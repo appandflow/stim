@@ -460,8 +460,8 @@ function fingerprintMismatch(
     : [];
   return [
     `the checkout there fingerprints ${there.slice(0, 12)}, here ${job.expectedFingerprint?.slice(0, 12)}`,
-    ...(differing.length ? [`differing sources: ${namedList(differing)}`] : []),
     ...(mutated.files.length ? [`${mutated.steps.join(' and ')} there rewrote ${namedList(mutated.files)}`] : []),
+    ...(differing.length ? [`differing sources: ${namedList(differing)}`] : []),
   ].join('; ');
 }
 

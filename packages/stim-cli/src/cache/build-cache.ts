@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
-import { join, posix, relative, sep } from 'path';
+import { isAbsolute, join, posix, relative, resolve, sep } from 'path';
 import { isDeepStrictEqual } from 'util';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
@@ -248,14 +248,23 @@ export async function gitignoredFingerprintInputs(
   if (sources.some((source) => source.type === 'contents' && source.id === 'expoConfig'))
     for (const name of expoEnvFiles(env))
       if (lstatSync(join(projectRoot, name), { throwIfNoEntry: false })?.isFile()) found.add(name);
-  const pathspecs = sources.flatMap((source) =>
-    source.type !== 'contents' && !inNodeModules(source.filePath) ? [source.filePath] : [],
-  );
+  const top = realpathSync(await gitAsync(projectRoot, ['rev-parse', '--show-toplevel'], { signal }));
+  const base = realpathSync(projectRoot);
+  const pathspecs = sources.flatMap((source) => {
+    if (source.type === 'contents' || inNodeModules(source.filePath)) return [];
+    const inRepo = relative(top, resolve(base, source.filePath));
+    return isAbsolute(inRepo) || inRepo === '..' || inRepo.startsWith(`..${sep}`)
+      ? []
+      : [posix.normalize(source.filePath)];
+  });
   if (pathspecs.length) {
     const { ignorePathMatchObjects, ignoreDirMatchObjects } = await normalizeOptionsAsync(
       projectRoot,
       await fingerprintOptions(projectRoot, target),
     );
+    const addFile = (path: string) => {
+      if (!isIgnoredPathWithMatchObjects(path, ignorePathMatchObjects)) found.add(path);
+    };
     const walk = async (dir: string): Promise<void> => {
       if (isIgnoredPathWithMatchObjects(dir, ignoreDirMatchObjects)) return;
       for (const entry of await readdir(join(projectRoot, dir), { withFileTypes: true })) {
@@ -263,9 +272,11 @@ export async function gitignoredFingerprintInputs(
         const path = posix.join(dir, entry.name);
         if (entry.isDirectory()) {
           if (entry.name !== 'node_modules') await walk(path);
-        } else if (entry.isFile() && !isIgnoredPathWithMatchObjects(path, ignorePathMatchObjects)) found.add(path);
+        } else if (entry.isFile()) addFile(path);
       }
     };
+    const inSource = (path: string) =>
+      pathspecs.some((spec) => spec === '.' || path === spec || path.startsWith(`${spec}/`));
     const listed = await gitAsync(
       projectRoot,
       [
@@ -281,10 +292,21 @@ export async function gitignoredFingerprintInputs(
       ],
       { untrimmed: true, timeoutMs: 120_000, signal },
     );
-    for (const path of listed.split('\0')) {
-      if (!path || inNodeModules(path)) continue;
-      if (path.endsWith('/')) await walk(path.slice(0, -1));
-      else if (!isIgnoredPathWithMatchObjects(path, ignorePathMatchObjects)) found.add(path);
+    for (const listedPath of listed.split('\0')) {
+      if (!listedPath || inNodeModules(listedPath)) continue;
+      const directory = listedPath.endsWith('/');
+      const path = directory ? listedPath.slice(0, -1) : listedPath;
+      if (inSource(path)) {
+        if (directory) await walk(path);
+        else addFile(path);
+        continue;
+      }
+      // `git ls-files --directory` reports a wholly ignored directory as one entry, even when a source is only part of it.
+      for (const spec of pathspecs.filter((each) => each.startsWith(`${path}/`))) {
+        const stat = lstatSync(join(projectRoot, spec), { throwIfNoEntry: false });
+        if (stat?.isDirectory()) await walk(spec);
+        else if (stat?.isFile()) addFile(spec);
+      }
     }
   }
   return [...found].toSorted().map((path) => join(projectRoot, path));

@@ -648,7 +648,7 @@ describe('gitignored fingerprint inputs', () => {
     write('package.json', '{"name":"app"}');
     write(
       '.gitignore',
-      'node_modules/\n.env.local\nios/Pods/\nios/assets/\n*.jsbundle\nxcuserdata\nios/GoogleService-Info.plist\n',
+      'node_modules/\n.env.local\nios/Pods/\nios/assets/\n*.jsbundle\nxcuserdata\nios/GoogleService-Info.plist\ncreds/\n',
     );
     write('.env.sample');
     write('ios/Podfile');
@@ -661,6 +661,8 @@ describe('gitignored fingerprint inputs', () => {
     write('ios/main.jsbundle');
     write('ios/App.xcodeproj/xcuserdata/me.xcuserdatad/xcschemes/xcschememanagement.plist');
     write('node_modules/expo-camera/ios/Camera.swift');
+    write('creds/google-services.json');
+    write('creds/release.keystore');
   });
 
   test('are the ignored files a checkout lacks, without dependencies or build leftovers', async () => {
@@ -668,15 +670,18 @@ describe('gitignored fingerprint inputs', () => {
       { type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: 'a' },
       { type: 'dir', filePath: 'node_modules/expo-camera/ios', reasons: ['expoAutolinkingIos'], hash: 'b' },
       { type: 'contents', id: 'expoConfig', contents: '{}', reasons: ['expoConfig'], hash: 'c' },
+      { type: 'file', filePath: 'creds/google-services.json', reasons: ['expoConfigExternalFile'], hash: 'd' },
+      { type: 'dir', filePath: '../outside-the-repository', reasons: ['extraSources'], hash: 'e' },
     ];
     const real = realpathSync(root);
     expect(await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: {} })).toEqual([
       join(real, '.env.local'),
+      join(real, 'creds/google-services.json'),
       join(real, 'ios/GoogleService-Info.plist'),
     ]);
     expect(
       await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: { EXPO_NO_DOTENV: '1' } }),
-    ).toEqual([join(real, 'ios/GoogleService-Info.plist')]);
+    ).toEqual([join(real, 'creds/google-services.json'), join(real, 'ios/GoogleService-Info.plist')]);
     expect(await gitignoredFingerprintInputs(real, sources.slice(0, 2), { platform: 'ios' }, { env: {} })).toEqual([
       join(real, 'ios/GoogleService-Info.plist'),
     ]);
