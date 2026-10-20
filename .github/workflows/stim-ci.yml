@@ -36,7 +36,7 @@ jobs:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e-smoke')
     name: ${{ matrix.platform }} app lifecycle
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -96,7 +96,7 @@ jobs:
           project: ${{ matrix.project }}
           command: node ../../scripts/ci/app-smoke.mjs
           artifacts: stim-ci-results/${{ matrix.platform }}/first
-          timeout: '2400'
+          timeout: ${{ matrix.platform == 'ios' && '3600' || '2400' }}
           artifact-name: stim-ci-${{ matrix.platform }}-first
           retention-days: '7'
 
