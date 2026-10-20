@@ -40,7 +40,8 @@ share native artifacts with Stim.
 Stim and Expo CLI compute the fingerprint that keys this cache separately, and
 Stim ignores machine-local and generated paths that Expo CLI does not:
 `android/local.properties`, `android/.idea`, Xcode's `*.xcodeproj/xcuserdata`,
-and the `react-native bundle` output `ios/main.jsbundle` and `ios/assets`. On a
+and, while git ignores them, the `react-native bundle` output `ios/main.jsbundle`
+and `ios/assets`. On a
 machine where those exist, the two hashes differ and each side fills its own
 entry. List them in the project's `.fingerprintignore` to bring the hashes back
 together.

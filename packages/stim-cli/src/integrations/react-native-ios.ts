@@ -559,10 +559,12 @@ function reactNativeIosArtifact(
       }),
       fingerprintInputs: async () => ({
         sources: storeSources,
-        ignored: await gitignoredFingerprintInputs(root, storeSources, {
-          platform: PLATFORM,
-          iosProjectPath: iosProject.relative,
-        }),
+        ignored: await gitignoredFingerprintInputs(
+          root,
+          storeSources,
+          { platform: PLATFORM, iosProjectPath: iosProject.relative },
+          { env: operation?.env },
+        ),
       }),
       unchanged: async () => {
         const after = await refingerprintAfterMutation({

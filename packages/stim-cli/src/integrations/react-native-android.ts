@@ -403,7 +403,12 @@ function reactNativeAndroidArtifact(
       },
       fingerprintInputs: async () => ({
         sources,
-        ignored: await gitignoredFingerprintInputs(root, sources, { platform: 'android', androidLayout: layout }),
+        ignored: await gitignoredFingerprintInputs(
+          root,
+          sources,
+          { platform: 'android', androidLayout: layout },
+          { env: operation?.env },
+        ),
       }),
       unchanged: async () => {
         const after = await refingerprintAfterMutation({

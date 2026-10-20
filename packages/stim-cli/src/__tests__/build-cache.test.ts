@@ -338,8 +338,6 @@ test('fingerprintProject ignores the paths a fresh checkout does not have', asyn
     '**/android/local.properties',
     '**/android/.idea/**',
     '**/*.xcodeproj/xcuserdata/**/*',
-    '**/ios/main.jsbundle',
-    '**/ios/assets/**/*',
   ]);
   expect(options?.platforms).toEqual(['ios']);
 });
@@ -672,16 +670,19 @@ describe('gitignored fingerprint inputs', () => {
       { type: 'contents', id: 'expoConfig', contents: '{}', reasons: ['expoConfig'], hash: 'c' },
     ];
     const real = realpathSync(root);
-    expect(await gitignoredFingerprintInputs(real, sources, { platform: 'ios' })).toEqual([
+    expect(await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: {} })).toEqual([
       join(real, '.env.local'),
       join(real, 'ios/GoogleService-Info.plist'),
     ]);
-    expect(await gitignoredFingerprintInputs(real, sources.slice(0, 2), { platform: 'ios' })).toEqual([
+    expect(
+      await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: { EXPO_NO_DOTENV: '1' } }),
+    ).toEqual([join(real, 'ios/GoogleService-Info.plist')]);
+    expect(await gitignoredFingerprintInputs(real, sources.slice(0, 2), { platform: 'ios' }, { env: {} })).toEqual([
       join(real, 'ios/GoogleService-Info.plist'),
     ]);
   });
 
-  test('build leftovers in ios/ leave the real fingerprint unchanged; an ignored native input moves it', async () => {
+  test('gitignored build leftovers in ios/ leave the real fingerprint unchanged; native inputs move it', async () => {
     const hashOf = async () => (await fingerprintProject(root, { platform: 'ios' }))?.hash;
     rmSync(join(root, 'ios/GoogleService-Info.plist'));
     const withLeftovers = await hashOf();
@@ -691,7 +692,11 @@ describe('gitignored fingerprint inputs', () => {
     expect(await hashOf()).toBe(withLeftovers);
     write('ios/GoogleService-Info.plist');
     expect(await hashOf()).not.toBe(withLeftovers);
-  });
+    const withPlist = await hashOf();
+    write('.gitignore', 'node_modules/\n');
+    write('ios/assets/Sound.caf');
+    expect(await hashOf()).not.toBe(withPlist);
+  }, 30_000);
 });
 
 test('fingerprintDiffRecord caps the logged list at 20 names and carries the total count', () => {

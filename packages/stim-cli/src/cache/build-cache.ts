@@ -47,10 +47,16 @@ export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
   '**/android/.idea/**',
   // Appears the first time someone opens the project in Xcode; @expo/fingerprint only ignores the workspace's.
   '**/*.xcodeproj/xcuserdata/**/*',
-  // `react-native bundle` output; a Debug build loads JS from Metro and a release cache hit injects the current JS.
-  '**/ios/main.jsbundle',
-  '**/ios/assets/**/*',
 ];
+
+/**
+ * `react-native bundle` output, ignored only while git ignores it: a committed copy can be a native resource,
+ * while a Debug build loads JS from Metro and a release cache hit injects the current JS.
+ */
+const BUNDLE_OUTPUT_IGNORES: Record<string, string> = {
+  'ios/main.jsbundle': 'ios/main.jsbundle',
+  'ios/assets': 'ios/assets/**/*',
+};
 
 const APP_ROOT_IOS_SKIPPED = new Set(['node_modules', 'Pods', 'build', 'android', '.git', '.DS_Store', '.stim.json']);
 
@@ -184,11 +190,17 @@ async function fingerprintOptions(
     const config = await loadFingerprintConfig(projectRoot, true);
     ios.extraSources = [...(config?.extraSources ?? []), ...ios.extraSources];
   }
+  const bundleOutput =
+    platform === 'android'
+      ? []
+      : [...gitIgnoredNames(projectRoot, Object.keys(BUNDLE_OUTPUT_IGNORES))].map(
+          (path) => BUNDLE_OUTPUT_IGNORES[path]!,
+        );
   // With DEBUG set, @expo/fingerprint profiles sourcers on stdout unless silent.
   return {
     ...platforms,
     ...(ios.extraSources ? { extraSources: ios.extraSources } : {}),
-    ignorePaths: [...DEFAULT_FINGERPRINT_IGNORES, ...(ios.ignorePaths ?? [])],
+    ignorePaths: [...DEFAULT_FINGERPRINT_IGNORES, ...bundleOutput, ...(ios.ignorePaths ?? [])],
     silent: true,
   };
 }
@@ -212,8 +224,12 @@ export async function fingerprintProject(
   return { hash, sources };
 }
 
-/** The env files Expo's config loader reads in the development mode @expo/fingerprint evaluates the config in. */
-const EXPO_DEVELOPMENT_ENV_FILES = ['.env.development.local', '.env.local', '.env.development', '.env'];
+/** The env files @expo/env loads for the config, in the mode @expo/fingerprint's config loader sets. */
+function expoEnvFiles(env: NodeJS.ProcessEnv = {}): string[] {
+  if (/^(1|true)$/i.test(env.EXPO_NO_DOTENV ?? '')) return [];
+  const mode = env.NODE_ENV || 'development';
+  return [`.env.${mode}.local`, ...(mode === 'test' ? [] : ['.env.local']), `.env.${mode}`, '.env'];
+}
 
 const inNodeModules = (path: string) => path.split('/').includes('node_modules');
 
@@ -226,11 +242,11 @@ export async function gitignoredFingerprintInputs(
   projectRoot: string,
   sources: readonly FingerprintSource[],
   target: FingerprintTarget,
-  signal?: AbortSignal,
+  { env, signal }: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
 ): Promise<string[]> {
   const found = new Set<string>();
   if (sources.some((source) => source.type === 'contents' && source.id === 'expoConfig'))
-    for (const name of EXPO_DEVELOPMENT_ENV_FILES)
+    for (const name of expoEnvFiles(env))
       if (lstatSync(join(projectRoot, name), { throwIfNoEntry: false })?.isFile()) found.add(name);
   const pathspecs = sources.flatMap((source) =>
     source.type !== 'contents' && !inNodeModules(source.filePath) ? [source.filePath] : [],
