@@ -1,7 +1,10 @@
 import { type ChildProcess, type SpawnOptions, execSync } from 'child_process';
 import spawn from 'cross-spawn';
 import which from 'which';
-import { basename, delimiter, resolve as resolvePath } from 'path';
+import { basename, delimiter, join, resolve as resolvePath } from 'path';
+import { randomUUID } from 'node:crypto';
+import { existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ambientEnv, ambientContext, type StimContext } from '@stim-cli/core';
@@ -65,9 +68,14 @@ export interface Executor {
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
-// Windows PowerShell 5.1 took up to 9.5 s to start on a fresh GitHub-hosted runner, and the job-object
-// script plus its Node entry about 2.6 s more on every launch, before the contained child starts (#4102).
-const REPORT_JOB_STARTUP_MS = 30_000;
+// Windows PowerShell 5.1 took up to 9.5 s to start on a fresh GitHub-hosted runner and 2.2 s to exit after
+// its child closed (#4102), so a contained child's budget covers only the child, between these markers.
+const REPORT_JOB_PHASE_MS = 30_000;
+
+interface ReportJobMarkers {
+  started: string;
+  closed: string;
+}
 
 function startsInReportJob(file: string, opts: SpawnOptions, containProcessTree: boolean): boolean {
   return (
@@ -83,7 +91,15 @@ function spawnReportProbe(
   opts: SpawnOptions,
   containProcessTree = false,
 ): ChildProcess {
-  if (!startsInReportJob(file, opts, containProcessTree)) return spawn(file, args, opts);
+  return startsInReportJob(file, opts, containProcessTree) ? spawnReportJob(file, args, opts) : spawn(file, args, opts);
+}
+
+function spawnReportJob(
+  file: string,
+  args: readonly string[],
+  opts: SpawnOptions,
+  markers?: ReportJobMarkers,
+): ChildProcess {
   const env = opts.env ?? ambientEnv();
   const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
   if (!systemRoot) throw new Error('SystemRoot is required to contain Windows report probes.');
@@ -108,6 +124,7 @@ function spawnReportProbe(
           args,
           node: process.execPath,
           entry: fileURLToPath(new URL('../dist/windows-report.mjs', import.meta.url)),
+          ...markers,
         }),
       },
     },
@@ -427,13 +444,22 @@ const defaultExecutor: Executor = {
               retainDeclaration = rejectDeclaration;
             })
           : undefined;
-      const contained = containProcessTree || Boolean(report);
-      const startupMs = startsInReportJob(file, opts, contained) ? REPORT_JOB_STARTUP_MS : 0;
-      const start = () => spawnReportProbe(file, args, opts, contained);
+      const base = startsInReportJob(file, opts, containProcessTree || Boolean(report))
+        ? join(tmpdir(), `stim-report-${process.pid}-${randomUUID()}`)
+        : null;
+      const markers = base ? { started: `${base}.started`, closed: `${base}.closed` } : undefined;
+      const start = () => (markers ? spawnReportJob(file, args, opts, markers) : spawn(file, args, opts));
       const child = declareFor ? spawnDeclared(declareFor, start, declaration ? { until: declaration } : {}) : start();
       let lifetime: ReturnType<typeof reportChild>;
       let cancel: (() => Promise<void>) | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let poll: ReturnType<typeof setInterval> | undefined;
+      let phase: 'starting' | 'running' | 'closing' = markers ? 'starting' : 'running';
+      const stopTimers = () => {
+        clearTimeout(timer);
+        clearInterval(poll);
+        if (markers) for (const marker of Object.values(markers)) rmSync(marker, { force: true });
+      };
       try {
         lifetime = reportChild(child, report, (error) => {
           const failure = claims.length
@@ -446,13 +472,13 @@ const defaultExecutor: Executor = {
                 { reportCleanup: true },
               )
             : error;
-          clearTimeout(timer);
+          stopTimers();
           return failure;
         });
         cancel = lifetime?.cancel;
         if (cleanupOnExit && cancel)
           child.once('exit', () => {
-            clearTimeout(timer);
+            stopTimers();
             void cancel?.().catch(reject);
           });
         void lifetime?.closed.catch(reject);
@@ -497,34 +523,51 @@ const defaultExecutor: Executor = {
           }
         }
       };
-      timer =
-        timeout === undefined
-          ? undefined
-          : setTimeout(() => {
-              timedOut = true;
-              if (cancel) void cancel().catch(reject);
-              else {
-                child.kill(killSignal ?? 'SIGTERM');
-                child.stdin?.destroy();
-                child.stdout?.destroy();
-                child.stderr?.destroy();
-              }
-            }, timeout + startupMs);
+      const arm = (ms: number) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          timedOut = true;
+          if (cancel) void cancel().catch(reject);
+          else {
+            child.kill(killSignal ?? 'SIGTERM');
+            child.stdin?.destroy();
+            child.stdout?.destroy();
+            child.stderr?.destroy();
+          }
+        }, ms);
+      };
+      if (timeout !== undefined && markers) {
+        arm(REPORT_JOB_PHASE_MS);
+        poll = setInterval(() => {
+          if (phase === 'starting' && existsSync(markers.started)) {
+            phase = 'running';
+            arm(timeout);
+          }
+          if (phase === 'running' && existsSync(markers.closed)) {
+            phase = 'closing';
+            arm(REPORT_JOB_PHASE_MS);
+            clearInterval(poll);
+          }
+        }, 50);
+      } else if (timeout !== undefined) arm(timeout);
       child.stdout?.on('data', (chunk: Buffer) => capture(stdout, chunk));
       child.stderr?.on('data', (chunk: Buffer) => capture(stderr, chunk));
       child.on('error', (error) => {
-        clearTimeout(timer);
+        stopTimers();
         reject(redactError(error, redact));
       });
       const finish = async (status: number | null, signal: NodeJS.Signals | null): Promise<void> => {
-        clearTimeout(timer);
+        stopTimers();
         await lifetime?.closed;
         const discardOutput = (timedOut || overflowed || report?.aborted) && redact?.some(Boolean);
         const out = discardOutput ? '' : Buffer.concat(stdout).toString('utf-8');
         const err = discardOutput ? '' : Buffer.concat(stderr).toString('utf-8');
         const result = { status, signal, stdout: out, stderr: err };
         if (report?.aborted) reject(report.reason);
-        else if (timedOut) {
+        else if (timedOut && phase !== 'running') {
+          const message = `The Windows report job did not ${phase === 'starting' ? 'start' : 'exit'} within ${REPORT_JOB_PHASE_MS}ms: ${command}`;
+          reject(redactError(Object.assign(new Error(message), result, { code: 'ETIMEDOUT' }), redact));
+        } else if (timedOut) {
           reject(
             redactError(
               nameTimeout(Object.assign(new Error(command), result, { code: 'ETIMEDOUT' }), command, timeoutMs),
