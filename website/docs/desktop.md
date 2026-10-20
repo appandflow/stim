@@ -160,7 +160,10 @@ grant access, and it runs no builds itself.
 A soft glow with a short label points at the control a step needs, without
 covering the app with a dimming layer. It appears only in the active window
 and fades after a few seconds; it shows
-again when the step or page changes. On **Make a Change** and **Change It Again in
+again when the step or page changes. During **Agent Actions and Replay**, the glow
+is gold and pulses continuously while its target is active. Clicking inside the
+Agent Actions container dismisses its glow for that viewer session. With Reduce Motion,
+it stays steady. On **Make a Change** and **Change It Again in
 Parallel**, it points at the **Show** button of the "New workspace" notice for
 your first change's worktree, which reads "Building iOS" while its build runs;
 if that notice is gone, **Open the build** in the step does the same. When the

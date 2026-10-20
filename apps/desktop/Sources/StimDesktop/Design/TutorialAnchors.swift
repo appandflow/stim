@@ -62,8 +62,8 @@ extension View {
     }
   }
 
-  func tutorialHighlights(showFallback: Bool = true) -> some View {
-    modifier(TutorialHighlights(showFallback: showFallback))
+  func tutorialHighlights(showFallback: Bool = true, agentGlowDismissed: Bool = false) -> some View {
+    modifier(TutorialHighlights(showFallback: showFallback, agentGlowDismissed: agentGlowDismissed))
   }
 
   func tutorialGlowInPlace(_ hint: TutorialHint?, _ anchor: TutorialAnchorID, workspaces: [String] = []) -> some View {
@@ -72,7 +72,8 @@ extension View {
         GeometryReader { geometry in
           TutorialGlow(
             rect: CGRect(origin: .zero, size: geometry.size), bounds: geometry.size, callout: nil,
-            restartKey: "\(hint.step ?? "")|\(hint.selectedPath ?? "")|\(anchor)", overflowsWindow: false)
+            restartKey: "\(hint.step ?? "")|\(hint.selectedPath ?? "")|\(anchor)", overflowsWindow: false,
+            loops: hint.step == "agent")
         }
       }
     }
@@ -83,6 +84,7 @@ private struct TutorialHighlights: ViewModifier {
   @Environment(\.tutorialHint) private var hint
   @State private var windowKey = false
   var showFallback: Bool
+  var agentGlowDismissed: Bool
 
   func body(content: Content) -> some View {
     content.overlayPreferenceValue(TutorialAnchorPreference.self) { anchors in
@@ -100,9 +102,11 @@ private struct TutorialHighlights: ViewModifier {
             return (target.anchor, target.callout, rect)
           }.first
           if let found {
-            TutorialGlow(
-              rect: found.2, bounds: geometry.size, callout: found.1,
-              restartKey: "\(hint.step ?? "")|\(hint.selectedPath ?? "")|\(found.0)")
+            if found.0 != .agentActions || !agentGlowDismissed {
+              TutorialGlow(
+                rect: found.2, bounds: geometry.size, callout: found.1,
+                restartKey: "\(hint.step ?? "")|\(hint.selectedPath ?? "")|\(found.0)", loops: hint.step == "agent")
+            }
           } else if showFallback, hint.offersShowMe, hint.path != nil, !hint.onPage {
             Button("Show Me", action: hint.showMe)
               .buttonStyle(.stim(.secondary))
@@ -117,8 +121,6 @@ private struct TutorialHighlights: ViewModifier {
   }
 }
 
-/// A pulsing glow with a capsule label that fades after a few seconds, and shows again when the target changes or
-/// comes back after an absence.
 private struct TutorialGlow: View {
   static let fadeSeconds = 0.6
   static let pulsePeriod = 1.4
@@ -128,6 +130,11 @@ private struct TutorialGlow: View {
   var callout: String?
   var restartKey: String
   var overflowsWindow = true
+  var loops = false
+
+  private var highlight: Color {
+    loops ? Color(red: 1, green: 215.0 / 255.0, blue: 0) : Palette.accent
+  }
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.colorScheme) private var colorScheme
   @State private var faded = false
@@ -159,6 +166,7 @@ private struct TutorialGlow: View {
     .task(id: restartKey) {
       gone = false
       faded = false
+      guard !loops else { return }
       try? await Task.sleep(for: .seconds(TutorialHint.glowSeconds))
       if Task.isCancelled { return }
       withAnimation(.easeOut(duration: Self.fadeSeconds)) { faded = true }
@@ -168,10 +176,11 @@ private struct TutorialGlow: View {
   }
 
   private var animatedGlow: some View {
-    TimelineView(reduceMotion ? .animation(minimumInterval: 3600) : .animation) { context in
+    TimelineView(.periodic(from: .now, by: reduceMotion ? 3600 : 1.0 / 30)) { context in
       let phase =
-        reduceMotion ? 0 : (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / Self.pulsePeriod) + 1) / 2
+        reduceMotion ? 1 : (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / Self.pulsePeriod) + 1) / 2
       glow(phase: phase)
+        .opacity(loops && !reduceMotion ? 0.1 + 0.9 * phase : 1)
     }
     .frame(width: bounds.width, height: bounds.height)
     .opacity(faded ? 0 : 1)
@@ -183,20 +192,20 @@ private struct TutorialGlow: View {
     let aboveY = rect.minY - 18
     return ZStack {
       RoundedRectangle(cornerRadius: Radius.control + 3)
-        .stroke(Palette.accent.opacity(0.45 + 0.25 * phase), lineWidth: 4 + 2 * phase)
+        .stroke(highlight.opacity(0.45 + 0.25 * phase), lineWidth: 4 + 2 * phase)
         .blur(radius: 6 + 2 * phase)
         .frame(width: size.width, height: size.height)
         .position(x: rect.midX, y: rect.midY)
       RoundedRectangle(cornerRadius: Radius.control + 3)
-        .strokeBorder(Palette.accent.opacity(0.4), lineWidth: 1)
+        .strokeBorder(highlight.opacity(0.4), lineWidth: 1)
         .frame(width: size.width, height: size.height)
         .position(x: rect.midX, y: rect.midY)
       if let callout {
         Text(callout).font(.stim(.footnote, weight: .semibold))
-          .foregroundStyle(Palette.onPrimary)
+          .foregroundStyle(loops ? Color.black : Palette.onPrimary)
           .padding(.horizontal, Space.md).padding(.vertical, Space.xs)
-          .background(Capsule().fill(Palette.accent))
-          .shadow(color: Palette.accent.opacity(0.4), radius: 6)
+          .background(Capsule().fill(highlight))
+          .shadow(color: highlight.opacity(0.4), radius: 6)
           .fixedSize(horizontal: true, vertical: false)
           .position(
             x: max(140, min(bounds.width - 140, rect.midX)),
