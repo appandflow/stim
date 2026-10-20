@@ -1179,6 +1179,13 @@ captured"  (in metro.ndjson, bare RN)
   config -- lands THERE, not in supervisor.log). \`stim logs --errors\` has
   the full records. Fix that and run \`start\` again.
 
+  A bind error on the reserved port ("listen EADDRINUSE ... :<port>") means
+  another process, usually another Stim home, took the port after Stim chose
+  it. \`start\` releases that reservation, reserves another free port and
+  starts again, up to 3 attempts, and says so. A pinned metro.port and
+  \`--remote\` starts are not retried. When all attempts fail, run \`start\`
+  again.
+
   "Cannot reuse or replace the recorded supervisor: ..."
   A live record has no verifiable OS process identity, or the workspace and
   registry records disagree. Nothing new was started; the old process is
