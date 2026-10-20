@@ -28,7 +28,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, sep } from 'node:path';
+import { basename, delimiter, dirname, join, relative, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 import { fingerprintProject, refingerprintAfterMutation } from '../cache/build-cache.ts';
@@ -433,14 +433,35 @@ function useProjectNode(root: string, src: string): void {
   const node = withProjectNode(root, process.env, { top: src });
   if (node.pinned) process.env.PATH = node.env.PATH;
   note(
-    'node',
+    'deps',
     node.pinned ? projectNodeLine(node.pinned) : `Node ${pathNodeVersion(process.env) ?? 'unknown'} on PATH`,
   );
 }
 
+/**
+ * Names the `node` first on this worker's `PATH` in `<iosDir>/.xcode.env.local`. React Native's `with-environment.sh`
+ * runs Xcode's script phases on that file's `NODE_BINARY`, and its CocoaPods setup writes the file only when it is
+ * missing, so a file left from an earlier job, or one recording a Homebrew Cellar path, would otherwise win.
+ */
+function useXcodeNode(iosDir: string): void {
+  const node = (process.env.PATH ?? '')
+    .split(delimiter)
+    .filter(Boolean)
+    .map((dir) => join(dir, 'node'))
+    .find((path) => statSync(path, { throwIfNoEntry: false })?.isFile());
+  if (!node || !existsSync(iosDir)) return;
+  const file = join(iosDir, '.xcode.env.local');
+  const line = `export NODE_BINARY='${node.replaceAll("'", "'\\''")}'`;
+  const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  const next = /^export NODE_BINARY=.*$/m.test(text)
+    ? text.replace(/^export NODE_BINARY=.*$/gm, () => line)
+    : `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`;
+  if (next !== text) writeFileSync(file, next);
+}
+
 /** Installs JavaScript dependencies when the lockfile, or the install command, changed since the last install. */
 async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
-  const install = dependencyInstall(src, job.packageName, job.project);
+  const install = dependencyInstall(src, job.packageName, relative(src, realpathSync(join(src, job.project))));
   if (!install) return;
   const { command, args, digest, lockfile } = install;
   const marker = join(job.area, 'dependencies');
@@ -671,6 +692,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       mutations.push('prebuild');
     }
     if (platform === 'ios') {
+      useXcodeNode(iosProject.dir);
       const podState = readPodState(realRoot, iosProject.dir);
       const pods = podAction(podState, podsAreStale(podState.lockText, podState.manifestText, podState.dir));
       if (pods.install) {

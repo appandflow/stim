@@ -5,8 +5,8 @@ import { projectNodeBin } from './toolchain.ts';
 
 /**
  * The existing worker install command and marker identity for a repository's selected lockfile. The marker identity
- * also names the major of the Node the project at `project` pins and the worker installs with, or `path` when the
- * worker runs the `node` on its `PATH`, so that native addons are rebuilt when that Node changes.
+ * also names the major of the Node `projectNodeBin` picks for the pin of the project at `project`, or `path` when it
+ * picks none, so that native addons are rebuilt when the pinned Node changes major.
  */
 export function dependencyInstall(
   root: string,
