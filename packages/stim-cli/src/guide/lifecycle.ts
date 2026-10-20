@@ -2198,7 +2198,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   there too. Each installs when its lockfile or its patches/ directory moved,
   when nothing is installed, or when npm reports a tree that differs from the
   one it reported after the last completed install. An npm project whose
-  .npmrc sets ignore-scripts gets no postinstall from \`npm ci\`, so when its
+  npm config sets ignore-scripts gets no postinstall from \`npm ci\`, so when its
   package.json defines one the refresh runs \`npm run postinstall\` next
   (patch-package, usually); dependencies' own install scripts stay blocked.
   Pods run for that app, and only that app, when its ios/Podfile.lock moved or

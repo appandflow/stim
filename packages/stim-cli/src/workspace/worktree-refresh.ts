@@ -294,8 +294,9 @@ function hashPatches(depsRoot: string): string {
   const dir = join(depsRoot, 'patches');
   let names: string[];
   try {
-    names = readdirSync(dir, { recursive: true, encoding: 'utf-8' })
-      .filter((name) => name.endsWith('.patch'))
+    names = readdirSync(dir, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.patch'))
+      .map((entry) => relative(dir, join(entry.parentPath, entry.name)))
       .toSorted();
   } catch {
     return '';
@@ -631,7 +632,7 @@ export async function refreshMainCheckout({
     const deps = depsPlan({
       lockfile: dependencies.lock,
       lockfileChanged: pathChangedBetween(root, before, head, gitPath(depsDir, dependencies.lock)),
-      patchesChanged: pathChangedBetween(root, before, head, gitPath(depsDir, 'patches')),
+      patchesChanged: pathChangedBetween(root, before, head, gitPath(depsDir, 'patches/*.patch')),
       installed,
       treeProblems:
         dependencies.lock === 'package-lock.json' && installed ? installedNpmTreeProblems(dependencies.root) : null,

@@ -1414,7 +1414,7 @@ test('a tree npm ls rejected right after a completed install is reinstalled only
   expect(spawned).toEqual(['npm ci']);
 }, 30_000);
 
-test('a failed postinstall leaves the install unfinished, so the next refresh runs both again', async () => {
+test('a failed postinstall leaves the install unfinished, so a plain warm refuses to copy it', async () => {
   write(root, 'package.json', '{"name":"refresh-fixture","scripts":{"postinstall":"patch-package"}}\n');
   write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
   commit(root, 'npm project');
