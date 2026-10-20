@@ -1546,7 +1546,8 @@ describe.skipIf(process.platform === 'win32')('local socket', () => {
     });
 
   test('a long hosted home serves a private socket and removes it on close', async () => {
-    process.env.STIM_HOME = join(root, 'device-host', 'sessions', '00000000-0000-0000-0000-000000000001', 'home');
+    process.env.STIM_HOME = join(root, 'device-host', 'sessions', 'x'.repeat(80), 'home');
+    expect(Buffer.byteLength(join(process.env.STIM_HOME, 'server', 'local.sock'))).toBeGreaterThan(107);
     mkdirSync(process.env.STIM_HOME, { recursive: true });
     await start();
     const socket = serverLocalSocket();
