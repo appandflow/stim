@@ -519,8 +519,6 @@ async function stopWorkspace({
   let stillHolding: string | null | undefined = null;
   let keepPort: string | null = null;
 
-  await removeOwnedEmulatorReverses(proj, reservedPort, operation);
-
   debugLog.log('stop.phase.start', { phase: 'supervisor' });
   const target = resolveSupervisorTarget({
     state: sup,
@@ -529,6 +527,7 @@ async function stopWorkspace({
     isAlive,
     inspectIdentity,
   });
+  await removeOwnedEmulatorReverses(proj, reservedPort, target.status, operation);
   if (target.status === 'none') {
     report(chalk.dim(phaseLine('stop', 'no supervisor recorded')));
   } else if (target.status === 'stale') {
@@ -971,9 +970,10 @@ function occupiedSkipReason(reason: string, holders: string[] | null | undefined
 async function removeOwnedEmulatorReverses(
   project: ProjectRecord | null | undefined,
   metroPort: number | null,
+  supervisor: ReturnType<typeof resolveSupervisorTarget>['status'],
   operation: StimContext | undefined,
 ): Promise<void> {
-  if (metroPort === null) return;
+  if (metroPort === null || supervisor === 'unverified') return;
   for (const { platforms } of projectDeviceSlots(project)) {
     const android = platforms.android;
     if (android?.owned && android.avdName && android.consolePort) {
