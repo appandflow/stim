@@ -30,6 +30,7 @@ struct TutorialPanel: View {
   }
   @State private var viewed: String?
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.isEnabled) private var isEnabled
   @ObservedObject private var updater = AppUpdater.shared
   @ObservedObject private var flags = FeatureFlagStore.shared
   private var steps: [TutorialStep] { TutorialSteps.steps(phoneApp: flags.phoneApp) }
@@ -68,11 +69,13 @@ struct TutorialPanel: View {
     .focusable()
     .focusEffectDisabled()
     .onKeyPress(.leftArrow) {
+      guard isEnabled else { return .ignored }
       guard let id = slides.previous(shown) else { return .ignored }
       view(id)
       return .handled
     }
     .onKeyPress(.rightArrow) {
+      guard isEnabled else { return .ignored }
       guard let id = slides.next(shown) else { return .ignored }
       view(id)
       return .handled

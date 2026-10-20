@@ -2033,6 +2033,8 @@ a floating window beside the main app window, kept within the screen and on the
 same desktop Space as that window. It stays
 freely draggable while open; reopening positions it beside the app again.
 It uses the same window level as Stim, so other apps can cover both windows.
+While a popup is open in the Stim window, the tutorial stays visible but its controls
+and arrow-key navigation are disabled until the popup closes.
 A new tutorial path opens it once, after open
 sheets close. UserDefaults stores progress and skipped steps.
 Unfinished tours resume at launch when status lists the tracked path; archived

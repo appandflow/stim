@@ -21,13 +21,42 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
   @MainActor final class Coordinator {
     private var panel: NSPanel?
     private var hosting: NSHostingView<AnyView>?
+    private weak var owner: NSWindow?
+    private var observers: [NSObjectProtocol] = []
+    private var content = AnyView(EmptyView())
+    private var popupOpen = false
 
     func update(isPresented: Bool, pinned: Bool, ownerWindow: NSWindow?, content: AnyView) {
       guard isPresented else { return close() }
-      if let hosting {
-        hosting.rootView = content
-      } else {
-        let hosting = NSHostingView(rootView: content)
+      self.content = content
+      if owner !== ownerWindow {
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+        observers = []
+        owner = ownerWindow
+        popupOpen = ownerWindow?.attachedSheet != nil
+        if let ownerWindow {
+          observers = [
+            NotificationCenter.default.addObserver(
+              forName: NSWindow.willBeginSheetNotification, object: ownerWindow, queue: .main
+            ) { [weak self] _ in
+              MainActor.assumeIsolated {
+                self?.popupOpen = true
+                self?.refreshContent()
+              }
+            },
+            NotificationCenter.default.addObserver(
+              forName: NSWindow.didEndSheetNotification, object: ownerWindow, queue: .main
+            ) { [weak self] _ in
+              MainActor.assumeIsolated {
+                self?.popupOpen = false
+                self?.refreshContent()
+              }
+            },
+          ]
+        }
+      }
+      if hosting == nil {
+        let hosting = NSHostingView(rootView: AnyView(EmptyView()))
         let panel = NSPanel(
           contentRect: NSRect(x: 0, y: 0, width: WorkspaceDetail.inspectorWidth, height: 640),
           styleMask: [.titled, .resizable, .utilityWindow, .nonactivatingPanel, .fullSizeContentView],
@@ -58,6 +87,7 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
         self.panel = panel
         self.hosting = hosting
       }
+      refreshContent()
       panel?.isFloatingPanel = false
       panel?.level = ownerWindow?.level ?? .normal
       if let panel, let ownerWindow, panel.parent !== ownerWindow {
@@ -67,7 +97,16 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
       if panel?.isVisible == false { panel?.orderFront(nil) }
     }
 
+    private func refreshContent() {
+      hosting?.rootView = AnyView(content.disabled(popupOpen).allowsHitTesting(!popupOpen))
+    }
+
     func close() {
+      for observer in observers { NotificationCenter.default.removeObserver(observer) }
+      observers = []
+      owner = nil
+      popupOpen = false
+      content = AnyView(EmptyView())
       if let panel {
         panel.parent?.removeChildWindow(panel)
         panel.orderOut(nil)
