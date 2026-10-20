@@ -49,4 +49,14 @@ describe('project Node pins', () => {
     );
     expect(unmetNodePin(app, {}, { top: top(), nodeVersion: () => '1.5.0' })).toBeNull();
   });
+
+  it("checks an lts pin through nvm's aliases, and says when it cannot resolve one", () => {
+    writeFileSync(join(dir, 'repo', '.nvmrc'), 'lts/jod\n');
+    expect(unmetNodePin(app, {}, { top: top(), nodeVersion: () => '1.5.0' })).toBe(
+      "Stim cannot resolve .nvmrc lts/jod through nvm's aliases, so Node 1.5.0 on PATH ran.",
+    );
+    mkdirSync(join(dir, 'home', '.nvm', 'alias', 'lts'), { recursive: true });
+    writeFileSync(join(dir, 'home', '.nvm', 'alias', 'lts', 'jod'), '1\n');
+    expect(unmetNodePin(app, {}, { top: top(), nodeVersion: () => '1.5.0' })).toBeNull();
+  });
 });

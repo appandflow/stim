@@ -46,7 +46,7 @@ import { logLines } from '../macos/run.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import { manifestDigest } from './manifest.ts';
-import { unmetNodePin, withProjectNode } from '../supervisor/project-node.ts';
+import { pathNodeVersion, projectNodeLine, unmetNodePin, withProjectNode } from '../supervisor/project-node.ts';
 import { parseNdjsonText, type NdjsonWriter } from '../ndjson.ts';
 import type { Optimizations } from '../optimizations.ts';
 import { podAction } from '../commands/ios/support.ts';
@@ -425,17 +425,22 @@ async function materialize(job: WorkerJob, src: string): Promise<{ written: numb
   return { written, removed };
 }
 
-/** Puts the Node that `root`, or the nearest directory above it in `src`, pins first on this worker's `PATH`. */
+/**
+ * Puts the Node that `root`, or the nearest directory above it in `src`, pins first on this worker's `PATH`, and
+ * reports which Node the build runs on.
+ */
 function useProjectNode(root: string, src: string): void {
   const node = withProjectNode(root, process.env, { top: src });
-  if (!node.pinned) return;
-  process.env.PATH = node.env.PATH;
-  note('node', `Node ${node.pinned.version} from ${node.pinned.bin}, for ${node.pinned.pin} ${node.pinned.spec}`);
+  if (node.pinned) process.env.PATH = node.env.PATH;
+  note(
+    'node',
+    node.pinned ? projectNodeLine(node.pinned) : `Node ${pathNodeVersion(process.env) ?? 'unknown'} on PATH`,
+  );
 }
 
 /** Installs JavaScript dependencies when the lockfile, or the install command, changed since the last install. */
 async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
-  const install = dependencyInstall(src, job.packageName);
+  const install = dependencyInstall(src, job.packageName, job.project);
   if (!install) return;
   const { command, args, digest, lockfile } = install;
   const marker = join(job.area, 'dependencies');

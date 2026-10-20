@@ -350,7 +350,8 @@ worker does not have, such as `22.22.0`, uses the newest installed Node of that
 major that is not older than the pin, such as Homebrew's `node@22` at 22.23.2.
 Without one, the steps run on the worker's own `node`, and a failed install or
 prebuild names the pin and that Node's version. Install a matching Node on the
-worker, for example `brew install node@22`.
+worker, for example `brew install node@22`. When the pinned Node's major
+changes, the worker reinstalls dependencies so native modules match it.
 
 ## Use the Desktop wizard
 

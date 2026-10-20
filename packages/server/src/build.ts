@@ -585,7 +585,13 @@ export class BuildHost {
           dependencies:
             typeof params.lockfile === 'string' &&
             dependencies !== undefined &&
-            reusableDependencies(area, dependencies.project, dependencies.packageName, params.lockfile),
+            reusableDependencies(
+              area,
+              dependencies.project,
+              dependencies.packageName,
+              params.lockfile,
+              this.options.env,
+            ),
           build: false,
         },
         ...(artifact !== undefined ? { artifact } : {}),

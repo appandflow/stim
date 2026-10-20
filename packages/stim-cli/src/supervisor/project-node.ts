@@ -1,8 +1,15 @@
 import { delimiter } from 'node:path';
-import { meetsNodePinMajor, projectNodeBin, projectNodePin, satisfiesNodePin } from '@stim-cli/core/toolchain';
+import {
+  meetsNodePinMajor,
+  projectNodeBin,
+  projectNodePin,
+  resolveNodePinSpec,
+  satisfiesNodePin,
+} from '@stim-cli/core/toolchain';
 import { getExecutor } from '../exec.ts';
 
-function pathNodeVersion(env: NodeJS.ProcessEnv): string | null {
+/** The version of the `node` that `env`'s `PATH` runs. */
+export function pathNodeVersion(env: NodeJS.ProcessEnv): string | null {
   const childEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) if (value !== undefined) childEnv[key] = value;
   return getExecutor().runFileQuiet('node', ['-p', 'process.versions.node'], { timeoutMs: 5000, env: childEnv });
@@ -54,7 +61,18 @@ export function unmetNodePin(
 ): string | null {
   const pin = projectNodePin(root, undefined, top);
   if (!pin || projectNodeBin(root, env, undefined, top)) return null;
-  const current = nodeVersion(env);
-  if (current && (satisfiesNodePin(current, pin.spec) || meetsNodePinMajor(current, pin.spec))) return null;
-  return `Node ${current ?? 'unknown'} on PATH does not satisfy ${pin.file} ${pin.spec}, and no installed Node does.`;
+  const spec = resolveNodePinSpec(pin.spec, env);
+  const current = nodeVersion(env) ?? 'unknown';
+  if (!spec)
+    return `Stim cannot resolve ${pin.file} ${pin.spec} through nvm's aliases, so Node ${current} on PATH ran.`;
+  if (satisfiesNodePin(current, spec) || meetsNodePinMajor(current, spec)) return null;
+  return `Node ${current} on PATH does not satisfy ${pin.file} ${pin.spec}, and no installed Node does.`;
+}
+
+/** The log line naming the Node `withProjectNode` put first on `PATH` and the pin it stands for. */
+export function projectNodeLine(pinned: NonNullable<ReturnType<typeof withProjectNode>['pinned']>): string {
+  const line = `Node ${pinned.version} from ${pinned.bin}, for ${pinned.pin} ${pinned.spec}`;
+  return pinned.match === 'major'
+    ? `${line} (no install has ${pinned.spec}; the newest ${pinned.version.split('.')[0]}.x not older than it)`
+    : line;
 }

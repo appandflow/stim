@@ -314,12 +314,23 @@ function nodePinIn(root: string, probe: ToolchainProbe): { spec: string; file: s
   return volta ? { spec: volta, file: 'package.json' } : null;
 }
 
+/** A pin's version spec, with an `lts/...` pin resolved through nvm's aliases, or null when nvm cannot resolve it. */
+export function resolveNodePinSpec(
+  spec: string,
+  env: NodeJS.ProcessEnv,
+  probe: ToolchainProbe = defaultToolchainProbe(),
+): string | null {
+  if (!spec.startsWith('lts/')) return spec;
+  const resolved = nvmAlias(nvmDir(env, probe), spec, probe);
+  return resolved.startsWith('lts/') ? null : resolved;
+}
+
 /**
  * The `bin` directory of an installed Node for the pin `projectNodePin` finds, from nvm, fnm, Volta, asdf, mise or a
  * linked Homebrew `node` or `node@NN`, or null when the project pins none or no install fits. `match` is `exact` for an
  * install the pin names. When none is, it is `major` for the newest install of the pinned major that is not older than
- * the pinned version, since Homebrew cannot install a chosen patch release. An `lts/...` pin resolves through nvm's
- * aliases.
+ * the pinned version, since Homebrew cannot install a chosen patch release. An `lts/...` pin resolves through
+ * `resolveNodePinSpec`.
  */
 export function projectNodeBin(
   root: string,
@@ -329,8 +340,9 @@ export function projectNodeBin(
 ): { bin: string; version: string; pin: string; spec: string; match: 'exact' | 'major' } | null {
   const pin = projectNodePin(root, probe, top);
   if (!pin) return null;
+  const spec = resolveNodePinSpec(pin.spec, env, probe);
+  if (!spec) return null;
   const nvm = nvmDir(env, probe);
-  const spec = pin.spec.startsWith('lts/') ? nvmAlias(nvm, pin.spec, probe) : pin.spec;
   const asdf = join(env.ASDF_DATA_DIR || join(probe.home, '.asdf'), 'installs', 'nodejs');
   const stores: Array<{ dir: string; bin: (name: string) => string }> = [
     { dir: join(nvm, 'versions', 'node'), bin: (name) => join(nvm, 'versions', 'node', name, 'bin') },
