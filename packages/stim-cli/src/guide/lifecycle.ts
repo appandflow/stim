@@ -2191,12 +2191,20 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   .stim.json, else \`git symbolic-ref --short refs/remotes/origin/HEAD\`;
   when neither answers it says so and makes no warning.
 
-  Dependencies install where the lockfile is, which in a monorepo is the
-  repository root, when the lockfile moved or nothing is installed. Pods run
-  for the app the command was invoked from, and only that app, when its
-  ios/Podfile.lock moved or ios/Pods/Manifest.lock does not match it. Each
-  completed or skipped deps and pods step names its source directory and
-  reason. A failed install refuses with STIM_DEPS_FAILED and nothing is copied.
+  The app is the one warm prepares: the app the command was invoked from, or,
+  from a monorepo root, the one app registered in the source checkout.
+  Dependencies install where the repository root's lockfile is and, when the
+  app has its own lockfile (a nested package outside the root workspaces),
+  there too. Each installs when its lockfile or its patches/ directory moved,
+  when nothing is installed, or when npm reports a tree that differs from the
+  one it reported after the last completed install. An npm project whose
+  .npmrc sets ignore-scripts gets no postinstall from \`npm ci\`, so when its
+  package.json defines one the refresh runs \`npm run postinstall\` next
+  (patch-package, usually); dependencies' own install scripts stay blocked.
+  Pods run for that app, and only that app, when its ios/Podfile.lock moved or
+  ios/Pods/Manifest.lock does not match it. Each completed or skipped deps and
+  pods step names its source directory and reason. A failed install or
+  postinstall refuses with STIM_DEPS_FAILED and nothing is copied.
 
   An install that did not finish is remembered, and a PLAIN warm reads that
   before it copies. The refresh records the completed install of the lockfile it

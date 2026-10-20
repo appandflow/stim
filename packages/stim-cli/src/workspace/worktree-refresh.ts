@@ -1,11 +1,16 @@
 import type { ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { workspaceName } from '@stim-cli/core';
 import { formatDuration, formatElapsed, phaseLine } from '../command-output.ts';
 import { getConfigDir } from './config.ts';
-import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValid } from '../dependency-state.ts';
+import {
+  type DependencyState,
+  dependencyState,
+  hasInstalledDependencies,
+  installedNpmTreeIsValid,
+} from '../dependency-state.ts';
 import { DEPS_ERROR, podsAreStale, readPodState, runCaptured, runPodInstall } from '../engine/deps.ts';
 import { NO_INSTALLER_CLAIM, type InstallerClaim } from '../engine/warm-claim.ts';
 import { HEARTBEAT_INTERVAL_MS } from '../engine/xcode.ts';
@@ -114,16 +119,20 @@ function checkoutFactLine(branch: string, plan: Exclude<CheckoutPlan, { kind: 'd
 interface InstallEvidence {
   lock: string;
   hash: string;
+  patches: string;
   completed: boolean;
+  treeValid: boolean | null;
 }
 
 export interface DepsInputs {
   lockfile: string | null;
   lockfileChanged: boolean;
+  patchesChanged: boolean;
   installed: boolean;
   treeValid: boolean | null;
   lastInstall: InstallEvidence | null;
   lockHash: string | null;
+  patchesHash: string;
 }
 
 export interface StepPlan {
@@ -134,19 +143,25 @@ export interface StepPlan {
 /**
  * Whether to install, decided against the lockfile as it stands now rather than against what HEAD did.
  * A lockfile that did not move is not evidence that its dependencies are installed: an install that was
- * interrupted leaves a present node_modules behind and moves HEAD no further.
+ * interrupted leaves a present node_modules behind and moves HEAD no further. A `patches/` change counts
+ * as a dependency change because patch-package applies it only on a fresh install. A tree `npm ls` already
+ * rejected right after the last completed install is not one another install would fix.
  */
 export function depsPlan({
   lockfile,
   lockfileChanged,
+  patchesChanged,
   installed,
   treeValid,
   lastInstall,
   lockHash,
+  patchesHash,
 }: DepsInputs): StepPlan {
   if (!lockfile) return { run: false, reason: 'no lockfile in this repository' };
   if (!installed) return { run: true, reason: 'no installed dependencies' };
-  if (treeValid === false) return { run: true, reason: `the installed tree does not match ${lockfile}` };
+  if (treeValid === false && lastInstall?.treeValid !== false) {
+    return { run: true, reason: `the installed tree does not match ${lockfile}` };
+  }
   if (lastInstall) {
     if (!lastInstall.completed) return { run: true, reason: `the last install of ${lastInstall.lock} did not finish` };
     if (lastInstall.lock !== lockfile)
@@ -154,9 +169,13 @@ export function depsPlan({
     if (lockHash === null || lastInstall.hash !== lockHash) {
       return { run: true, reason: `${lockfile} does not match the last completed install` };
     }
+    if (lastInstall.patches !== patchesHash) {
+      return { run: true, reason: 'patches/ does not match the last completed install' };
+    }
     return { run: false, reason: `${lockfile} matches the last completed install` };
   }
   if (lockfileChanged) return { run: true, reason: `${lockfile} changed` };
+  if (patchesChanged) return { run: true, reason: 'patches/ changed' };
   return { run: false, reason: `${lockfile} unchanged` };
 }
 
@@ -166,18 +185,52 @@ export function depsPlan({
  * nothing about this one, and no record at all is the state of every repository before its first refresh.
  */
 export function incompleteInstallRefusal(root: string, appDir: string): RefreshFailure | null {
-  const dependencies = dependencyState(existsSync(appDir) ? appDir : root);
-  if (!dependencies) return null;
-  const last = readInstallEvidence(dependencies.root);
-  if (!last || last.completed || last.lock !== dependencies.lock) return null;
-  const hash = lockfileHash(dependencies.root, dependencies.lock);
-  if (hash === null || last.hash !== hash) return null;
-  return {
-    code: 'STIM_DEPS_INCOMPLETE',
-    message: `Refusing to copy from ${dependencies.root}: the last install of ${dependencies.lock} there did not finish, so its dependencies are partial.`,
-    lines: [],
-    remedy: `Run \`stim worktree warm --refresh\` to install them in the source checkout -- it reinstalls rather than skipping, because no completed install of this ${dependencies.lock} is recorded -- then warm again.`,
-  };
+  for (const dependencies of dependencyStates(root, appDir)) {
+    const last = readInstallEvidence(dependencies.root);
+    if (!last || last.completed || last.lock !== dependencies.lock) continue;
+    const hash = lockfileHash(dependencies.root, dependencies.lock);
+    if (hash === null || last.hash !== hash) continue;
+    return {
+      code: 'STIM_DEPS_INCOMPLETE',
+      message: `Refusing to copy from ${dependencies.root}: the last install of ${dependencies.lock} there did not finish, so its dependencies are partial.`,
+      lines: [],
+      remedy: `Run \`stim worktree warm --refresh\` to install them in the source checkout -- it reinstalls rather than skipping, because no completed install of this ${dependencies.lock} is recorded -- then warm again.`,
+    };
+  }
+  return null;
+}
+
+function dependencyStates(root: string, appDir: string): DependencyState[] {
+  const states = [dependencyState(root, root), dependencyState(existsSync(appDir) ? appDir : root)];
+  return states.filter(
+    (state, index): state is DependencyState =>
+      state !== null && states.findIndex((other) => other?.root === state.root) === index,
+  );
+}
+
+/**
+ * An npm project whose own `.npmrc` sets `ignore-scripts` gets no lifecycle scripts from `npm ci`, its own
+ * postinstall included. `npm run` still runs a named script under that setting, so the project's postinstall
+ * (usually patch-package) runs explicitly; dependencies' install scripts stay blocked.
+ */
+function skippedPostinstall(dependencies: DependencyState): boolean {
+  if (dependencies.lock !== 'package-lock.json') return false;
+  let postinstall: unknown;
+  try {
+    postinstall = JSON.parse(readFileSync(join(dependencies.root, 'package.json'), 'utf-8'))?.scripts?.postinstall;
+  } catch {
+    return false;
+  }
+  if (typeof postinstall !== 'string' || !postinstall.trim()) return false;
+  try {
+    const value = getExecutor().runFile('npm', ['config', 'get', 'ignore-scripts'], {
+      cwd: dependencies.root,
+      timeoutMs: 30_000,
+    });
+    return value === 'true';
+  } catch {
+    return false;
+  }
 }
 
 export interface PodsInputs {
@@ -237,22 +290,49 @@ function lockfileHash(depsRoot: string, lockfile: string): string | null {
   }
 }
 
+function hashPatches(depsRoot: string): string {
+  const dir = join(depsRoot, 'patches');
+  let names: string[];
+  try {
+    names = readdirSync(dir, { recursive: true, encoding: 'utf-8' })
+      .filter((name) => name.endsWith('.patch'))
+      .toSorted();
+  } catch {
+    return '';
+  }
+  if (!names.length) return '';
+  const hash = createHash('sha256');
+  for (const name of names)
+    hash
+      .update(name)
+      .update('\0')
+      .update(readFileSync(join(dir, name)))
+      .update('\0');
+  return hash.digest('hex');
+}
+
 function readInstallEvidence(depsRoot: string): InstallEvidence | null {
   try {
     const parsed = JSON.parse(readFileSync(installRecordFile(depsRoot), 'utf-8'));
     if (!parsed || typeof parsed !== 'object') return null;
     if (typeof parsed.lock !== 'string' || typeof parsed.hash !== 'string') return null;
-    return { lock: parsed.lock, hash: parsed.hash, completed: parsed.completed === true };
+    return {
+      lock: parsed.lock,
+      hash: parsed.hash,
+      patches: typeof parsed.patches === 'string' ? parsed.patches : '',
+      completed: parsed.completed === true,
+      treeValid: typeof parsed.treeValid === 'boolean' ? parsed.treeValid : null,
+    };
   } catch {
     return null;
   }
 }
 
-function writeInstallEvidence(depsRoot: string, lockfile: string, hash: string | null, completed: boolean): void {
+function writeInstallEvidence(depsRoot: string, evidence: InstallEvidence): void {
   const file = installRecordFile(depsRoot);
   const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   mkdirSync(join(getConfigDir(), 'warm-installs'), { recursive: true });
-  writeFileSync(tmp, JSON.stringify({ lock: lockfile, hash: hash ?? '', completed }));
+  writeFileSync(tmp, JSON.stringify(evidence));
   try {
     renameSync(tmp, file);
   } catch (error) {
@@ -261,8 +341,18 @@ function writeInstallEvidence(depsRoot: string, lockfile: string, hash: string |
   }
 }
 
+function pendingInstallEvidence(dependencies: DependencyState): InstallEvidence {
+  return {
+    lock: dependencies.lock,
+    hash: lockfileHash(dependencies.root, dependencies.lock) ?? '',
+    patches: hashPatches(dependencies.root),
+    completed: false,
+    treeValid: null,
+  };
+}
+
 function restoreInstallEvidence(depsRoot: string, prior: InstallEvidence | null): void {
-  if (prior) writeInstallEvidence(depsRoot, prior.lock, prior.hash, prior.completed);
+  if (prior) writeInstallEvidence(depsRoot, prior);
   else rmSync(installRecordFile(depsRoot), { force: true });
 }
 
@@ -500,10 +590,14 @@ export async function refreshMainCheckout({
   // The evidence that an install may be owed has to be durable before HEAD moves: the fast-forward runs
   // the repository's own hooks, and a retry that finds HEAD already moved, a node_modules present and no
   // evidence at all would call that installed.
-  const depsBefore = dependencyState(existsSync(appDir) ? appDir : root);
-  const priorInstall = depsBefore ? readInstallEvidence(depsBefore.root) : null;
-  const marked = plan.kind === 'fast-forward' ? depsBefore : null;
-  if (marked) writeInstallEvidence(marked.root, marked.lock, lockfileHash(marked.root, marked.lock), false);
+  const depsBefore = dependencyStates(root, appDir);
+  const priorInstalls = new Map(depsBefore.map((entry) => [entry.root, readInstallEvidence(entry.root)]));
+  const marked = plan.kind === 'fast-forward' ? depsBefore : [];
+  for (const entry of marked) writeInstallEvidence(entry.root, pendingInstallEvidence(entry));
+  const restoreMarked = (depsRoot: string) => {
+    if (marked.some((entry) => entry.root === depsRoot))
+      restoreInstallEvidence(depsRoot, priorInstalls.get(depsRoot) ?? null);
+  };
 
   let head = before;
   if (plan.kind === 'fast-forward') {
@@ -523,49 +617,82 @@ export async function refreshMainCheckout({
   const note = defaultBranchNote(branch, resolveDefaultBranch(root, settings));
   if (note.kind !== 'match') for (const line of note.lines) emit(phaseLine('', line));
 
-  const dependencies = dependencyState(existsSync(appDir) ? appDir : root);
-  const installed = dependencies ? hasInstalledDependencies(dependencies.root, dependencies.installed) : false;
-  // The hash the installer is about to consume. Re-reading the file at completion records whatever was
-  // committed while the install ran, which is not what got installed.
-  const consumed = dependencies ? lockfileHash(dependencies.root, dependencies.lock) : null;
-  const deps = depsPlan({
-    lockfile: dependencies?.lock ?? null,
-    lockfileChanged: dependencies
-      ? pathChangedBetween(root, before, head, gitPath(relative(root, dependencies.root), dependencies.lock))
-      : false,
-    installed,
-    treeValid:
-      dependencies?.lock === 'package-lock.json' && installed ? installedNpmTreeIsValid(dependencies.root) : null,
-    lastInstall: priorInstall,
-    lockHash: consumed,
-  });
-  const depsSubject = `source ${dependencies?.root ?? root}: ${deps.reason}`;
-  if (deps.run && dependencies) {
-    if (inspectOnly) return { mutation: deps.reason };
-    writeInstallEvidence(dependencies.root, dependencies.lock, consumed, false);
-    const install = await runInstallCommand({
-      command: dependencies.command,
-      cwd: dependencies.root,
-      spawnFn: spawn,
-      now,
-      heartbeatMs,
-      onHeartbeat: emit,
+  const dependencyRoots = dependencyStates(root, appDir);
+  for (const entry of marked)
+    if (!dependencyRoots.some((other) => other.root === entry.root)) restoreMarked(entry.root);
+  if (!dependencyRoots.length) emit(stepLine('deps', `source ${root}: no lockfile in this repository`, 'skipped'));
+  const owed: { dependencies: DependencyState; consumed: InstallEvidence; subject: string }[] = [];
+  for (const dependencies of dependencyRoots) {
+    const installed = hasInstalledDependencies(dependencies.root, dependencies.installed);
+    const depsDir = relative(root, dependencies.root);
+    // What the installer is about to consume. Re-reading the files at completion records whatever was
+    // committed while the install ran, which is not what got installed.
+    const consumed = pendingInstallEvidence(dependencies);
+    const deps = depsPlan({
+      lockfile: dependencies.lock,
+      lockfileChanged: pathChangedBetween(root, before, head, gitPath(depsDir, dependencies.lock)),
+      patchesChanged: pathChangedBetween(root, before, head, gitPath(depsDir, 'patches')),
+      installed,
+      treeValid:
+        dependencies.lock === 'package-lock.json' && installed ? installedNpmTreeIsValid(dependencies.root) : null,
+      lastInstall: priorInstalls.has(dependencies.root)
+        ? (priorInstalls.get(dependencies.root) ?? null)
+        : readInstallEvidence(dependencies.root),
+      lockHash: consumed.hash || null,
+      patchesHash: consumed.patches,
     });
-    emit(stepLine('deps', depsSubject, `${dependencies.command} (${formatDuration(install.durationMs)})`));
-    const running = await awaitSpawnedWork(`\`${dependencies.command}\``);
-    if (!install.ok) {
-      return {
-        code: DEPS_ERROR,
-        message: String(install.reason),
-        lines: install.lastLines,
-        remedy: `Run \`cd ${dependencies.root} && ${dependencies.command}\` and fix what it reports, then run warm again.`,
-      };
+    const depsSubject = `source ${dependencies.root}: ${deps.reason}`;
+    if (deps.run) {
+      if (inspectOnly) return { mutation: deps.reason };
+      owed.push({ dependencies, consumed, subject: depsSubject });
+      continue;
     }
-    if (running) return running;
-    writeInstallEvidence(dependencies.root, dependencies.lock, consumed, true);
-  } else {
-    if (marked) restoreInstallEvidence(marked.root, priorInstall);
+    restoreMarked(dependencies.root);
     emit(stepLine('deps', depsSubject, 'skipped'));
+  }
+  for (const { dependencies, consumed, subject: depsSubject } of owed) {
+    writeInstallEvidence(dependencies.root, consumed);
+    const runStep = async (command: string, subject: string, remedy: string): Promise<RefreshFailure | null> => {
+      const install = await runInstallCommand({
+        command,
+        cwd: dependencies.root,
+        spawnFn: spawn,
+        now,
+        heartbeatMs,
+        onHeartbeat: emit,
+      });
+      emit(stepLine('deps', subject, `${command} (${formatDuration(install.durationMs)})`));
+      const running = await awaitSpawnedWork(`\`${command}\``);
+      if (!install.ok) {
+        return {
+          code: DEPS_ERROR,
+          message: String(install.reason),
+          lines: install.lastLines,
+          remedy: `Run \`cd ${dependencies.root} && ${remedy}\` and fix what it reports, then run warm again.`,
+        };
+      }
+      return running;
+    };
+    const postinstall = skippedPostinstall(dependencies) ? 'npm run postinstall' : null;
+    const installFailure = await runStep(
+      dependencies.command,
+      depsSubject,
+      postinstall ? `${dependencies.command} && ${postinstall}` : dependencies.command,
+    );
+    if (installFailure) return installFailure;
+    if (postinstall) {
+      const postinstallFailure = await runStep(
+        postinstall,
+        `source ${dependencies.root}: ignore-scripts skipped postinstall`,
+        postinstall,
+      );
+      if (postinstallFailure) return postinstallFailure;
+    }
+    writeInstallEvidence(dependencies.root, {
+      ...consumed,
+      completed: true,
+      treeValid: dependencies.lock === 'package-lock.json' ? installedNpmTreeIsValid(dependencies.root) : null,
+    });
   }
 
   const app = relative(root, appDir) || '.';

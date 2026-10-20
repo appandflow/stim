@@ -30,6 +30,7 @@ import {
 import { operationState } from '../engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { warmWorktreePaths } from '../workspace/worktree.ts';
+import { upsertProject } from '../workspace/config.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import {
   type DepsInputs,
@@ -176,16 +177,20 @@ test('the refresh decisions read off the state without touching git', () => {
   const deps = (over: Partial<DepsInputs>): DepsInputs => ({
     lockfile: 'pnpm-lock.yaml',
     lockfileChanged: false,
+    patchesChanged: false,
     installed: true,
     treeValid: null,
     lastInstall: null,
     lockHash: null,
+    patchesHash: '',
     ...over,
   });
   const installedOf = (over: Partial<DepsInputs['lastInstall'] & object> = {}) => ({
     lock: 'pnpm-lock.yaml',
     hash: 'a',
+    patches: '',
     completed: true,
+    treeValid: null,
     ...over,
   });
   expect(depsPlan(deps({ lockfile: null, installed: false })).run).toBe(false);
@@ -214,6 +219,24 @@ test('the refresh decisions read off the state without touching git', () => {
   // the lockfile did not move, and a lockfile that moved is left alone when its content is installed.
   expect(depsPlan(deps({ lockfileChanged: false, lastInstall: installedOf({ completed: false }) })).run).toBe(true);
   expect(depsPlan(deps({ lockfileChanged: true, lastInstall: installedOf(), lockHash: 'a' })).run).toBe(false);
+
+  expect(depsPlan(deps({ patchesChanged: true }))).toEqual({ run: true, reason: 'patches/ changed' });
+  expect(depsPlan(deps({ lastInstall: installedOf(), lockHash: 'a', patchesHash: 'p2' }))).toEqual({
+    run: true,
+    reason: 'patches/ does not match the last completed install',
+  });
+  const npmInstalledOf = (treeValid: boolean | null) => installedOf({ lock: 'package-lock.json', treeValid });
+  const npmDeps = (lastInstall: DepsInputs['lastInstall']) =>
+    deps({ lockfile: 'package-lock.json', treeValid: false, lastInstall, lockHash: 'a' });
+  expect(depsPlan(npmDeps(npmInstalledOf(false)))).toEqual({
+    run: false,
+    reason: 'package-lock.json matches the last completed install',
+  });
+  expect(depsPlan(npmDeps(npmInstalledOf(true)))).toEqual({
+    run: true,
+    reason: 'the installed tree does not match package-lock.json',
+  });
+  expect(depsPlan(npmDeps(npmInstalledOf(null))).run).toBe(true);
 
   const fresh = { stale: false } as const;
   expect(podsPlan({ hasIos: false, hasPodfile: false, podfileLockChanged: true, stale: fresh })).toEqual({
@@ -1111,7 +1134,7 @@ test('the ledger records the lockfile the installer read, not the one on disk wh
   });
   const first = await runWarm(target, '--refresh');
   expect(first.code).toBe(0);
-  expect(installLedger()).toEqual({ lock: 'pnpm-lock.yaml', hash: sha256('lock v2\n'), completed: true });
+  expect(installLedger()).toMatchObject({ lock: 'pnpm-lock.yaml', hash: sha256('lock v2\n'), completed: true });
 
   process.exitCode = 0;
   const spawned: string[] = [];
@@ -1128,7 +1151,7 @@ test('the ledger records the lockfile the installer read, not the one on disk wh
     `deps        source ${root}: pnpm-lock.yaml does not match the last completed install -> pnpm install`,
   );
   expect(spawned).toEqual(['pnpm install']);
-  expect(installLedger()).toEqual({ lock: 'pnpm-lock.yaml', hash: sha256('lock v3\n'), completed: true });
+  expect(installLedger()).toMatchObject({ lock: 'pnpm-lock.yaml', hash: sha256('lock v3\n'), completed: true });
 }, 30_000);
 
 test('a STIM_HOME that is a regular file refuses both warm paths and names the blocking file', async () => {
@@ -1231,7 +1254,7 @@ test('an incomplete install of a superseded lockfile does not block a copy', asy
   setExecutor({ ...real, spawn: () => makeExitingChild(1, 'ERR_PNPM_OUTDATED_LOCKFILE\n') });
   const failed = await runWarm(target, '--refresh');
   expect(failed.code).toBe(1);
-  expect(installLedger()).toEqual({ lock: 'pnpm-lock.yaml', hash: sha256('lock v2\n'), completed: false });
+  expect(installLedger()).toMatchObject({ lock: 'pnpm-lock.yaml', hash: sha256('lock v2\n'), completed: false });
 
   process.exitCode = 0;
   write(root, 'pnpm-lock.yaml', 'lock v3\n');
@@ -1281,6 +1304,143 @@ test('a warm from a monorepo app reads the ledger of the repository root that ow
   expect(refused.stderr).toContain(`Refusing to copy from ${root}`);
   expect(refused.stderr).toContain('failed: STIM_DEPS_INCOMPLETE');
   expect(existsSync(join(target, 'node_modules'))).toBe(false);
+}, 30_000);
+
+test.each([
+  { ignoreScripts: 'true', commands: ['npm ci', 'npm run postinstall'] },
+  { ignoreScripts: 'false', commands: ['npm ci'] },
+])(
+  'a refresh from a monorepo root reinstalls the registered app on a patches-only change, with ignore-scripts=$ignoreScripts',
+  async ({ ignoreScripts, commands }) => {
+    const app = join(root, 'app');
+    write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
+    write(
+      app,
+      'package.json',
+      '{"name":"app","dependencies":{"react-native":"0.80.0"},"scripts":{"postinstall":"patch-package"}}\n',
+    );
+    write(app, 'package-lock.json', '{"lockfileVersion":3}\n');
+    write(app, 'patches/dep+1.0.0.patch', 'patch v1\n');
+    commit(root, 'monorepo with a nested app');
+    git(root, 'push', '-q', 'origin', 'main');
+    git(target, 'merge', '-q', '--ff-only', 'main');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    mkdirSync(join(app, 'node_modules'), { recursive: true });
+    upsertProject(app, {});
+    fallBehind({ 'app/patches/dep+1.0.0.patch': 'patch v2\n' }, 'change only a patch');
+
+    const real = getExecutor();
+    const spawned: string[] = [];
+    setExecutor({
+      ...real,
+      spawn(cmd: string, args: string[], opts: { cwd?: unknown }) {
+        spawned.push(`${[cmd, ...args].join(' ')} in ${String(opts?.cwd)}`);
+        return makeExitingChild(0);
+      },
+      runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
+        if (file === 'npm' && args[0] === 'ls') return '{}';
+        if (file === 'npm' && args.join(' ') === 'config get ignore-scripts') return ignoreScripts;
+        return real.runFile(file, args, opts);
+      },
+    });
+
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(0);
+    expect(spawned).toEqual(commands.map((command) => `${command} in ${app}`));
+    expect(result.stderr).toContain(`deps        source ${root}: package-lock.json unchanged -> skipped`);
+    expect(result.stderr).toContain(`deps        source ${app}: patches/ changed -> npm ci (`);
+    expect(
+      result.stderr.includes(`deps        source ${app}: ignore-scripts skipped postinstall -> npm run postinstall (`),
+    ).toBe(commands.length > 1);
+
+    process.exitCode = 0;
+    spawned.length = 0;
+    const again = await runWarm(target, '--refresh');
+    expect(again.code).toBe(0);
+    expect(spawned).toEqual([]);
+    expect(again.stderr).toContain('lock        acquired shared (seed current)');
+  },
+  30_000,
+);
+
+test('a tree npm ls already rejected right after a completed install is not reinstalled on every refresh', async () => {
+  write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
+  commit(root, 'npm project');
+  git(root, 'push', '-q', 'origin', 'main');
+  fallBehind({ 'README.md': 'docs\n' }, 'unrelated change');
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+
+  const real = getExecutor();
+  const spawned: string[] = [];
+  setExecutor({
+    ...real,
+    spawn(cmd: string, args: string[]) {
+      spawned.push([cmd, ...args].join(' '));
+      return makeExitingChild(0);
+    },
+    runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
+      if (file === 'npm' && args[0] === 'ls') throw new Error('npm error missing: react-dom@*, required by some-peer');
+      return real.runFile(file, args, opts);
+    },
+  });
+
+  const first = await runWarm(target, '--refresh');
+  expect(first.code).toBe(0);
+  expect(spawned).toEqual(['npm ci']);
+  expect(first.stderr).toContain(
+    `deps        source ${root}: the installed tree does not match package-lock.json -> npm ci (`,
+  );
+  expect(installLedger()).toMatchObject({ completed: true, treeValid: false });
+
+  process.exitCode = 0;
+  spawned.length = 0;
+  fallBehind({ 'README.md': 'more docs\n' }, 'another unrelated change');
+  const second = await runWarm(target, '--refresh');
+  expect(second.code).toBe(0);
+  expect(spawned).toEqual([]);
+  expect(second.stderr).toContain(
+    `deps        source ${root}: package-lock.json matches the last completed install -> skipped`,
+  );
+}, 30_000);
+
+test('a failed postinstall leaves the install unfinished, so the next refresh runs both again', async () => {
+  write(root, 'package.json', '{"name":"refresh-fixture","scripts":{"postinstall":"patch-package"}}\n');
+  write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
+  commit(root, 'npm project');
+  git(root, 'push', '-q', 'origin', 'main');
+  fallBehind({ 'patches/dep+1.0.0.patch': 'patch v1\n' }, 'add a patch');
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+  write(root, '.env', 'main env');
+
+  const real = getExecutor();
+  const spawned: string[] = [];
+  setExecutor({
+    ...real,
+    spawn(cmd: string, args: string[]) {
+      spawned.push([cmd, ...args].join(' '));
+      return args[0] === 'run'
+        ? makeExitingChild(1, '**ERROR** Failed to apply patch for package dep\n')
+        : makeExitingChild(0);
+    },
+    runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
+      if (file === 'npm' && args[0] === 'ls') return '{}';
+      if (file === 'npm' && args.join(' ') === 'config get ignore-scripts') return 'true';
+      return real.runFile(file, args, opts);
+    },
+  });
+
+  const failed = await runWarm(target, '--refresh');
+  expect(failed.code).toBe(1);
+  expect(spawned).toEqual(['npm ci', 'npm run postinstall']);
+  expect(failed.stderr).toContain('`npm run postinstall` failed (exit code 1).');
+  expect(failed.stderr).toContain(`Run \`cd ${root} && npm run postinstall\``);
+  expect(installLedger()).toMatchObject({ lock: 'package-lock.json', completed: false });
+  expect(existsSync(join(target, '.env'))).toBe(false);
+
+  process.exitCode = 0;
+  spawned.length = 0;
+  const refused = await runWarm(target);
+  expect(refused.stderr).toContain('failed: STIM_DEPS_INCOMPLETE');
 }, 30_000);
 
 test('a current refresh retains both copy claims when child cleanup is unresolved', async () => {

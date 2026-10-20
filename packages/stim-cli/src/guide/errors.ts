@@ -144,7 +144,8 @@ Branch on the code, never on the message.`,
   note naming which of the two set it; Gemfile.lock is never edited either way.
   \`worktree warm --refresh\` reports the same code for the install it runs in
   the SOURCE CHECKOUT -- the lockfile's own command (\`pnpm install\`,
-  \`yarn install\`, \`bun install\`, \`npm ci\`) or that same pod ladder. The
+  \`yarn install\`, \`bun install\`, \`npm ci\`), the \`npm run postinstall\`
+  it runs when the project's .npmrc sets ignore-scripts, or that same pod ladder. The
   message names the command, quotes its last lines, and nothing is copied: fix
   the source checkout, then warm again.`,
     },
