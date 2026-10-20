@@ -2234,7 +2234,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     const takenPort = 8156;
     const bindError = (port: number) => `metro: Error: listen EADDRINUSE: address already in use :::${port}\n`;
 
-    function racingExecutor(exitLog: (port: number) => string) {
+    function racingExecutor(exitLog: (port: number) => string, losingSpawns = 1) {
       const exec = metroExecutor({ listeners: {} });
       const listening = new Set<number>();
       const base = exec.runQuiet.bind(exec);
@@ -2247,7 +2247,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
         exec.calls.spawn.push({ cmd, args, opts });
         const port = Number(args[args.indexOf('--port') + 1]);
         const handlers: Record<string, (...a: unknown[]) => void> = {};
-        if (exec.calls.spawn.length === 1) {
+        if (exec.calls.spawn.length <= losingSpawns) {
           const rival = createServer((_req, res) => res.end('another home'));
           openServers.push(rival);
           rival.listen(port, '127.0.0.1');
@@ -2294,6 +2294,20 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       expect(exec.calls.spawn).toHaveLength(2);
       expect(exec.calls.spawn[1]?.args).toContain(String(facts.port));
       expect(result.errs.join('\n')).toContain(`Port ${takenPort} was taken by another process`);
+    });
+
+    test('start gives up after three lost ports and names the race', async () => {
+      const exec = racingExecutor(bindError, Infinity);
+      setExecutor(exec);
+      upsertProject(root, { metroPort: takenPort });
+
+      const result = await runAction({ json: true, wait: '30' });
+
+      expect(result.exitCode).toBe(1);
+      const failure = JSON.parse(result.logs.at(-1) ?? '');
+      expect(failure.code).toBe('STIM_SUPERVISOR_EXITED');
+      expect(failure.remedy).toContain('3 times in a row');
+      expect(exec.calls.spawn).toHaveLength(3);
     });
 
     test('a pinned metro.port stays put and the failure is reported', async () => {
