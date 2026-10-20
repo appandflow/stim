@@ -584,21 +584,36 @@ test('a failed Android device teardown reports an adb-flavored remedy', async ()
   expect(android.remedy).toMatch(/stim gc --delete/);
 });
 
+const REVERSES_REMOVED = [
+  '-s emulator-5556 reverse --list',
+  '-s emulator-5556 reverse --remove tcp:8083',
+  '-s emulator-5558 reverse --list',
+  '-s emulator-5558 reverse --remove tcp:8083',
+];
+
 test.each([
   [
-    8083,
-    [
-      '-s emulator-5556 reverse --list',
-      '-s emulator-5556 reverse --remove tcp:8083',
-      '-s emulator-5558 reverse --list',
-      '-s emulator-5558 reverse --remove tcp:8083',
-      'supervisor',
-    ],
+    'a verified supervisor',
+    { state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083 }, isAlive: (pid: number) => pid === 4242 },
+    [...REVERSES_REMOVED, 'supervisor'],
   ],
-  [9999, []],
+  [
+    'an unverified supervisor',
+    { state: { pid: 4242, processToken: 'upid1.supervisor', port: 9999 }, isAlive: (pid: number) => pid === 4242 },
+    [],
+  ],
+  [
+    'an unverifiable dev server left by the supervisor',
+    {
+      state: { pid: 4242, port: 8083, serverPid: 4243, serverProcessToken: 'server-token' },
+      inspectIdentity: (record: { pid?: unknown }) => (record?.pid === 4243 ? 'unknown' : 'gone'),
+    },
+    [],
+  ],
+  ['no dev server on the port', {}, REVERSES_REMOVED],
 ])(
-  'stop removes the Metro reverses of owned emulators before it stops a verified supervisor (supervisor port %s)',
-  async (supervisorPort, expected) => {
+  "stop removes owned emulators' Metro reverses only when it stops Metro or none listens: %s",
+  async (_case, over, expected) => {
     const events: string[] = [];
     const { opts } = seams({
       project: {
@@ -609,12 +624,12 @@ test.each([
           theirs: { android: { avdName: 'Pixel_8', owned: false, consolePort: 5560 } },
         },
       },
-      state: { pid: 4242, processToken: 'upid1.supervisor', port: supervisorPort, mode: 'bare-inproc' },
-      isAlive: (pid: number) => pid === 4242,
       killGroup: () => {
         events.push('supervisor');
         return true;
       },
+      teardownAvd: async () => ({ status: 'skipped', reason: 'not under test' }),
+      ...over,
     });
     const consoles: Record<string, string> = { 'emulator-5556': 'stim-app', 'emulator-5558': 'stim-app-mine' };
     setExecutor(

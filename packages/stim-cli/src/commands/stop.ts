@@ -527,7 +527,7 @@ async function stopWorkspace({
     isAlive,
     inspectIdentity,
   });
-  await removeOwnedEmulatorReverses(proj, reservedPort, target.status, operation);
+  const releaseReverses = () => removeOwnedEmulatorReverses(proj, reservedPort, operation);
   if (target.status === 'none') {
     report(chalk.dim(phaseLine('stop', 'no supervisor recorded')));
   } else if (target.status === 'stale') {
@@ -544,7 +544,7 @@ async function stopWorkspace({
     ok = false;
     stillHolding = `supervisor pid ${target.pid} could not be verified`;
   } else {
-    outcomes.supervisor = await stopSupervisor(target, { root, killGroup, waiter, report });
+    outcomes.supervisor = await stopSupervisor(target, { root, killGroup, waiter, report, releaseReverses });
     if (outcomes.supervisor.status !== 'stopped') {
       ok = false;
       stillHolding = outcomes.supervisor.reason;
@@ -604,6 +604,7 @@ async function stopWorkspace({
       waiter,
       resolveMetro,
       report,
+      releaseReverses,
     });
     outcomes.metro = metro.outcome;
     keepPort = metro.keepPort;
@@ -845,17 +846,20 @@ async function stopSupervisor(
     killGroup,
     waiter,
     report,
+    releaseReverses,
   }: {
     root: string;
     killGroup: typeof killMetroTree | typeof killMetroTreeAsync;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     report: (line: string) => void;
+    releaseReverses: () => Promise<void>;
   },
 ): Promise<SupervisorOutcome> {
   report(chalk.dim(phaseLine('stop', `sending SIGTERM to supervisor process group ${target.pid}`)));
   try {
     await withWorkspaceStateLockAsync(root, () => requestDevServerStop(root, target.processToken, { by: 'stim stop' }));
   } catch {}
+  await releaseReverses();
   let signalled = false;
   try {
     signalled = await killGroup(target.pid, target.processToken);
@@ -909,6 +913,7 @@ async function stopMetro(
     waiter,
     resolveMetro,
     report,
+    releaseReverses,
   }: {
     server: SupervisorStateRecord | null;
     supervisorGone: boolean;
@@ -917,6 +922,7 @@ async function stopMetro(
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
     report: (line: string) => void;
+    releaseReverses: () => Promise<void>;
   },
 ): Promise<{ outcome: MetroOutcome; keepPort: string | null }> {
   const serverPid = numberOrNull(server?.serverPid);
@@ -931,6 +937,7 @@ async function stopMetro(
   }
   if (identity === 'same') {
     report(chalk.dim(phaseLine('metro', `sending SIGTERM to dev server pid ${serverPid} left by the supervisor`)));
+    await releaseReverses();
     let signalled = false;
     try {
       signalled = await signalServer(serverPid as number, server?.mode === MODE_COMMAND);
@@ -948,6 +955,7 @@ async function stopMetro(
   }
   const resolution = await resolveMetro(port, root);
   if (resolution.missing) {
+    await releaseReverses();
     report(chalk.dim(phaseLine('metro', `nothing listening on port ${port}`)));
     return { outcome: { status: 'missing', port }, keepPort: null };
   }
@@ -970,10 +978,9 @@ function occupiedSkipReason(reason: string, holders: string[] | null | undefined
 async function removeOwnedEmulatorReverses(
   project: ProjectRecord | null | undefined,
   metroPort: number | null,
-  supervisor: ReturnType<typeof resolveSupervisorTarget>['status'],
   operation: StimContext | undefined,
 ): Promise<void> {
-  if (metroPort === null || supervisor === 'unverified') return;
+  if (metroPort === null) return;
   for (const { platforms } of projectDeviceSlots(project)) {
     const android = platforms.android;
     if (android?.owned && android.avdName && android.consolePort) {
