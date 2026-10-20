@@ -2232,6 +2232,10 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
 
   describe('another process takes the reserved port while the dev server starts', () => {
     const takenPort = 8156;
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
     const bindError = (port: number) => `metro: Error: listen EADDRINUSE: address already in use :::${port}\n`;
 
     function racingExecutor(exitLog: (port: number) => string, losingSpawns = 1) {
