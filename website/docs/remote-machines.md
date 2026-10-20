@@ -744,8 +744,9 @@ Build approval permits the client's project code, including config plugins,
 CocoaPods hooks, Xcode script phases and Gradle plugins, to run as the server
 user. It is not a sandbox for untrusted projects. Approved build or device-host
 clients can also request managed server updates. Only accept requests from
-machines you trust. Forwarded peer addresses only label approvals and key rate
-limits.
+machines you trust. Forwarded peer addresses label approvals and key rate
+limits. A local process on the server can forge one to lock a peer out
+temporarily; it cannot authenticate.
 
 ## Troubleshooting
 

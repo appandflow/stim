@@ -556,8 +556,13 @@ bootstrap proof (see [Private Desktop bootstrap](#private-desktop-bootstrap)).
 Windows has no socket.
 
 The network address, `tailscale whois` and the `X-Forwarded-For` header that
-`tailscale serve` adds never authenticate. They only label a record (`from` in
-`stim-server devices`) and key the rate limits below.
+`tailscale serve` adds never authenticate. They label a record (`from` in
+`stim-server devices`) and key the rate limits below. Tailscale rewrites the
+header to the real tailnet source, so remote clients cannot forge it. A local
+process on the host can connect to the loopback port and forge it to lock one
+named peer, or the shared local bucket, out for the lockout window. It
+authenticates nothing and reads nothing. This is accepted because it needs
+local code execution on the host.
 
 A connection must finish the handshake and send `hello` within 5 seconds of
 each step. Five failed attempts from the same peer address within a minute

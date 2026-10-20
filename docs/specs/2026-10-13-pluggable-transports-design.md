@@ -41,10 +41,15 @@ revoke work the same on every transport. Authentication itself changes; see
   transport, Tailscale included. See "Authentication". A transport carries
   bytes; it never decides who a client is. The network address, `tailscale
 whois` and `X-Forwarded-For` are shown to people and never authenticate
-  anyone. The forwarded address still keys rate limits for serve-proxied
-  connections, since they all arrive from 127.0.0.1; that limits load, it
-  grants nothing. This reverses "Stim writes no cryptography" in the
-  stim-server design.
+  anyone. The forwarded address still keys the failed-authentication limits for
+  serve-proxied connections, since they all arrive from 127.0.0.1. Tailscale
+  serve rewrites the header to the real tailnet source, so remote clients are
+  counted per peer. A local process on the host can connect to the loopback
+  port and forge the header, which locks one named peer (or, with no header,
+  the shared local bucket) out for the lockout window. It authenticates
+  nothing and reads nothing. This was accepted on 2026-10-20 because it
+  requires local code execution on the host. This reverses "Stim writes no
+  cryptography" in the stim-server design.
 - ngrok and cloudflared decrypt TLS at their edge. Stim's own encryption means
   the edge sees only ciphertext, so these backends can ship. The user still
   turns them on explicitly. This reverses the "Transport alternatives" note of
