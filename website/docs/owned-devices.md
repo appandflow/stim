@@ -348,7 +348,8 @@ unavailable readings. Unknown readings are not treated as normal, and pressure
 does not prove the cause of a timeout. The boot deadline remains ten minutes
 and also covers SpringBoard finishing its startup after `simctl bootstatus`
 returns, so a slow host spends that time in the boot step, where the last boot
-output reads `waiting for SpringBoard`, rather than in the app launch. Synchronous CLI work can delay observations, progress, and timeout handling.
+output reads `waiting for SpringBoard`, rather than in the app launch.
+Synchronous CLI work can delay observations, progress, and timeout handling.
 Diagnostics report observation gaps over 30 seconds; pressure during those gaps
 is unobserved, even when surrounding readings are normal.
 
