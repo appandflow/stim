@@ -13,7 +13,7 @@ import {
   withConfigLockAsync,
 } from '../workspace/config.ts';
 import { configuredIosSimulatorViewer, type IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
-import { getExecutor, isTimeoutError } from '../exec.ts';
+import { getExecutor } from '../exec.ts';
 import { hostMemoryPressureAdvice, memoryCulpritsUnder, readHostMemoryPressure } from '../host-memory.ts';
 import {
   bootIosSim,
@@ -71,8 +71,11 @@ function startIosBoot(
     { platform: 'ios', key: udid },
     async () => {
       out(chalk.dim(phaseLine('device', `booting ${label} (${udid})`)));
-      await bootIosSim(udid, { label, out, simulatorApp, env: ambientContext()?.env });
-      await muteBootedSimulator(udid, out);
+      await muteBootedSimulator(
+        udid,
+        await bootIosSim(udid, { label, out, simulatorApp, env: ambientContext()?.env }),
+        out,
+      );
       await configure();
     },
     { ...deviceSlotWait, root, out },
@@ -81,41 +84,13 @@ function startIosBoot(
   return { udid, done };
 }
 
-const SPRINGBOARD_STARTUP_TIMEOUT_MS = 30000;
-const SPRINGBOARD_STARTUP_POLL_MS = 250;
-
-// SpringBoard publishes its default volume while it starts, after `simctl
-// bootstatus -b` returns, and replaces a volume set before then (#4075). It
-// sets the `com.apple.springboard.finishedstartup` notify state to its pid
-// once it has started.
-async function waitForSpringBoard(udid: string): Promise<void> {
-  const deadline = Date.now() + SPRINGBOARD_STARTUP_TIMEOUT_MS;
-  for (;;) {
-    let output: string | null = null;
-    try {
-      output = await getExecutor().runFileAsync(
-        'xcrun',
-        ['simctl', 'spawn', udid, 'notifyutil', '-g', 'com.apple.springboard.finishedstartup'],
-        { timeoutMs: 10000 },
-      );
-    } catch (error) {
-      if (!isTimeoutError(error)) throw error;
-    }
-    if (output !== null) {
-      const state = /^com\.apple\.springboard\.finishedstartup (\d+)$/m.exec(output);
-      if (!state) throw new Error(`Could not read SpringBoard's startup state: ${output.trim() || 'no output'}.`);
-      if (Number(state[1]) > 0) return;
-    }
-    if (Date.now() >= deadline) {
-      throw new Error(`SpringBoard did not finish starting within ${SPRINGBOARD_STARTUP_TIMEOUT_MS / 1000}s.`);
-    }
-    await cancellableSleep(SPRINGBOARD_STARTUP_POLL_MS);
-  }
-}
-
-async function muteBootedSimulator(udid: string, out: Notify): Promise<void> {
+async function muteBootedSimulator(
+  udid: string,
+  { springBoardUnreadable }: { springBoardUnreadable: string | null },
+  out: Notify,
+): Promise<void> {
   try {
-    await waitForSpringBoard(udid);
+    if (springBoardUnreadable) throw new Error(springBoardUnreadable);
     const response: unknown = JSON.parse(
       await getExecutor().runFileAsync(
         'xcrun',
@@ -612,8 +587,11 @@ export async function ensureIosBooted({
       { platform: 'ios', key: udid },
       async () => {
         out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
-        await bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp, env: ambientContext()?.env });
-        await muteBootedSimulator(udid, out);
+        await muteBootedSimulator(
+          udid,
+          await bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp, env: ambientContext()?.env }),
+          out,
+        );
       },
       { ...deviceSlotWait, root: projectPath, out },
     );

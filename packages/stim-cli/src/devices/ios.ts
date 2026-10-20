@@ -7,7 +7,8 @@ import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
 import { isStimOwnedSim } from './device-ownership.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getExecutor, type Executor } from '../exec.ts';
+import { getExecutor, isTimeoutError, type Executor } from '../exec.ts';
+import { cancellableSleep } from '../cancellation.ts';
 import { parseAppContainerPath } from '../engine/installed-artifact.ts';
 import {
   hostMemoryPressureAdvice,
@@ -198,6 +199,45 @@ export const IOS_BOOT_TIMEOUT_MS: number = 600000;
 const BOOTSTATUS_ATTEMPT_MS = 240000;
 const BOOTSTATUS_ATTEMPT_FLOOR_MS = 1000;
 const BOOT_STATE_LIST_TIMEOUT_MS = 30000;
+const SPRINGBOARD_QUERY_TIMEOUT_MS = 10000;
+const SPRINGBOARD_POLL_MS = 250;
+
+type SpringBoardStartup = { state: 'started' } | { state: 'timed-out' } | { state: 'unreadable'; reason: string };
+
+// `simctl bootstatus -b` returns before SpringBoard has started. Until it has,
+// `simctl launch` blocks and SpringBoard resets the volume (#4075). It sets the
+// `com.apple.springboard.finishedstartup` notify state to its pid once started.
+async function waitForSpringBoard(udid: string, deadline: number): Promise<SpringBoardStartup> {
+  for (;;) {
+    let output: string | null = null;
+    try {
+      output = await getExecutor().runFileAsync(
+        'xcrun',
+        ['simctl', 'spawn', udid, 'notifyutil', '-g', 'com.apple.springboard.finishedstartup'],
+        {
+          timeoutMs: Math.max(
+            BOOTSTATUS_ATTEMPT_FLOOR_MS,
+            Math.min(SPRINGBOARD_QUERY_TIMEOUT_MS, deadline - Date.now()),
+          ),
+        },
+      );
+    } catch (error) {
+      if (!isTimeoutError(error)) return { state: 'unreadable', reason: (error as Error)?.message || String(error) };
+    }
+    if (output !== null) {
+      const state = /^com\.apple\.springboard\.finishedstartup (\d+)$/m.exec(output);
+      if (!state) {
+        return {
+          state: 'unreadable',
+          reason: `Could not read SpringBoard's startup state: ${output.trim() || 'no output'}.`,
+        };
+      }
+      if (Number(state[1]) > 0) return { state: 'started' };
+    }
+    if (Date.now() >= deadline) return { state: 'timed-out' };
+    await cancellableSleep(SPRINGBOARD_POLL_MS);
+  }
+}
 
 export function iosSimulatorFailureAdvice(exec: Executor = getExecutor()): string {
   const pressure = readHostMemoryPressure(exec);
@@ -282,7 +322,7 @@ export async function bootIosSim(
     label?: string;
     out?: (message: string) => void;
   } = {},
-): Promise<void> {
+): Promise<{ springBoardUnreadable: string | null }> {
   const exec = getExecutor();
   const viewer = configuredIosSimulatorViewer(simulatorApp, env);
   const started = Date.now();
@@ -292,6 +332,7 @@ export async function bootIosSim(
   let sampledAt = started;
   let longestGapMs = 0;
   let phase = 'requesting boot';
+  let springBoardUnreadable: string | null = null;
   const ranks = { normal: 0, warning: 1, critical: 2 };
   const sample = () => {
     const now = Date.now();
@@ -363,6 +404,12 @@ export async function bootIosSim(
         throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
       }
     }
+    phase = 'waiting for SpringBoard';
+    const springBoard = await waitForSpringBoard(udid, deadline);
+    if (springBoard.state === 'timed-out') {
+      throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
+    }
+    if (springBoard.state === 'unreadable') springBoardUnreadable = springBoard.reason;
   } catch (error) {
     const named = memoryCulpritAdvice(memoryCulpritsUnder(sample(), exec));
     throw new Error(
@@ -373,6 +420,7 @@ export async function bootIosSim(
     clearInterval(monitor);
   }
   if (openViewer) await viewer.open(udid);
+  return { springBoardUnreadable };
 }
 
 export async function shutdownIosSim(udid: string, operation?: StimContext): Promise<void> {

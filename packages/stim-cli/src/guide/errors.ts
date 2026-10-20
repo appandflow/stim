@@ -762,7 +762,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   and \`adb devices\`, then retry after any other run finishes. Keep the AVD and
   its process locks while its state is unverified.
   On iOS a slow first boot is waited out for up to ten minutes while the
-  simulator reports Booting or Booted but bootstatus has not completed.
+  simulator reports Booting or Booted but bootstatus has not completed, and
+  then until SpringBoard has finished starting, which \`simctl launch\` needs.
   Booted alone does not end that wait. The failure names the udid and the wait.
   After boot, a process-spawn probe must finish within 30 seconds before
   installation. If it fails, the refusal includes observed host memory pressure
