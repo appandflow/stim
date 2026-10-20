@@ -628,16 +628,19 @@ export class DeviceHost {
       }
       const devClientPort = record.platform === 'ios' ? (params.clientMetroPort as number | undefined) : undefined;
       const bridge = createMetroBridge({ peer, gatewayPort: params.gatewayPort, secret: params.secret });
+      const inUse = () =>
+        Object.assign(
+          new Error(
+            `Port ${devClientPort} is in use on the hosting Mac, and an Expo dev client loads its bundle from the client's Metro port.`,
+          ),
+          { code: 'device-busy' as const },
+        );
       const ready = (async () => {
-        if (devClientPort !== undefined && (await loopbackAccepts(devClientPort)))
-          throw Object.assign(
-            new Error(
-              `Port ${devClientPort} is in use on the hosting Mac, and an Expo dev client loads its bundle from the client's Metro port.`,
-            ),
-            { code: 'device-busy' as const },
-          );
+        if (devClientPort !== undefined && (await loopbackAccepts(devClientPort))) throw inUse();
         return new Promise<number>((resolve, reject) => {
-          bridge.server.once('error', reject);
+          bridge.server.once('error', (error: NodeJS.ErrnoException) =>
+            reject(devClientPort !== undefined && error.code === 'EADDRINUSE' ? inUse() : error),
+          );
           bridge.server.listen(devClientPort ?? record.metroPort ?? 0, '127.0.0.1', () =>
             resolve((bridge.server.address() as AddressInfo).port),
           );

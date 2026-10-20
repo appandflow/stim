@@ -32,6 +32,9 @@ Branch on the code, never on the message.`,
   --system-image / --device-profile for Android when the offer names
   an unavailable choice. A session that exists stays recorded even if delivery
   fails: retry stim ios|android --remote <machine>, or run stim stop to reconcile it.
+  An Expo dev client whose Metro port already accepts loopback connections on
+  the host refuses before upload; pin a Metro port free on both Macs with
+  metro.port or STIM_METRO_PORT, run stim stop; stim start, then retry.
   An unreachable stop keeps the placement; rerun stim stop when the host answers.
   To see why a host was slow or refused: stim logs --source placement (hosts checked and
   reason codes), stim logs --source build (remote_connect_failed, remote_request_failed),
