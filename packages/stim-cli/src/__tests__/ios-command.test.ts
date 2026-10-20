@@ -8472,6 +8472,7 @@ describe('iOS placement on a hosting Mac', () => {
           session: null,
         }),
         placeHostedIos: async (_target, args) => {
+          expect(args.metroPort).toBe(8082);
           args.reserved(placement);
           return { placement, launched: 'unverified' };
         },

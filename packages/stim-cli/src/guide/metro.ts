@@ -26,7 +26,10 @@ HOSTED IOS METRO
   ios --remote <machine> keeps Metro local and needs no start --remote.
   The supervisor watches private gateway requests in workspace state, binds
   only this machine's Tailscale address and accepts only the pinned hosting peer
-  with a per-session secret. The host's bridge is loopback-only. Port and secret
+  with a per-session secret. The host's bridge is loopback-only. For an Expo
+  dev client it listens on this machine's Metro port, which the dev server
+  writes into the manifest; a host port that already accepts loopback
+  connections refuses the run. Port and secret
   stay in 0600 workspace state and never appear in status, JSON or logs.
   metro.tunnel and metro.publicUrl are ignored. Supervisor restart recreates
   the recorded gateway; stop or a stopped hosted session closes it. A recorded

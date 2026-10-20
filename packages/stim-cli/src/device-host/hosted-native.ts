@@ -302,7 +302,7 @@ export async function placeHostedNative(
       await call(host, 'device-host.metro.open', {
         session: session.id,
         ...gateway,
-        ...(platform === 'android' ? { clientMetroPort: metroPort } : {}),
+        ...(platform === 'android' || devClientScheme ? { clientMetroPort: metroPort } : {}),
       });
     } else {
       await call(host, 'device-host.metro.close', { session: session.id });

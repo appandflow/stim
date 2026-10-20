@@ -226,6 +226,7 @@ async function deliver(
       mode,
       selectors: { deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
       devClientScheme: 'exp+fixture',
+      metroPort: 8086,
       reserved: (value) => writeHostedIos(root, slot, value),
       note: () => {},
       enterPhase,
@@ -299,6 +300,9 @@ test('offers before reservation, uploads digest-matching bytes, and development 
   expect(methods.find((entry) => entry.method === 'device-host.app.offer')!.params).toMatchObject({
     mode: 'development',
     devClientScheme: 'exp+fixture',
+  });
+  expect(methods.find((entry) => entry.method === 'device-host.metro.open')?.params).toMatchObject({
+    clientMetroPort: 8086,
   });
   expect(readHostedIos(root).default?.device?.udid === device.udid).toBe(true);
   expect(getProject(root)?.platforms?.ios).toBeUndefined();

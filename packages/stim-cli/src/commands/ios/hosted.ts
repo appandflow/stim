@@ -76,6 +76,7 @@ export async function finishHostedIosRun({
       ...(appMode === 'development' && isExpo
         ? { devClientScheme: d.devClientScheme(root, artifact.path) ?? undefined }
         : {}),
+      metroPort,
       reserved: (placement) => d.writeHostedIos(root, slot, placement),
       note,
       enterPhase,
