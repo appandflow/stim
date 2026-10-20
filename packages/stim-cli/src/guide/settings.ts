@@ -930,10 +930,20 @@ emulator debug build or a stim macos SwiftPM Debug build compiles:
   off    here when local remains enabled in the automatic build pool
 
 For React Native and Expo, among machines that can take a new build, a matching dependency installation
-ranks before load. The worker checks the requested project, lockfile and install
-arguments, and verifies that its modules and install marker remain present.
+ranks before load. The worker checks the requested project, lockfile, install
+arguments and the major of the Node the app pins, and verifies that its modules
+and install marker remain present.
 Older workers' dependency hints and mere checkout or build-folder presence do
 not influence this ranking. Exact completed-artifact hits still come first.
+
+The worker runs the dependency install, prebuild, pods and xcodebuild with the
+Node the app pins, in its directory or the nearest one above it in the
+checkout, first on PATH, chosen as for Metro (see \`stim guide metro\`), and
+names that Node as NODE_BINARY in the iOS project's .xcode.env.local. A warm
+Gradle daemon keeps running React Native's node steps on the Node it started
+with. When no installed Node fits the pin, the steps run on the worker's node
+and a deps-failed or prebuild-failed reason names the pin and that Node's
+version. A change of the pinned Node's major reinstalls the dependencies.
 
 Load per core is the 5-minute load average divided by the CPU count; a machine's
 native builds are its Stim runs in prebuild, pods or compile on that machine, not

@@ -116,7 +116,10 @@ default Node, Homebrew, `~/.local/bin`, the standard Android SDK, a system or Ho
 or Android Studio's bundled runtime), with how to override each. When the app
 pins Node in `.nvmrc`, `.node-version`, `.tool-versions` or `package.json`'s
 `volta.node`, it also names the installed Node Metro runs on when the `node` on
-`PATH` does not satisfy the pin. `--json` adds this as `toolchain`.
+`PATH` does not satisfy the pin: an nvm, fnm, Volta, asdf, mise or linked
+Homebrew `node`/`node@NN` install. When no install has the version the pin
+names, it names the newest installed Node of the pinned major that is not older
+than the pin, and says so. `--json` adds this as `toolchain`.
 
 A `budget` line reports the free disk on the volumes that hold the app and
 `$STIM_HOME`, and the estimated committed memory, against the

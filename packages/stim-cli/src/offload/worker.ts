@@ -28,7 +28,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, sep } from 'node:path';
+import { basename, delimiter, dirname, join, relative, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 import { fingerprintProject, refingerprintAfterMutation } from '../cache/build-cache.ts';
@@ -46,6 +46,7 @@ import { logLines } from '../macos/run.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import { manifestDigest } from './manifest.ts';
+import { pathNodeVersion, projectNodeLine, unmetNodePin, withProjectNode } from '../supervisor/project-node.ts';
 import { parseNdjsonText, type NdjsonWriter } from '../ndjson.ts';
 import type { Optimizations } from '../optimizations.ts';
 import { podAction } from '../commands/ios/support.ts';
@@ -424,9 +425,43 @@ async function materialize(job: WorkerJob, src: string): Promise<{ written: numb
   return { written, removed };
 }
 
+/**
+ * Puts the Node that `root`, or the nearest directory above it in `src`, pins first on this worker's `PATH`, and
+ * reports which Node the build runs on.
+ */
+function useProjectNode(root: string, src: string): void {
+  const node = withProjectNode(root, process.env, { top: src });
+  if (node.pinned) process.env.PATH = node.env.PATH;
+  note(
+    'deps',
+    node.pinned ? projectNodeLine(node.pinned) : `Node ${pathNodeVersion(process.env) ?? 'unknown'} on PATH`,
+  );
+}
+
+/**
+ * Names the `node` first on this worker's `PATH` in `<iosDir>/.xcode.env.local`. React Native's `with-environment.sh`
+ * runs Xcode's script phases on that file's `NODE_BINARY`, and its CocoaPods setup writes the file only when it is
+ * missing, so a file left from an earlier job, or one recording a Homebrew Cellar path, would otherwise win.
+ */
+function useXcodeNode(iosDir: string): void {
+  const node = (process.env.PATH ?? '')
+    .split(delimiter)
+    .filter(Boolean)
+    .map((dir) => join(dir, 'node'))
+    .find((path) => statSync(path, { throwIfNoEntry: false })?.isFile());
+  if (!node || !existsSync(iosDir)) return;
+  const file = join(iosDir, '.xcode.env.local');
+  const line = `export NODE_BINARY='${node.replaceAll("'", "'\\''")}'`;
+  const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  const next = /^export NODE_BINARY=.*$/m.test(text)
+    ? text.replace(/^export NODE_BINARY=.*$/gm, () => line)
+    : `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`;
+  if (next !== text) writeFileSync(file, next);
+}
+
 /** Installs JavaScript dependencies when the lockfile, or the install command, changed since the last install. */
 async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
-  const install = dependencyInstall(src, job.packageName);
+  const install = dependencyInstall(src, job.packageName, relative(src, realpathSync(join(src, job.project))));
   if (!install) return;
   const { command, args, digest, lockfile } = install;
   const marker = join(job.area, 'dependencies');
@@ -608,10 +643,13 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     compiled = await workerOperation(root, (context) => compileMacos(context, job, root, log, time));
     if (!compiled.ok) return failed(compiled.code, compiled.message);
   } else {
+    useProjectNode(realRoot, realSrc);
+    const nodeFailed = (code: string, message: string) =>
+      failed(code, [message, unmetNodePin(realRoot, process.env, { top: realSrc })].filter(Boolean).join(' '));
     try {
       await time('depsMs', () => ensureDependencies(job, src));
     } catch (error) {
-      return failed('deps-failed', (error as Error).message);
+      return nodeFailed('deps-failed', (error as Error).message);
     }
 
     const platform = job.platform;
@@ -650,10 +688,11 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       const result = await time('prebuildMs', () =>
         runPrebuild(realRoot, platform, log, { clean: plan === 'regenerate' }),
       );
-      if (result?.failed) return failed('prebuild-failed', result.reason ?? 'expo prebuild failed.');
+      if (result?.failed) return nodeFailed('prebuild-failed', result.reason ?? 'expo prebuild failed.');
       mutations.push('prebuild');
     }
     if (platform === 'ios') {
+      useXcodeNode(iosProject.dir);
       const podState = readPodState(realRoot, iosProject.dir);
       const pods = podAction(podState, podsAreStale(podState.lockText, podState.manifestText, podState.dir));
       if (pods.install) {

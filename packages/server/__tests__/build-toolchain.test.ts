@@ -89,7 +89,9 @@ test('dependency warmth requires the requested install; directories and pruned s
   const modules = join(checkout, project, 'node_modules');
   const lockfile = 'lockfile fixture';
   const sha = (text: string) => createHash('sha256').update(text).digest('hex');
-  const marker = sha(lockfile + JSON.stringify(['install', '--frozen-lockfile', '--filter', 'mobile...']));
+  const marker = sha(
+    lockfile + JSON.stringify(['install', '--frozen-lockfile', '--filter', 'mobile...']) + 'node path',
+  );
   mkdirSync(modules, { recursive: true });
   mkdirSync(join(area, 'macos'), { recursive: true });
   writeFileSync(join(area, 'macos', 'unrelated'), 'not a compiler cache');
