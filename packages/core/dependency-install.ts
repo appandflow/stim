@@ -28,7 +28,6 @@ export function dependencyLockfile(root: string, project = '.'): { dir: string; 
  */
 export function dependencyInstall(
   root: string,
-  packageName: string | null,
   project = '.',
   env: NodeJS.ProcessEnv = process.env,
 ): {
@@ -43,12 +42,7 @@ export function dependencyInstall(
   if (!selected) return null;
   const { dir, file } = selected;
   const command = file === 'pnpm-lock.yaml' ? 'pnpm' : file === 'yarn.lock' ? 'yarn' : 'npm';
-  const args =
-    command === 'pnpm'
-      ? ['install', '--frozen-lockfile', ...(packageName ? ['--filter', `${packageName}...`] : [])]
-      : command === 'yarn'
-        ? ['install', '--frozen-lockfile']
-        : ['ci'];
+  const args = command === 'npm' ? ['ci'] : ['install', '--frozen-lockfile'];
   const bytes = readFileSync(join(root, dir, file));
   const node = projectNodeBin(join(root, project), env, undefined, root)?.version.split('.')[0] ?? 'path';
   return {
@@ -68,7 +62,6 @@ export function dependencyInstall(
 export function reusableDependencies(
   area: string,
   project: string,
-  packageName: string | null,
   lockfile: string,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
@@ -77,7 +70,7 @@ export function reusableDependencies(
     const selected = realpathSync(join(root, project));
     const path = relative(root, selected);
     if (path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path)) return false;
-    const install = dependencyInstall(root, packageName, path, env);
+    const install = dependencyInstall(root, path, env);
     return (
       install?.lockfile === lockfile &&
       existsSync(join(selected, 'node_modules')) &&

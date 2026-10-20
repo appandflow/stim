@@ -585,13 +585,7 @@ export class BuildHost {
           dependencies:
             typeof params.lockfile === 'string' &&
             dependencies !== undefined &&
-            reusableDependencies(
-              area,
-              dependencies.project,
-              dependencies.packageName,
-              params.lockfile,
-              this.options.env,
-            ),
+            reusableDependencies(area, dependencies.project, params.lockfile, this.options.env),
           build: false,
         },
         ...(artifact !== undefined ? { artifact } : {}),
@@ -1582,7 +1576,6 @@ export class BuildSession {
         android,
         macos,
         project: params.project,
-        packageName: optional(params.packageName),
         isExpo: params.isExpo === true,
         cacheArtifact: params.cacheArtifact === true,
         stimBuild: params.stimBuild,
