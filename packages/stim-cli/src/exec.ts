@@ -444,11 +444,11 @@ const defaultExecutor: Executor = {
               retainDeclaration = rejectDeclaration;
             })
           : undefined;
-      const base = startsInReportJob(file, opts, containProcessTree || Boolean(report))
-        ? join(tmpdir(), `stim-report-${process.pid}-${randomUUID()}`)
-        : null;
+      const contained = startsInReportJob(file, opts, containProcessTree || Boolean(report));
+      const base =
+        contained && timeout !== undefined ? join(tmpdir(), `stim-report-${process.pid}-${randomUUID()}`) : null;
       const markers = base ? { started: `${base}.started`, closed: `${base}.closed` } : undefined;
-      const start = () => (markers ? spawnReportJob(file, args, opts, markers) : spawn(file, args, opts));
+      const start = () => (contained ? spawnReportJob(file, args, opts, markers) : spawn(file, args, opts));
       const child = declareFor ? spawnDeclared(declareFor, start, declaration ? { until: declaration } : {}) : start();
       let lifetime: ReturnType<typeof reportChild>;
       let cancel: (() => Promise<void>) | undefined;
@@ -458,7 +458,11 @@ const defaultExecutor: Executor = {
       const stopTimers = () => {
         clearTimeout(timer);
         clearInterval(poll);
-        if (markers) for (const marker of Object.values(markers)) rmSync(marker, { force: true });
+        for (const marker of Object.values(markers ?? {})) {
+          try {
+            rmSync(marker, { force: true });
+          } catch {}
+        }
       };
       try {
         lifetime = reportChild(child, report, (error) => {
@@ -485,6 +489,7 @@ const defaultExecutor: Executor = {
         if (declaration) void lifetime?.closed.then(clearDeclaration, retainDeclaration);
         onSpawn?.(child);
       } catch (error) {
+        stopTimers();
         if (cancel)
           void cancel()
             .then(() => lifetime?.closed)
@@ -527,6 +532,7 @@ const defaultExecutor: Executor = {
         clearTimeout(timer);
         timer = setTimeout(() => {
           timedOut = true;
+          clearInterval(poll);
           if (cancel) void cancel().catch(reject);
           else {
             child.kill(killSignal ?? 'SIGTERM');
