@@ -938,7 +938,7 @@ not influence this ranking. Exact completed-artifact hits still come first.
 The worker runs the dependency install, prebuild, pods and the native build
 with the Node the app pins, in its directory or the nearest one above it in the
 checkout, first on PATH, chosen as for Metro (see \`stim guide metro\`). When
-no installed Node satisfies the pin, they run on the worker's node and a
+no installed Node fits the pin, they run on the worker's node and a
 deps-failed or prebuild-failed reason names the pin and that Node's version.
 
 Load per core is the 5-minute load average divided by the CPU count; a machine's

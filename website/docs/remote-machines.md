@@ -345,11 +345,12 @@ When the app pins Node in `.nvmrc`, `.node-version`, `.tool-versions` or
 `package.json`'s `volta.node`, in its own directory or the nearest one above it
 in the repository, the worker installs dependencies, runs prebuild and pods, and
 builds with an installed Node that satisfies the pin: an nvm, fnm, Volta, asdf,
-mise or Homebrew `node`/`node@NN` install. A pin naming a version the worker does
-not have, such as `22.22.0`, uses the newest installed Node of that major, such
-as Homebrew's `node@22`. Without one, the steps run on the worker's own `node`, and a failed
-install or prebuild names the pin and that Node's version. Install a matching
-Node on the worker, for example `brew install node@22`.
+mise or linked Homebrew `node`/`node@NN` install. A pin naming a version the
+worker does not have, such as `22.22.0`, uses the newest installed Node of that
+major that is not older than the pin, such as Homebrew's `node@22` at 22.23.2.
+Without one, the steps run on the worker's own `node`, and a failed install or
+prebuild names the pin and that Node's version. Install a matching Node on the
+worker, for example `brew install node@22`.
 
 ## Use the Desktop wizard
 

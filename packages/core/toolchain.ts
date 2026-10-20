@@ -1,6 +1,6 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, readlinkSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { basename, delimiter, dirname, join } from 'node:path';
 
 /** How `discoverToolchain` and `projectNodeBin` look at this machine; tests pass a fake file system. */
 export interface ToolchainProbe {
@@ -11,6 +11,8 @@ export interface ToolchainProbe {
   isFile(path: string): boolean;
   read(path: string): string | null;
   list(path: string): string[];
+  /** The target of the symbolic link at `path`, or null when it is not one. */
+  link(path: string): string | null;
 }
 
 const stat = (path: string) => statSync(path, { throwIfNoEntry: false });
@@ -33,6 +35,13 @@ export function defaultToolchainProbe(): ToolchainProbe {
         return readdirSync(path);
       } catch {
         return [];
+      }
+    },
+    link: (path) => {
+      try {
+        return readlinkSync(path);
+      } catch {
+        return null;
       }
     },
   };
@@ -95,6 +104,22 @@ function newestMatching(names: string[], wanted: string): string | null {
 /** Whether Node `version`, such as `22.12.0`, satisfies a pin such as `22`, `v22.12` or `22.12.0`. */
 export function satisfiesNodePin(version: string, spec: string): boolean {
   return newestMatching([version], spec) !== null;
+}
+
+/** The lowest version a pin such as `22.22` or `v22.22.0` names, or null for a pin that names only a major or no number. */
+function pinFloor(spec: string): Version | null {
+  const match = /^v?(\d+)\.(\d+)(?:\.(\d+))?$/.exec(spec.trim());
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)] : null;
+}
+
+/**
+ * Whether Node `version` is an acceptable stand-in for a pin no install matches: the pin's major, and not older than
+ * the version the pin names.
+ */
+export function meetsNodePinMajor(version: string, spec: string): boolean {
+  const parsed = parseVersion(version);
+  const floor = pinFloor(spec);
+  return !!parsed && !!floor && parsed[0] === floor[0] && compareVersions(parsed, floor) >= 0;
 }
 
 function matchesPrefix(version: Version, spec: string): boolean {
@@ -290,62 +315,74 @@ function nodePinIn(root: string, probe: ToolchainProbe): { spec: string; file: s
 }
 
 /**
- * The `bin` directory of an installed Node that satisfies the pin `projectNodePin` finds, from nvm, fnm, Volta, asdf,
- * mise or a Homebrew `node` or `node@NN` keg, or nil when the project pins none or no installed version satisfies the
- * pin. A pin naming a version no store has falls back to the newest installed version of the pinned major, since
- * Homebrew cannot install a chosen patch release. An `lts/...` pin resolves through nvm's aliases.
+ * The `bin` directory of an installed Node for the pin `projectNodePin` finds, from nvm, fnm, Volta, asdf, mise or a
+ * linked Homebrew `node` or `node@NN`, or null when the project pins none or no install fits. `match` is `exact` for an
+ * install the pin names. When none is, it is `major` for the newest install of the pinned major that is not older than
+ * the pinned version, since Homebrew cannot install a chosen patch release. An `lts/...` pin resolves through nvm's
+ * aliases.
  */
 export function projectNodeBin(
   root: string,
   env: NodeJS.ProcessEnv,
   probe: ToolchainProbe = defaultToolchainProbe(),
   top: string = root,
-): { bin: string; version: string; pin: string; spec: string } | null {
+): { bin: string; version: string; pin: string; spec: string; match: 'exact' | 'major' } | null {
   const pin = projectNodePin(root, probe, top);
   if (!pin) return null;
   const nvm = nvmDir(env, probe);
   const spec = pin.spec.startsWith('lts/') ? nvmAlias(nvm, pin.spec, probe) : pin.spec;
-  const stores = [
-    { dir: join(nvm, 'versions', 'node'), bin: (name: string) => join(nvm, 'versions', 'node', name, 'bin') },
-    {
-      dir: join(probe.home, '.local', 'share', 'fnm', 'node-versions'),
-      bin: (name: string) => join(probe.home, '.local', 'share', 'fnm', 'node-versions', name, 'installation', 'bin'),
-    },
-    {
-      dir: join(probe.home, 'Library', 'Application Support', 'fnm', 'node-versions'),
-      bin: (name: string) =>
-        join(probe.home, 'Library', 'Application Support', 'fnm', 'node-versions', name, 'installation', 'bin'),
-    },
+  const asdf = join(env.ASDF_DATA_DIR || join(probe.home, '.asdf'), 'installs', 'nodejs');
+  const stores: Array<{ dir: string; bin: (name: string) => string }> = [
+    { dir: join(nvm, 'versions', 'node'), bin: (name) => join(nvm, 'versions', 'node', name, 'bin') },
+    ...[join(probe.home, '.local', 'share', 'fnm'), join(probe.home, 'Library', 'Application Support', 'fnm')].map(
+      (fnm) => ({
+        dir: join(fnm, 'node-versions'),
+        bin: (name: string) => join(fnm, 'node-versions', name, 'installation', 'bin'),
+      }),
+    ),
     {
       dir: join(probe.home, '.volta', 'tools', 'image', 'node'),
-      bin: (name: string) => join(probe.home, '.volta', 'tools', 'image', 'node', name, 'bin'),
+      bin: (name) => join(probe.home, '.volta', 'tools', 'image', 'node', name, 'bin'),
     },
-    {
-      dir: join(env.ASDF_DATA_DIR || join(probe.home, '.asdf'), 'installs', 'nodejs'),
-      bin: (name: string) => join(env.ASDF_DATA_DIR || join(probe.home, '.asdf'), 'installs', 'nodejs', name, 'bin'),
-    },
+    { dir: asdf, bin: (name) => join(asdf, name, 'bin') },
     {
       dir: join(probe.home, '.local', 'share', 'mise', 'installs', 'node'),
-      bin: (name: string) => join(probe.home, '.local', 'share', 'mise', 'installs', 'node', name, 'bin'),
+      bin: (name) => join(probe.home, '.local', 'share', 'mise', 'installs', 'node', name, 'bin'),
     },
-    ...HOMEBREW_PREFIXES.flatMap((prefix) =>
+  ];
+  const groups = stores.map(({ dir, bin }) => probe.list(dir).map((name) => ({ name, bin: bin(name) })));
+  groups.push(
+    HOMEBREW_PREFIXES.flatMap((prefix) =>
       probe
-        .list(join(prefix, 'Cellar'))
+        .list(join(prefix, 'opt'))
         .filter((keg) => /^node(@\d+)?$/.test(keg))
         .map((keg) => ({
-          dir: join(prefix, 'Cellar', keg),
-          bin: (name: string) => join(prefix, 'Cellar', keg, name, 'bin'),
+          name: basename(probe.link(join(prefix, 'opt', keg)) ?? ''),
+          bin: join(prefix, 'opt', keg, 'bin'),
         })),
     ),
-  ];
-  const major = /^v?(\d+)/.exec(spec)?.[1];
-  for (const wanted of major ? [spec, major] : [spec]) {
-    for (const store of stores) {
-      const name = newestMatching(probe.list(store.dir), wanted);
-      if (name && probe.isFile(join(store.bin(name), 'node'))) {
-        return { bin: store.bin(name), version: name.replace(/^v/, '').replace(/_\d+$/, ''), pin: pin.file, spec };
-      }
-    }
+  );
+  const installs = groups.map((group) => group.filter(({ bin }) => probe.isFile(join(bin, 'node'))));
+  const found = (install: { name: string; bin: string }, match: 'exact' | 'major') => ({
+    bin: install.bin,
+    version: install.name.replace(/^v/, '').replace(/_\d+$/, ''),
+    pin: pin.file,
+    spec,
+    match,
+  });
+  for (const group of installs) {
+    const name = newestMatching(
+      group.map((install) => install.name),
+      spec,
+    );
+    const install = group.find((candidate) => candidate.name === name);
+    if (install) return found(install, 'exact');
   }
-  return null;
+  let fallback: { install: { name: string; bin: string }; version: Version } | null = null;
+  for (const install of installs.flat()) {
+    const version = parseVersion(install.name);
+    if (!version || !meetsNodePinMajor(install.name, spec)) continue;
+    if (!fallback || compareVersions(version, fallback.version) > 0) fallback = { install, version };
+  }
+  return fallback ? found(fallback.install, 'major') : null;
 }

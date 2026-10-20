@@ -549,10 +549,11 @@ leased until <time>" for each one.`,
                   brew and adb: source "environment" when this process's
                   environment provides it, "discovered" when stim-server's
                   toolchain discovery would find it (from says where), or
-                  "missing". projectNode is { pin, spec, bin, version } when
+                  "missing". projectNode is { pin, spec, bin, version, match } when
                   .nvmrc, .node-version, .tool-versions or package.json volta
-                  pins Node (bin and version are null when no install
-                  satisfies the pin), else null
+                  pins Node (bin, version and match are null when no install
+                  fits the pin; match is "exact", or "major" for the newest
+                  install of the pinned major not older than the pin), else null
   remoteMachines  one { machine, state, dnsName?, deviceId?, requestedAt?,
                   expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
                   remote.machines entry, for its build approval; state is "approved", "pending", "not-asked",

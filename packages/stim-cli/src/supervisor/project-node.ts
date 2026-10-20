@@ -1,5 +1,5 @@
 import { delimiter } from 'node:path';
-import { projectNodeBin, projectNodePin, satisfiesNodePin } from '@stim-cli/core/toolchain';
+import { meetsNodePinMajor, projectNodeBin, projectNodePin, satisfiesNodePin } from '@stim-cli/core/toolchain';
 import { getExecutor } from '../exec.ts';
 
 function pathNodeVersion(env: NodeJS.ProcessEnv): string | null {
@@ -9,10 +9,11 @@ function pathNodeVersion(env: NodeJS.ProcessEnv): string | null {
 }
 
 /**
- * `env` with the Node that `root`, or the nearest directory above it up to `top`, pins (`.nvmrc`, `.node-version`,
- * `.tool-versions` or Volta) first on `PATH`, for the processes Stim starts that run the project's own Node code. It
- * changes nothing when the project pins no Node, when no installed Node satisfies the pin, or when the `node` already
- * on `PATH` satisfies it.
+ * `env` with the Node `projectNodeBin` picks for the pin in `root`, or the nearest directory above it up to `top`
+ * (`.nvmrc`, `.node-version`, `.tool-versions` or Volta), first on `PATH`, for the processes Stim starts that run the
+ * project's own Node code. It changes nothing when the project pins no Node, when no install fits the pin, or when
+ * the `node` already on `PATH` satisfies it: matching the pin, or, when no install matches it, of its major and not
+ * older than it.
  */
 export function withProjectNode(
   root: string,
@@ -21,11 +22,18 @@ export function withProjectNode(
     nodeVersion = pathNodeVersion,
     top = root,
   }: { nodeVersion?: (env: NodeJS.ProcessEnv) => string | null; top?: string } = {},
-): { env: NodeJS.ProcessEnv; pinned: { bin: string; version: string; pin: string; spec: string } | null } {
+): {
+  env: NodeJS.ProcessEnv;
+  pinned: { bin: string; version: string; pin: string; spec: string; match: 'exact' | 'major' } | null;
+} {
   const pinned = projectNodeBin(root, env, undefined, top);
   if (!pinned) return { env, pinned: null };
   const current = nodeVersion(env);
-  if (current && satisfiesNodePin(current, pinned.spec)) return { env, pinned: null };
+  if (
+    current &&
+    (satisfiesNodePin(current, pinned.spec) || (pinned.match === 'major' && meetsNodePinMajor(current, pinned.spec)))
+  )
+    return { env, pinned: null };
   return {
     env: { ...env, PATH: [pinned.bin, ...(env.PATH ?? '').split(delimiter).filter(Boolean)].join(delimiter) },
     pinned,
@@ -34,7 +42,7 @@ export function withProjectNode(
 
 /**
  * Why the project's own Node code may have failed under `env`: the pin that `root`, or the nearest directory above it
- * up to `top`, sets when no installed Node and not the `node` on `PATH` satisfies it, else null.
+ * up to `top`, sets when neither an install nor the `node` on `PATH` fits it as `withProjectNode` decides, else null.
  */
 export function unmetNodePin(
   root: string,
@@ -47,6 +55,6 @@ export function unmetNodePin(
   const pin = projectNodePin(root, undefined, top);
   if (!pin || projectNodeBin(root, env, undefined, top)) return null;
   const current = nodeVersion(env);
-  if (current && satisfiesNodePin(current, pin.spec)) return null;
+  if (current && (satisfiesNodePin(current, pin.spec) || meetsNodePinMajor(current, pin.spec))) return null;
   return `Node ${current ?? 'unknown'} on PATH does not satisfy ${pin.file} ${pin.spec}, and no installed Node does.`;
 }

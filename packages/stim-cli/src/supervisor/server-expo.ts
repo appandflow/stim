@@ -317,7 +317,7 @@ export async function startExpoServer({
       src: 'metro',
       level: 'info',
       event: 'project_node',
-      msg: `Metro runs on Node ${node.pinned.version} from ${node.pinned.bin}, which ${node.pinned.pin} pins`,
+      msg: `Metro runs on Node ${node.pinned.version} from ${node.pinned.bin}, for ${node.pinned.pin} ${node.pinned.spec}`,
     });
   }
   const child = spawn(command, commandArgs, {
