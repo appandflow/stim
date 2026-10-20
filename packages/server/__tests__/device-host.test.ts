@@ -327,6 +327,49 @@ test('keeps HTTP and WebSocket Metro on the owned session port across reconnect 
   }
 });
 
+function boundPort(server: { address(): AddressInfo | string | null }): number {
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('The server is not listening on TCP.');
+  return address.port;
+}
+
+test('serves an Expo dev-client session on the client Metro port and refuses one another listener holds', async () => {
+  const first = await reserve();
+  await state(first.id, 'ready');
+  const metro = createServer((_request, response) => response.end('workspace bundle'));
+  await new Promise<void>((resolve) => metro.listen(0, '127.0.0.1', resolve));
+  const secret = 'a'.repeat(64);
+  const gateway = createMetroGateway({ metroPort: boundPort(metro), peer: '127.0.0.1', secret });
+  await new Promise<void>((resolve) => gateway.server.listen(0, '127.0.0.1', resolve));
+  const holder = createServer((_request, response) => response.end('host workspace bundle'));
+  await new Promise<void>((resolve) => holder.listen(0, '::', resolve));
+  const clientMetroPort = boundPort(holder);
+  const params = {
+    session: first.id,
+    gatewayPort: boundPort(gateway.server),
+    secret,
+    clientMetroPort,
+  };
+  try {
+    expect(await host.metroOpen('client', params, '127.0.0.1')).toMatchObject({
+      error: { code: 'device-busy', message: expect.stringContaining(`Port ${clientMetroPort} is in use`) },
+    });
+    expect(await (await fetch(`http://127.0.0.1:${clientMetroPort}/index.bundle`)).text()).toBe(
+      'host workspace bundle',
+    );
+    holder.closeAllConnections();
+    await new Promise<void>((resolve) => holder.close(() => resolve()));
+    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', clientMetroPort);
+    expect(await (await fetch(`http://127.0.0.1:${clientMetroPort}/index.bundle`)).text()).toBe('workspace bundle');
+  } finally {
+    await host.metroClose('client', params);
+    if (holder.listening) await new Promise<void>((resolve) => holder.close(() => resolve()));
+    await gateway.close();
+    metro.closeAllConnections();
+    await new Promise<void>((resolve) => metro.close(() => resolve()));
+  }
+});
+
 for (const ending of ['revocation', 'server close', 'revocation with an unwritable journal']) {
   test.skipIf(ending === 'revocation with an unwritable journal' && process.platform === 'win32')(
     `closes known Metro traffic on ${ending} when journal reconciliation fails and retains its device claim`,

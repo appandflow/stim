@@ -726,6 +726,10 @@ Stim builds or fetches before reserving, records the session immediately, then
 uploads the app on every run. React Native and Expo Debug keep Metro here; the supervisor owns a
 private gateway bound to this machine's Tailscale address, pinned to the host peer
 and protected by a per-session secret. The host exposes only a loopback bridge.
+For an Expo dev client the bridge listens on this machine's Metro port, because
+the dev server writes that port into the manifest's bundle URL. If that port
+already accepts loopback connections on the host, the run refuses: pin a Metro
+port free on both Macs with metro.port, run stim stop; stim start, then retry.
 No start --remote is needed; metro.tunnel and metro.publicUrl are ignored.
 Debug requires a running supervisor with private gateway support before reserving
 a simulator. --no-metro-check refuses with STIM_BAD_ARG for hosted Debug runs.

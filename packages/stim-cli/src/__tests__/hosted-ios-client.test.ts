@@ -226,6 +226,7 @@ async function deliver(
       mode,
       selectors: { deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
       devClientScheme: 'exp+fixture',
+      metroPort: 8086,
       reserved: (value) => writeHostedIos(root, slot, value),
       note: () => {},
       enterPhase,
@@ -300,6 +301,9 @@ test('offers before reservation, uploads digest-matching bytes, and development 
     mode: 'development',
     devClientScheme: 'exp+fixture',
   });
+  expect(methods.find((entry) => entry.method === 'device-host.metro.open')?.params).toMatchObject({
+    clientMetroPort: 8086,
+  });
   expect(readHostedIos(root).default?.device?.udid === device.udid).toBe(true);
   expect(getProject(root)?.platforms?.ios).toBeUndefined();
   for (const [digest, bytes] of blobs) expect(createHash('sha256').update(bytes).digest('hex')).toBe(digest);
@@ -342,6 +346,16 @@ test('missing configuration and approval keep their existing credential remedies
   rmSync(deviceHostMachinesFile());
   await expect(prepareHostedIos('mini', {})).rejects.toThrow('Run stim doctor --fix');
   expect(methods).toEqual([]);
+});
+
+test('a dev-client Metro port held on the host refuses with the metro.port remedy before any upload', async () => {
+  errorMethod = 'device-host.metro.open';
+  errorCode = 'device-busy';
+  await expect(deliver()).rejects.toMatchObject({
+    code: 'STIM_HOSTING_REFUSED',
+    remedy: expect.stringContaining('metro.port'),
+  });
+  expect(methods.some((entry) => entry.method === 'device-host.app.offer')).toBe(false);
 });
 
 test('delivery failure keeps the session available to stop', async () => {
