@@ -35,6 +35,7 @@ import {
   memoizeEmulatorProbe,
   parseAvdList,
   parseAdbDevices,
+  removeOwnedEmulatorMetroReverses,
   nextConsolePort,
   parseAvdRootIni,
   pickDefaultSystemImage,
@@ -126,6 +127,36 @@ test('parseAdbDevices extracts running emulator console ports and physical devic
   ]);
   expect(result.physical).toEqual([{ serial: '0123456789ABCDEF' }]);
 });
+
+test.each([
+  [
+    'stim-app',
+    [
+      ['-s', 'emulator-5556', 'reverse', '--list'],
+      ['-s', 'emulator-5556', 'reverse', '--remove', 'tcp:8082'],
+      ['-s', 'emulator-5556', 'reverse', '--remove', 'tcp:8081'],
+    ],
+  ],
+  ['someone-else', []],
+])(
+  'removeOwnedEmulatorMetroReverses removes only reverses to the Metro port, and only when the console names the AVD (%s)',
+  async (consoleAvd, expected) => {
+    const adbCalls: string[][] = [];
+    setExecutor(
+      makeExecutor({
+        runFileQuietAsync: async (_file, args) => {
+          if (args.includes('emu')) return `${consoleAvd}\nOK\n`;
+          adbCalls.push(args);
+          return args.includes('--list')
+            ? 'host-21 tcp:8082 tcp:8082\nhost-21 tcp:8081 tcp:8082\nhost-21 tcp:9000 tcp:9000\nhost-21 localabstract:x tcp:8082\n'
+            : '';
+        },
+      }),
+    );
+    await removeOwnedEmulatorMetroReverses('stim-app', 'emulator-5556', 8082);
+    expect(adbCalls).toEqual(expected);
+  },
+);
 
 test('parseAdbDevices recognizes adb-over-TCP physical devices', () => {
   const out = `List of devices attached\n192.168.1.5:5555\tdevice\n`;

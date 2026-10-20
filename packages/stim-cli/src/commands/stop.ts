@@ -71,6 +71,7 @@ import {
 } from '../workspace/workspace-state.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
+import { removeOwnedEmulatorMetroReverses } from '../devices/android.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { fileLeaseIo, releaseWorkspaceLeasesAsync, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
@@ -518,6 +519,8 @@ async function stopWorkspace({
   let stillHolding: string | null | undefined = null;
   let keepPort: string | null = null;
 
+  await removeOwnedEmulatorReverses(proj, reservedPort, operation);
+
   debugLog.log('stop.phase.start', { phase: 'supervisor' });
   const target = resolveSupervisorTarget({
     state: sup,
@@ -963,6 +966,20 @@ const OCCUPANCY_HINT = 'often a UI-test runner or device tool still attached';
 function occupiedSkipReason(reason: string, holders: string[] | null | undefined): string {
   const named = (holders || []).filter(Boolean);
   return named.length ? `${reason} -- held by UI-test runner ${named.join(', ')}` : `${reason} -- ${OCCUPANCY_HINT}`;
+}
+
+async function removeOwnedEmulatorReverses(
+  project: ProjectRecord | null | undefined,
+  metroPort: number | null,
+  operation: StimContext | undefined,
+): Promise<void> {
+  if (metroPort === null) return;
+  for (const { platforms } of projectDeviceSlots(project)) {
+    const android = platforms.android;
+    if (android?.owned && android.avdName && android.consolePort) {
+      await removeOwnedEmulatorMetroReverses(android.avdName, `emulator-${android.consolePort}`, metroPort, operation);
+    }
+  }
 }
 
 async function shutDownDevices(

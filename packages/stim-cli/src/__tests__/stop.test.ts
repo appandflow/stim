@@ -17,7 +17,7 @@ import stopCommand, {
   resolveSupervisorTarget,
   runStop,
 } from '../commands/stop.ts';
-import { makeConfig, makeError, makeMetroResolution } from './_factories.ts';
+import { makeConfig, makeError, makeExecutor, makeMetroResolution } from './_factories.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
@@ -582,6 +582,49 @@ test('a failed Android device teardown reports an adb-flavored remedy', async ()
   expect(android.status).toBe('failed');
   expect(android.remedy).toMatch(/adb devices/);
   expect(android.remedy).toMatch(/stim gc --delete/);
+});
+
+test('stop removes the Metro reverses of owned running emulators before it stops the supervisor', async () => {
+  const events: string[] = [];
+  const { opts } = seams({
+    project: {
+      metroPort: 8083,
+      platforms: { android: { avdName: 'stim-app', owned: true, consolePort: 5556 } },
+      deviceSlots: {
+        mine: { android: { avdName: 'stim-app-mine', owned: true, consolePort: 5558 } },
+        theirs: { android: { avdName: 'Pixel_8', owned: false, consolePort: 5560 } },
+      },
+    },
+    state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'bare-inproc' },
+    isAlive: (pid: number) => pid === 4242,
+    killGroup: () => {
+      events.push('supervisor');
+      return true;
+    },
+  });
+  const consoles: Record<string, string> = { 'emulator-5556': 'stim-app', 'emulator-5558': 'stim-app-mine' };
+  setExecutor(
+    makeExecutor({
+      runFileQuietAsync: async (_file, args) => {
+        const serial = args[1] ?? '';
+        if (args.includes('emu')) return `${consoles[serial] ?? 'Pixel_8'}\nOK\n`;
+        events.push(args.join(' '));
+        return args.includes('--list') ? `host-21 tcp:8083 tcp:8083\n` : '';
+      },
+    }),
+  );
+  try {
+    await runStop(opts);
+  } finally {
+    resetExecutor();
+  }
+  expect(events).toEqual([
+    '-s emulator-5556 reverse --list',
+    '-s emulator-5556 reverse --remove tcp:8083',
+    '-s emulator-5558 reverse --list',
+    '-s emulator-5558 reverse --remove tcp:8083',
+    'supervisor',
+  ]);
 });
 
 test('a project with no reserved port has nothing to free', async () => {
