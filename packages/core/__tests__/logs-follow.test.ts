@@ -78,6 +78,24 @@ test('default following drains the previous rotation before reading its smaller 
   await vi.waitFor(() => expect(records.map((record) => record.msg)).toEqual(['before rotation', 'new']));
 });
 
+test('default following reads a replacement file that is larger than the previous offset from its first record', async () => {
+  writeFileSync(join(root, 'client.ndjson'), line('before following'));
+  const { records } = following();
+  appendFileSync(join(root, 'client.ndjson'), line('before rotation'));
+  renameSync(join(root, 'client.ndjson'), join(root, 'client.ndjson.1'));
+  writeFileSync(
+    join(root, 'client.ndjson'),
+    line('a replacement record much longer than the old file') + line('after'),
+  );
+  await vi.waitFor(() =>
+    expect(records.map((record) => record.msg)).toEqual([
+      'before rotation',
+      'a replacement record much longer than the old file',
+      'after',
+    ]),
+  );
+});
+
 test('filesystem hints preserve Expo context until a quiet settle, including without another write', async () => {
   const { records } = following(root, 'field');
   const expo = (msg: string, level: string) =>

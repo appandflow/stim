@@ -1,4 +1,14 @@
-import { closeSync, openSync, readdirSync, readSync, statSync, watch, type FSWatcher } from 'node:fs';
+import {
+  closeSync,
+  fstatSync,
+  openSync,
+  readdirSync,
+  readSync,
+  statSync,
+  watch,
+  type FSWatcher,
+  type Stats,
+} from 'node:fs';
 import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { rotatedLogPath } from '../index.ts';
@@ -600,11 +610,17 @@ export function followLogs({
   const follower = errorContext ? expoContextFollower(onRecord, errorContext) : null;
   const state = new Map<string, TailState>();
   const decoders = new Map<string, StringDecoder>();
+  const identities = new Map<string, string>();
   let stopped = false;
   let contextTimer: ReturnType<typeof setTimeout> | undefined;
   for (const [name, size] of Object.entries(offsets || fileSizes(dir))) {
     state.set(name, { offset: size, partial: '' });
     decoders.set(name, new StringDecoder('utf8'));
+    if (offsets) continue;
+    try {
+      const identity = fileIdentity(statSync(join(dir, name)));
+      if (identity !== undefined) identities.set(name, identity);
+    } catch {}
   }
 
   function emit(records: NdjsonRecord[]): void {
@@ -617,30 +633,43 @@ export function followLogs({
   }
 
   function drainRotated(name: string, entry: TailState): void {
-    const path = rotatedLogPath(join(dir, name));
-    let size;
+    let fd;
     try {
-      size = statSync(path).size;
+      fd = openSync(rotatedLogPath(join(dir, name)), 'r');
     } catch {
       return;
     }
-    const decoder = decoders.get(name) ?? new StringDecoder('utf8');
-    emit(advanceTail(entry, readChunk(path, decoder, entry.offset, size) + decoder.end(), size).records);
+    try {
+      const stat = fstatSync(fd);
+      const known = identities.get(name);
+      if (known !== undefined && fileIdentity(stat) !== known) return;
+      const decoder = decoders.get(name) ?? new StringDecoder('utf8');
+      emit(advanceTail(entry, readChunk(fd, decoder, entry.offset, stat.size) + decoder.end(), stat.size).records);
+    } finally {
+      closeSync(fd);
+    }
   }
 
   function pollFile(name: string): void {
-    const path = join(dir, name);
-    const size = statSync(path).size;
-    const entry = state.get(name);
-    // https://github.com/appandflow/stim/issues/3899: larger replacements still use the previous byte offset.
-    if (entry && size < entry.offset) drainRotated(name, entry);
-    const { start, prev } = tailRead(entry, size);
-    if (prev !== entry) decoders.set(name, new StringDecoder('utf8'));
-    if (!decoders.has(name)) decoders.set(name, new StringDecoder('utf8'));
+    const fd = openSync(join(dir, name), 'r');
+    try {
+      const stat = fstatSync(fd);
+      const identity = fileIdentity(stat);
+      const known = identities.get(name);
+      const replaced = known !== undefined && identity !== undefined && identity !== known;
+      const entry = state.get(name);
+      if (entry && (replaced || stat.size < entry.offset)) drainRotated(name, entry);
+      const { start, prev } = tailRead(replaced ? undefined : entry, stat.size);
+      if (prev !== entry) decoders.set(name, new StringDecoder('utf8'));
+      if (!decoders.has(name)) decoders.set(name, new StringDecoder('utf8'));
+      if (identity !== undefined) identities.set(name, identity);
 
-    const next = advanceTail(prev, readChunk(path, decoders.get(name)!, start, size), size);
-    state.set(name, next.state);
-    emit(next.records);
+      const next = advanceTail(prev, readChunk(fd, decoders.get(name)!, start, stat.size), stat.size);
+      state.set(name, next.state);
+      emit(next.records);
+    } finally {
+      closeSync(fd);
+    }
   }
 
   function poll() {
@@ -758,16 +787,16 @@ export function followLogs({
   };
 }
 
-function readChunk(path: string, decoder: StringDecoder, start: number, size: number): string {
+function readChunk(fd: number, decoder: StringDecoder, start: number, size: number): string {
   if (size <= start) return '';
-  const fd = openSync(path, 'r');
-  try {
-    const buf = Buffer.allocUnsafe(size - start);
-    const read = readSync(fd, buf, 0, size - start, start);
-    return decoder.write(buf.subarray(0, read));
-  } finally {
-    closeSync(fd);
-  }
+  const buf = Buffer.allocUnsafe(size - start);
+  const read = readSync(fd, buf, 0, size - start, start);
+  return decoder.write(buf.subarray(0, read));
+}
+
+/** Identifies a file generation across renames; undefined where the filesystem reports no inode. */
+function fileIdentity(stat: Stats): string | undefined {
+  return stat.ino === 0 ? undefined : `${stat.dev}:${stat.ino}`;
 }
 
 function tsOf(record: NdjsonRecord | null | undefined): number | null {
