@@ -614,6 +614,7 @@ jobs:
             D:\e\stim-home\workspaces\**\logs\*
             D:\e\stim-home\logs\debug\*
             D:\e\stim-home\archive\**\logs\*
+            D:\e\adb.log
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
