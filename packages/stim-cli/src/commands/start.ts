@@ -9,7 +9,7 @@ import type { Command } from 'commander';
 import { phaseLine, stepTimer } from '../command-output.ts';
 import type { StartError, StartFacts } from '../supervisor/start-facts.ts';
 import { type WorkspaceLinks, workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
-import { getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
+import { getProject, releaseMetroPort, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { listeningPidsAsync, pidExists, processCwds, resolveProjectMetro, signalProcessTree } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
@@ -507,6 +507,21 @@ class StartRefusal extends Error {
   }
 }
 
+class MetroPortRace extends StartRefusal {
+  readonly port: number;
+  constructor(refusal: StartRefusalArgs, port: number) {
+    super(refusal);
+    this.port = port;
+  }
+}
+
+const PORT_RACE_ATTEMPTS = 3;
+
+function portBindRace(lines: readonly string[], port: number): boolean {
+  const bind = new RegExp(`EADDRINUSE\\b.*:${port}\\b`);
+  return lines.some((line) => bind.test(line));
+}
+
 export interface StartDevServerRequest {
   root: string;
   settings: SettingsObject;
@@ -662,7 +677,7 @@ export async function startDevServer(
 
       const gateBudget = async () => {
         const budget = await d.budgetGate({ root, note, env: ambientEnv(), signal: operationSignal });
-        reclaimed = budget.reclaimed;
+        reclaimed = [...reclaimed, ...budget.reclaimed];
         if (budget.refusal) return fail(budget.refusal);
       };
       if (resetCache) {
@@ -1386,21 +1401,22 @@ export async function startDevServer(
               ? `signal ${exitInfo.signal}`
               : `code ${exitInfo.code}`
             : 'without being observed';
-          return fail(
-            gone
-              ? {
-                  code: 'STIM_SUPERVISOR_EXITED',
-                  message: `The supervisor exited (${how}) before the dev server came up on port ${port}.`,
-                  lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
-                  remedy: 'Fix the error above and run `stim start` again; `stim logs --errors` has the full records.',
-                }
-              : {
-                  code: 'STIM_METRO_TIMEOUT',
-                  message: `The dev server did not answer on port ${port} within ${waitSeconds}s.`,
-                  lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
-                  remedy: 'It may still be starting. Run `stim stop` to halt it, or `stim logs` to follow along.',
-                },
-          );
+          const failure: StartRefusalArgs = gone
+            ? {
+                code: 'STIM_SUPERVISOR_EXITED',
+                message: `The supervisor exited (${how}) before the dev server came up on port ${port}.`,
+                lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
+                remedy: 'Fix the error above and run `stim start` again; `stim logs --errors` has the full records.',
+              }
+            : {
+                code: 'STIM_METRO_TIMEOUT',
+                message: `The dev server did not answer on port ${port} within ${waitSeconds}s.`,
+                lines: failureEvidence({ logFile, logsDir, sinceTs: attemptStartedTs }),
+                remedy: 'It may still be starting. Run `stim stop` to halt it, or `stim logs` to follow along.',
+              };
+          const retryable = gone && !remote && metroPortSetting(settings, ambientEnv()).port === null;
+          if (retryable && portBindRace(failure.lines ?? [], port)) throw new MetroPortRace(failure, port);
+          return fail(failure);
         }
 
         if (managedTunnelExited()) return failExitedManagedTunnel();
@@ -1437,6 +1453,25 @@ export async function startDevServer(
       }
     };
 
+    const runStartRetryingPortRace = async (claim: ClaimHandle, tunnelClaim: ClaimHandle): Promise<StartFacts> => {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await runStart(claim, tunnelClaim);
+        } catch (error) {
+          if (!(error instanceof MetroPortRace)) throw error;
+          if (attempt === PORT_RACE_ATTEMPTS) {
+            throw new StartRefusal({
+              ...error.refusal,
+              remedy: `Another process took port ${error.port} after Stim reserved it, ${PORT_RACE_ATTEMPTS} times in a row. Run \`stim start\` again; it reserves a free port.`,
+            });
+          }
+          await withConfigLockAsync(() => releaseMetroPort(root, error.port), operationSignal);
+          note(chalk.yellow(`Port ${error.port} was taken by another process while the dev server started.`));
+          note(chalk.dim('Reserving another port and starting again.'));
+        }
+      }
+    };
+
     const startLocked = async () => {
       try {
         return await d.withTunnelLock(
@@ -1445,7 +1480,7 @@ export async function startDevServer(
             withWorkspaceProcessLock(
               dirname(workspaceLogsDir(root)),
               'metro-start',
-              (claim) => runStart(claim, tunnelClaim),
+              (claim) => runStartRetryingPortRace(claim, tunnelClaim),
               {
                 external: true,
                 signal: operationSignal,

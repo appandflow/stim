@@ -2229,6 +2229,99 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       expect(retryArgs.includes('--reset-cache')).toBe(false);
     },
   );
+
+  describe('another process takes the reserved port while the dev server starts', () => {
+    const takenPort = 8156;
+    const bindError = (port: number) => `metro: Error: listen EADDRINUSE: address already in use :::${port}\n`;
+
+    function racingExecutor(exitLog: (port: number) => string) {
+      const exec = metroExecutor({ listeners: {} });
+      const listening = new Set<number>();
+      const base = exec.runQuiet.bind(exec);
+      exec.runQuiet = (cmd) => {
+        const listener = /lsof -nP -iTCP:(\d+)/.exec(cmd);
+        if (listener && listening.has(Number(listener[1]))) return String(process.pid);
+        return base(cmd);
+      };
+      exec.spawn = (cmd, args, opts) => {
+        exec.calls.spawn.push({ cmd, args, opts });
+        const port = Number(args[args.indexOf('--port') + 1]);
+        const handlers: Record<string, (...a: unknown[]) => void> = {};
+        if (exec.calls.spawn.length === 1) {
+          const rival = createServer((_req, res) => res.end('another home'));
+          openServers.push(rival);
+          rival.listen(port, '127.0.0.1');
+          writeFileSync(supervisorLogFile(root), exitLog(port));
+          setTimeout(() => handlers.exit?.(1, null), 5);
+        } else {
+          const metro = createServer((_req, res) => res.end('packager-status:running'));
+          openServers.push(metro);
+          metro.listen(port, '127.0.0.1');
+          listening.add(port);
+          writeWorkspaceState(root, {
+            supervisor: {
+              pid: process.pid,
+              processToken: captureProcessToken(process.pid),
+              port,
+              mode: 'bare-inproc',
+              startedAt: 'T',
+            },
+          });
+        }
+        return {
+          pid: process.pid,
+          unref() {},
+          on(event, cb) {
+            handlers[event] = cb;
+          },
+        };
+      };
+      return exec;
+    }
+
+    test('start moves to a free port and starts again', async () => {
+      const exec = racingExecutor(bindError);
+      setExecutor(exec);
+      upsertProject(root, { metroPort: takenPort });
+
+      const result = await runAction({ json: true, wait: '30' });
+
+      expect(result.exitCode).toBe(null);
+      const facts = JSON.parse(result.logs.at(-1) ?? '');
+      expect(facts.port).not.toBe(takenPort);
+      expect(facts.alreadyRunning).toBe(false);
+      expect(getProject(root)?.metroPort).toBe(facts.port);
+      expect(exec.calls.spawn).toHaveLength(2);
+      expect(exec.calls.spawn[1]?.args).toContain(String(facts.port));
+      expect(result.errs.join('\n')).toContain(`Port ${takenPort} was taken by another process`);
+    });
+
+    test('a pinned metro.port stays put and the failure is reported', async () => {
+      vi.stubEnv('STIM_METRO_PORT', String(takenPort));
+      const exec = racingExecutor(bindError);
+      setExecutor(exec);
+
+      const result = await runAction({ json: true, wait: '30' });
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.logs.at(-1) ?? '').code).toBe('STIM_SUPERVISOR_EXITED');
+      expect(exec.calls.spawn).toHaveLength(1);
+      expect(getProject(root)?.metroPort).toBe(takenPort);
+    });
+
+    test('a supervisor that exits for another reason is not retried', async () => {
+      const exec = racingExecutor(
+        () => 'Stim supervisor: failed to start the bare-inproc dev server: STIM_BARE_DEPS\n',
+      );
+      setExecutor(exec);
+      upsertProject(root, { metroPort: takenPort });
+
+      const result = await runAction({ json: true, wait: '30' });
+
+      expect(result.exitCode).toBe(1);
+      expect(exec.calls.spawn).toHaveLength(1);
+    });
+  });
 });
 
 describe('the error contract', () => {
