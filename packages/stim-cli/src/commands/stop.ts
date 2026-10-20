@@ -71,6 +71,7 @@ import {
 } from '../workspace/workspace-state.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
+import { removeOwnedEmulatorMetroReverses } from '../devices/android.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { fileLeaseIo, releaseWorkspaceLeasesAsync, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
@@ -526,6 +527,7 @@ async function stopWorkspace({
     isAlive,
     inspectIdentity,
   });
+  const releaseReverses = () => removeOwnedEmulatorReverses(proj, reservedPort, operation);
   if (target.status === 'none') {
     report(chalk.dim(phaseLine('stop', 'no supervisor recorded')));
   } else if (target.status === 'stale') {
@@ -542,7 +544,7 @@ async function stopWorkspace({
     ok = false;
     stillHolding = `supervisor pid ${target.pid} could not be verified`;
   } else {
-    outcomes.supervisor = await stopSupervisor(target, { root, killGroup, waiter, report });
+    outcomes.supervisor = await stopSupervisor(target, { root, killGroup, waiter, report, releaseReverses });
     if (outcomes.supervisor.status !== 'stopped') {
       ok = false;
       stillHolding = outcomes.supervisor.reason;
@@ -602,6 +604,7 @@ async function stopWorkspace({
       waiter,
       resolveMetro,
       report,
+      releaseReverses,
     });
     outcomes.metro = metro.outcome;
     keepPort = metro.keepPort;
@@ -843,13 +846,16 @@ async function stopSupervisor(
     killGroup,
     waiter,
     report,
+    releaseReverses,
   }: {
     root: string;
     killGroup: typeof killMetroTree | typeof killMetroTreeAsync;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     report: (line: string) => void;
+    releaseReverses: () => Promise<void>;
   },
 ): Promise<SupervisorOutcome> {
+  await releaseReverses();
   report(chalk.dim(phaseLine('stop', `sending SIGTERM to supervisor process group ${target.pid}`)));
   try {
     await withWorkspaceStateLockAsync(root, () => requestDevServerStop(root, target.processToken, { by: 'stim stop' }));
@@ -907,6 +913,7 @@ async function stopMetro(
     waiter,
     resolveMetro,
     report,
+    releaseReverses,
   }: {
     server: SupervisorStateRecord | null;
     supervisorGone: boolean;
@@ -915,6 +922,7 @@ async function stopMetro(
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
     report: (line: string) => void;
+    releaseReverses: () => Promise<void>;
   },
 ): Promise<{ outcome: MetroOutcome; keepPort: string | null }> {
   const serverPid = numberOrNull(server?.serverPid);
@@ -929,6 +937,7 @@ async function stopMetro(
   }
   if (identity === 'same') {
     report(chalk.dim(phaseLine('metro', `sending SIGTERM to dev server pid ${serverPid} left by the supervisor`)));
+    await releaseReverses();
     let signalled = false;
     try {
       signalled = await signalServer(serverPid as number, server?.mode === MODE_COMMAND);
@@ -946,6 +955,7 @@ async function stopMetro(
   }
   const resolution = await resolveMetro(port, root);
   if (resolution.missing) {
+    await releaseReverses();
     report(chalk.dim(phaseLine('metro', `nothing listening on port ${port}`)));
     return { outcome: { status: 'missing', port }, keepPort: null };
   }
@@ -963,6 +973,20 @@ const OCCUPANCY_HINT = 'often a UI-test runner or device tool still attached';
 function occupiedSkipReason(reason: string, holders: string[] | null | undefined): string {
   const named = (holders || []).filter(Boolean);
   return named.length ? `${reason} -- held by UI-test runner ${named.join(', ')}` : `${reason} -- ${OCCUPANCY_HINT}`;
+}
+
+async function removeOwnedEmulatorReverses(
+  project: ProjectRecord | null | undefined,
+  metroPort: number | null,
+  operation: StimContext | undefined,
+): Promise<void> {
+  if (metroPort === null) return;
+  for (const { platforms } of projectDeviceSlots(project)) {
+    const android = platforms.android;
+    if (android?.owned && android.avdName && android.consolePort) {
+      await removeOwnedEmulatorMetroReverses(android.avdName, `emulator-${android.consolePort}`, metroPort, operation);
+    }
+  }
 }
 
 async function shutDownDevices(
