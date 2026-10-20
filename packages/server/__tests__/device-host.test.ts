@@ -351,10 +351,9 @@ test('serves an Expo dev-client session on the client Metro port and refuses one
     clientMetroPort,
   };
   try {
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty(
-      'error.message',
-      expect.stringContaining(`Port ${clientMetroPort} is in use`),
-    );
+    expect(await host.metroOpen('client', params, '127.0.0.1')).toMatchObject({
+      error: { code: 'device-busy', message: expect.stringContaining(`Port ${clientMetroPort} is in use`) },
+    });
     expect(await (await fetch(`http://127.0.0.1:${clientMetroPort}/index.bundle`)).text()).toBe(
       'host workspace bundle',
     );

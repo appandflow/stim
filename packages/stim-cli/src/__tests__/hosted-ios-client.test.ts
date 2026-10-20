@@ -348,6 +348,16 @@ test('missing configuration and approval keep their existing credential remedies
   expect(methods).toEqual([]);
 });
 
+test('a dev-client Metro port held on the host refuses with the metro.port remedy before any upload', async () => {
+  errorMethod = 'device-host.metro.open';
+  errorCode = 'device-busy';
+  await expect(deliver()).rejects.toMatchObject({
+    code: 'STIM_HOSTING_REFUSED',
+    remedy: expect.stringContaining('metro.port'),
+  });
+  expect(methods.some((entry) => entry.method === 'device-host.app.offer')).toBe(false);
+});
+
 test('delivery failure keeps the session available to stop', async () => {
   errorMethod = 'device-host.app.offer';
   await expect(deliver()).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });

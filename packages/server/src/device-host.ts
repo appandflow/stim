@@ -147,7 +147,9 @@ function loopbackAccepts(port: number): Promise<boolean> {
       };
       socket.setTimeout(1000, () => done(true));
       socket.once('connect', () => done(true));
-      socket.once('error', () => done(false));
+      socket.once('error', (error: NodeJS.ErrnoException) =>
+        done(!['ECONNREFUSED', 'EADDRNOTAVAIL', 'EAFNOSUPPORT', 'ENETUNREACH'].includes(error.code ?? '')),
+      );
     });
   return Promise.all([accepts('127.0.0.1'), accepts('::1')]).then((open) => open.includes(true));
 }
@@ -628,8 +630,11 @@ export class DeviceHost {
       const bridge = createMetroBridge({ peer, gatewayPort: params.gatewayPort, secret: params.secret });
       const ready = (async () => {
         if (devClientPort !== undefined && (await loopbackAccepts(devClientPort)))
-          throw new Error(
-            `Port ${devClientPort} is in use on the hosting Mac, and an Expo dev client loads its bundle from the client's Metro port. Pin this workspace's Metro to a port free on both Macs with metro.port or STIM_METRO_PORT, run stim stop; stim start, then retry.`,
+          throw Object.assign(
+            new Error(
+              `Port ${devClientPort} is in use on the hosting Mac, and an Expo dev client loads its bundle from the client's Metro port.`,
+            ),
+            { code: 'device-busy' as const },
           );
         return new Promise<number>((resolve, reject) => {
           bridge.server.once('error', reject);
@@ -664,7 +669,10 @@ export class DeviceHost {
         throw error;
       }
     } catch (error) {
-      return refused('action-failed', (error as Error).message);
+      return refused(
+        (error as { code?: unknown }).code === 'device-busy' ? 'device-busy' : 'action-failed',
+        (error as Error).message,
+      );
     }
   }
 

@@ -303,6 +303,12 @@ export async function placeHostedNative(
         session: session.id,
         ...gateway,
         ...(platform === 'android' || devClientScheme ? { clientMetroPort: metroPort } : {}),
+      }).catch((error: unknown) => {
+        if (platform === 'ios' && devClientScheme && (error as { code?: unknown }).code === 'device-busy')
+          throw Object.assign(error as Error, {
+            remedy: `Pin this workspace's Metro to a port free on both Macs with metro.port or STIM_METRO_PORT, run stim stop; stim start, then retry.`,
+          });
+        throw error;
       });
     } else {
       await call(host, 'device-host.metro.close', { session: session.id });
