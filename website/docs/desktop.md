@@ -152,7 +152,7 @@ either way; without it your agent can only check the build and logs.
 
 The panel shows one step at a time. Click a node on the progress track, use the arrows beside it, or press the left and right arrow keys to look at another step; this never changes your progress, and Desktop keeps detecting the current step meanwhile. A later step shows dimmed and read-only, **Go to Current Step** returns, and when the step you are looking at completes, the panel moves on with it. The completion card is the last slide.
 
-The tutorial opens in a floating window that stays above other apps without taking focus, so you can keep it beside your editor or terminal. It opens beside the Stim window, staying onscreen when space is limited. Drag it anywhere while it is open; reopening places it beside Stim again. The pin turns staying on top off and on.
+The tutorial opens in a floating window beside Stim without taking focus. It uses the same window level as Stim, so other apps can cover both windows. It opens beside the Stim window, staying onscreen when space is limited. It stays on the same desktop Space as the Stim window. Drag it anywhere while it is open; reopening places it beside Stim again.
 
 The tutorial does not start the server, pair phones or
 grant access, and it runs no builds itself.

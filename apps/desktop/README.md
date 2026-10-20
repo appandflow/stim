@@ -2029,9 +2029,10 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 ## Tutorial panel
 
 **Help > Stim Tutorial…** and the setup guide's **Take the Tutorial** button open
-a floating window beside the main app window, kept within the screen. It stays
+a floating window beside the main app window, kept within the screen and on the
+same desktop Space as that window. It stays
 freely draggable while open; reopening positions it beside the app again.
-The pin controls whether it stays above other apps.
+It uses the same window level as Stim, so other apps can cover both windows.
 A new tutorial path opens it once, after open
 sheets close. UserDefaults stores progress and skipped steps.
 Unfinished tours resume at launch when status lists the tracked path; archived

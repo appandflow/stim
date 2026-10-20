@@ -39,7 +39,7 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
         panel.becomesKeyOnlyIfNeeded = true
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.collectionBehavior = [.fullScreenAuxiliary]
         panel.contentMinSize = NSSize(width: WorkspaceDetail.inspectorWidth, height: 420)
         panel.contentView = hosting
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
@@ -58,13 +58,20 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
         self.panel = panel
         self.hosting = hosting
       }
-      panel?.isFloatingPanel = pinned
-      panel?.level = pinned ? .floating : .normal
-      if panel?.isVisible == false { panel?.orderFrontRegardless() }
+      panel?.isFloatingPanel = false
+      panel?.level = ownerWindow?.level ?? .normal
+      if let panel, let ownerWindow, panel.parent !== ownerWindow {
+        panel.parent?.removeChildWindow(panel)
+        ownerWindow.addChildWindow(panel, ordered: .above)
+      }
+      if panel?.isVisible == false { panel?.orderFront(nil) }
     }
 
     func close() {
-      panel?.orderOut(nil)
+      if let panel {
+        panel.parent?.removeChildWindow(panel)
+        panel.orderOut(nil)
+      }
       panel = nil
       hosting = nil
     }
