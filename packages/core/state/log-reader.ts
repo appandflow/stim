@@ -6,6 +6,7 @@ import {
   attachExpoErrorContext,
   isExpoErrorContext,
   bundleMarkerPlatform,
+  fileIdentity,
   NATIVE_CRASH_LOG_PREFIX,
   planLogQuery,
 } from './logs-query.ts';
@@ -256,6 +257,8 @@ export interface LogDirQuery extends LogQueryOptions {
 export interface LogDir {
   /** Bytes read from each current `.ndjson` file, through its last complete line. */
   readonly sizes: Record<string, number>;
+  /** `fileIdentity` of each current `.ndjson` file that `sizes` was read from. */
+  readonly identities: Record<string, string>;
   /** The oldest timestamp in the directory. */
   readonly firstTs: number | undefined;
   /** Launch attempt records outside native crash files, in timeline order. */
@@ -296,6 +299,7 @@ export async function openLogDir(
         ];
   const generations: Generation[] = [];
   const sizes: Record<string, number> = {};
+  const identities: Record<string, string> = {};
   const close = async () => {
     await Promise.all(generations.map((generation) => generation.handle.close().catch(() => {})));
   };
@@ -312,7 +316,11 @@ export async function openLogDir(
           const stat = await handle.stat({ bigint: true });
           const index = await indexGeneration(handle, `${stat.dev}:${stat.ino}`, Number(stat.size), signal);
           generations.push({ handle, rank, generation, crash: name.startsWith(NATIVE_CRASH_LOG_PREFIX), index });
-          if (generation === 1) sizes[name] = index.size;
+          if (generation === 1) {
+            sizes[name] = index.size;
+            const identity = fileIdentity(stat);
+            if (identity !== undefined) identities[name] = identity;
+          }
         } catch (error) {
           await handle.close().catch(() => {});
           throw error;
@@ -329,6 +337,7 @@ export async function openLogDir(
   }
   return {
     sizes,
+    identities,
     firstTs,
     launchAttempts: () =>
       generations
