@@ -89,9 +89,7 @@ test('dependency warmth requires the requested install; directories and pruned s
   const modules = join(checkout, project, 'node_modules');
   const lockfile = 'lockfile fixture';
   const sha = (text: string) => createHash('sha256').update(text).digest('hex');
-  const marker = sha(
-    lockfile + JSON.stringify(['install', '--frozen-lockfile', '--filter', 'mobile...']) + 'node path',
-  );
+  const marker = sha(lockfile + JSON.stringify(['install', '--frozen-lockfile']) + 'node path');
   mkdirSync(modules, { recursive: true });
   mkdirSync(join(area, 'macos'), { recursive: true });
   writeFileSync(join(area, 'macos', 'unrelated'), 'not a compiler cache');
@@ -117,9 +115,10 @@ test('dependency warmth requires the requested install; directories and pruned s
     return reply.result.warm;
   };
   expect(await warmth()).toEqual({ checkout: true, dependencies: true, build: false });
-  expect(await warmth({ ...params, dependencies: { project, packageName: 'other' } })).toHaveProperty(
+  mkdirSync(join(checkout, 'apps', 'other', 'node_modules'), { recursive: true });
+  expect(await warmth({ ...params, dependencies: { project: 'apps/other', packageName: 'other' } })).toHaveProperty(
     'dependencies',
-    false,
+    true,
   );
   expect(await host.offer('client', { repo: 'app', lockfile: sha(lockfile) })).toHaveProperty(
     'result.warm.dependencies',

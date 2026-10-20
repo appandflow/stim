@@ -119,7 +119,6 @@ export interface WorkerJob {
   } | null;
   swiftpmCache: string;
   project: string;
-  packageName: string | null;
   isExpo: boolean;
   configuration: string | null;
   scheme: string | null;
@@ -461,7 +460,7 @@ function useXcodeNode(iosDir: string): void {
 
 /** Installs JavaScript dependencies when the lockfile, or the install command, changed since the last install. */
 async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
-  const install = dependencyInstall(src, job.packageName, relative(src, realpathSync(join(src, job.project))));
+  const install = dependencyInstall(src, relative(src, realpathSync(join(src, job.project))));
   if (!install) return;
   const { command, args, digest, lockfile } = install;
   const marker = join(job.area, install.marker);
