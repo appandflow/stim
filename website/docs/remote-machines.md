@@ -341,6 +341,11 @@ machine's login shell, so Desktop, terminal and agent callers agree; `pod instal
 sets `GEM_HOME` keeps it, and if the login shell cannot be read the caller's
 environment is used.
 
+The worker installs dependencies with the lockfile nearest the app: the first
+`pnpm-lock.yaml`, `yarn.lock` or `package-lock.json` in the app's directory or
+above it in the repository, in the directory that holds it. An app with its own
+lockfile inside a larger repository installs its own dependencies there.
+
 When the app pins Node in `.nvmrc`, `.node-version`, `.tool-versions` or
 `package.json`'s `volta.node`, in its own directory or the nearest one above it
 in the repository, the worker installs dependencies, runs prebuild and pods, and
