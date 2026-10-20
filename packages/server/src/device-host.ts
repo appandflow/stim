@@ -629,7 +629,7 @@ export class DeviceHost {
       const ready = (async () => {
         if (devClientPort !== undefined && (await loopbackAccepts(devClientPort)))
           throw new Error(
-            `Port ${devClientPort} is in use on this Mac, and an Expo dev client loads its bundle from the client's Metro port. Pin this workspace's Metro to a port free on both Macs with metro.port or STIM_METRO_PORT, run stim stop; stim start, then retry.`,
+            `Port ${devClientPort} is in use on the hosting Mac, and an Expo dev client loads its bundle from the client's Metro port. Pin this workspace's Metro to a port free on both Macs with metro.port or STIM_METRO_PORT, run stim stop; stim start, then retry.`,
           );
         return new Promise<number>((resolve, reject) => {
           bridge.server.once('error', reject);
