@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, normalize } from 'node:path';
 import { dependencyInstall } from '../dependency-install.ts';
 
 test.each([
@@ -63,7 +63,7 @@ test.each([
       .update(readFileSync(join(root, lock)))
       .digest('hex');
     const install = dependencyInstall(root, 'mobile', 'apps/mobile');
-    expect(install).toMatchObject({ command, dir, lockfile });
+    expect(install).toMatchObject({ command, dir: normalize(dir), lockfile });
     expect(install?.marker === 'dependencies').toBe(dir === '.');
   } finally {
     rmSync(root, { recursive: true, force: true });
