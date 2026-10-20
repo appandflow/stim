@@ -100,14 +100,15 @@ hosting Mac keeps Metro local through a private bridge; see hosted-ios. Step 2 r
 Metro while other work happens.
 
 Each time Stim boots an owned local simulator or emulator, it mutes it: iOS
-simulators to volume zero through Xcode's devicectl, and Android 15 and later
-emulators to media volume zero. A device that is already running keeps its
-volume. Turn sound on for one device with Sound (iOS) or Media sound
-(Android) in its Stim Desktop options; the choice lasts until that device next
-boots. Android 14 and older images have no shell command that can set media
-volume, so startup warns, as it does whenever a mute is not confirmed. Host
-volume, Android alarm and ringtone volumes, hosted devices and physical
-devices are unchanged.
+simulators to volume zero through Xcode's devicectl once SpringBoard has
+finished starting, because SpringBoard resets the volume while it starts, and
+Android 15 and later emulators to media volume zero. A device that is already
+running keeps its volume. Turn sound on for one device with Sound (iOS) or
+Media sound (Android) in its Stim Desktop options; the choice lasts until that
+device next boots. Android 14 and older images have no shell command that can
+set media volume, so startup warns, as it does whenever a mute is not
+confirmed. Host volume, Android alarm and ringtone volumes, hosted devices and
+physical devices are unchanged.
 
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for. \`stim reload\` is

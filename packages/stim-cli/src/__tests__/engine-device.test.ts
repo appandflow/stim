@@ -181,14 +181,18 @@ describe('ensureBooted: ios', () => {
     expect(result.reason).not.toMatch(/out of memory|OOM/i);
   });
 
+  const springBoardStarting = 'com.apple.springboard.finishedstartup 0';
+  const springBoardStarted = 'com.apple.springboard.finishedstartup 4242';
   test.each([
-    ['U1', 0, false],
-    ['OTHER', 0, true],
-    ['U1', 60, true],
+    ['U1', 0, [springBoardStarting, springBoardStarting, springBoardStarted], false],
+    ['OTHER', 0, [springBoardStarted], true],
+    ['U1', 60, [springBoardStarted], true],
+    ['U1', 0, [new Error('notifyutil: No such file or directory')], true],
   ] as const)(
-    'boots a shut-down owned sim, waits for the Booted state, and mutes it (%s at %s)',
-    async (reportedUdid, reportedVolume, warns) => {
+    'boots a shut-down owned sim, waits for the Booted state and SpringBoard, and mutes it (%s at %s, case %#)',
+    async (reportedUdid, reportedVolume, springBoard, warns) => {
       let listCalls = 0;
+      let springBoardCalls = 0;
       const commands: string[] = [];
       const notes: string[] = [];
       setExecutor({
@@ -214,6 +218,12 @@ describe('ensureBooted: ios', () => {
               result: { deviceIdentifier: reportedUdid, volume: reportedVolume },
             });
           }
+          if (file === 'xcrun' && args[1] === 'spawn' && args[3] === 'notifyutil') {
+            commands.push([file, ...args].join(' '));
+            const reply = springBoard[Math.min(springBoardCalls++, springBoard.length - 1)];
+            if (reply instanceof Error) throw reply;
+            return reply;
+          }
           return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
             ? this.run!([file, ...args].join(' '))
             : '';
@@ -237,9 +247,14 @@ describe('ensureBooted: ios', () => {
       expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
       expect(commands.indexOf('xcrun simctl boot U1')).toBeLessThan(commands.indexOf('xcrun simctl bootstatus U1 -b'));
       const mute = 'xcrun devicectl device settings audio --device U1 --volume 0 --json-output -';
-      expect(commands.filter((c) => c === mute).length).toBe(1);
-      expect(commands.indexOf('xcrun simctl bootstatus U1 -b')).toBeLessThan(commands.indexOf(mute));
+      const springBoardQuery = 'xcrun simctl spawn U1 notifyutil -g com.apple.springboard.finishedstartup';
+      const started = springBoard.at(-1) === springBoardStarted;
+      expect(commands.filter((c) => c === springBoardQuery).length).toBe(springBoard.length);
+      expect(commands.indexOf('xcrun simctl bootstatus U1 -b')).toBeLessThan(commands.indexOf(springBoardQuery));
+      expect(commands.filter((c) => c === mute).length).toBe(started ? 1 : 0);
+      expect(commands.indexOf(mute) > commands.lastIndexOf(springBoardQuery)).toBe(started);
       expect(notes.some((line) => line.includes('Could not mute this simulator'))).toBe(warns);
+      expect(notes.some((line) => line.includes('simulator muted'))).toBe(!warns);
     },
   );
 
