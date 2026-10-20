@@ -106,14 +106,18 @@ export async function nativeFileDigest(path: string, signal?: AbortSignal): Prom
   return { size, sha256: hash.digest('hex') };
 }
 
-/** The exact source a build needs: tracked and untracked, not ignored, as `git ls-files -co --exclude-standard`. */
+/**
+ * The exact source a build needs: tracked and untracked, not ignored, as `git ls-files -co --exclude-standard`, and
+ * the repository-relative `ignored` paths it also reads.
+ */
 export async function sourceManifest(
   repoRoot: string,
   strict = false,
   signal?: AbortSignal,
+  ignored: readonly string[] = [],
 ): Promise<NativeTransferFile[]> {
   const files: NativeTransferFile[] = [];
-  for (const path of await gitVisiblePaths(repoRoot, signal)) {
+  for (const path of new Set([...(await gitVisiblePaths(repoRoot, signal)), ...ignored])) {
     signal?.throwIfAborted();
     const absolute = join(repoRoot, path);
     let stat;

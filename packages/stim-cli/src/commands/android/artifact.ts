@@ -53,7 +53,12 @@ import {
   type OffloadChoice,
   type BuildHandoff,
 } from '../../offload/client.ts';
-import { namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../../offload/selection.ts';
+import {
+  FINGERPRINT_MISMATCH_REMEDY,
+  namedBuildMachine,
+  OffloadRefusal,
+  requireLocalBuild,
+} from '../../offload/selection.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
 import type { AndroidBuildPlan } from './plan.ts';
@@ -178,7 +183,7 @@ export async function acquireAndroidArtifact(
   const fallBack = (
     reason: string,
     line: string = reason,
-    info: { code?: string; machine?: string; candidates?: PlacementCandidate[] } = {},
+    info: { code?: string; machine?: string; candidates?: PlacementCandidate[]; remedy?: string } = {},
   ) => {
     writer.write(
       buildPlacementRecord({
@@ -189,7 +194,7 @@ export async function acquireAndroidArtifact(
         fallback: { code: info.code ?? 'fallback', reason, machine: info.machine },
       }),
     );
-    if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
+    if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason, info.remedy);
     requireLocalBuild(buildMachine);
     record.offloadFallback = reason;
     phase('build', `${line} -> building here`);
@@ -606,6 +611,7 @@ export async function acquireAndroidArtifact(
       choice,
       expectedFingerprint: uncached ? null : storeHash,
       request: recipe.offload!.request,
+      fingerprintInputs: recipe.offload!.fingerprintInputs,
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
       onEnter: (name) => {
@@ -662,6 +668,9 @@ export async function acquireAndroidArtifact(
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
         code: 'offload-failed',
         machine: choice.machine,
+        ...(!outcome.ok && outcome.reason.startsWith('fingerprint-mismatch: ')
+          ? { remedy: FINGERPRINT_MISMATCH_REMEDY }
+          : {}),
       });
       writer.write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;

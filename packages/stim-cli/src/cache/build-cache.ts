@@ -1,17 +1,19 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { join, posix, relative, sep } from 'path';
 import { isDeepStrictEqual } from 'util';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
 import { loadConfigAsync as loadFingerprintConfig } from '@expo/fingerprint/build/Config.js';
+import { normalizeOptionsAsync } from '@expo/fingerprint/build/Options.js';
+import { isIgnoredPathWithMatchObjects } from '@expo/fingerprint/build/utils/Path.js';
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
 import { resolveArtifact, storeArtifactAsync, type StimContext } from '@stim-cli/core';
-import { writeFile } from 'node:fs/promises';
+import { readdir, writeFile } from 'node:fs/promises';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 import { getExecutor } from '../exec.ts';
-import { git, gitQuiet } from '../workspace/git.ts';
+import { git, gitAsync, gitQuiet } from '../workspace/git.ts';
 import { register } from './cache-manifest.ts';
 import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from '../engine/asset-manifest.ts';
 import { sharedBuildCache as cacheRoot } from '../workspace/paths.ts';
@@ -43,6 +45,11 @@ export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
   '**/android/local.properties',
   // Appears the first time someone opens the project in Android Studio.
   '**/android/.idea/**',
+  // Appears the first time someone opens the project in Xcode; @expo/fingerprint only ignores the workspace's.
+  '**/*.xcodeproj/xcuserdata/**/*',
+  // `react-native bundle` output; a Debug build loads JS from Metro and a release cache hit injects the current JS.
+  '**/ios/main.jsbundle',
+  '**/ios/assets/**/*',
 ];
 
 const APP_ROOT_IOS_SKIPPED = new Set(['node_modules', 'Pods', 'build', 'android', '.git', '.DS_Store', '.stim.json']);
@@ -152,27 +159,20 @@ export function androidProjectFingerprintOptions(
   };
 }
 
-export async function fingerprintProject(
+interface FingerprintTarget {
+  platform?: string;
+  iosProjectPath?: string;
+  androidLayout?: AndroidLayout | null;
+}
+
+async function fingerprintOptions(
   projectRoot: string,
-  {
-    platform,
-    iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
-    androidLayout = null,
-    createFingerprint = expoFingerprint.createFingerprintAsync,
-    debug = false,
-  }: {
-    platform?: string;
-    iosProjectPath?: string;
-    androidLayout?: AndroidLayout | null;
-    createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
-    debug?: boolean;
-  } = {},
-): Promise<ProjectFingerprint | null> {
+  { platform, iosProjectPath = DEFAULT_IOS_PROJECT_PATH, androidLayout = null }: FingerprintTarget,
+): Promise<FingerprintOptions> {
   const platforms =
     platform && FINGERPRINT_PLATFORMS.has(platform)
       ? { platforms: [platform] as FingerprintOptions['platforms'] }
       : undefined;
-  // With DEBUG set, @expo/fingerprint profiles sourcers on stdout unless silent.
   const ios: Pick<FingerprintOptions, 'extraSources' | 'ignorePaths'> =
     platform === 'ios'
       ? iosProjectFingerprintOptions(projectRoot, iosProjectPath)
@@ -184,18 +184,94 @@ export async function fingerprintProject(
     const config = await loadFingerprintConfig(projectRoot, true);
     ios.extraSources = [...(config?.extraSources ?? []), ...ios.extraSources];
   }
-  const options: FingerprintOptions = {
+  // With DEBUG set, @expo/fingerprint profiles sourcers on stdout unless silent.
+  return {
     ...platforms,
-    ...(debug ? { debug } : {}),
     ...(ios.extraSources ? { extraSources: ios.extraSources } : {}),
     ignorePaths: [...DEFAULT_FINGERPRINT_IGNORES, ...(ios.ignorePaths ?? [])],
     silent: true,
   };
-  const result = await createFingerprint(projectRoot, options);
+}
+
+export async function fingerprintProject(
+  projectRoot: string,
+  {
+    createFingerprint = expoFingerprint.createFingerprintAsync,
+    debug = false,
+    ...target
+  }: FingerprintTarget & {
+    createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
+    debug?: boolean;
+  } = {},
+): Promise<ProjectFingerprint | null> {
+  const options = await fingerprintOptions(projectRoot, target);
+  const result = await createFingerprint(projectRoot, debug ? { ...options, debug } : options);
   const hash = result?.hash ?? null;
   if (!hash) return null;
   const sources = Array.isArray(result?.sources) ? (result.sources as FingerprintSource[]) : [];
   return { hash, sources };
+}
+
+/** The env files Expo's config loader reads in the development mode @expo/fingerprint evaluates the config in. */
+const EXPO_DEVELOPMENT_ENV_FILES = ['.env.development.local', '.env.local', '.env.development', '.env'];
+
+const inNodeModules = (path: string) => path.split('/').includes('node_modules');
+
+/**
+ * Absolute paths of the files git ignores that a fingerprint with `sources` hashed or the Expo config loader read:
+ * the inputs a checkout of the tracked and untracked files lacks. Files under node_modules are left out, because a
+ * dependency install recreates them.
+ */
+export async function gitignoredFingerprintInputs(
+  projectRoot: string,
+  sources: readonly FingerprintSource[],
+  target: FingerprintTarget,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const found = new Set<string>();
+  if (sources.some((source) => source.type === 'contents' && source.id === 'expoConfig'))
+    for (const name of EXPO_DEVELOPMENT_ENV_FILES)
+      if (lstatSync(join(projectRoot, name), { throwIfNoEntry: false })?.isFile()) found.add(name);
+  const pathspecs = sources.flatMap((source) =>
+    source.type !== 'contents' && !inNodeModules(source.filePath) ? [source.filePath] : [],
+  );
+  if (pathspecs.length) {
+    const { ignorePathMatchObjects, ignoreDirMatchObjects } = await normalizeOptionsAsync(
+      projectRoot,
+      await fingerprintOptions(projectRoot, target),
+    );
+    const walk = async (dir: string): Promise<void> => {
+      if (isIgnoredPathWithMatchObjects(dir, ignoreDirMatchObjects)) return;
+      for (const entry of await readdir(join(projectRoot, dir), { withFileTypes: true })) {
+        signal?.throwIfAborted();
+        const path = posix.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== 'node_modules') await walk(path);
+        } else if (entry.isFile() && !isIgnoredPathWithMatchObjects(path, ignorePathMatchObjects)) found.add(path);
+      }
+    };
+    const listed = await gitAsync(
+      projectRoot,
+      [
+        '--literal-pathspecs',
+        'ls-files',
+        '-z',
+        '--others',
+        '--ignored',
+        '--exclude-standard',
+        '--directory',
+        '--',
+        ...pathspecs,
+      ],
+      { untrimmed: true, timeoutMs: 120_000, signal },
+    );
+    for (const path of listed.split('\0')) {
+      if (!path || inNodeModules(path)) continue;
+      if (path.endsWith('/')) await walk(path.slice(0, -1));
+      else if (!isIgnoredPathWithMatchObjects(path, ignorePathMatchObjects)) found.add(path);
+    }
+  }
+  return [...found].toSorted().map((path) => join(projectRoot, path));
 }
 
 function registerOnce(root: string, registeredBy?: string): void {

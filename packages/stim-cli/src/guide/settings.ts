@@ -905,6 +905,11 @@ and records buildMachine with builtOn absent. Build failures retain the selected
 value; builtOn is here or the configured machine entry when compilation ran.
 Prebuild and pod install still run on this machine before a named offload. A refusal
 starts no local xcodebuild, Gradle or SwiftPM compile.
+A React Native offload sends the tracked and untracked files, and the gitignored
+files the native fingerprint hashes or the Expo config reads, such as .env.local
+and other Expo .env files, secrets included. Nothing under node_modules and no
+build output the fingerprint ignores is sent. A fingerprint-mismatch refusal
+names the sources that differ and the files pod install or prebuild rewrote there.
 Run stim doctor --fix to ask for build access if not paired. A person on the
 worker approves it by running the stim-server setup command doctor printed, with
 its ticket and expiry. Check stim settings get remote.machines,

@@ -1705,7 +1705,10 @@ connected since stim-server started keeps its directory when revoked.
   `ccache` or `none`) and `stimBuild`, after the whole manifest of `repo` was
   synced on this connection. A peer-cache-capable React Native caller can set
   `cacheArtifact: true` to retain a completed development archive when its cache
-  write and remote policies allow it. It returns `{ "job" }`. It fails with
+  write and remote policies allow it. With the `fingerprint-sources` feature, a
+  caller can send `fingerprintSources`, the `id` and `hash` of each source of
+  `fingerprint`, and a `fingerprint-mismatch` failure names the sources that
+  differ and the synced files prebuild or `pod install` rewrote. It returns `{ "job" }`. It fails with
   `build-busy` while the offer would be declined, naming the reason, or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with

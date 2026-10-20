@@ -31,7 +31,7 @@ import {
 import { basename, delimiter, dirname, join, relative, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
-import { fingerprintProject, refingerprintAfterMutation } from '../cache/build-cache.ts';
+import { compareSourceLists, fingerprintProject, refingerprintAfterMutation } from '../cache/build-cache.ts';
 import { buildIos, buildAndroid, gradlewPath } from '../integrations/react-native-build.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../cache/compilation-cache-corruption.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
@@ -57,6 +57,7 @@ import { selectNativeXcodeProject } from '../integrations/native-xcode-project.t
 import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
 import type {
   BuildAndroidOptions,
+  BuildFingerprintSource,
   BuildStartParams,
   BuildSwiftpmArtifactQuery,
   GradleOffloadInputs,
@@ -126,6 +127,8 @@ export interface WorkerJob {
   runtime: string | null;
   android: AndroidBuildOptions | null;
   expectedFingerprint: string | null;
+  /** The client's sources of `expectedFingerprint`, when its stim-server forwards them. */
+  expectedSources?: BuildFingerprintSource[];
   cacheArtifact?: boolean;
   stimBuild?: string;
   native?: BuildStartParams['native'];
@@ -296,7 +299,10 @@ interface MirrorRecord {
   [path: string]: { sha256: string; kind: ManifestEntry['kind']; mtimeMs: number; size: number };
 }
 
-async function materialize(job: WorkerJob, src: string): Promise<{ written: number; removed: number }> {
+async function materialize(
+  job: WorkerJob,
+  src: string,
+): Promise<{ written: number; removed: number; record: MirrorRecord }> {
   const recordFile = join(job.area, 'mirror.json');
   let previous: MirrorRecord = {};
   try {
@@ -421,7 +427,42 @@ async function materialize(job: WorkerJob, src: string): Promise<{ written: numb
   const tmp = `${recordFile}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(next));
   renameSync(tmp, recordFile);
-  return { written, removed };
+  return { written, removed, record: next };
+}
+
+/** The synced files whose content no longer matches the manifest, such as a lockfile pod install rewrote. */
+function rewrittenFiles(src: string, manifest: readonly ManifestEntry[], record: MirrorRecord): string[] {
+  return manifest.flatMap((entry) => {
+    if (entry.kind === 'directory') return [];
+    const target = join(src, entry.path);
+    const stat = lstatSync(target, { throwIfNoEntry: false });
+    const known = record[entry.path];
+    if (stat && known && stat.mtimeMs === known.mtimeMs && stat.size === known.size) return [];
+    if (!stat) return [entry.path];
+    const content = stat.isSymbolicLink() ? readlinkSync(target) : stat.isFile() ? readFileSync(target) : null;
+    return content !== null && createHash('sha256').update(content).digest('hex') === entry.sha256 ? [] : [entry.path];
+  });
+}
+
+function namedList(names: readonly string[]): string {
+  const shown = names.slice(0, 3).join(', ');
+  return names.length > 3 ? `${shown} and ${names.length - 3} more` : shown;
+}
+
+function fingerprintMismatch(
+  job: WorkerJob,
+  there: string,
+  sources: readonly unknown[],
+  mutated: { steps: readonly string[]; files: readonly string[] },
+): string {
+  const differing = job.expectedSources
+    ? compareSourceLists(job.expectedSources, [...sources]).map((change) => change.name)
+    : [];
+  return [
+    `the checkout there fingerprints ${there.slice(0, 12)}, here ${job.expectedFingerprint?.slice(0, 12)}`,
+    ...(differing.length ? [`differing sources: ${namedList(differing)}`] : []),
+    ...(mutated.files.length ? [`${mutated.steps.join(' and ')} there rewrote ${namedList(mutated.files)}`] : []),
+  ].join('; ');
 }
 
 /**
@@ -688,7 +729,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
         runPrebuild(realRoot, platform, log, { clean: plan === 'regenerate' }),
       );
       if (result?.failed) return nodeFailed('prebuild-failed', result.reason ?? 'expo prebuild failed.');
-      mutations.push('prebuild');
+      mutations.push('expo prebuild');
     }
     if (platform === 'ios') {
       useXcodeNode(iosProject.dir);
@@ -700,10 +741,11 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
           runPodInstall(realRoot, log, { directory: iosProject.dir, onHeartbeat: (line) => note('pods', line) }),
         );
         if (result?.failed) return failed('pods-failed', result.reason ?? 'pod install failed.');
-        mutations.push('pods');
+        mutations.push('pod install');
       }
     }
     fingerprint = initial.hash;
+    let sources = initial.sources;
     if (mutations.length) {
       const after = await time('fingerprintMs', () =>
         refingerprintAfterMutation({
@@ -716,12 +758,16 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       );
       if (!after) return failed('no-fingerprint', `No fingerprint after ${mutations.join(', ')}.`);
       fingerprint = after.hash;
-      if (mutations.includes('prebuild')) recordPrebuild(realRoot, platform, after.hash);
+      sources = after.sources;
+      if (mutations.includes('expo prebuild')) recordPrebuild(realRoot, platform, after.hash);
     }
     if (fingerprint !== job.expectedFingerprint) {
       return failed(
         'fingerprint-mismatch',
-        `the checkout there fingerprints ${fingerprint.slice(0, 12)}, here ${job.expectedFingerprint?.slice(0, 12)}`,
+        fingerprintMismatch(job, fingerprint, sources, {
+          steps: mutations,
+          files: mutations.length ? rewrittenFiles(src, job.manifest, mirrored.record) : [],
+        }),
       );
     }
 

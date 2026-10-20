@@ -1215,6 +1215,7 @@ describe('pairing', () => {
           'native-gradle-artifact-cache',
           'native-gradle-peer-cache',
           'react-native-peer-cache',
+          'fingerprint-sources',
           'swiftpm-peer-cache',
           'build-dependency-cache',
           'hosted-android-data',
@@ -2221,7 +2222,14 @@ describe('offloaded builds', () => {
 
       client.socket.send(blob('{}'));
       client.socket.send(blob('{"a":1}'));
-      const started = await client.request('build.start', START);
+      const fingerprintSources = [
+        { id: 'ios', hash: 'ab12' },
+        { id: 'expoConfig', hash: null },
+      ];
+      expect(
+        await client.request('build.start', { ...START, fingerprintSources: [{ id: 'ios', hash: '../x' }] }),
+      ).toMatchObject({ error: { code: 'bad-request' } });
+      const started = await client.request('build.start', { ...START, fingerprintSources });
       expect(started).toMatchObject({ result: { job: expect.any(String) } });
       const job = (started as { result: { job: string } }).result.job;
       const events = await progress(client);
@@ -2241,7 +2249,13 @@ describe('offloaded builds', () => {
       const area = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1');
       const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
       expect(ran.home).toBe(join(area, 'home'));
-      expect(ran.job).toMatchObject({ area, project: 'apps/mobile', expectedFingerprint: 'f00d', runtime: 'iOS-27-0' });
+      expect(ran.job).toMatchObject({
+        area,
+        project: 'apps/mobile',
+        expectedFingerprint: 'f00d',
+        expectedSources: fingerprintSources,
+        runtime: 'iOS-27-0',
+      });
       expect(ran.job.manifest.map((entry: { path: string }) => entry.path).toSorted()).toEqual([
         'apps/mobile/app.json',
         'apps/mobile/copy.json',

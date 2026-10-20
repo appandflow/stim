@@ -47,7 +47,12 @@ import {
   type BuildHandoff,
 } from '../../offload/client.ts';
 import type { pairedMachines } from '../../offload/build-machines.ts';
-import { namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../../offload/selection.ts';
+import {
+  FINGERPRINT_MISMATCH_REMEDY,
+  namedBuildMachine,
+  OffloadRefusal,
+  requireLocalBuild,
+} from '../../offload/selection.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
 import { machineCapacity, type BuildMissReason, type MachineCapacity, type OffloadMode } from '@stim-cli/core/state';
@@ -187,7 +192,7 @@ export async function acquireIosArtifact(
   const fallBack = (
     reason: string,
     line: string = reason,
-    info: { code?: string; machine?: string; candidates?: PlacementCandidate[] } = {},
+    info: { code?: string; machine?: string; candidates?: PlacementCandidate[]; remedy?: string } = {},
   ) => {
     logWriter().write(
       buildPlacementRecord({
@@ -198,7 +203,7 @@ export async function acquireIosArtifact(
         fallback: { code: info.code ?? 'fallback', reason, machine: info.machine },
       }),
     );
-    if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
+    if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason, info.remedy);
     requireLocalBuild(buildMachine);
     offloadFallback = reason;
     buildFailure = { ...buildFailure, offloadFallback: reason };
@@ -593,6 +598,7 @@ export async function acquireIosArtifact(
       choice,
       expectedFingerprint: storeHash,
       request: recipe.offload!.request(runtime),
+      fingerprintInputs: recipe.offload!.fingerprintInputs,
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
       onEnter: (name) => {
@@ -645,6 +651,9 @@ export async function acquireIosArtifact(
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
         code: corrupt === undefined ? 'offload-failed' : COMPILATION_CACHE_CORRUPT,
         machine: choice.machine,
+        ...(!outcome.ok && outcome.reason.startsWith('fingerprint-mismatch: ')
+          ? { remedy: FINGERPRINT_MISMATCH_REMEDY }
+          : {}),
       });
       logWriter().write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;
