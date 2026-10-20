@@ -244,6 +244,19 @@ test('warm rejects the source checkout and non-repositories without changing the
   expect(outside.stderr).toMatch(/Not a git repository/);
 }, 30_000);
 
+test('warm reports a timed-out Git probe instead of calling the worktree a non-repository', async () => {
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    async runFileAsync(file, args, opts) {
+      if (args.includes('--show-toplevel'))
+        throw Object.assign(new Error(`Command timed out after 10000ms: git ${args.join(' ')}`), { code: 'ETIMEDOUT' });
+      return real.runFileAsync(file, args, opts);
+    },
+  });
+  await expect(warmWorktreePaths(target)).rejects.toThrow(/timed out after 10000ms: git .*rev-parse --show-toplevel/);
+}, 30_000);
+
 test('warm refuses an unregistered target, missing source checkout, or mismatched Git common directory', async () => {
   const real = getExecutor();
   for (const kind of ['unregistered', 'missing main', 'different common']) {

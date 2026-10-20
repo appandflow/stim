@@ -65,18 +65,25 @@ export interface Executor {
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
+// Windows PowerShell 5.1 took up to 9.5 s to start on a fresh GitHub-hosted runner, and the job-object
+// script plus its Node entry about 2.6 s more on every launch, before the contained child starts (#4102).
+const REPORT_JOB_STARTUP_MS = 30_000;
+
+function startsInReportJob(file: string, opts: SpawnOptions, containProcessTree: boolean): boolean {
+  return (
+    process.platform === 'win32' &&
+    (containProcessTree || Boolean(reportSignal(ambientContext()))) &&
+    Boolean(executableIn(file, opts.env ?? ambientEnv(), opts.cwd ?? process.cwd()))
+  );
+}
+
 function spawnReportProbe(
   file: string,
   args: readonly string[],
   opts: SpawnOptions,
   containProcessTree = false,
 ): ChildProcess {
-  if (
-    process.platform !== 'win32' ||
-    (!containProcessTree && !reportSignal(ambientContext())) ||
-    !executableIn(file, opts.env ?? ambientEnv(), opts.cwd ?? process.cwd())
-  )
-    return spawn(file, args, opts);
+  if (!startsInReportJob(file, opts, containProcessTree)) return spawn(file, args, opts);
   const env = opts.env ?? ambientEnv();
   const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
   if (!systemRoot) throw new Error('SystemRoot is required to contain Windows report probes.');
@@ -420,7 +427,9 @@ const defaultExecutor: Executor = {
               retainDeclaration = rejectDeclaration;
             })
           : undefined;
-      const start = () => spawnReportProbe(file, args, opts, containProcessTree || Boolean(report));
+      const contained = containProcessTree || Boolean(report);
+      const startupMs = startsInReportJob(file, opts, contained) ? REPORT_JOB_STARTUP_MS : 0;
+      const start = () => spawnReportProbe(file, args, opts, contained);
       const child = declareFor ? spawnDeclared(declareFor, start, declaration ? { until: declaration } : {}) : start();
       let lifetime: ReturnType<typeof reportChild>;
       let cancel: (() => Promise<void>) | undefined;
@@ -500,7 +509,7 @@ const defaultExecutor: Executor = {
                 child.stdout?.destroy();
                 child.stderr?.destroy();
               }
-            }, timeout);
+            }, timeout + startupMs);
       child.stdout?.on('data', (chunk: Buffer) => capture(stdout, chunk));
       child.stderr?.on('data', (chunk: Buffer) => capture(stderr, chunk));
       child.on('error', (error) => {
