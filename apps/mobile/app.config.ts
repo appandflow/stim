@@ -80,9 +80,12 @@ const config: ExpoConfig = {
   owner: 'app_and_flow',
   // @expo/cli sets EXPO_DEV_SERVER_ORIGIN in the dev server, which its runtimeversion:resolve child inherits. That child
   // recomputes the fingerprint on every manifest request (expo/expo#46415); the dev launcher ignores the runtime.
-  // `expo run:* --configuration Release` sets the variable too before it builds, so the command must match as well.
+  // `expo run:* --configuration Release` sets the variable too before it builds, so the command must match as well,
+  // and eas-cli passes --workflow where the dev server does not.
   runtimeVersion:
-    process.env.EXPO_DEV_SERVER_ORIGIN && process.argv.includes('runtimeversion:resolve')
+    process.env.EXPO_DEV_SERVER_ORIGIN &&
+    process.argv.includes('runtimeversion:resolve') &&
+    !process.argv.includes('--workflow')
       ? 'dev-server'
       : { policy: 'fingerprint' },
   updates: {

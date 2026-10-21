@@ -33,6 +33,10 @@ describe('app config runtimeVersion', () => {
     expect(loadRuntimeVersion(origin, ['expo', 'export'])).toEqual({ policy: 'fingerprint' });
   });
 
+  it('keeps the fingerprint when eas-cli resolves the runtime for eas update or eas build', () => {
+    expect(loadRuntimeVersion(origin, [...resolve, '--workflow', 'managed'])).toEqual({ policy: 'fingerprint' });
+  });
+
   it('is static for the dev server runtimeversion:resolve child so manifest requests do not recompute the fingerprint', () => {
     expect(loadRuntimeVersion(origin, resolve)).toBe('dev-server');
   });

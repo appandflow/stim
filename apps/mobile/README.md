@@ -1270,7 +1270,8 @@ and the dev launcher does not compare the manifest's runtime. Every other
 evaluation of the config keeps the fingerprint: builds, `eas update` and
 `expo-updates fingerprint:generate`, including a build started with
 `expo run:* --configuration Release`, which sets the variable before it builds
-but does not run `runtimeversion:resolve`. The runtime of TestFlight builds and
+but does not run `runtimeversion:resolve`, and eas-cli's own
+`runtimeversion:resolve` calls, which pass `--workflow`. The runtime of TestFlight builds and
 updates is unchanged.
 
 The app checks for an update on every launch without waiting for it: it
