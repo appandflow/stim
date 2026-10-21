@@ -822,6 +822,13 @@ no native launch is recorded. A web reload sends `Page.reload` to the owned page
 and reports `strategy: "cdp"`, with `appId` set to the URL the page was on when
 Stim sent the reload.
 
+Stim does not record launches on a physical device (`--device`) or an EAS
+Simulator session (`--remote eas`), so `reload` cannot reach them. With a
+recorded EAS session it refuses with `STIM_RELOAD_UNSUPPORTED`; with no
+recorded launch it refuses with `STIM_RELOAD_STOPPED`. Both remedies name
+`agent-device metro reload --metro-port <port>`, which asks every app connected
+to the workspace Metro to reload.
+
 Every native reload goes over the workspace Metro websocket, on both platforms. It never
 reopens a development-client URL, because that restarts the app rather than
 reloading its JavaScript.
