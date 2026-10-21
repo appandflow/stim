@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -20,6 +20,7 @@ import {
   createHarness,
   createWarmWorktree,
   prepareIosDevices,
+  teardownWorkspaces,
   cleanupTmp,
   workspaceLogsDir,
 } from './native/harness.mjs';
@@ -280,4 +281,52 @@ test('native preparation stops each simulator before the next and stops after a 
       ]),
     );
   }
+});
+
+test('failure teardown stops and removes every created worktree, newest first, despite command failures', (t) => {
+  const base = scratch(t);
+  const [first, second, gone, kept] = ['first', 'second', 'gone', 'kept'].map((name) => join(base, name));
+  for (const dir of [first, second, kept]) mkdirSync(dir);
+  const calls = [];
+  const h = {
+    cli(args, { cwd }) {
+      calls.push(args[0] === 'stop' ? ['stop', cwd] : ['remove', args[2], ...args.slice(3)]);
+      if (args[0] === 'worktree') rmSync(args[2], { recursive: true, force: true });
+      return { code: args[0] === 'stop' && cwd === second ? 1 : 0, stderr: '' };
+    },
+    sh() {
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  };
+  const created = [first, second, gone];
+  teardownWorkspaces({ h, created });
+  teardownWorkspaces({ h, created });
+  assert.deepEqual(calls, [
+    ['stop', second],
+    ['remove', second, '--force'],
+    ['stop', first],
+    ['remove', first, '--force'],
+  ]);
+  calls.length = 0;
+  teardownWorkspaces({ h, created: [kept], removeWorktrees: false });
+  assert.deepEqual(calls, [['stop', kept]]);
+});
+
+test('die runs its exit hooks once and keeps the failing exit code', (t) => {
+  const base = scratch(t);
+  const marker = join(base, 'marker');
+  const harness = new URL('./native/harness.mjs', import.meta.url).href;
+  const script = `
+    import { appendFileSync } from 'node:fs';
+    import { createHarness } from ${JSON.stringify(harness)};
+    const h = createHarness({ env: process.env, cliPath: 'unused', label: 'die' });
+    h.onDie(() => appendFileSync(${JSON.stringify(marker)}, 'first\\n'));
+    h.onDie(() => { throw new Error('hook failed'); });
+    h.die('boom', 3);
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf-8' });
+  assert.equal(result.status, 3);
+  assert.match(result.stderr, /ERROR: boom/);
+  assert.match(result.stderr, /exit cleanup failed: hook failed/);
+  assert.equal(readFileSync(marker, 'utf-8'), 'first\n');
 });
