@@ -13,7 +13,7 @@ import {
   type HomeItem,
   type HomeWorktree,
 } from '@/lib/home';
-import { STALE_MS } from '@/lib/needs-attention';
+import { STALE_MS } from '@stim-cli/core/oversight';
 import { buildLabel } from '@/lib/spoken-status';
 import { appPresence, currentPhaseLabel, gitChip } from '@/lib/workspace-view';
 import {

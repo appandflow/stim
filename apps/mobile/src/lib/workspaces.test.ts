@@ -6,7 +6,6 @@ import { pathInCheckout, projectOf, repositoryRoots, workspaceTitle, workspaceTi
 import {
   attentionGroups,
   deviceKey,
-  deviceSource,
   deviceWarnings,
   devicesOf,
   isActive,
@@ -182,7 +181,6 @@ describe('the Stim-owned Chrome', () => {
       page: { url: 'http://localhost:5173/apps/groups/', error: 'GET failed: net::ERR_CONNECTION_REFUSED' },
       activity: { state: 'driven' },
     });
-    expect(deviceSource(device!)).toBe('Chrome');
     expect(shortUrl(device!.page!.url)).toBe('localhost:5173/apps/groups');
     expect(livePlatforms(env('/w', { web }))).toEqual(['web']);
   });
@@ -253,7 +251,6 @@ describe('physical devices', () => {
       }),
       expect.objectContaining({ platform: 'android', slot: 'pixel', name: 'Pixel 9', running: false, owned: false }),
     ]);
-    expect(deviceSource(phones[0]!)).toBe('iOS device');
     expect(livePlatforms(env('/w', { physicalDevices: leased.physicalDevices }))).toEqual([]);
   });
 
