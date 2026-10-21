@@ -2115,6 +2115,20 @@ describe('the applicationId comes from the built APK', () => {
     expect(h.stderr.join('\n')).toMatch(/io\.tlon\.groups \(from the APK; project files say com\.example\.app\)/);
   });
 
+  test('a hit takes the package stored on its cache entry instead of reading the cached APK', async () => {
+    const h = harness({
+      resolveCached: () => '/cache/app-debug.apk',
+      storedAppId: (platform: string, key: string) =>
+        platform === 'android' && key.startsWith(FINGERPRINT) ? 'io.tlon.groups' : null,
+    });
+    const result = await h.run();
+
+    expect(result.ok).toBe(true);
+    expect(h.calls.readApkPackage).toEqual([]);
+    expect(h.calls.install[0]?.packageName).toBe('io.tlon.groups');
+    expect(h.calls.launch[0]?.packageName).toBe('io.tlon.groups');
+  });
+
   test('an unreadable APK falls back to project detection', async () => {
     const h = harness();
     const result = await h.run();

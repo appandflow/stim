@@ -28,6 +28,7 @@ import type { ChildProcess } from 'node:child_process';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
+import { storedAppId as cacheEntryAppId } from '../cache/build-cache.ts';
 import { formatDuration, phaseLine, refuseNoProject, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
 import type { CcacheActivity, DevServerStart } from '../engine/build-facts.ts';
 import { findProjectRoot, projectShortcut } from '../workspace/project.ts';
@@ -378,6 +379,7 @@ interface RunAndroidOptions {
   uploadRemoteBuild?: typeof uploadRemote;
   resolveCacheProvider?: typeof resolveCacheProviderConfig;
   loadCacheProviderModule?: typeof loadCacheProvider;
+  storedAppId?: typeof cacheEntryAppId;
   install?: typeof installAndroidApp;
   launch?: typeof launchAndroidApp;
   launchRelease?: typeof launchAndroidReleaseApp;
@@ -458,6 +460,7 @@ function resolveRunAndroidOptions(
     uploadRemoteBuild = uploadRemote,
     resolveCacheProvider = resolveCacheProviderConfig,
     loadCacheProviderModule = loadCacheProvider,
+    storedAppId = cacheEntryAppId,
     install = installAndroidApp,
     launch = launchAndroidApp,
     launchRelease = launchAndroidReleaseApp,
@@ -537,6 +540,7 @@ function resolveRunAndroidOptions(
     uploadRemoteBuild,
     resolveCacheProvider,
     loadCacheProviderModule,
+    storedAppId,
     install,
     launch,
     launchRelease,
@@ -663,6 +667,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     uploadRemoteBuild,
     resolveCacheProvider,
     loadCacheProviderModule,
+    storedAppId,
     install,
     launch,
     launchRelease,
@@ -1309,6 +1314,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         resolveRemoteBuild,
         uploadRemoteBuild,
         loadCacheProviderModule,
+        storedAppId,
         acquireSlot,
         releaseSlot,
         now,
@@ -1482,7 +1488,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         writer,
         phase,
         fail,
-        readApkPackage,
+        readApkPackage: (path: string | null) => artifact.apkPackage ?? readApkPackage(path),
         readProjectPackage: async () => (await integration.appIds()).androidPackage,
         packageRemedy: integration.packageRemedy,
         install,

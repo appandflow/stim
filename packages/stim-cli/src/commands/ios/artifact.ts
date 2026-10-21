@@ -15,7 +15,12 @@ import {
   type LoadCacheProviderResult,
   type ProviderCallResult,
 } from '@stim-cli/cache';
-import { prepareProviderDownloadDir, providerDownloadPath, providerUploadOutcome } from '../../cache/build-cache.ts';
+import {
+  prepareProviderDownloadDir,
+  providerDownloadPath,
+  providerUploadOutcome,
+  storedAppId,
+} from '../../cache/build-cache.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../../cache/compilation-cache-corruption.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
@@ -926,7 +931,7 @@ export async function acquireIosArtifact(
   const artifact: PreparedIosArtifact = {
     handoff,
     path: appPath,
-    bundleId,
+    bundleId: bundleId ?? (cacheHit && storeKey ? storedAppId(PLATFORM, storeKey) : null),
     cache: {
       identity: storeHash && storeKey ? { fingerprint: storeHash, key: storeKey } : null,
       hit: cacheHit,

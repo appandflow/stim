@@ -21,7 +21,14 @@ import { explainBuildMiss, fingerprintErrorMissReason } from '../cache/miss-reas
 import { formatDuration, shortHash } from '../command-output.ts';
 import { androidMetroRuntime, androidProcessRuntime } from '../commands/android/launch.ts';
 import { relative } from 'node:path';
-import { androidGradleProject, androidJobLayout, displayPath, NO_FINGERPRINT } from '../commands/android/support.ts';
+import {
+  androidGradleProject,
+  androidJobLayout,
+  apkPackage,
+  displayPath,
+  dumpApkManifest,
+  NO_FINGERPRINT,
+} from '../commands/android/support.ts';
 import { resolveKeystore, swapApkBundle } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import { resolveCcache } from '../engine/ccache.ts';
@@ -245,6 +252,7 @@ function reactNativeAndroidArtifact(
         resolve: resolveCached,
         store: storeCached,
         sources,
+        readAppId: async (path) => apkPackage(await dumpApkManifest(path, { context: operation })),
         ...(compiled ? { assetManifest: release ? captureAssets(root, { variant, layout }) : null } : {}),
       }),
     async prepare(beforePrepare) {

@@ -383,6 +383,7 @@ export async function storeBuild(
         overwrite?: boolean;
         sources?: FingerprintSource[] | null;
         assetManifest?: AssetManifest | null;
+        readAppId?: AppIdReader;
         signal?: AbortSignal;
         context?: StimContext;
       } = {},
@@ -420,6 +421,14 @@ export async function storeBuild(
               await writeFile(join(staging, ASSET_MANIFEST_FILE), JSON.stringify(options.assetManifest));
             } catch {}
           }
+          if (options.readAppId) {
+            try {
+              const appId = await options.readAppId(buildPath);
+              if (appId) await writeFile(join(staging, APP_ID_FILE), JSON.stringify({ appId }));
+            } catch {
+              throwIfCancelled(signal, 'build cache copy');
+            }
+          }
         },
       }),
     );
@@ -430,6 +439,8 @@ export async function storeBuild(
 }
 
 export type BuildStore = (...args: Parameters<typeof storeBuild>) => string | null | ReturnType<typeof storeBuild>;
+
+export type AppIdReader = (artifactPath: string) => string | null | Promise<string | null>;
 
 export const PROVIDER_DOWNLOAD_DIR = 'cache-provider';
 
@@ -462,6 +473,7 @@ export interface FilesystemBuildCapabilityOptions {
   context?: StimContext;
   sources?: FingerprintSource[] | null;
   assetManifest?: AssetManifest | null;
+  readAppId?: AppIdReader;
   resolve?: typeof resolveBuild;
   store?: BuildStore;
 }
@@ -471,6 +483,7 @@ export function filesystemBuildCapability({
   context,
   sources,
   assetManifest,
+  readAppId,
   resolve = resolveBuild,
   store = storeBuild,
 }: FilesystemBuildCapabilityOptions = {}): BuildCacheCapability {
@@ -479,6 +492,7 @@ export function filesystemBuildCapability({
     ...(root === undefined ? {} : { root }),
     ...(sources === undefined ? {} : { sources }),
     ...(assetManifest === undefined ? {} : { assetManifest }),
+    ...(readAppId === undefined ? {} : { readAppId }),
   };
   return {
     resolve: ({ platform, key }) => (root === undefined ? resolve(platform, key) : resolve(platform, key, root)),
@@ -507,6 +521,7 @@ export function providerUploadOutcome(
 }
 
 const SOURCES_FILE = 'fingerprint-sources.json';
+const APP_ID_FILE = 'app-id.json';
 
 function withoutContents(source: FingerprintSource): FingerprintSource {
   return source.type === 'contents' ? { ...source, contents: '' } : source;
@@ -516,6 +531,18 @@ export function storedSources(platform: string, key: string, root: string = cach
   try {
     const parsed: unknown = JSON.parse(readFileSync(join(entryDir(platform, key, root), SOURCES_FILE), 'utf-8'));
     return Array.isArray(parsed) ? (parsed as FingerprintSource[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The bundle id or Android package read from the entry's artifact when it was stored, or null for older entries. */
+export function storedAppId(platform: string, key: string, root: string = cacheRoot()): string | null {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(entryDir(platform, key, root), APP_ID_FILE), 'utf-8'));
+    if (parsed && typeof parsed === 'object' && 'appId' in parsed && typeof parsed.appId === 'string' && parsed.appId)
+      return parsed.appId;
+    return null;
   } catch {
     return null;
   }
