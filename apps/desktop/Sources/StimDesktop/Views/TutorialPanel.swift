@@ -219,7 +219,23 @@ struct TutorialPanel: View {
         }
         let notice = (current ? message : nil) ?? TutorialNotice(state.detail, action: state.action)
         let detail = notice.text
-        if !detail.isEmpty, detail != explanation(step.id), current || ["build", "parallel", "phone"].contains(step.id) {
+        if current, state.state == .current, notice.action == nil {
+          let waitingText =
+            detail == "Waiting for the tutorial workspace..."
+            ? "Waiting for your agent to clone the app..."
+            : detail.isEmpty ? "Waiting for this step to finish..." : detail
+          HStack(alignment: .top, spacing: Space.sm) {
+            if reduceMotion {
+              Image(systemName: "hourglass").foregroundStyle(Palette.accent)
+            } else {
+              ProgressView().controlSize(.small).tint(Palette.accent)
+            }
+            Text(waitingText)
+              .font(.stim(.callout, weight: .medium))
+              .fixedSize(horizontal: false, vertical: true)
+              .textSelection(.enabled)
+          }
+        } else if !detail.isEmpty, detail != explanation(step.id), current || ["build", "parallel", "phone"].contains(step.id) {
           Text(detail).foregroundStyle(color(state.state)).textSelection(.enabled)
         }
         switch notice.action {
@@ -236,11 +252,15 @@ struct TutorialPanel: View {
         case nil: EmptyView()
         }
         ForEach(state.ticks, id: \.id) { tick in
-          Label(
-            Self.tickTitle(tick.id) + (tick.optional ? " (optional)" : ""),
-            systemImage: tick.done ? "checkmark.circle.fill" : "circle"
-          )
-          .font(.stim(.footnote)).foregroundStyle(tick.done ? Palette.success : Palette.secondary)
+          let active = current && tick.id == state.ticks.first(where: { !$0.done })?.id
+          Label {
+            Text(Self.tickTitle(tick.id) + (tick.optional ? " (optional)" : ""))
+              .foregroundStyle(tick.done ? Palette.secondary : active ? Palette.text : Palette.tertiary)
+          } icon: {
+            Image(systemName: tick.done ? "checkmark.circle.fill" : "circle")
+              .foregroundStyle(tick.done ? Palette.success : active ? Palette.accent : Palette.tertiary)
+          }
+          .font(.stim(.footnote))
           .accessibilityLabel("\(Self.tickTitle(tick.id)), \(tick.done ? "done" : "waiting")")
         }
         if let pull = state.link, let url = URL(string: pull.url) {
@@ -254,11 +274,16 @@ struct TutorialPanel: View {
           if step.id == "phone", phoneState != .paired {
             Button(phoneState.buttonTitle, action: pairPhone).buttonStyle(.stim(.primary))
           }
-          Button("Next", action: next).buttonStyle(.stim(.secondary))
-            .accessibilityLabel("Next: leave \(step.title)")
+          HStack {
+            Spacer()
+            Button("Skip step", action: next)
+              .buttonStyle(.plain)
+              .foregroundStyle(Palette.primary)
+              .accessibilityLabel("Skip \(step.title)")
+          }
         }
       }
-      .padding(.leading, Space.xl)
+      .padding(.leading, 16 + Space.sm)
     }
   }
 
@@ -303,7 +328,7 @@ struct TutorialPanel: View {
     switch id {
     case "begin":
       return
-        "Watch two agents make two changes at once, each in its own worktree with its own simulator and dev server, checking its own work on the device. First, clone the test app."
+        "Run two agents side by side with Stim. Have each agent change the test app and test its work on a separate simulator. Clone the test app to get started."
     case "build":
       return
         "Ask your agent for a visual change. It builds in its own worktree and simulator, and checks the result on the device. The first build can take a few minutes."
@@ -321,7 +346,7 @@ struct TutorialPanel: View {
     case "finish":
       return
         "Your agent stops the apps and removes the two worktrees and drops their changes. Their builds, logs and agent actions stay under Archived."
-    case "delete": return "Delete the test app's clone, or press Next to keep it."
+    case "delete": return "Delete the test app's clone, or skip this step to keep it."
     default: return ""
     }
   }
@@ -355,7 +380,11 @@ private struct TutorialPromptBox: View {
       Text("Tell your agent:").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
       Card {
         VStack(alignment: .leading, spacing: Space.md) {
-          Text(prompt).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+          Text(prompt)
+            .textSelection(.enabled)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
           HStack {
             Spacer()
             CopyButton(prompt, accessibilityLabel: "Copy prompt: \(prompt)", onCopy: onCopy)
