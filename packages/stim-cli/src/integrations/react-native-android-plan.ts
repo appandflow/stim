@@ -74,17 +74,40 @@ function refuse(refusal: PlanRefusal, lines: string[] = []): ProjectPlanResult {
   return { refusal, lines };
 }
 
-type EmulatorImage = { systemImage: string | null } | { refusal: { code: string; message: string; remedy: string } };
+type EmulatorImage = { systemImage: string | null } | { refusal: PlanRefusal };
+
+function imageReplacement(
+  root: string,
+  slot: string,
+  flagImage: string | undefined,
+  deps: Pick<AndroidPlanDeps, 'avdSystemImage' | 'avdDirectory'>,
+): { replaces: boolean } | { refusal: PlanRefusal } {
+  const record = deviceSlotPlatforms(getProject(root), slot)?.android;
+  if (!flagImage || !record?.owned || !record.avdName || record.setupIncomplete || !deps.avdDirectory(record.avdName))
+    return { replaces: false };
+  const current = deps.avdSystemImage(record.avdName);
+  if (!current || current === flagImage) return { replaces: false };
+  if (record.bootPending) return { replaces: true };
+  return {
+    refusal: {
+      code: 'STIM_BAD_ARG',
+      message: `This project's emulator ${record.avdName} uses system image ${current}, but ${flagImage} was requested. --system-image replaces only an emulator that never finished a boot, and this one has.`,
+      remedy:
+        'Run `stim worktree remove` (or `stim gc --delete`) to reap the current emulator, then `stim android` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
+    },
+  };
+}
 
 async function emulatorImage(
   root: string,
   slot: string,
   requested: string | null,
+  replaces: boolean,
   deps: Pick<AndroidPlanDeps, 'listSystemImages' | 'avdSystemImage' | 'avdDirectory' | 'listAvds'>,
   signal?: AbortSignal,
 ): Promise<EmulatorImage> {
   const record = deviceSlotPlatforms(getProject(root), slot)?.android;
-  if (record?.avdName && !record.setupIncomplete) {
+  if (record?.avdName && !record.setupIncomplete && !replaces) {
     if (record.owned && deps.avdDirectory(record.avdName)) return { systemImage: deps.avdSystemImage(record.avdName) };
     if (!record.owned && (await avdListed(record.avdName, deps.listAvds, signal))) return { systemImage: null };
   }
@@ -207,11 +230,16 @@ export async function planReactNativeAndroid(
       remedy: 'Run `stim android` to build with the CAS, or set optimizations.android.compilerCache to ccache.',
     });
   }
+  const replacement =
+    target.kind === 'emulator'
+      ? imageReplacement(root, slot, opts.systemImage?.trim() || undefined, deps)
+      : { replaces: false };
+  if ('refusal' in replacement) return refuse(replacement.refusal);
   const abiKeyed = build.targetAbiOnly && !build.release;
   let localImageRead: Promise<EmulatorImage> | undefined;
   const localImage = () =>
     (localImageRead ??= abiKeyed
-      ? emulatorImage(root, slot, target.systemImage, deps, operation.signal)
+      ? emulatorImage(root, slot, target.systemImage, replacement.replaces, deps, operation.signal)
       : Promise.resolve({ systemImage: null }));
   let image: EmulatorImage;
   let hostedAbi: string | null = null;

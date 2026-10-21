@@ -15,7 +15,7 @@ import type { AndroidPlanDeps } from '../integrations/react-native-android-plan.
 import { reactNativeAndroidProject } from '../integrations/react-native-android.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { buildCacheKey, entryDir } from '../cache/build-cache.ts';
-import { upsertProject } from '../workspace/config.ts';
+import { getProject, upsertProject } from '../workspace/config.ts';
 import { hostSystemImageArch } from '../devices/android.ts';
 import { readProductFlavors } from '../integrations/react-native-build.ts';
 
@@ -392,6 +392,34 @@ describe('planAndroid', () => {
     const { payload } = await plan({ systemImage: X86.pkg }, { avdSystemImage: () => ARM.pkg });
     expect(payload.cacheKey).toBe(buildCacheKey('android', HASH, { variant: 'debug', abi: 'x86_64' }));
   });
+
+  test("an explicit --system-image replaces a never-booted AVD, so the key carries the requested image's ABI", async () => {
+    upsertProject(app, { platforms: { android: { avdName: 'stim-fixture', owned: true, bootPending: true } } });
+    const { payload, exitCode } = await plan(
+      { systemImage: X86.pkg },
+      { avdDirectory: () => join(app, 'avd'), avdSystemImage: () => ARM.pkg },
+    );
+    expect(exitCode).toBeUndefined();
+    expect(payload.cacheKey).toBe(buildCacheKey('android', HASH, { variant: 'debug', abi: 'x86_64' }));
+  });
+
+  test.each(['debug', 'release'])(
+    'an explicit --system-image refuses to replace an AVD that finished a boot (%s)',
+    async (variant) => {
+      upsertProject(app, { platforms: { android: { avdName: 'stim-fixture', owned: true } } });
+      const before = getProject(app);
+      const { payload, exitCode } = await plan(
+        { systemImage: X86.pkg, variant },
+        { avdDirectory: () => join(app, 'avd'), avdSystemImage: () => ARM.pkg },
+      );
+      expect(exitCode).toBe(1);
+      expect(payload).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringContaining('never finished a boot'),
+      });
+      expect(getProject(app)).toEqual(before);
+    },
+  );
 
   test('no installed system image refuses, because the ABI in the key is unknown', async () => {
     const { payload, exitCode } = await plan({}, { listSystemImages: () => [] });
