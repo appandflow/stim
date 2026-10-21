@@ -438,6 +438,24 @@ test('warm copies literal ignored filenames and skips Finder, IDE, jj, and deriv
   );
 }, 30_000);
 
+test('warm removes every nested exclusion from a wide, deep carried tree', async () => {
+  const dirs: string[] = [];
+  for (let a = 0; a < 6; a++)
+    for (let b = 0; b < 6; b++) for (let c = 0; c < 6; c++) dirs.push(`node_modules/p${a}/d${b}/e${c}`);
+  for (const dir of dirs) {
+    write(root, `${dir}/index.js`, dir);
+    write(root, `${dir}/.DS_Store`, 'Finder metadata');
+    write(root, `${dir}/.idea/workspace.xml`, 'IDE state');
+  }
+  const result = await warm();
+  expect(result.failed).toEqual([]);
+  const left = dirs.filter(
+    (dir) => existsSync(join(target, dir, '.DS_Store')) || existsSync(join(target, dir, '.idea')),
+  );
+  expect(left).toEqual([]);
+  expect(dirs.filter((dir) => readFileSync(join(target, dir, 'index.js'), 'utf-8') !== dir)).toEqual([]);
+}, 30_000);
+
 test.each(['android/build/', 'apps/mobile/'])(
   'warm excludes generated autolinking from ignored %s',
   async (ignored) => {

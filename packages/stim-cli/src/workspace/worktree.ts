@@ -302,7 +302,14 @@ function missingDestinationReason(target: string, rel: string): string | null {
   return lstatSync(join(target, rel), { throwIfNoEntry: false }) ? 'exists' : null;
 }
 
-async function removeCopiedExclusionsAsync(path: string, rel: string, signal: AbortSignal): Promise<void> {
+const SWEEP_CONCURRENCY = 32;
+
+interface SweptDirectory {
+  path: string;
+  rel: string;
+}
+
+async function removeExclusionsIn({ path, rel }: SweptDirectory, signal: AbortSignal): Promise<SweptDirectory[]> {
   signal.throwIfAborted();
   const entries = await readdir(path, { withFileTypes: true });
   const excluded = entries.filter((entry) => isCarrySkipped(`${rel}/${entry.name}`));
@@ -319,11 +326,43 @@ async function removeCopiedExclusionsAsync(path: string, rel: string, signal: Ab
       await chmod(path, stat.mode);
     }
   }
+  const children: SweptDirectory[] = [];
   for (const entry of entries) {
     const child = `${rel}/${entry.name}`;
-    if (entry.isDirectory() && !isCarrySkipped(child))
-      await removeCopiedExclusionsAsync(join(path, entry.name), child, signal);
+    if (entry.isDirectory() && !isCarrySkipped(child)) children.push({ path: join(path, entry.name), rel: child });
   }
+  return children;
+}
+
+async function removeCopiedExclusionsAsync(path: string, rel: string, signal: AbortSignal): Promise<void> {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  const acquire = async (): Promise<void> => {
+    if (active < SWEEP_CONCURRENCY) active += 1;
+    else await new Promise<void>((wake) => waiting.push(wake));
+  };
+  const release = (): void => {
+    const next = waiting.shift();
+    if (next) next();
+    else active -= 1;
+  };
+  let failure: { error: unknown } | undefined;
+  const visit = async (directory: SweptDirectory): Promise<void> => {
+    await acquire();
+    let children: SweptDirectory[];
+    try {
+      if (failure) return;
+      children = await removeExclusionsIn(directory, signal);
+    } catch (error) {
+      failure ??= { error };
+      return;
+    } finally {
+      release();
+    }
+    await Promise.all(children.map(visit));
+  };
+  await visit({ path, rel });
+  if (failure) throw failure.error;
 }
 
 export async function cloneIgnoredEntries({
