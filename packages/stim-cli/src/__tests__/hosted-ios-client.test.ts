@@ -6,6 +6,8 @@ import { WebSocketServer } from 'ws';
 import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 import { createHash } from 'node:crypto';
 import {
+  type PathLike,
+  type WatchListener,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -53,6 +55,23 @@ const loopbackAvailable = await new Promise<boolean>((resolve) => {
 });
 
 const tailnet = vi.hoisted(() => ({ port: 0, changed: false }));
+const watcher = vi.hoisted(() => ({ dropEvents: false }));
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    watch: (
+      file: PathLike,
+      options: WatchListener<string> | { persistent?: boolean },
+      listener?: WatchListener<string>,
+    ) => {
+      const changed = typeof options === 'function' ? options : listener;
+      return fs.watch(file, (event, name) => {
+        if (!watcher.dropEvents) changed?.(event, name);
+      });
+    },
+  };
+});
 vi.mock('../offload/tailnet.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../offload/tailnet.ts')>()),
   realIo: { ...(await importOriginal<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },
@@ -1160,6 +1179,29 @@ test('follow discovers an iOS slot placed after the follower starts', async () =
     );
   } finally {
     stop();
+    vi.useRealTimers();
+  }
+});
+
+test('follow discovers a slot placed before the state watcher is live without waiting for the 10 s refresh', async () => {
+  let stop = () => {};
+  try {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    watcher.dropEvents = true;
+    stop = followHostedLogs(root, false);
+    writeHostedIos(root, 'tablet', placement());
+    logRecords = [{ ts: 1, src: 'device', level: 'error', msg: 'early slot failure' }];
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.waitFor(
+      () =>
+        expect(readFileSync(join(workspaceLogsDir(root), 'ios.tablet-host.ndjson'), 'utf8')).toContain(
+          'early slot failure',
+        ),
+      { timeout: 3000 },
+    );
+  } finally {
+    stop();
+    watcher.dropEvents = false;
     vi.useRealTimers();
   }
 });
