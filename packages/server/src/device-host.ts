@@ -736,22 +736,26 @@ export class DeviceHost {
       params.ports.some((port) => typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535)
     )
       return refused('bad-request', 'Metro ports needs at most 256 TCP ports.');
-    const ports = [...new Set(params.ports as number[])];
-    const sessions = new Set(readHostedSessions().flatMap((record) => (record.client === client ? [record.id] : [])));
-    const own = new Set(
-      [...this.owned].flatMap(([id, { metro }]) =>
-        sessions.has(id) && metro?.port !== undefined && metro.port === metro.clientMetroPort ? [metro.port] : [],
-      ),
-    );
-    const busy: number[] = [];
-    const queue = ports.filter((port) => !own.has(port));
-    await Promise.all(
-      Array.from({ length: 16 }, async () => {
-        for (let port = queue.shift(); port !== undefined; port = queue.shift())
-          if (await loopbackAccepts(port)) busy.push(port);
-      }),
-    );
-    return { result: { busy: busy.toSorted((a, b) => a - b) } };
+    try {
+      const ports = [...new Set(params.ports as number[])];
+      const sessions = new Set(readHostedSessions().flatMap((record) => (record.client === client ? [record.id] : [])));
+      const own = new Set(
+        [...this.owned].flatMap(([id, { metro }]) =>
+          sessions.has(id) && metro?.port !== undefined && metro.port === metro.clientMetroPort ? [metro.port] : [],
+        ),
+      );
+      const busy: number[] = [];
+      const queue = ports.filter((port) => !own.has(port));
+      await Promise.all(
+        Array.from({ length: 16 }, async () => {
+          for (let port = queue.shift(); port !== undefined; port = queue.shift())
+            if (await loopbackAccepts(port)) busy.push(port);
+        }),
+      );
+      return { result: { busy: busy.toSorted((a, b) => a - b) } };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
   }
 
   async metroClose(client: string, params: unknown): Promise<AppAnswer<{ port: null }>> {

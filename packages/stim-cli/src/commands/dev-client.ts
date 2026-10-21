@@ -21,7 +21,7 @@ export function devClientScheme(
   return scheme.trim();
 }
 
-function hasDevClient(root: string): boolean {
+export function hasDevClient(root: string): boolean {
   const pkg = readJsonObject(join(root, 'package.json'));
   const declared = [pkg?.dependencies, pkg?.devDependencies].some(
     (deps) => isJsonObject(deps) && 'expo-dev-client' in deps,

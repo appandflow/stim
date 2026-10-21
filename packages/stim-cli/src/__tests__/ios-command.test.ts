@@ -8495,6 +8495,7 @@ describe('iOS placement on a hosting Mac', () => {
       { remote: 'mini', json: true },
       {
         detectIsExpo: () => true,
+        hasDevClient: () => true,
         hostedMetroPortProbe: () => async (port: number) => port !== 8082,
         prepareHostedIos: async () => ({
           host: { machine: 'mini', connection: { close() {} } },
@@ -8514,6 +8515,33 @@ describe('iOS placement on a hosting Mac', () => {
     });
     expect(placed).toBe(false);
     expect(calls.order).not.toContain('buildIos');
+  });
+
+  test('an Expo app without a dev client keeps its random bridge port and skips the host port check', async () => {
+    reserve();
+    let probed = false;
+    const { exitCode } = await run(
+      { remote: 'mini', json: true },
+      {
+        detectIsExpo: () => true,
+        hasDevClient: () => false,
+        hostedMetroPortProbe: () => {
+          probed = true;
+          return async () => false;
+        },
+        prepareHostedIos: async () => ({
+          host: { machine: 'mini', connection: { close() {} } },
+          choice: hostedDevice,
+          session: null,
+        }),
+        placeHostedIos: async (_target, args) => {
+          args.reserved(placement);
+          return { placement, launched: 'unverified' };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(probed).toBe(false);
   });
 
   test('a hosted named slot records a separate launch target for reload', async () => {

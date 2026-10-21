@@ -76,7 +76,7 @@ import { gitCommonDirAsync, repoRootAsync } from '../../workspace/worktree.ts';
 import { warmMetro } from '../../engine/metro-warmup.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { startDevServer } from '../start.ts';
-import { devClientScheme, devClientTakesDevMenuParams } from '../dev-client.ts';
+import { devClientScheme, devClientTakesDevMenuParams, hasDevClient } from '../dev-client.ts';
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
@@ -107,6 +107,7 @@ export interface IosDeps {
   detectBundleId: typeof detectBundleId;
   detectIsExpo: typeof detectIsExpo;
   devClientScheme: typeof devClientScheme;
+  hasDevClient: typeof hasDevClient;
   devClientTakesDevMenuParams: typeof devClientTakesDevMenuParams;
   getProject: typeof getProject;
   upsertProject: typeof upsertProject;
@@ -206,6 +207,7 @@ export const DEFAULT_DEPS: IosDeps = {
   detectBundleId,
   detectIsExpo,
   devClientScheme,
+  hasDevClient,
   devClientTakesDevMenuParams,
   getProject,
   upsertProject,

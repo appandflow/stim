@@ -204,8 +204,17 @@ async function reserveHostedNative(
 
 const HOST_PORT_WINDOW = 64;
 
-export const devClientPortRemedy = (machine: string): string =>
+const devClientPortRemedy = (machine: string): string =>
   `Run stim stop, then stim ios --remote ${machine} without stim start, so Stim starts Metro on a port free on both Macs. If metro.port or STIM_METRO_PORT pins the port, pin one free on both Macs instead.`;
+
+export const devClientPortBusy = (
+  machine: string,
+  port: number,
+): { code: 'STIM_HOSTING_REFUSED'; message: string; remedy: string } => ({
+  code: 'STIM_HOSTING_REFUSED',
+  message: `${machine}: Port ${port} is in use on ${machine}, and an Expo dev client loads its bundle from this workspace's Metro port.`,
+  remedy: devClientPortRemedy(machine),
+});
 
 /**
  * Answers whether a port is free for an Expo dev-client bridge on `machine`, asking the host for a window of ports at

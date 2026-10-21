@@ -538,6 +538,7 @@ export interface StartDevServerRequest {
 export interface HostedMetroPorts {
   machine: string;
   free: (port: number) => Promise<boolean>;
+  busy: (port: number) => StartError;
 }
 
 export type StartDevServerResult =
@@ -1609,6 +1610,7 @@ export async function resolveWorkspaceMetroPort(
         remedy: 'Stop the process on that port, or set another metro.port.',
       };
     }
+    if (hostedPorts && !held.metro && !(await hostedPorts.free(pinned))) return hostedPorts.busy(pinned);
     if (recorded === pinned) return recorded;
   } else if (recorded) {
     const held = await resolveStartupMetro(recorded, root);
