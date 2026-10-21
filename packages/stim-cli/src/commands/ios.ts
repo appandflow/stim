@@ -45,7 +45,7 @@ import {
   projectSettingsContextAsync,
   tunnelModeSetting,
 } from '../workspace/settings.ts';
-import type { IosCommandOptions, IosBootLike, FailArgs } from './ios/types.ts';
+import type { IosCommandOptions, IosBootLike, FailArgs, BuildFailureFields } from './ios/types.ts';
 import { type IosDeps, DEFAULT_DEPS } from './ios/dependencies.ts';
 import { DEFAULT_METRO_PORT } from '../engine/app-install.ts';
 import { createIosSimSnapshot } from '../devices/ios.ts';
@@ -452,6 +452,22 @@ async function runIos(
   let buildMachine = 'auto';
   let devicePlacement: DevicePlacement | undefined;
   let builtConfiguration: string | null = null;
+  let acquiredBuild: BuildFailureFields | null = null;
+
+  const recordFailedBuild = (build: BuildFailureFields, errorCode?: string) =>
+    writeLastBuild(
+      root,
+      lastBuildRecord({
+        devicePlacement,
+        buildMachine,
+        ...build,
+        configuration: builtConfiguration,
+        startedAt,
+        status: 'failed',
+        errorCode,
+        durationMs: elapsed(),
+      }),
+    );
 
   const fail = ({
     retainedClaimRoots,
@@ -475,20 +491,8 @@ async function runIos(
     for (const line of lines) note(chalk.dim(phaseLine('', line)));
     if (remedy) note(chalk.dim(phaseLine('remedy', remedy)));
     if (logPath) note(chalk.dim(phaseLine('log', logPath)));
-    if (build)
-      writeLastBuild(
-        root,
-        lastBuildRecord({
-          devicePlacement,
-          buildMachine,
-          ...build,
-          configuration: builtConfiguration,
-          startedAt,
-          status: 'failed',
-          errorCode: code,
-          durationMs: elapsed(),
-        }),
-      );
+    const failedBuild = build ?? acquiredBuild;
+    if (failedBuild) recordFailedBuild(failedBuild, code);
     note(chalk.red(phaseLine('failed', code)));
     if (!setup) recordRun({ failed: true, durationMs: elapsed() });
     if (json) {
@@ -1006,6 +1010,10 @@ async function runIos(
         message: 'while finishing the run',
       });
       if (cancelled) return fail({ ...cancelled, build: artifact?.failureFields });
+      if (acquiredBuild) {
+        const { code } = error as { code?: unknown };
+        recordFailedBuild(acquiredBuild, typeof code === 'string' ? code : undefined);
+      }
       recordRun({ failed: true, durationMs: elapsed() });
       throw error;
     };
@@ -1132,6 +1140,11 @@ async function runIos(
         return fail(acquiredArtifact.failure);
       }
       artifact = acquiredArtifact.artifact;
+      acquiredBuild = {
+        ...artifact.failureFields,
+        appPath: artifact.path,
+        bundleId: artifact.bundleId,
+      };
       compilationCache = artifact.cache.compilation;
       if (hostedTarget)
         return await finishHostedIosRun({

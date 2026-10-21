@@ -46,7 +46,7 @@ import { getProject, setDevice, upsertProject, writeConfigSetting } from '../wor
 import { prepareHostedIos } from '../device-host/hosted-ios.ts';
 import { writeHostedIos } from '../device-host/ios-state.ts';
 import type { HostedIosPlacement } from '@stim-cli/core/state';
-import { buildMachinesFile, deviceHostMachinesFile, readLastBuilds } from '@stim-cli/core/state';
+import { buildMachinesFile, deviceHostMachinesFile, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import { IOS_DEV_MENU_OFF_DEFAULTS_PLIST } from '../engine/app-install.ts';
 import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -2634,6 +2634,31 @@ describe('failure output', () => {
     expect(!calls.order.includes('installIosApp')).toBeTruthy();
     expect(errs.join('\n')).toMatch(/no longer exists/);
     expect(errs.join('\n')).toMatch(/STIM_NO_DEVICE/);
+    const state = readWorkspaceState(root);
+    expect(readLastBuilds(state).ios).toMatchObject({
+      status: 'failed',
+      errorCode: 'STIM_NO_DEVICE',
+      fingerprint: FINGERPRINT,
+      cacheHit: false,
+    });
+    expect(readBuildHistory(state).ios?.[0]).toMatchObject({ result: 'failed', errorCode: 'STIM_NO_DEVICE' });
+  });
+
+  test('a build that completes and then throws is recorded as failed with the error code', async () => {
+    reserve();
+    await expect(
+      run(
+        {},
+        {
+          installIosApp: () => {
+            throw Object.assign(new Error('fixture install crash'), { code: 'STIM_FIXTURE_CRASH' });
+          },
+        },
+      ),
+    ).rejects.toThrow('fixture install crash');
+    const state = readWorkspaceState(root);
+    expect(readLastBuilds(state).ios).toMatchObject({ status: 'failed', errorCode: 'STIM_FIXTURE_CRASH' });
+    expect(readBuildHistory(state).ios?.[0]).toMatchObject({ result: 'failed', errorCode: 'STIM_FIXTURE_CRASH' });
   });
 
   test.each([false, true])('a failed install preserves completed cache statistics (json: %s)', async (json) => {
@@ -8407,6 +8432,34 @@ describe('iOS placement on a hosting Mac', () => {
       expect(close).toHaveBeenCalledOnce();
     },
   );
+
+  test('a hosted refusal after the build records the build as failed with its code', async () => {
+    reserve();
+    const { exitCode } = await run(
+      { remote: 'mini', json: true },
+      {
+        prepareHostedIos: async () => ({
+          host: { machine: 'mini', connection: { close() {} } },
+          choice: hostedDevice,
+          session: null,
+        }),
+        buildIos: async () => makeIosBuildSuccess({ appPath: join(root, 'Fixture.app'), bundleId: 'com.example.app' }),
+        placeHostedIos: async () => {
+          throw Object.assign(new Error('mini is unreachable'), { code: 'STIM_HOSTING_REFUSED' });
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    const state = readWorkspaceState(root);
+    expect(readLastBuilds(state).ios).toMatchObject({
+      status: 'failed',
+      errorCode: 'STIM_HOSTING_REFUSED',
+      fingerprint: FINGERPRINT,
+      cacheHit: false,
+    });
+    expect(state?.lastIosBuild).toMatchObject({ appPath: join(root, 'Fixture.app'), bundleId: 'com.example.app' });
+    expect(readBuildHistory(state).ios?.[0]).toMatchObject({ result: 'failed', errorCode: 'STIM_HOSTING_REFUSED' });
+  });
 
   test('a missing watcher preserves the restart remedy without claiming a simulator was reserved', async () => {
     reserve();

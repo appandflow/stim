@@ -407,3 +407,16 @@ export function persistLastBuild({
   }
   return lastBuild;
 }
+
+export function persistThrownBuild({
+  acquired,
+  error,
+  ...args
+}: Omit<Parameters<typeof persistLastBuild>[0], 'status' | 'errorCode' | 'diagnostics'> & {
+  acquired: boolean;
+  error: unknown;
+}): void {
+  if (!acquired) return;
+  const { code } = error as { code?: unknown };
+  persistLastBuild({ ...args, status: 'failed', errorCode: typeof code === 'string' ? code : undefined });
+}

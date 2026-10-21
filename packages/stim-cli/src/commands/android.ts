@@ -126,7 +126,7 @@ import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
 import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './android/artifact.ts';
-import { persistLastBuild } from './android/result.ts';
+import { persistLastBuild, persistThrownBuild } from './android/result.ts';
 import { finishAndroidRun, type AndroidRuntimePlan } from './android/launch.ts';
 import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
 import { planAndroid } from './android/next-build.ts';
@@ -737,6 +737,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
   let ccacheActivity: CcacheActivity = CCACHE_NOT_RUN;
   let reclaimed: ReclaimedStep[] = [];
+  let artifactAcquired = false;
 
   const fail = (
     code: string | undefined,
@@ -755,7 +756,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   ): RunAndroidResult => {
     const cancellation = cancelledFailure(context, PLATFORM, { code, message });
     if (cancellation) ({ code, message, remedy, lines } = cancellation);
-    if (lastBuildStatus) {
+    if (lastBuildStatus || artifactAcquired) {
       persistLastBuild({
         recordBuild,
         root,
@@ -1317,6 +1318,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     ccacheActivity = artifact.ccache;
     androidPackage = artifact.androidPackage;
     record.appPath = apkPath;
+    artifactAcquired = true;
     if (runCancellation(context)) return fail('STIM_CANCELLED', 'before install');
 
     if (hostedTarget)
@@ -1521,6 +1523,16 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       message: 'while finishing the run',
     });
     if (cancelled) return fail(cancelled.code, cancelled.message, cancelled.remedy, { lastBuildStatus: true });
+    persistThrownBuild({
+      acquired: artifactAcquired,
+      error,
+      recordBuild,
+      root,
+      record,
+      startedAt,
+      durationMs: now() - started,
+      out,
+    });
     recordRun({ failed: true, durationMs: now() - started });
     throw error;
   } finally {
