@@ -155,9 +155,9 @@ struct RootView: View {
       }
       .overlay(alignment: .topTrailing) { inspectorSideControls }
       .overlay(alignment: .topTrailing) {
-        ToastStack(center: toasts, onDismissAll: dismissAllCards)
+        ToastStack(center: toasts)
       }
-      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices, onDismissAll: dismissAllCards) }
+      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
       .onGeometryChange(for: CGFloat.self) {
         $0.size.width
       } action: {
@@ -778,32 +778,28 @@ struct RootView: View {
     }
   }
 
-  private func dismissAllCards() {
-    toasts.dismissAll()
-    notices.dismissAll()
-  }
-
   private func showNewWorkspaces(in payload: StatusPayload) -> [String] {
     let arrived = notices.arrivals.update(payload.environments)
+    var shown: [String] = []
     for workspace in arrived {
       let path = workspace.path
-      notices.show(
-        Notice(
-          icon: "plus.rectangle.on.folder", title: "New workspace \(workspace.names.title)",
-          detail: newWorkspaceDetail(workspace), actionTitle: "Show",
-          perform: {
-            navigate(.environment(path), .click("new workspace notice"))
-            let current = store.payload?.environments.first { $0.path == path }
-            focusedDeviceID =
-              current?.orderedDevices.first { device in
-                current?.build.map { $0.platform == device.platform && $0.slot == device.slot } ?? true
-              }?.id
-          }, key: WorkspaceArrivals.cardKey(path), workspacePath: path))
+      let card = Notice(
+        icon: "plus.rectangle.on.folder", title: "New workspace \(workspace.names.title)",
+        detail: newWorkspaceDetail(workspace), actionTitle: "Show",
+        perform: {
+          navigate(.environment(path), .click("new workspace notice"))
+          let current = store.payload?.environments.first { $0.path == path }
+          focusedDeviceID =
+            current?.orderedDevices.first { device in
+              current?.build.map { $0.platform == device.platform && $0.slot == device.slot } ?? true
+            }?.id
+        }, key: WorkspaceArrivals.cardKey(path), workspacePath: path)
+      if notices.show(card) { shown.append(path) }
     }
     for workspace in payload.environments {
       notices.update(key: WorkspaceArrivals.cardKey(workspace.path), detail: newWorkspaceDetail(workspace))
     }
-    return arrived.map(\.path)
+    return shown
   }
 
   private func newWorkspaceDetail(_ workspace: Workspace) -> String {

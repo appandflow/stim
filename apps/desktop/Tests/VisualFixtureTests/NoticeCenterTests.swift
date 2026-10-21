@@ -27,23 +27,24 @@ import XCTest
     XCTAssertEqual(dismissals, 0)
   }
 
-  func testDismissAllIncludesQueuedNoticesAndRunsEachDismissalOnce() {
-    let center = NoticeCenter()
-    var dismissals: [Int] = []
-    for index in 0..<5 {
-      center.show(
-        Notice(
-          icon: "bell", title: "Notice \(index)", actionTitle: "Show", perform: {},
-          onDismiss: { dismissals.append(index) }))
-    }
-    center.step(2)
+  func testNewWorkspaceCardsFollowTheSettingAndOtherNoticesAreUnaffected() {
+    let name = "NoticeCenterTests.\(UUID())"
+    let defaults = UserDefaults(suiteName: name)!
+    addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+    let center = NoticeCenter(defaults: defaults)
+    let card = Notice(
+      icon: "folder", title: "New workspace", actionTitle: "Show", perform: {},
+      key: WorkspaceArrivals.cardKey("/new"), workspacePath: "/new")
+    let update = Notice(icon: "bell", title: "stim available", actionTitle: "Update", perform: {})
 
-    center.dismissAll()
-    center.dismissAll()
+    XCTAssertTrue(center.show(card))
+    XCTAssertEqual(center.notices.map(\.id), [card.id])
+    center.removeAll()
 
-    XCTAssertTrue(center.notices.isEmpty)
-    XCTAssertNil(center.current)
-    XCTAssertEqual(dismissals, [4, 3, 2, 1, 0])
+    defaults.set(false, forKey: AppPreferences.Key.showsWorkspaceCards)
+    XCTAssertFalse(center.show(card))
+    XCTAssertTrue(center.show(update))
+    XCTAssertEqual(center.notices.map(\.id), [update.id])
   }
 
   func testRemovedWorkspaceNoticesLeaveWithoutRecordingAUserDismissal() throws {

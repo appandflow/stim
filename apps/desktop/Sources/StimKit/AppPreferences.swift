@@ -59,6 +59,8 @@ public enum AppPreferences {
     public static let debugLogging = "debugLogging"
 
     public static let tipsEnabled = "tips.enabled"
+    public static let showsWorkspaceCards = "cards.showsNewWorkspace"
+    public static let offersTutorial = "tutorial.offered"
     public static let usageRecord = "tips.usageRecord"
 
     public static let discoveryLaunches = "discovery.launches"
@@ -96,6 +98,8 @@ public enum AppPreferences {
       Key.notifiesDiskPressure: true,
       Key.showsInspector: true,
       Key.tipsEnabled: true,
+      Key.showsWorkspaceCards: true,
+      Key.offersTutorial: true,
       Key.viewerShowsActions: true,
       Key.syncsClipboard: true,
     ].merging(NotificationSettings.defaults) { current, _ in current }
@@ -146,6 +150,18 @@ public enum AppPreferences {
   public static var maxFramesPerSecond: Double {
     let value = UserDefaults.standard.double(forKey: Key.maxFramesPerSecond)
     return value > 0 ? value : 60
+  }
+
+  public static func showsWorkspaceCards(_ defaults: UserDefaults = .standard) -> Bool {
+    isOn(Key.showsWorkspaceCards, defaults)
+  }
+
+  public static func offersTutorial(_ defaults: UserDefaults = .standard) -> Bool {
+    isOn(Key.offersTutorial, defaults)
+  }
+
+  private static func isOn(_ key: String, _ defaults: UserDefaults) -> Bool {
+    defaults.object(forKey: key) == nil || defaults.bool(forKey: key)
   }
 
   public static var pausesHiddenFrames: Bool {
