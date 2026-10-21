@@ -33,7 +33,13 @@ import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
 import { budgetGate } from '../../budget.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
 import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
-import { clearIosAppData, listIosRuntimesAsync, listIosRuntimes, listAllIosSims } from '../../devices/ios.ts';
+import {
+  clearIosAppData,
+  listIosRuntimesAsync,
+  listIosRuntimes,
+  listAllIosSims,
+  type IosSimSnapshot,
+} from '../../devices/ios.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable,
@@ -124,6 +130,7 @@ export interface IosDeps {
   ensureOwnedDevice: typeof ensureOwnedDevice;
   listIosRuntimes: (options?: {
     signal?: AbortSignal;
+    snapshot?: IosSimSnapshot;
   }) => ReturnType<typeof listIosRuntimes> | Promise<ReturnType<typeof listIosRuntimes>>;
   listAllIosSims: typeof listAllIosSims;
   ensureBooted: typeof ensureBooted;

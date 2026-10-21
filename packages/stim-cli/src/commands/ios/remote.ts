@@ -121,6 +121,7 @@ export function selectIosTarget({
 export async function selectIosPlacement(
   args: Parameters<typeof selectIosTarget>[0] & {
     supportsRemote: boolean;
+    simSnapshot: IosSimSnapshot;
     validateSelectors: () => FailArgs | null | Promise<FailArgs | null>;
     deviceType: string | null;
     runtime: string | null;
@@ -149,10 +150,15 @@ export async function selectIosPlacement(
   if (refusal) return { failure: refusal };
   const easFallback = args.supportsRemote && remoteEasFallbackSetting(args.settings);
   try {
+    const localSims = await args.simSnapshot
+      .readAsync?.({ signal: args.operation?.signal, operation: args.operation })
+      .then((sims) => sims.filter((sim) => sim.available))
+      .catch(() => undefined);
     const placed = await d.automaticDevicePlacement({
       root,
       slot,
       platform: 'ios',
+      ...(localSims ? { localSims } : {}),
       selectors: hostedIosSelectors(deviceType, runtime),
       appMode,
       buildMachine: opts.remoteBuild,

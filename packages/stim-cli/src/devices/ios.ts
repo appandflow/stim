@@ -126,6 +126,7 @@ const SIMCTL_TIMEOUT_MS = 60_000;
 const SIMCTL_OPTIONS = { timeoutMs: SIMCTL_TIMEOUT_MS, killSignal: 'SIGKILL' } as const;
 
 const SIMCTL_LIST_ARGS = ['simctl', 'list', 'devices', '--json'];
+const SIMCTL_LIST_ALL_ARGS = ['simctl', 'list', '--json'];
 
 export function listAllIosSims({
   timeoutMs = 30000,
@@ -135,33 +136,73 @@ export function listAllIosSims({
   return parseSimctlList(out, { includeUnavailable });
 }
 
+interface IosSimulatorListing {
+  /** Every simulator, unavailable ones included. */
+  sims: IosSimRecord[];
+  runtimes: IosRuntime[];
+  deviceTypes: IosDeviceType[];
+}
+
+interface IosListOptions {
+  signal?: AbortSignal;
+  operation?: StimContext;
+}
+
 export interface IosSimSnapshot {
   /** All simulators, unavailable ones included (filter on `available`); one `simctl list` until `invalidate`. */
   read(): IosSimRecord[];
   /** Await a native listing and cache it for subsequent synchronous reads. */
-  readAsync?(): Promise<IosSimRecord[]>;
+  readAsync?(options?: IosListOptions): Promise<IosSimRecord[]>;
+  /** Installed iOS runtimes, from the same `simctl list` that fills the simulators. Kept across `invalidate`. */
+  runtimes?(options?: IosListOptions): Promise<IosRuntime[]>;
+  /** Simulator device types, from the same `simctl list` that fills the simulators. Kept across `invalidate`. */
+  deviceTypes?(options?: IosListOptions): Promise<IosDeviceType[]>;
   /** Drop the cached listing after Stim changes device state, so the next `read` lists again. */
   invalidate(): void;
 }
 
 export function createIosSimSnapshot(): IosSimSnapshot {
-  let cached: { value?: IosSimRecord[]; pending?: Promise<IosSimRecord[]> } | null = null;
+  type Entry = { value?: IosSimRecord[]; pending?: Promise<IosSimRecord[]> };
+  let cached: Entry | null = null;
+  let listing: Promise<IosSimulatorListing> | null = null;
+  const start = (options: IosListOptions | undefined): Promise<IosSimulatorListing> => {
+    if (listing) return listing;
+    const entry = (cached ??= {});
+    const run = listIosSimulatorAsync(options);
+    const pending = run.then((all) => (entry.value ??= all.sims));
+    listing = run;
+    entry.pending = pending;
+    const forget = () => {
+      if (listing === run) listing = null;
+      if (entry.pending === pending) entry.pending = undefined;
+    };
+    run.catch(forget);
+    pending.catch(forget);
+    return run;
+  };
   return {
     read() {
       const entry = (cached ??= {});
       entry.value ??= listAllIosSims({ includeUnavailable: true });
       return entry.value;
     },
-    async readAsync() {
+    async readAsync(options) {
       const entry = (cached ??= {});
       if (entry.value) return entry.value;
-      entry.pending ??= listAllIosSimsAsync({ includeUnavailable: true })
+      if (!entry.pending && !listing) start(options);
+      entry.pending ??= listAllIosSimsAsync({ includeUnavailable: true, ...options })
         .then((value) => (entry.value = value))
         .catch((error) => {
           entry.pending = undefined;
           throw error;
         });
       return entry.pending;
+    },
+    async runtimes(options) {
+      return (await start(options)).runtimes;
+    },
+    async deviceTypes(options) {
+      return (await start(options)).deviceTypes;
     },
     invalidate() {
       cached = null;
@@ -184,6 +225,25 @@ export async function listAllIosSimsAsync({
     cwd: operation?.cwd,
   });
   return parseSimctlList(out, { includeUnavailable });
+}
+
+/** The simulators, runtimes and device types out of one unfiltered `simctl list --json`. */
+function parseSimctlListing(jsonOutput: string): IosSimulatorListing {
+  return {
+    sims: parseSimctlList(jsonOutput, { includeUnavailable: true }),
+    runtimes: parseIosRuntimes(jsonOutput),
+    deviceTypes: parseIosDeviceTypes(jsonOutput),
+  };
+}
+
+async function listIosSimulatorAsync({ signal, operation }: IosListOptions = {}): Promise<IosSimulatorListing> {
+  const out = await runOperationFile(operation, getExecutor(), 'xcrun', SIMCTL_LIST_ALL_ARGS, {
+    timeoutMs: 30000,
+    killSignal: 'SIGKILL',
+    signal,
+    cwd: operation?.cwd,
+  });
+  return parseSimctlListing(out);
 }
 
 export function parseRuntimeVersion(runtimeId: string): string {
@@ -449,7 +509,9 @@ export function listIosDeviceTypes(): IosDeviceType[] {
 export async function listIosDeviceTypesAsync({
   signal,
   operation,
-}: { signal?: AbortSignal; operation?: StimContext } = {}): Promise<IosDeviceType[]> {
+  snapshot,
+}: { signal?: AbortSignal; operation?: StimContext; snapshot?: IosSimSnapshot } = {}): Promise<IosDeviceType[]> {
+  if (snapshot?.deviceTypes) return snapshot.deviceTypes({ signal, operation });
   return parseIosDeviceTypes(
     await runOperationFile(operation, getExecutor(), 'xcrun', LIST_DEVICE_TYPES_ARGS, {
       ...LIST_DEVICE_TYPES_OPTIONS,
@@ -771,7 +833,11 @@ export function listIosRuntimes(): IosRuntime[] {
   return parseIosRuntimes(getExecutor().runFile('xcrun', LIST_RUNTIMES_ARGS, LIST_RUNTIMES_OPTIONS));
 }
 
-export async function listIosRuntimesAsync({ signal }: { signal?: AbortSignal } = {}): Promise<IosRuntime[]> {
+export async function listIosRuntimesAsync({
+  signal,
+  snapshot,
+}: { signal?: AbortSignal; snapshot?: IosSimSnapshot } = {}): Promise<IosRuntime[]> {
+  if (snapshot?.runtimes) return snapshot.runtimes({ signal });
   return parseIosRuntimes(
     await getExecutor().runFileAsync('xcrun', LIST_RUNTIMES_ARGS, { ...LIST_RUNTIMES_OPTIONS, signal }),
   );
