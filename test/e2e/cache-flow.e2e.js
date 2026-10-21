@@ -157,12 +157,13 @@ test('the loser of a race waits and resolves the artifact the winner stores', as
   const builder = writeScript('builder.mjs', [
     `const { acquireBuildLock, releaseBuildLock } = await import(${JSON.stringify(LOCK_URL)});`,
     `const { storeBuild } = await import(${JSON.stringify(CACHE_URL)});`,
-    'const { mkdirSync, writeFileSync } = await import("node:fs");',
+    'const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");',
     'const { join } = await import("node:path");',
     `const got = acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: process.argv[2], logFile: join(process.argv[2], "build.ndjson") });`,
     'if (!got.acquired) { process.stdout.write(JSON.stringify({ raced: true })); process.exit(0); }',
     'try {',
-    '  await new Promise(r => setTimeout(r, 900));',
+    '  writeFileSync(join(process.argv[3], "locked"), "");',
+    '  while (!existsSync(join(process.argv[3], "release"))) await new Promise(r => setTimeout(r, 20));',
     '  const app = join(process.argv[2], "Fixture.app");',
     '  mkdirSync(app, { recursive: true });',
     '  writeFileSync(join(app, "Fixture"), "binary");',
@@ -176,7 +177,14 @@ test('the loser of a race waits and resolves the artifact the winner stores', as
     `const { acquireBuildLock, waitForBuild } = await import(${JSON.stringify(LOCK_URL)});`,
     `const got = acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: process.argv[2], logFile: null });`,
     'if (got.acquired) { process.stdout.write(JSON.stringify({ wonInstead: true })); process.exit(0); }',
-    `const result = await waitForBuild({ platform: "ios", key: ${JSON.stringify(key)}, intervalMs: 50, out: (l) => console.error(l) });`,
+    'const { writeFileSync } = await import("node:fs");',
+    'const { join } = await import("node:path");',
+    'let contended = false;',
+    'const sleep = (ms) => {',
+    '  if (!contended) { contended = true; writeFileSync(join(process.argv[3], "contended"), ""); }',
+    '  return new Promise(r => setTimeout(r, ms));',
+    '};',
+    `const result = await waitForBuild({ platform: "ios", key: ${JSON.stringify(key)}, intervalMs: 50, sleep, out: (l) => console.error(l) });`,
     'process.stdout.write(JSON.stringify({ ...result, heldPid: got.held.pid }));',
   ]);
 
@@ -185,9 +193,15 @@ test('the loser of a race waits and resolves the artifact the winner stores', as
   mkdirSync(buildRoot, { recursive: true });
   mkdirSync(waitRoot, { recursive: true });
 
-  const started = runNode(builder, [buildRoot]);
-  await delay(300);
-  const [built, waited] = await Promise.all([started, runNode(waiter, [waitRoot])]);
+  const signals = join(ctx.tmp, 'race-signals');
+  mkdirSync(signals, { recursive: true });
+
+  const started = runNode(builder, [buildRoot, signals]);
+  await untilExists(join(signals, 'locked'), started);
+  const waiting = runNode(waiter, [waitRoot, signals]);
+  await untilExists(join(signals, 'contended'), waiting);
+  writeFileSync(join(signals, 'release'), '');
+  const [built, waited] = await Promise.all([started, waiting]);
 
   const builderOut = JSON.parse(built.stdout.trim());
   assert.equal(builderOut.built, true, `builder should have built: ${built.stderr}`);
@@ -265,8 +279,18 @@ function runNode(scriptPath, args = []) {
   });
 }
 
-function delay(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+async function untilExists(path, child) {
+  let exited = null;
+  child.then(
+    (r) => (exited = r),
+    () => null,
+  );
+  const deadline = Date.now() + 30000;
+  while (!existsSync(path)) {
+    assert.equal(exited, null, `the child exited before ${path} appeared: ${exited?.stderr}`);
+    assert.ok(Date.now() < deadline, `timed out waiting for ${path}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
 }
 
 function makeMinimalRnProject(root) {
