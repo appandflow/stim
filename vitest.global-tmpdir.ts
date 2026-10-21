@@ -30,10 +30,16 @@ export default function setup(): () => void {
       else process.env[key] = value;
     }
     const leaked = readdirSync(root).filter((name) => TRACKED_PREFIXES.some((prefix) => name.startsWith(prefix)));
+    const contents = leaked.slice(0, 3).map((name) => {
+      try {
+        return `${name} [${readdirSync(join(root, name)).slice(0, 5).join(', ')}]`;
+      } catch {
+        return name;
+      }
+    });
     try {
       rmSync(root, { recursive: true, force: true, maxRetries: 3 });
-    } catch (error) {
-      if (leaked.length === 0) throw error;
+    } catch {
     }
     if (leaked.length === 0) return;
     const counts = new Map<string, number>();
@@ -42,8 +48,8 @@ export default function setup(): () => void {
       counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
     }
     throw new Error(
-      `The test run left ${leaked.length} entries in TMPDIR: ${[...counts].map(([prefix, count]) => `${prefix}* x${count}`).join(', ')} ` +
-        `(for example ${leaked.slice(0, 3).join(', ')}). Remove what a test creates in afterEach, afterAll or onTestFinished.`,
+      `The test run left ${leaked.length} ${leaked.length === 1 ? 'entry' : 'entries'} in TMPDIR: ${[...counts].map(([prefix, count]) => `${prefix}* x${count}`).join(', ')} ` +
+        `(for example ${contents.join('; ')}). Remove what a test creates in afterEach, afterAll or onTestFinished.`,
     );
   };
 }

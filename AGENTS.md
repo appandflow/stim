@@ -605,9 +605,9 @@ bypass the scoped GC guard for real-tool validation. Clean up only exact devices
 created by that validation, using centralized teardown and retained fixture records.
 
 The unit suite runs in a private `TMPDIR` (`vitest.global-tmpdir.ts`) and fails
-when it leaves a `stim-claim-`, `stim-host-`, `stim-fakehome-`,
-`stim-hosted-macos-`, `stim-server-`, `stim-ws-` or `TemporaryDirectory` entry
-in it. Remove every directory a test creates in `afterEach`, `afterAll` or
+when it leaves an entry with one of the prefixes listed there. Other prefixes
+are not enforced, and a child started with a hand-built `env` bypasses the
+redirect. Remove every directory a test creates in `afterEach`, `afterAll` or
 `onTestFinished`.
 
 The EAS session ledger and project lock under `~/.stim/machine/eas` ignore
