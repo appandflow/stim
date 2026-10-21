@@ -40,7 +40,7 @@ import {
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
-import { writeWorkspaceLaunch, workspaceDevServerMode } from '../../supervisor/state.ts';
+import { workspaceDevServerMode, writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
 import { recordPhoneReverse } from '../../devices/phone-reverses.ts';
 import type {
   VerifyLaunchResultLike,
@@ -484,7 +484,7 @@ interface FinishAndroidRunArgs {
   kill: (pid: number, signal: NodeJS.Signals) => boolean;
   pidAlive: typeof pidExists;
   verifyCollector: typeof verifyCollectorOwnership;
-  writeLaunch: typeof writeWorkspaceLaunch;
+  writeLaunch: typeof writeWorkspaceLaunchAsync;
   recordBuild?: typeof recordFinishedBuild;
   now: () => number;
   out: (line: string) => void;
@@ -842,7 +842,7 @@ export async function finishAndroidRun({
     writer.write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
   }
 
-  if (androidPackage) upsertProject(root, { androidPackage });
+  if (androidPackage) await withConfigLockAsync(() => upsertProject(root, { androidPackage }));
   record.bundleId = androidPackage;
   if (!androidPackage) {
     return fail(
@@ -871,7 +871,7 @@ export async function finishAndroidRun({
     physical,
     msg: `launching ${androidPackage} on ${serial}`,
   });
-  notePhoneReverse({ root, slot, serial, metroPort, physical, remoteDevice, runtimeKind: runtime.kind }, out);
+  await notePhoneReverse({ root, slot, serial, metroPort, physical, remoteDevice, runtimeKind: runtime.kind }, out);
   const launched = await runtime.launch(runtimePreparation, {
     serial,
     androidPackage,
@@ -910,7 +910,7 @@ export async function finishAndroidRun({
 
   if (!physical && !remoteDevice) {
     try {
-      writeLaunch(root, 'android', {
+      await writeLaunch(root, 'android', {
         appId: androidPackage,
         deviceId: serial,
         metroPort,
@@ -1086,7 +1086,7 @@ function launchRemedy(
   );
 }
 
-function notePhoneReverse(
+async function notePhoneReverse(
   args: {
     root: string;
     slot?: string;
@@ -1097,11 +1097,11 @@ function notePhoneReverse(
     runtimeKind: string;
   },
   out: (line: string) => void,
-): void {
+): Promise<void> {
   const { root, slot = 'default', serial, metroPort } = args;
   if (!args.physical || args.remoteDevice || args.runtimeKind !== 'metro' || typeof metroPort !== 'number') return;
   try {
-    recordPhoneReverse(root, slot, serial, metroPort);
+    await recordPhoneReverse(root, slot, serial, metroPort);
   } catch (error) {
     out(
       phaseLine(

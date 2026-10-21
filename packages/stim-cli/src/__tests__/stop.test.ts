@@ -701,8 +701,8 @@ describe('stop removes the adb reverses a --device run left on a physical phone'
       [],
     ],
   ])('before it stops Metro, and not while it refuses to: %s', async (_case, over, expected) => {
-    recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8085);
-    recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8083);
+    await recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8085);
+    await recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8083);
     const events: string[] = [];
     recordAdb(events);
     const { opts } = seams({
@@ -720,8 +720,8 @@ describe('stop removes the adb reverses a --device run left on a physical phone'
   });
 
   test('stop --slot removes only that slot phone, and keeps the others recorded', async () => {
-    recordPhoneReverse(tmpRoot, 'default', 'DEFAULT-PHONE', 8083);
-    recordPhoneReverse(tmpRoot, 'tablet', 'RFCR7081Q9L', 8083);
+    await recordPhoneReverse(tmpRoot, 'default', 'DEFAULT-PHONE', 8083);
+    await recordPhoneReverse(tmpRoot, 'tablet', 'RFCR7081Q9L', 8083);
     const events: string[] = [];
     recordAdb(events);
     const { opts } = seams({ root: tmpRoot });
@@ -735,7 +735,7 @@ describe('stop removes the adb reverses a --device run left on a physical phone'
   });
 
   test('an unreachable phone does not fail stop, and its record is dropped', async () => {
-    recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8083);
+    await recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8083);
     setExecutor(
       makeExecutor({
         runFileQuietAsync: async () => {

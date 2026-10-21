@@ -3,6 +3,8 @@ import { stripAnsi } from '../process-output.ts';
 type RecordLike = { msg?: unknown; stack?: unknown; componentStack?: unknown; [key: string]: unknown };
 type StackKind = 'Error' | 'Component' | 'Native' | 'Caused-by';
 
+const MAX_FRAME_LINE_LENGTH = 2048;
+
 function framePriority(frame: string, root?: string): number {
   const normalized = frame.replaceAll('\\', '/');
   if (/^\s*at (?:android\.|java\.|com\.android\.|dalvik\.)/.test(normalized)) return 2;
@@ -190,9 +192,10 @@ export function launchErrorPreview(
       flush();
       kind = /^component/i.test(header[1]!) ? 'Component' : 'Error';
     } else if (
-      /^\s*at\s+\S/.test(line) ||
-      /^\s*\S[^\n]*@\S+:\d+:\d+\s*$/.test(line) ||
-      /^\s+\S[^\n]*\([^()]+:\d+:\d+\)\s*$/.test(line)
+      line.length <= MAX_FRAME_LINE_LENGTH &&
+      (/^\s*at\s+\S/.test(line) ||
+        /^\s*\S[^\n]*@\S+:\d+:\d+\s*$/.test(line) ||
+        /^\s+\S[^\n]*\([^()]+:\d+:\d+\)\s*$/.test(line))
     ) {
       if (!full && /\(https?:\/\/[^\s)]*$/.test(line)) return;
       frames.push(line);

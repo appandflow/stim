@@ -606,6 +606,12 @@ This redirects Stim state, not machine-global simulators or emulators. Never
 bypass the scoped GC guard for real-tool validation. Clean up only exact devices
 created by that validation, using centralized teardown and retained fixture records.
 
+The unit suite runs in a private `TMPDIR` (`vitest.global-tmpdir.ts`) and fails
+when it leaves an entry with one of the prefixes listed there. Other prefixes
+are not enforced, and a child started with a hand-built `env` bypasses the
+redirect. Remove every directory a test creates in `afterEach`, `afterAll` or
+`onTestFinished`.
+
 The EAS session ledger and project lock under `~/.stim/machine/eas` ignore
 `STIM_HOME` so every Stim home finds billable sessions. A test that reaches
 them passes a temporary `ledgerRoot`, `machineRoot`, or `easLedgerRoot`, or

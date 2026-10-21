@@ -17,12 +17,19 @@ import {
   unknownSettingKeys,
   type SettingsObject,
 } from '../workspace/settings.ts';
-import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../workspace/config.ts';
+import {
+  getProject,
+  isPathPrefix,
+  loadConfig,
+  removeProject,
+  upsertProject,
+  withConfigLockAsync,
+} from '../workspace/config.ts';
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { relocatePods } from '../workspace/pods-relocate.ts';
 import { isMobileProject, findProjectRoot } from '../workspace/project.ts';
-import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
@@ -201,9 +208,11 @@ export function warmedWorkspace(root: string, target: string, cwd: string): stri
   return apps.size === 1 ? [...apps][0]! : app;
 }
 
-function registerWarmedWorkspace(workspace: string, out: (line: string) => void): void {
+async function registerWarmedWorkspace(workspace: string, out: (line: string) => void): Promise<void> {
   try {
-    if (!getProject(workspace)) upsertProject(workspace, {});
+    await withConfigLockAsync(() => {
+      if (!getProject(workspace)) upsertProject(workspace, {});
+    });
   } catch (error) {
     out(chalk.yellow(`Could not register ${workspace} for status: ${(error as Error)?.message || String(error)}`));
   }
@@ -255,8 +264,9 @@ export async function warmWorktreeTarget(opts: {
     workspace = warmedWorkspace(root, target, opts.cwd);
     const scope = new Set([...reclaimKeys(target), ...(app ? [app] : []), ...(workspace ? [workspace] : [])]);
     for (const key of scope) opts.beforeWarm?.(nativeCanonicalPath(key));
-    if (app) recordWorkspaceUse(app, new Date(), operation.env, opts.cwd);
-    if (workspace && workspace !== app) recordWorkspaceUse(workspace, new Date(), operation.env, opts.cwd);
+    if (app) await recordWorkspaceUseAsync(app, new Date(), operation.env, opts.cwd, operation.signal);
+    if (workspace && workspace !== app)
+      await recordWorkspaceUseAsync(workspace, new Date(), operation.env, opts.cwd, operation.signal);
     if (!workspace) {
       out(
         chalk.dim(
@@ -267,7 +277,7 @@ export async function warmWorktreeTarget(opts: {
         ),
       );
     } else {
-      registerWarmedWorkspace(workspace, out);
+      await registerWarmedWorkspace(workspace, out);
       progress = startWarmProgress(workspace, opts.refresh ? 'refresh' : 'copy', {
         note: (line) => out(chalk.yellow(line)),
       });
@@ -1120,7 +1130,7 @@ async function removeOrRefuse(
       }
       opts.beforeRemove?.(removalPath(mainRoot));
       if (!(await branchExistsAsync(mainRoot, branch, options))) {
-        removeProject(path);
+        await withConfigLockAsync(() => removeProject(path));
         output.error(chalk.dim(phaseLine('branch', `${branch} is already absent; cleared its pending cleanup record`)));
         return;
       }
@@ -1146,7 +1156,7 @@ async function removeOrRefuse(
       }
       try {
         await deleteBranchAsync(mainRoot, branch, pending.worktreePendingBranchSha, options);
-        removeProject(path);
+        await withConfigLockAsync(() => removeProject(path));
         output.error(chalk.dim(phaseLine('branch', `deleted ${branch}; cleared its pending cleanup record`)));
       } catch (error) {
         if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
@@ -1386,7 +1396,9 @@ async function removeOrRefuse(
               finish();
               return;
             }
-            upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha });
+            await withConfigLockAsync(() =>
+              upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha }),
+            );
             let checkedOutAt: string | undefined;
             try {
               checkedOutAt = (await listWorktreesAsync(branchDeleteCwd, options)).find(
@@ -1433,7 +1445,7 @@ async function removeOrRefuse(
           } else if (branch && retainedBranchReason) {
             output.error(chalk.dim(phaseLine('branch', `kept ${branch} (${retainedBranchReason})`)));
           }
-          removeProject(path);
+          await withConfigLockAsync(() => removeProject(path));
           finish();
         },
         opts.operation,

@@ -9,7 +9,8 @@ import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import type { Command } from 'commander';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
-import { androidAppProcess, ensureMetroReverse, iosAppProcess } from '../engine/app-install.ts';
+import { androidAppProcess, ensureMetroReverse, iosAppProcess, type AppProcessProbe } from '../engine/app-install.ts';
+import { loadScaledBudgetMs } from '../process-group-exit.ts';
 import { reloadThroughMetro } from '../engine/reload.ts';
 import { listeningPidsAsync, processCwds, resolveProjectMetro, type MetroResolution } from '../metro.ts';
 import { isMetroRunning } from '../ports.ts';
@@ -21,7 +22,9 @@ import { readWorkspaceState, recordWorkspaceUseAsync } from '../workspace/worksp
 import { resolveOwnedAvdSerialAsync, type ResolvedAvdSerial } from '../devices/android.ts';
 import { listAllIosSimsAsync, resolveOwnedIosSim, type ResolvedIosSim } from '../devices/ios.ts';
 import {
+  readRemoteSession,
   readWorkspaceLaunches,
+  type RemoteSessionRecord,
   type WorkspaceLaunchPlatform,
   type WorkspaceLaunchRecord,
 } from '../supervisor/state.ts';
@@ -54,6 +57,7 @@ interface LiveTarget {
   deviceName: string;
   hosted?: boolean;
   hostedAndroid?: HostedAndroidPlacement;
+  processUnknown?: boolean;
 }
 
 interface TargetFailure {
@@ -65,6 +69,7 @@ export interface ReloadDeps {
   findWorkspace: (cwd: string) => string | null | Promise<string | null>;
   getProject: typeof getProject;
   readLaunches: typeof readWorkspaceLaunches;
+  readRemote: (root: string) => RemoteSessionRecord | null;
   resolveIos: (udid: string) => ResolvedIosSim | Promise<ResolvedIosSim>;
   resolveAndroid: (avdName: string) => Promise<ResolvedAvdSerial>;
   iosProcess: typeof iosAppProcess;
@@ -88,6 +93,7 @@ const DEFAULT_DEPS: ReloadDeps = {
   findWorkspace: (cwd) => findCommandWorkspaceAsync(cwd, repoRootAsync, (line) => console.error(line)),
   getProject,
   readLaunches: readWorkspaceLaunches,
+  readRemote: readRemoteSession,
   resolveIos: async (udid) => resolveOwnedIosSim(udid, await listAllIosSimsAsync({})),
   resolveAndroid: resolveOwnedAvdSerialAsync,
   iosProcess: iosAppProcess,
@@ -157,16 +163,29 @@ async function reloadBrowser(
   };
 }
 
-async function processFailure(
+const PROCESS_PROBE_BASE_MS = 5_000;
+const PROCESS_PROBE_CAP_MS = 30_000;
+
+async function appProcessState(
   platform: WorkspaceLaunchPlatform,
   record: WorkspaceLaunchRecord,
   d: ReloadDeps,
-  slot = 'default',
-): Promise<ReloadFailure | null> {
+): Promise<AppProcessProbe['state']> {
   const { state } =
     platform === 'ios'
-      ? await d.iosProcess(record.deviceId, record.appId)
+      ? await d.iosProcess(record.deviceId, record.appId, {
+          timeoutMs: loadScaledBudgetMs(PROCESS_PROBE_BASE_MS, PROCESS_PROBE_CAP_MS),
+        })
       : await d.androidProcess(record.deviceId, record.appId);
+  return state;
+}
+
+function processFailure(
+  platform: WorkspaceLaunchPlatform,
+  record: WorkspaceLaunchRecord,
+  state: AppProcessProbe['state'],
+  slot = 'default',
+): ReloadFailure | null {
   if (state === 'unknown') {
     const probe =
       platform === 'ios'
@@ -231,9 +250,10 @@ async function inspectTarget(
         ),
       };
     }
-    const stopped = await processFailure(platform, record, d, slot);
+    const state = await appProcessState(platform, record, d);
+    const stopped = state === 'unknown' ? null : processFailure(platform, record, state, slot);
     if (stopped) return { platform, error: stopped };
-    return { platform, slot, record, deviceName: resolved.sim.name };
+    return { platform, slot, record, deviceName: resolved.sim.name, processUnknown: state === 'unknown' };
   }
 
   const configured = project.platforms?.android;
@@ -270,9 +290,42 @@ async function inspectTarget(
       ),
     };
   }
-  const stopped = await processFailure(platform, record, d, slot);
+  const state = await appProcessState(platform, record, d);
+  const stopped = state === 'unknown' ? null : processFailure(platform, record, state, slot);
   if (stopped) return { platform, error: stopped };
-  return { platform, slot, record, deviceName: configured.avdName };
+  return { platform, slot, record, deviceName: configured.avdName, processUnknown: state === 'unknown' };
+}
+
+function remoteSessionFor(
+  session: RemoteSessionRecord | null,
+  platform: ReloadPlatform | null,
+): RemoteSessionRecord | null {
+  return session && (!platform || !session.platform || session.platform === platform) ? session : null;
+}
+
+function unlaunchedRefusal(
+  platform: ReloadPlatform | null,
+  metroPort: number | null,
+  remote: RemoteSessionRecord | null,
+): ReloadFailure {
+  const metroReload = metroPort ? `agent-device metro reload --metro-port ${metroPort}` : null;
+  if (remote) {
+    return failure(
+      'STIM_RELOAD_UNSUPPORTED',
+      `This workspace's remote device is EAS Simulator session ${remote.sessionId}, which stim reload does not reach.`,
+      metroReload
+        ? `If the app is running there, run \`${metroReload}\`; it asks every app connected to this workspace's Metro to reload. Otherwise run \`stim ${platform ?? remote.platform ?? 'ios'} --remote eas\` to launch it.`
+        : 'Run `stim start`, launch the app on the session, then reload it with `agent-device metro reload --metro-port <port>`.',
+    );
+  }
+  const run = platform ? `Run \`stim ${platform}\` first.` : 'Run `stim ios` or `stim android` first.';
+  return failure(
+    'STIM_RELOAD_STOPPED',
+    platform ? `No ${platform} app launch is recorded for this workspace.` : 'No live app launch is recorded.',
+    metroReload
+      ? `${run} Stim records launches only on owned local simulators and emulators, so an app running on a physical device (--device) is not recorded; reload it with \`${metroReload}\`.`
+      : run,
+  );
 }
 
 function isTargetFailure(value: LiveTarget | TargetFailure): value is TargetFailure {
@@ -449,11 +502,7 @@ export async function runReload({
       ok: false,
       error:
         firstFailure ??
-        failure(
-          'STIM_RELOAD_STOPPED',
-          platform ? `No ${platform} app launch is recorded for this workspace.` : 'No live app launch is recorded.',
-          platform ? `Run \`stim ${platform}\` first.` : 'Run `stim ios` or `stim android` first.',
-        ),
+        unlaunchedRefusal(platform, project.metroPort ?? null, remoteSessionFor(d.readRemote(root), platform)),
     };
   }
 
@@ -502,8 +551,11 @@ export async function runReload({
       ),
     };
   }
-  const stopped = target.hosted ? null : await processFailure(target.platform, target.record, d, target.slot);
+  const rechecked =
+    target.hosted || target.processUnknown ? 'running' : await appProcessState(target.platform, target.record, d);
   throwIfCancelled(signal, 'reload');
+  const stopped =
+    rechecked === 'unknown' ? null : processFailure(target.platform, target.record, rechecked, target.slot);
   if (stopped) return { ok: false, error: stopped };
 
   const reverseRestored: string[] = [];
@@ -565,7 +617,12 @@ export async function runReload({
   if (!reloaded.ok) {
     const stoppedAfterMetro = target.hosted
       ? null
-      : await processFailure(target.platform, target.record, d, target.slot);
+      : processFailure(
+          target.platform,
+          target.record,
+          await appProcessState(target.platform, target.record, d),
+          target.slot,
+        );
     if (stoppedAfterMetro) return { ok: false, error: stoppedAfterMetro };
     if (target.hosted)
       return {

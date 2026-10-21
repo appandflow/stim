@@ -145,7 +145,11 @@ function reportChild(
     return 'unknown';
   };
   const refuse = (message: string): never => {
-    const failure = Object.assign(new Error(message), { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+    const failure = Object.assign(new Error(message), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+      remedy: `Check whether the report child${pid === undefined ? '' : ` ${pid}${process.platform === 'win32' ? '' : ` (\`ps -p ${pid}\`)`}`} and its descendants are still running and stop them if they are`,
+    });
     const error = failed?.(failure) ?? failure;
     child.stdin?.destroy();
     child.stdout?.destroy();

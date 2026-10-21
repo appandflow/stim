@@ -822,9 +822,22 @@ no native launch is recorded. A web reload sends `Page.reload` to the owned page
 and reports `strategy: "cdp"`, with `appId` set to the URL the page was on when
 Stim sent the reload.
 
+Stim does not record launches on a physical device (`--device`) or an EAS
+Simulator session (`--remote eas`), so `reload` cannot reach them. With a
+recorded EAS session it refuses with `STIM_RELOAD_UNSUPPORTED`; with no
+recorded launch it refuses with `STIM_RELOAD_STOPPED`. Both remedies name
+`agent-device metro reload --metro-port <port>`, which asks every app connected
+to the workspace Metro to reload.
+
 Every native reload goes over the workspace Metro websocket, on both platforms. It never
 reopens a development-client URL, because that restarts the app rather than
 reloading its JavaScript.
+
+Before sending, Stim checks that the app process exists. On iOS that probe
+(`simctl spawn launchctl list`) waits 5 seconds, scaled up with host load to at
+most 30. When the device tool still does not answer, Stim sends the reload anyway;
+`STIM_RELOAD_PROBE_FAILED` is then reported only if Metro finds no peer for the app after the reload fails.
+A process the probe proves is gone still fails with `STIM_RELOAD_STOPPED`.
 
 An Android reload first checks `adb reverse` on each live owned emulator launched
 against this Metro and re-applies the Metro port's reverse where it is missing.
@@ -858,7 +871,7 @@ the app. It reports the miss either way, so verify the UI before acting on the
 remedy.
 
 When Metro reports no peer for the app, retry once first: a client reconnects
-every 2 seconds, which is also this probe's timeout, so a single miss can be a
+every 2 seconds, which is also the Metro probe's timeout, so a single miss can be a
 reconnect window rather than an app that never connected. If it stays
 unreachable on iOS, an error in the first bundle leaves the app without a
 packager connection at all, and no retry will make it a peer. The command then
@@ -1496,7 +1509,8 @@ cache facts. `configuration` is the iOS configuration or Android variant the run
 `phases` gives the milliseconds the run spent in each build phase it entered,
 such as `pods`, `compile` and `install`. Only runs that record a last build are
 listed: a run that stopped before looking up a build, such as one with a bad
-flag, is not.
+flag, is not. A run that builds or reuses an app and then fails at
+the device, install or launch step is listed with `failed` and its error code.
 
 Each booted simulator and detected emulator also shows who is using it:
 

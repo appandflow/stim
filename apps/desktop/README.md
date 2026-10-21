@@ -2133,6 +2133,14 @@ STIM_WORKSPACE_SHOTS=/tmp/stim-workspace-shots swift test --filter VisualFixture
 On a native 1x window, add `STIM_ARCHIVE_REFERENCE_SHOTS=1` to also export the four
 archive comparison captures at their reference dimensions. Inspect them before replacing references.
 
+To render the toolbar status pill with a status error inside a real window toolbar item, in light and dark:
+
+```sh
+STIM_TOOLBAR_STATUS_SHOTS=/tmp/stim-toolbar-status swift test --filter ToolbarStatusErrorScreenshotTests
+```
+
+The test skips without the variable. A toolbar draws a `Label` as its icon only, so check that the images show the message beside the icon.
+
 These fixtures use failed iOS and successful Android build history with phase timings,
 a merged PR, ended agents, expired logs and two recording slots. The real archive sidebar,
 workspace and build-sheet screens load the sanitized `Fixtures/real-archive` case, including

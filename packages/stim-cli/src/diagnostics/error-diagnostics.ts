@@ -7,6 +7,8 @@ import { resolveProjectMetro } from '../metro.ts';
 import { attachExpoErrorContext, readLogRecords } from '@stim-cli/core/state';
 import { writeDiagnosticOnce } from './diagnostic-store.ts';
 
+const SOURCE_LOCATION = /(?<![^\s()"\\])[^\s()"\\]+:\d+:\d+/g;
+
 function key(record: NdjsonRecord): string {
   return createHash('sha256').update(JSON.stringify(record)).digest('hex');
 }
@@ -73,7 +75,7 @@ export function mergeErrorCopies(records: readonly NdjsonRecord[], root?: string
       [
         ...JSON.stringify([record.msg, record.stack, record.componentStack])
           .replaceAll(root ? `${root}/` : '\u0000', '')
-          .matchAll(/[^\s()"\\]+:\d+:\d+/g),
+          .matchAll(SOURCE_LOCATION),
       ].map(([location]) => location),
     );
     const existing =
@@ -89,7 +91,7 @@ export function mergeErrorCopies(records: readonly NdjsonRecord[], root?: string
               [
                 ...JSON.stringify([other.msg, other.stack, other.componentStack])
                   .replaceAll(root ? `${root}/` : '\u0000', '')
-                  .matchAll(/[^\s()"\\]+:\d+:\d+/g),
+                  .matchAll(SOURCE_LOCATION),
               ].some(([location]) => locations.has(location)),
           )
         : -1;

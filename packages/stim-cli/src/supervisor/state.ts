@@ -1,6 +1,7 @@
 import {
   readWorkspaceState,
   withWorkspaceStateLock,
+  withWorkspaceStateLockAsync,
   updateWorkspaceState,
   clearWorkspaceStateKey,
 } from '../workspace/workspace-state.ts';
@@ -126,6 +127,16 @@ export function writeWorkspaceLaunch(
     const launches = state.launches && typeof state.launches === 'object' ? state.launches : {};
     return { ...state, launches: { ...launches, [deviceSlotKey(platform, slot)]: record } };
   });
+}
+
+/** Records a launch after asynchronously acquiring the workspace state lock. */
+export function writeWorkspaceLaunchAsync(
+  root: string,
+  platform: WorkspaceLaunchPlatform,
+  record: WorkspaceLaunchRecord,
+  slot = 'default',
+): Promise<void> {
+  return withWorkspaceStateLockAsync(root, () => writeWorkspaceLaunch(root, platform, record, slot));
 }
 
 export function clearWorkspaceLaunches(root: string, slot: string): void {

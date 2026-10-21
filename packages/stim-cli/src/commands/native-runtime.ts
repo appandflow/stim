@@ -7,7 +7,7 @@ import { resolveProjectMetro } from '../metro.ts';
 import { metroPortSetting } from '../workspace/settings.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { startDevServer, type StartDevServerRequest } from './start.ts';
-import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import { ensureWorkspaceStorageAsync } from '../workspace/paths.ts';
 import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../engine/launch-verify.ts';
 
 export interface MobileRuntimePreparation {
@@ -90,7 +90,7 @@ export async function ensureWorkspaceStorageSafely(
   { note = (_line: string) => {} }: { note?: (line: string) => void } = {},
 ): Promise<unknown> {
   try {
-    return ensureWorkspaceStorage(root);
+    return await ensureWorkspaceStorageAsync(root);
   } catch (err) {
     note(chalk.dim(`Could not prepare this workspace's Stim state: ${(err as Error)?.message || err}`));
     throw err;

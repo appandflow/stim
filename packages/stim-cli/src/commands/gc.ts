@@ -20,8 +20,8 @@ import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
-import { loadConfig, removeProject } from '../workspace/config.ts';
-import { plural } from '../command-output.ts';
+import { loadConfig, removeProject, withConfigLockAsync } from '../workspace/config.ts';
+import { plural, quotedPath } from '../command-output.ts';
 import { directorySizeAsync, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
@@ -213,10 +213,14 @@ export function readGcReport(options: GcReadOptions = {}, deps: GcDependencies =
   );
 }
 
-function removeInvalidProjectEntries(invalidProjects: string[], output: GcOutput, signal?: AbortSignal): void {
+async function removeInvalidProjectEntries(
+  invalidProjects: string[],
+  output: GcOutput,
+  signal?: AbortSignal,
+): Promise<void> {
   for (const path of invalidProjects) {
     signal?.throwIfAborted();
-    removeProject(path);
+    await withConfigLockAsync(() => removeProject(path), signal);
     output.log(chalk.green(`Removed the invalid registry entry ${path}`));
     output.record('project', 'done', path);
   }
@@ -624,6 +628,22 @@ export async function collectGcReport(
   };
 }
 
+const shellWord = (value: string) => (/^[\w.:-]+$/.test(value) ? value : quotedPath(value));
+
+function gcRetryCommand(opts: RunGcOptions): string {
+  return [
+    'stim gc',
+    opts.delete && '--delete',
+    opts.worktrees && '--worktrees',
+    opts.olderThan !== undefined && `--older-than ${opts.olderThan}`,
+    opts.cache !== undefined && `--cache ${shellWord(opts.cache)}`,
+    opts.idle !== undefined && `--idle ${opts.idle / 60_000}m`,
+    opts.json && '--json',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
   let result: GcExecutionResult;
   try {
@@ -640,7 +660,7 @@ export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}):
     );
   } catch (error) {
     const failure =
-      claimFailure(error, opts.delete ? 'stim gc --delete' : 'stim gc --idle <duration>') ??
+      claimFailure(error, gcRetryCommand(opts)) ??
       (deps.operation?.signal.aborted
         ? { code: 'STIM_CANCELLED', message: 'GC was cancelled.', remedy: 'Retry the same GC command.' }
         : null);
@@ -1136,7 +1156,7 @@ async function runGcCore(
   deleteFailures += await deleteGradleVersions(report.gradleVersions, output, deps.operation);
 
   throwIfCancelled(signal, 'GC');
-  removeInvalidProjectEntries(invalidProjects, output, signal);
+  await removeInvalidProjectEntries(invalidProjects, output, signal);
 
   throwIfCancelled(signal, 'GC');
   deleteFailures += await pruneDeadProjects(deadProjects, output, deps.operation);

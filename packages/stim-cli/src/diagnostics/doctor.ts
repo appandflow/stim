@@ -1319,7 +1319,7 @@ export function checkAndroidPathRoom(
     ...finding(
       'cost',
       'The project path leaves no room for Android native object paths',
-      `${androidPathRoomMessage(room)} \`stim android\` refuses to build here with STIM_PATH_TOO_LONG, because Gradle would fail deep inside ninja instead.`,
+      `${androidPathRoomMessage(room)} \`stim android\` refuses to run an emulator here with STIM_PATH_TOO_LONG, before it prepares the device, because Gradle would fail deep inside ninja instead.`,
       androidPathRoomRemedy(room),
     ),
   };

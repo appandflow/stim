@@ -867,7 +867,7 @@ test('reclaimProject removes the adb reverses a --device run left on the phone',
   );
   try {
     ensureWorkspaceStorage(root);
-    recordPhoneReverse(root, 'default', 'RFCR7081Q9L', 8087);
+    await recordPhoneReverse(root, 'default', 'RFCR7081Q9L', 8087);
 
     await reclaimProject(root, { deleteOwnedDevices: false });
 

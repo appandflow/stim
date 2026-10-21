@@ -1,3 +1,4 @@
+import { withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
@@ -130,6 +131,8 @@ interface LaunchResult {
   reason?: string;
 }
 
+const EAS_PROJECT_NOT_CONFIGURED = /EAS project not configured/i;
+
 function describe(err: unknown): string {
   const e = err as { stderr?: unknown; message?: unknown };
   const stderr = typeof e?.stderr === 'string' ? e.stderr.trim() : '';
@@ -253,7 +256,8 @@ function remoteDeviceDeps(ctx: RemoteContext) {
                 remedy: 'Inspect the recorded session, then run `stim stop` again.',
               };
             }
-            clearRemoteSession(ctx.root, recorded.sessionId);
+            const sessionId = recorded.sessionId;
+            await withWorkspaceStateLockAsync(ctx.root, () => clearRemoteSession(ctx.root, sessionId));
           }
         }
       }
@@ -290,7 +294,16 @@ function remoteDeviceDeps(ctx: RemoteContext) {
               remedy: `Run \`eas simulator:list --name ${name}\` and stop any running session with \`eas simulator:stop --id <id>\`, then retry.`,
             };
           }
-          return { failed: true, reason: `eas sim failed: ${describe(err)}` };
+          const failure = describe(err);
+          if (EAS_PROJECT_NOT_CONFIGURED.test(failure)) {
+            return {
+              failed: true,
+              code: 'STIM_REMOTE_EAS_UNAVAILABLE',
+              reason: 'The Expo app is not linked to an EAS project, so no EAS Simulator session was created.',
+              remedy: `Link it with \`eas init --id <project-id> --non-interactive\` (existing project) or \`eas init --account <account-name> --non-interactive\` (new project), then run \`stim ${ctx.platform ?? 'ios'} --remote eas\` again.`,
+            };
+          }
+          return { failed: true, reason: `eas sim failed: ${failure}` };
         }
         const created = parseCreatedSession(stdout);
         if (!created) {

@@ -1,5 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
-import { readWorkspaceState, updateWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { removeMetroReverses } from './android.ts';
 import { deviceSlotKey, parseDeviceSlotKey } from './device-slots.ts';
 
@@ -25,9 +25,9 @@ function readRecords(state: { [key: string]: unknown } | null | undefined): Reco
   return records;
 }
 
-export function recordPhoneReverse(root: string, slot: string, serial: string, port: number): void {
+export async function recordPhoneReverse(root: string, slot: string, serial: string, port: number): Promise<void> {
   const key = deviceSlotKey('android', slot);
-  updateWorkspaceState(root, (state) => {
+  await updateWorkspaceStateAsync(root, (state) => {
     const records = readRecords(state);
     const previous = records[key]?.serial === serial ? records[key].ports : [];
     records[key] = { serial, ports: [...new Set([...previous, port])] };

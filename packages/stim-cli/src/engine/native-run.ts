@@ -3,7 +3,12 @@ import { formatElapsed } from '../command-output.ts';
 import type { ClaimHandle, ClaimHolder } from '../ownership-claim.ts';
 import type { ProcessIdentityStatus } from '../process-identity.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { clearWorkspaceStateKey, readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
+import {
+  clearWorkspaceStateKey,
+  readWorkspaceState,
+  updateWorkspaceState,
+  withWorkspaceStateLockAsync,
+} from '../workspace/workspace-state.ts';
 import { isTermination, operationState } from './operation-state.ts';
 import { allowDeclaredSpawns, refuseDeclaredSpawns, signalDeclaredSpawns } from './spawn-claims.ts';
 import { withWorkspaceProcessLock } from './workspace-process-lock.ts';
@@ -178,7 +183,7 @@ function cancelOnAbort({
   claim: ClaimHandle;
   write: (line: string) => void;
   controller: AbortController;
-}): () => void {
+}): () => Promise<void> {
   const state = operationState(context);
   const cancel = () => {
     if (controller.signal.aborted) return;
@@ -211,12 +216,12 @@ function cancelOnAbort({
   requestListeners.set(claim.claimId, onRequest);
   const watch = setInterval(onRequest, REQUEST_POLL_MS);
   watch.unref();
-  return () => {
+  return async () => {
     clearInterval(watch);
     requestListeners.delete(claim.claimId);
     context.signal.removeEventListener('abort', onAbort);
     allowDeclaredSpawns(context);
-    clearNativeRunCancel(root, claim.claimId);
+    await withWorkspaceStateLockAsync(root, () => clearNativeRunCancel(root, claim.claimId)).catch(() => {});
   };
 }
 
@@ -246,7 +251,7 @@ export function withNativeBuildRun<T>(
       try {
         return await fn(claim);
       } finally {
-        dispose();
+        await dispose();
         state.runSignal = undefined;
       }
     },

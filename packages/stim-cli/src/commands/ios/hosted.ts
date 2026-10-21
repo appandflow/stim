@@ -92,7 +92,7 @@ export async function finishHostedIosRun({
     });
   }
   d.writeHostedIos(root, slot, run.placement);
-  d.writeWorkspaceLaunch(
+  await d.writeWorkspaceLaunch(
     root,
     'ios',
     {

@@ -228,8 +228,13 @@ Branch on the code, never on the message.`,
   leaves room for. A project with react-native-gesture-handler 3, whose
   shared shadow nodes have the longest known object path, fits a root of at
   most 24 characters for an x86_64 Debug build and 21 for arm64-v8a; other
-  projects fit 51 and 48. Refused BEFORE Gradle
-  runs -- a cache hit still installs -- because the build would otherwise
+  projects fit 51 and 48. \`stim android\` on
+  an emulator, local or --remote <backend>, refuses before it starts Metro
+  or prepares the emulator, even when a cached build would have installed.
+  That early refusal is skipped for a physical or hosted device, an EAS
+  profile and when build machines are paired; a build that still runs here
+  is refused before Gradle runs, so a cache hit there still installs.
+  The build would otherwise
   fail deep inside ninja ("mkdir ... No such file or directory" or
   "Filename longer than 260 characters"). Move or clone the project under a
   short real path such as C:\\src\\<name> and run Stim there. A subst drive
@@ -446,6 +451,11 @@ Rerun with --remote-build auto for normal placement and local fallback, or
   copying for the same reason. A copy without a claim would be invisible to a
   refresh starting after it, allowing the source dependencies to change while
   they are read.
+  A report command such as \`gc\` reports it when it cannot confirm that a child
+  it started has stopped, typically on a machine under heavy load. The child is
+  left untouched. The remedy tells you what to check and which command to run
+  again, and when the run held ownership claims it lists the exact \`rm\`
+  command for each retained claim.
   Warm also reports this code for EACCES, EPERM, EROFS and ENOENT while taking a claim.
   The message names the claim path and original filesystem error. Restore write
   access to the existing claim store, checking parent permissions, symlink
@@ -945,14 +955,19 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   proxy is selected. They never select the backend.`,
     },
     STIM_REMOTE_EAS_UNAVAILABLE: {
-      summary: '--remote eas needs eas-cli 21.6.0 or later',
+      summary: '--remote eas needs eas-cli 21.6.0 or later and an Expo app linked to an EAS project',
       body: () => `STIM_REMOTE_EAS_UNAVAILABLE
   \`--remote eas\` requires eas-cli 21.6.0 or later, the first release with
   the \`eas simulator:*\` commands Stim runs. Stim reads \`eas --version\` and
   refuses before any build or session work when eas-cli is missing, older, or
   reports no version. Upgrade it (\`npm install --global eas-cli@latest\`, or
   the project's eas-cli dependency). Proxy environment variables do not change
-  this selection and are not passed to EAS.`,
+  this selection and are not passed to EAS.
+  It is also the code when EAS reports that the Expo app has no EAS project
+  (no extra.eas.projectId), so no session was created. Link the app with
+  \`eas init --id <project-id> --non-interactive\` or create a project with
+  \`eas init --account <account-name> --non-interactive\`, then rerun. Rerunning
+  \`stim ios\` or \`stim android\` without the link fails the same way.`,
     },
     STIM_REMOTE_PLATFORM_MISMATCH: {
       summary: 'the recorded remote session belongs to the other platform; stop, then rerun',
@@ -1031,15 +1046,28 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   The live app was launched with embedded JavaScript. Run the platform command
   with a Debug configuration or variant first.`,
     },
+    STIM_RELOAD_UNSUPPORTED: {
+      summary: 'the workspace device is an EAS Simulator session; reload with agent-device metro reload',
+      body: () => `STIM_RELOAD_UNSUPPORTED
+  The workspace's recorded remote device is an EAS Simulator session. stim
+  reload acts only on an owned local simulator or emulator, so it does not
+  reach the session. Run \`agent-device metro reload --metro-port <port>\` with
+  this workspace's Metro port; it asks every app connected to that Metro to
+  reload. Nothing is launched or stopped.`,
+    },
     STIM_RELOAD_STOPPED: {
       summary: 'the recorded app is gone, its device is not live and owned, or the process could not be proven',
       aliases: ['STIM_RELOAD_UNOWNED', 'STIM_RELOAD_PROBE_FAILED'],
       body: () => `STIM_RELOAD_STOPPED / STIM_RELOAD_UNOWNED / STIM_RELOAD_PROBE_FAILED
   The recorded app is gone, its exact device is not live and owned by this
-  workspace, or simctl/adb could not prove the process exists. For web,
+  workspace, or Metro has no peer for the app and simctl/adb could not prove the
+  process exists (a probe that times out alone does not stop the reload). For web,
   STOPPED means no owned Chrome is running (run stim web) and PROBE_FAILED
   that its identity could not be verified. A bare reload picks the Chrome page
-  only when no native launch is recorded. No launch or
+  only when no native launch is recorded. Stim records launches only on owned
+  local simulators and emulators, so an app on a physical device (--device)
+  also gets STOPPED; the remedy names agent-device metro reload with this
+  workspace's Metro port. No launch or
   device lifecycle action is taken; follow the printed platform-command or
   process-probe remedy.`,
     },

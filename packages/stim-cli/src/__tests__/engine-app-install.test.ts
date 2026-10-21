@@ -886,6 +886,12 @@ describe('ios', () => {
     expect(exec.calls[0]).toEqual(['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list']);
   });
 
+  test('iosAppProcess gives the launchctl probe the caller-supplied timeout', async () => {
+    const exec = recordingExec({ outputs: { 'launchctl list': '-\t0\tcom.apple.foo\n' } });
+    await iosAppProcess('U1', 'com.example.app', { exec, timeoutMs: 12_000 });
+    expect(exec.options[0]).toMatchObject({ timeoutMs: 12_000 });
+  });
+
   test('iosAppProcess reports stopped when the app is not running', async () => {
     const exec = recordingExec({ outputs: { 'launchctl list': '-\t0\tcom.apple.foo\n' } });
     expect(await iosAppProcess('U1', 'com.example.app', { exec })).toEqual({ state: 'stopped' });
