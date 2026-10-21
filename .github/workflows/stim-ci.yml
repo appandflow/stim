@@ -82,6 +82,11 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          # GitHub's ubuntu runner has 16 GB RAM and 3 GB swap; the Gradle build beside the booted emulator exhausts both (#4170).
+          sudo fallocate -l 8G /stim-ci.swap
+          sudo chmod 600 /stim-ci.swap
+          sudo mkswap /stim-ci.swap
+          sudo swapon /stim-ci.swap
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platform-tools' 'emulator' 'system-images;android-34;google_apis;x86_64'
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
