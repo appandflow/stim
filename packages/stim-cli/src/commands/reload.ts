@@ -368,7 +368,7 @@ async function reloadUnrecorded(
     const [only] = platforms;
     const recorded = remote?.platform ?? null;
     if (only && platforms.length === 1) target = only;
-    else if (recorded && (platforms.length === 0 || platforms.includes(recorded))) target = recorded;
+    else if (recorded && platforms.length === 0) target = recorded;
     else {
       return {
         ok: false,
@@ -383,7 +383,7 @@ async function reloadUnrecorded(
     }
   }
   const session = remoteSessionFor(remote, target);
-  const reloaded = await d.reloadMetro(port, { role: target, ...(signal ? { signal } : {}) });
+  const reloaded = await d.reloadMetro(port, { role: target, exact: true, ...(signal ? { signal } : {}) });
   throwIfCancelled(signal, 'reload');
   if (!reloaded.ok) {
     return reloaded.unreachable

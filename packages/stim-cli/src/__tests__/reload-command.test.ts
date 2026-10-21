@@ -1092,7 +1092,7 @@ describe('a workspace with no launch on an owned local simulator or emulator', (
     });
     expect(reloadMetro).toHaveBeenCalledTimes(2);
     expect(reloadMetro).toHaveBeenNthCalledWith(1, 8082, { peersOnly: true, role: 'android' });
-    expect(reloadMetro).toHaveBeenNthCalledWith(2, 8082, { role: 'android' });
+    expect(reloadMetro).toHaveBeenNthCalledWith(2, 8082, { role: 'android', exact: true });
   });
 
   test('an EAS Simulator session reloads through Metro with the session platform', async () => {
@@ -1102,7 +1102,7 @@ describe('a workspace with no launch on an owned local simulator or emulator', (
       ok: true,
       facts: { platform: 'ios', deviceName: 'EAS Simulator session 01a15cf7-0000', appId: null, targets: 1 },
     });
-    expect(reloadMetro).toHaveBeenLastCalledWith(8082, { role: 'ios' });
+    expect(reloadMetro).toHaveBeenLastCalledWith(8082, { role: 'ios', exact: true });
   });
 
   test('a recorded EAS session does not outrank the platform the connected apps report', async () => {
@@ -1116,7 +1116,7 @@ describe('a workspace with no launch on an owned local simulator or emulator', (
       ok: true,
       facts: { platform: 'android', deviceName: 'devices connected to Metro' },
     });
-    expect(reloadMetro).toHaveBeenLastCalledWith(8082, { role: 'android' });
+    expect(reloadMetro).toHaveBeenLastCalledWith(8082, { role: 'android', exact: true });
   });
 
   test('a bare reload takes the platform of the only apps connected to Metro', async () => {
@@ -1128,7 +1128,7 @@ describe('a workspace with no launch on an owned local simulator or emulator', (
     const result = await runReload({ root: '/project', deps: unrecorded({ reloadMetro }) });
     expect(result).toMatchObject({ ok: true, facts: { platform: 'android' } });
     expect(reloadMetro).toHaveBeenNthCalledWith(1, 8082, { peersOnly: true });
-    expect(reloadMetro).toHaveBeenNthCalledWith(2, 8082, { role: 'android' });
+    expect(reloadMetro).toHaveBeenNthCalledWith(2, 8082, { role: 'android', exact: true });
   });
 
   test('a bare reload sends nothing while apps on both platforms are connected', async () => {
@@ -1155,6 +1155,18 @@ describe('a workspace with no launch on an owned local simulator or emulator', (
     expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_STOPPED' } });
     expect(reloadMetro).toHaveBeenCalledTimes(1);
     expect(reloadMetro).toHaveBeenCalledWith(8082, { peersOnly: true, role: 'ios' });
+  });
+
+  test('a recorded EAS session does not break a tie between platforms the connected apps report', async () => {
+    const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async () => ({
+      ok: true,
+      peers: 2,
+      targets: 2,
+      platforms: ['ios', 'android'],
+    }));
+    const result = await runReload({ root: '/project', deps: unrecorded({ reloadMetro, readRemote: () => session }) });
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_AMBIGUOUS' } });
+    expect(reloadMetro).toHaveBeenCalledTimes(1);
   });
 
   test('a Metro that cannot name its clients gets a broadcast once the platform is named', async () => {

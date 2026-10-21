@@ -59,7 +59,7 @@ function peerMatches(query: URLSearchParams, role: MetroReloadRole, appId: strin
 /**
  * Asks Metro for its peers and reloads the ones matching `role` and `appId`. Without `role` every peer matches, and
  * without `appId` every Android peer does. With `peersOnly`, it sends nothing and only reports the outcome a reload
- * would have, so a caller can wait for the app to connect.
+ * would have, so a caller can wait for the app to connect. With `exact`, a miss never falls back to a broadcast.
  */
 export function reloadThroughMetro(
   port: number,
@@ -68,8 +68,16 @@ export function reloadThroughMetro(
     appId,
     timeoutMs = METRO_TIMEOUT_MS,
     peersOnly = false,
+    exact = false,
     signal,
-  }: { role?: MetroReloadRole; appId?: string; timeoutMs?: number; peersOnly?: boolean; signal?: AbortSignal },
+  }: {
+    role?: MetroReloadRole;
+    appId?: string;
+    timeoutMs?: number;
+    peersOnly?: boolean;
+    exact?: boolean;
+    signal?: AbortSignal;
+  },
 ): Promise<MetroReloadResult> {
   if (signal?.aborted) return Promise.reject(cancelledError('reload'));
   const roleName = role ? `${ROLE_NAMES[role]} ` : '';
@@ -135,9 +143,12 @@ export function reloadThroughMetro(
           // shape these matchers do not read -- so an unmatched app may still be
           // connected. Take the free shot with a broadcast before giving up, but
           // report the miss: nothing here proves the app got it.
-          socket.send(JSON.stringify({ version: 2, method: 'reload' }));
-          const others =
-            peers === 0
+          if (!exact) socket.send(JSON.stringify({ version: 2, method: 'reload' }));
+          const others = exact
+            ? peers === 0
+              ? ' Nothing at all is connected to it.'
+              : ` Metro has ${peers} other connected client${peers === 1 ? '' : 's'}; Stim sent them nothing.`
+            : peers === 0
               ? ' Nothing at all is connected to it, so the broadcast Stim sent anyway reached nothing.'
               : ` Metro has ${peers} other connected client${peers === 1 ? '' : 's'}, and Stim broadcast a reload to them in case one is this app unmatched.`;
           finish({

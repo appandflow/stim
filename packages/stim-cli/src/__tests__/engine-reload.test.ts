@@ -350,3 +350,14 @@ test('without a platform, Metro with no peers reports no app instead of an iOS o
     expect(result.reason).toMatch(/^No React Native app is connected/);
   });
 });
+
+test('an exact reload that finds no matching peer broadcasts nothing to the other clients', async () => {
+  const harness = peerServer(peers({ 'client#1': ANDROID_PEER }));
+
+  await withServer(harness, async (port) => {
+    const result = await reloadThroughMetro(port, { role: 'ios', exact: true });
+    expect(result).toMatchObject({ failed: true, noPeer: true, peers: 1 });
+    await delay(50);
+    expect(harness.messages).toEqual([expect.objectContaining({ method: 'getpeers' })]);
+  });
+});
