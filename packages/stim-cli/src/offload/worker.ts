@@ -135,6 +135,7 @@ export interface WorkerJob {
   expectedTracked?: string[];
   cacheArtifact?: boolean;
   stimBuild?: string;
+  compat?: number;
   native?: BuildStartParams['native'];
   optimizations: Optimizations['ios'] | null;
   /** How long the client's Gradle daemon stays warm after an Android build; 0 or absent stops it when the build ends. */
@@ -1108,12 +1109,13 @@ async function compileMacos(
   };
   try {
     const extras = resolveBundleExtras(src, src, options.resources, options.assetCatalog);
+    const stim = job.compat ? { compat: job.compat } : job.stimBuild ? { stimBuild: job.stimBuild } : null;
     const query: BuildSwiftpmArtifactQuery | null =
-      job.cacheArtifact && options.artifactInputs && job.expectedFingerprint && job.stimBuild
+      job.cacheArtifact && options.artifactInputs && job.expectedFingerprint && stim
         ? {
             project: job.project,
             sourceDigest: job.expectedFingerprint,
-            stimBuild: job.stimBuild,
+            ...stim,
             inputs: options.artifactInputs,
             build: {
               product: options.product,

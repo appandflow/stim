@@ -325,7 +325,7 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   simulators, and running a generated `stim-server setup` command in Terminal on
   that Mac. Running it there, and answering its Y/n question for each request, is
   the approval. Desktop mirrors the setup live and waits for both approvals.
-  A remote machine on another Stim build offers **Install This Mac's Build**. It
+  A remote machine on an incompatible Stim build offers **Install This Mac's Build**. It
   installs this Mac's npm release there, or this checkout's own build when the
   machine allows it with `server.acceptClientBuilds`. The update goes over the
   tailnet, with no ssh, and the old server comes back if the new one does not

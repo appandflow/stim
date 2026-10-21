@@ -10,8 +10,10 @@ import { podEnvForRuby, podEnvForRubyAsync, readRubyVersion } from '../engine/de
 
 /** What must be identical on this Mac and a remote Mac for an iOS simulator build to come out the same. */
 export interface IosToolchain {
-  /** A digest of Stim's built code, so both sides prove they run the same Stim. */
+  /** A digest of Stim's built code, compared only with a remote machine that reports no `compat`. */
   stimBuild: string | null;
+  /** The Stim build compatibility version both sides must share. */
+  compat: number;
   arch: string;
   xcode: string | null;
   simulatorSdk: string | null;
@@ -21,6 +23,7 @@ export interface IosToolchain {
 /** What must be identical on this machine and a remote machine for an Android debug build; Gradle and AGP come from the synced project. */
 export interface AndroidToolchain {
   stimBuild: string | null;
+  compat: number;
   arch: string;
   /** The major version of the JDK Gradle runs on. */
   jdk: string | null;
@@ -34,7 +37,9 @@ export interface AndroidRequirements {
 }
 
 /** A remote machine's toolchain, the simulator runtimes it can build for, and its JDK and Android SDK packages. */
-export interface WorkerToolchain extends IosToolchain {
+export interface WorkerToolchain extends Omit<IosToolchain, 'compat'> {
+  /** Absent from a stim-server older than build compatibility versions. */
+  compat?: number;
   /** The OS stim-server runs on, as Node names it; absent from a stim-server older than this field. */
   os?: string;
   macosSdk: string | null;
@@ -57,6 +62,14 @@ export type BuildTarget =
   | { platform: 'macos'; local: MacosToolchain; runsOnWorker?: true };
 
 const distDir = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * What a client and a remote machine must agree on to build for each other: what a worker builds and how, the
+ * artifacts it returns and the build and artifact messages. It lives in the `stim` package, whose own code does the
+ * build, because `@stim-cli/core` is a ranged dependency that can resolve newer than the installed `stim`.
+ * `scripts/build-compat.json` records the files a change to which needs a bump or a recorded no-bump.
+ */
+const STIM_BUILD_COMPAT = 1;
 
 function quiet(file: string, args: string[]): string | null {
   return getExecutor().runFileQuiet(file, args, { timeoutMs: 20_000 });
@@ -95,6 +108,7 @@ function assembleIosToolchain(
 ): IosToolchain {
   return {
     stimBuild: stimBuildDigest(distDir),
+    compat: STIM_BUILD_COMPAT,
     arch: process.arch,
     xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
     simulatorSdk: simulatorSdk?.trim() ?? null,
@@ -137,6 +151,7 @@ async function projectCocoapodsVersion(root: string, podDirectory: string): Prom
 
 export interface MacosToolchain {
   stimBuild: string | null;
+  compat: number;
   arch: string;
   xcode: string | null;
   macosSdk: string | null;
@@ -160,6 +175,7 @@ export async function macosToolchainAsync(): Promise<MacosToolchain> {
 function assembleMacosToolchain(xcode: string | null, macosSdk: string | null): MacosToolchain {
   return {
     stimBuild: stimBuildDigest(distDir),
+    compat: STIM_BUILD_COMPAT,
     arch: process.arch,
     xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
     macosSdk: macosSdk?.trim() ?? null,
@@ -197,7 +213,7 @@ function localJdk(env: NodeJS.ProcessEnv = process.env): string | null {
 }
 
 export function androidToolchain(): AndroidToolchain {
-  return { stimBuild: stimBuildDigest(distDir), arch: process.arch, jdk: localJdk() };
+  return { stimBuild: stimBuildDigest(distDir), compat: STIM_BUILD_COMPAT, arch: process.arch, jdk: localJdk() };
 }
 
 export async function androidToolchainAsync(env: NodeJS.ProcessEnv = process.env): Promise<AndroidToolchain> {
@@ -215,7 +231,7 @@ export async function androidToolchainAsync(env: NodeJS.ProcessEnv = process.env
       if (home) jdk = releaseMajor(home);
     }
   }
-  return { stimBuild: stimBuildDigest(distDir), arch: process.arch, jdk };
+  return { stimBuild: stimBuildDigest(distDir), compat: STIM_BUILD_COMPAT, arch: process.arch, jdk };
 }
 
 /** `ndkVersion`, `buildTools` and `compileSdk` from React Native's `gradle/libs.versions.toml`. */
@@ -357,7 +373,10 @@ function versionMismatch(tool: string, there: string | null, here: string | null
 export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain): OffloadProblem[] {
   const { local } = target;
   const out: OffloadProblem[] = [];
-  if (!local.stimBuild || worker.stimBuild !== local.stimBuild) {
+  if (
+    !local.stimBuild ||
+    (worker.compat !== undefined ? worker.compat !== local.compat : worker.stimBuild !== local.stimBuild)
+  ) {
     out.push({
       code: 'stim-build',
       reason: `Stim build ${worker.stimBuild ?? 'unknown'} there, ${local.stimBuild ?? 'unknown'} here`,

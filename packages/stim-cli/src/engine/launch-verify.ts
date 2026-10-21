@@ -90,6 +90,8 @@ export const LAUNCH_BUNDLING = 'bundling';
 export const LAUNCH_FATAL = 'fatal';
 
 export const VERIFY_TIMEOUT_MS = 20000;
+export const MANIFEST_GRACE_MS = 15000;
+export const MANIFEST_VERIFY_TIMEOUT_MS = 60000;
 export const STABILITY_WINDOW_MS = 3000;
 const VERIFY_POLL_MS = 500;
 
@@ -170,6 +172,26 @@ async function nativeLaunchFailure({
     : null;
 }
 
+function manifestDeadline(
+  records: NdjsonRecord[],
+  { startedAt, timeoutMs }: { startedAt: number; timeoutMs: number },
+): number {
+  const base = startedAt + timeoutMs;
+  const open = new Set<unknown>();
+  let servedAt: number | null = null;
+  for (const record of records.toSorted((a, b) => Number(a.ts) - Number(b.ts))) {
+    if (record.event === 'manifest_request_started') {
+      open.add(record.requestId);
+    } else {
+      open.delete(record.requestId);
+      if (record.event === 'manifest_request_finished') servedAt = Number(record.ts);
+    }
+  }
+  const cap = startedAt + Math.max(timeoutMs, MANIFEST_VERIFY_TIMEOUT_MS);
+  if (open.size > 0) return cap;
+  return servedAt === null ? base : Math.min(cap, Math.max(base, servedAt + MANIFEST_GRACE_MS));
+}
+
 export async function verifyLaunch({
   slot,
   appPid,
@@ -225,7 +247,8 @@ export async function verifyLaunch({
   const readDevice = readDeviceRecords || (() => readNdjson(logsDir, 'device.ndjson'));
   const readClient = readClientRecords || (() => readNdjson(logsDir, 'client.ndjson'));
   const startedAt = now();
-  const bundleDeadline = startedAt + Math.max(0, timeoutMs);
+  const baseTimeoutMs = Math.max(0, timeoutMs);
+  let bundleDeadline = startedAt + baseTimeoutMs;
   let proof: NdjsonRecord | null = null;
   let activity: NdjsonRecord | null = null;
   let stabilityDeadline: number | null = null;
@@ -250,6 +273,12 @@ export async function verifyLaunch({
       (record) => after(record, since) && (slot === undefined || (record.slot ?? 'default') === slot),
     );
     const clientRecords = readClient().filter((record) => after(record, since) && !platformShared);
+    bundleDeadline = manifestDeadline(
+      metroRecords.filter(
+        (record) => String(record.event).startsWith('manifest_request_') && (!platform || record.platform === platform),
+      ),
+      { startedAt, timeoutMs: baseTimeoutMs },
+    );
     if (now() >= nextCrashCheck) {
       nextCrashCheck = now() + 2000;
       const crash = await nativeLaunchFailure({

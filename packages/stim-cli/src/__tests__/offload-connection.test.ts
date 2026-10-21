@@ -59,7 +59,7 @@ const TOOLCHAIN = {
 
 const TARGET: BuildTarget = {
   platform: 'ios',
-  local: { stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', cocoapods: '1.16.2' },
+  local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', cocoapods: '1.16.2' },
   runtime: 'iOS-27-0',
   cocoapodsPinned: false,
 };
@@ -667,12 +667,18 @@ describe('macOS artifact transfer', () => {
         'mini',
         offer(0.1),
         { result: { job: 'j1' } },
-        { artifact: { archive, digest } },
+        {
+          artifact: { archive, digest },
+          hello: () => ({ result: { capabilities: ['build'], features: kind === 'valid' ? ['build-compat'] : [] } }),
+        },
       );
       machines.push(machine);
       const choice = await chooseBuildMachine({
         projectRoot: repo,
-        target: { platform: 'macos', local: { stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' } },
+        target: {
+          platform: 'macos',
+          local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
+        },
         mode: 'force',
         here: HERE,
         machines: [credential('mini')],
@@ -712,6 +718,7 @@ describe('macOS artifact transfer', () => {
         },
         fingerprint: manifestDigest(files),
         stimBuild: 'b1',
+        ...(kind === 'valid' ? { compat: 1 } : {}),
       });
       expect(outcome.ok).toBe(kind === 'valid');
       const observed = outcome.ok
@@ -907,7 +914,7 @@ describe('native Gradle worker transfer', () => {
   const target: BuildTarget = {
     platform: 'android',
     native: 'gradle',
-    local: { stimBuild: 'b1', arch: 'arm64', jdk: '17' },
+    local: { stimBuild: 'b1', compat: 1, arch: 'arm64', jdk: '17' },
     requires: { ndk: null, buildTools: null, compileSdk: null },
   };
   test.each([
@@ -996,7 +1003,7 @@ describe('exact peer artifacts', () => {
       name: 'SwiftPM',
       target: {
         platform: 'macos',
-        local: { stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
+        local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
       } satisfies BuildTarget,
       dependencies: false,
     },
@@ -1069,7 +1076,7 @@ describe('exact peer artifacts', () => {
         },
       },
       { result: { job: 'unused' } },
-      { hello: () => ({ result: { capabilities: ['build'], features: ['swiftpm-peer-cache'] } }) },
+      { hello: () => ({ result: { capabilities: ['build'], features: ['swiftpm-peer-cache', 'build-compat'] } }) },
     );
     machines.push(machine);
     const request: Extract<BuildRequest, { platform: 'macos' }> = {
@@ -1085,7 +1092,7 @@ describe('exact peer artifacts', () => {
         projectRoot: repo,
         target: {
           platform: 'macos',
-          local: { stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
+          local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
         },
         mode: 'auto',
         here: { ...HERE, builds: 0 },
@@ -1180,7 +1187,7 @@ describe('exact peer artifacts', () => {
       };
       const target: BuildTarget = {
         platform: 'macos',
-        local: { stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
+        local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
       };
       const machine = await fakeMachine(
         'swiftpm',
@@ -1198,7 +1205,10 @@ describe('exact peer artifacts', () => {
         { result: { job: 'unused' } },
         {
           hello: () => ({
-            result: { capabilities: ['build'], features: scenario === 'old-worker' ? [] : ['swiftpm-peer-cache'] },
+            result: {
+              capabilities: ['build'],
+              features: ['swiftpm-peer-cache', ...(scenario === 'old-worker' ? [] : ['build-compat'])],
+            },
           }),
           artifact: { archive, digest },
           cachedFetch: scenario === 'miss' || scenario === 'corrupt' ? scenario : 'hit',
@@ -1282,7 +1292,7 @@ describe('exact peer artifacts', () => {
         ? TARGET
         : {
             platform: 'android',
-            local: { stimBuild: 'b1', arch: 'arm64', jdk: '17' },
+            local: { stimBuild: 'b1', compat: 1, arch: 'arm64', jdk: '17' },
             requires: { ndk: null, buildTools: null, compileSdk: null },
           };
     const request: BuildRequest =
@@ -1319,7 +1329,10 @@ describe('exact peer artifacts', () => {
       { result: { job: 'unused' } },
       {
         hello: () => ({
-          result: { capabilities: ['build'], features: scenario === 'old-worker' ? [] : ['react-native-peer-cache'] },
+          result: {
+            capabilities: ['build'],
+            features: ['react-native-peer-cache', ...(scenario === 'old-worker' ? [] : ['build-compat'])],
+          },
         }),
         artifact: { archive, digest },
         cachedFetch: scenario === 'old-worker' ? 'hit' : scenario,
@@ -1376,7 +1389,10 @@ describe('exact peer artifacts', () => {
     expect(offered).toMatchObject({
       fingerprint: 'native-fingerprint',
       platform,
-      toolchain: platform === 'ios' ? target.local : { stimBuild: 'b1', jdk: '17' },
+      toolchain:
+        platform === 'ios'
+          ? { compat: 1, arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', cocoapods: '1.16.2' }
+          : { compat: 1, jdk: '17' },
       ...(platform === 'ios' ? { ios: { configuration: 'Debug' } } : { android: { variant: 'debug', abi: null } }),
     });
     expect(machine.requests.find((e) => e.method === 'build.cached-artifact')?.params.reactNativeArtifact).toEqual(
@@ -1387,7 +1403,7 @@ describe('exact peer artifacts', () => {
   const gradleTarget: BuildTarget = {
     platform: 'android',
     native: 'gradle',
-    local: { stimBuild: 'b1', arch: 'arm64', jdk: '17' },
+    local: { stimBuild: 'b1', compat: 1, arch: 'arm64', jdk: '17' },
     requires: { ndk: null, buildTools: null, compileSdk: null },
   };
   const android = {

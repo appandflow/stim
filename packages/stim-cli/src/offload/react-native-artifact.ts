@@ -42,7 +42,7 @@ export function reactNativeBuildQuery(
 
 type ArtifactTools =
   | (IosToolchain & { os: string })
-  | Pick<WorkerToolchain, 'stimBuild' | 'os' | 'arch' | 'jdk' | 'androidSdk'>;
+  | (Pick<WorkerToolchain, 'stimBuild' | 'os' | 'arch' | 'jdk' | 'androidSdk'> & { compat: number });
 
 interface ArtifactReceipt {
   identity: { hash: string; key: string };
@@ -60,8 +60,10 @@ export async function reactNativeArtifactToolchain(
       ? { ...tools, os: process.platform }
       : null;
   }
-  const { stimBuild, os, arch, jdk, androidSdk } = workerToolchain(null, 'gradle');
-  return stimBuild && jdk && androidSdk ? { stimBuild, os, arch, jdk, androidSdk } : null;
+  const { stimBuild, compat, os, arch, jdk, androidSdk } = workerToolchain(null, 'gradle');
+  return stimBuild && compat !== undefined && jdk && androidSdk
+    ? { stimBuild, compat, os, arch, jdk, androidSdk }
+    : null;
 }
 
 export function reactNativeArtifactReceipt(

@@ -49,8 +49,8 @@ and [device-host clients](#device-host-approval). The plain listing shows
 [Actions](#actions).
 
 `GET http://127.0.0.1:7787/health` answers requests from this machine with the
-server's name, versions, `stimBuild` (the digest of the bundled Stim's build,
-which offload compares between machines), protocol, `stimHome`, `startup`, `busy`
+server's name, versions, `stimBuild` (the digest of the bundled Stim's build),
+protocol, `stimHome`, `startup`, `busy`
 (the offloaded `builds` and `hostedSessions` running now) and the current
 Tailscale state. It answers HTTP 200 once `startup.state` is `ready`; while the
 state is `pending` or `degraded` (see the LaunchAgent notes below) it answers
@@ -1615,6 +1615,8 @@ connected since stim-server started keeps its directory when revoked.
   same Ruby selection and UTF-8 locale defaults as `pod install`; omitting
   `rubyVersion` uses the worker's default Ruby. It
   returns `toolchain` (`stimBuild`, a digest of the bundled Stim's built code;
+  `compat`, the bundled Stim's build compatibility version, which a client
+  compares instead of `stimBuild` when it is present;
   `os`, the OS stim-server runs on as Node names it (`darwin`, `linux`, `win32`);
   `arch`; `xcode`; `simulatorSdk`; `macosSdk` (from
   `xcrun --sdk macosx --show-sdk-version`); `cocoapods`; `runtimes`, the simulator
@@ -1652,8 +1654,10 @@ connected since stim-server started keeps its directory when revoked.
   architecture and target options. These are exact lookups, not a full inventory.
   With `react-native-peer-cache`, a React Native/Expo development offer can send
   `reactNativeArtifact: { project, fingerprint, isExpo, platform, toolchain, ios | android }`.
-  The query includes the caller's compatible toolchain and normalized native
-  build choices; the worker constructs its own receipt around compilation.
+  The query includes the caller's compatible toolchain, whose `toolchain.compat`
+  takes the place of `stimBuild` with `build-compat`, and normalized native
+  build choices; a caller sends React Native and SwiftPM queries only to a
+  server with `build-compat`; the worker constructs its own receipt around compilation.
   The returned identity is opaque, not an alias for the caller's local cache key.
   The completed receipt binds the worker-verified post-mutation fingerprint
   and native options to the toolchain checked before and after compilation.
@@ -1661,7 +1665,7 @@ connected since stim-server started keeps its directory when revoked.
   does not discard a matching archive. Older workers receive no new query
   parameters and continue through their normal build path.
   With `swiftpm-peer-cache`, `swiftpmArtifact` carries `project`, `sourceDigest`,
-  `stimBuild`, complete `inputs` (`ignored`, `outputs`, `localFiles`,
+  `stimBuild` or, with `build-compat`, `compat` in its place, complete `inputs` (`ignored`, `outputs`, `localFiles`,
   `environment`) and `build` (`product`, `infoPlist`, `resources`, `assetCatalog`).
   Resource and catalog paths are repository-relative; the plist is
   project-relative. The worker verifies actual transferred files and full
@@ -1711,7 +1715,7 @@ connected since stim-server started keeps its directory when revoked.
   simulator runtime identifier, required for `ios`, null for `android`),
   `fingerprint`, `packageName`, `isExpo`, `optimizations`, `android` (for
   `android`: `variant`, `abi`, `gradleBuildCache`, `pch` and `compilerCache`,
-  `ccache` or `none`) and `stimBuild`, after the whole manifest of `repo` was
+  `ccache` or `none`), `stimBuild` and, from a caller that saw `build-compat`, `compat`, after the whole manifest of `repo` was
   synced on this connection. A peer-cache-capable React Native caller can set
   `cacheArtifact: true` to retain a completed development archive when its cache
   write and remote policies allow it. With the `fingerprint-sources` feature, a
@@ -1728,7 +1732,8 @@ connected since stim-server started keeps its directory when revoked.
   `build-busy` while the offer would be declined, naming the reason, or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with
-  `build-refused` when `stimBuild` differs. The build runs `offload-worker.mjs` of the bundled Stim with
+  `build-refused` when `compat` differs from this machine's, or, when either
+  side has no `compat`, when `stimBuild` differs. The build runs `offload-worker.mjs` of the bundled Stim with
   `STIM_HOME` set to the repository's area. It makes the area's checkout
   hold exactly the manifest (a file git lists as untracked and not ignored,
   and not in the manifest, is deleted; ignored dependencies and generated

@@ -322,10 +322,10 @@ Setup refuses an older Desktop-run server with an update remedy and never
 downgrades a newer server.
 
 For iOS builds, Xcode and the simulator SDK must match, and the worker needs
-an iPhone simulator on the target runtime. The Stim build must match, and so
-must the CPU architecture for iOS and macOS builds (macOS builds that run on the same worker excepted). Project-selected CocoaPods versions must match unless the
+an iPhone simulator on the target runtime. The Stim build compatibility version
+must match (see [Stim versions](#stim-versions)), and so must the CPU architecture for iOS and macOS builds (macOS builds that run on the same worker excepted). Project-selected CocoaPods versions must match unless the
 project's `Gemfile.lock`, in `ios/` or the project root, pins it; then both
-machines use Bundler and the pinned version. For macOS, Xcode and the macOS SDK must match, except when `stim macos --remote <machine> --remote-build <machine>` builds and runs the app on the same Mac; then only the Stim build must match (see [Run it on another Mac](./macos.md#run-it-on-another-mac)). For Android, JDK major
+machines use Bundler and the pinned version. For macOS, Xcode and the macOS SDK must match, except when `stim macos --remote <machine> --remote-build <machine>` builds and runs the app on the same Mac; then only the Stim build compatibility version must match (see [Run it on another Mac](./macos.md#run-it-on-another-mac)). For Android, JDK major
 versions must match, and the worker needs the project's NDK, build-tools and
 compile SDK. An Android worker can have another CPU architecture, and it can
 be an x86_64 Linux or Windows machine; see [Linux worker](#linux-worker) and
@@ -366,6 +366,20 @@ Without one, the steps run on the worker's own `node`, and a failed install or
 prebuild names the pin and that Node's version. Install a matching Node on the
 worker, for example `brew install node@22`. When the pinned Node's major
 changes, the worker reinstalls dependencies so native modules match it.
+
+### Stim versions
+
+Each Stim release carries a build compatibility version. Two machines build for
+each other when the versions are equal, whatever their Stim releases or builds.
+The version changes only in a release that changes what a worker builds, how it
+builds it, or the build and artifact messages, so a release on one machine and a
+checkout build on the other usually still offload. Completed artifacts on a
+worker are reused under the same rule. A stim-server too old to report a build
+compatibility version needs exactly the same Stim build as this machine. When
+the versions differ, doctor reports `stim-build` and builds stay on this
+machine until the worker runs a compatible release; see [Tools](#tools).
+Hosted simulators and emulators do not compare versions: they check the
+features the host's stim-server reports.
 
 ## Use the Desktop wizard
 
@@ -415,9 +429,9 @@ so there is no Check again button:
    shim, such as pnpm's, add `--path-prepend` with the real Node's folder.
 4. **Tools.** Compare the worker's tools with this machine, including the Android
    tools when **Builds** is chosen. Only a problem that stops the chosen
-   capability blocks **Next**: a Stim build mismatch or no Xcode for Builds, and
+   capability blocks **Next**: an incompatible Stim build or no Xcode for Builds, and
    no iOS simulator runtime for Hosted simulators. **Install This Mac's Build**
-   fixes a Stim build mismatch. A Linux or Windows machine shows only the Stim build and
+   fixes an incompatible Stim build. A Linux or Windows machine shows only the Stim build and
    Android rows, and a missing Android SDK or any JDK difference blocks **Next**
    there, since no build could offload. The other problems are warnings that name what
    they cost:

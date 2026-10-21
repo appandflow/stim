@@ -203,14 +203,22 @@ const swiftpmArtifactInputs: JsonSchema = {
     environment: { type: 'array', maxItems: 1000, items: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' } },
   },
 };
+const buildCompat: JsonSchema = {
+  type: 'integer',
+  minimum: 1,
+  description: 'The Stim build compatibility version, sent to a stim-server with the build-compat feature.',
+};
+const stimIdentity: JsonSchema[] = [{ required: ['stimBuild'] }, { required: ['compat'] }];
 const swiftpmArtifactQuery: JsonSchema = {
   type: 'object',
-  required: ['project', 'sourceDigest', 'stimBuild', 'inputs', 'build'],
+  required: ['project', 'sourceDigest', 'inputs', 'build'],
+  oneOf: stimIdentity,
   additionalProperties: false,
   properties: {
     project: { type: 'string' },
     sourceDigest: sha256,
     stimBuild: { type: 'string', minLength: 1, maxLength: 256 },
+    compat: buildCompat,
     inputs: swiftpmArtifactInputs,
     build: {
       type: 'object',
@@ -247,10 +255,11 @@ const reactNativeArtifactQuery: JsonSchema = {
     platform: { enum: ['ios', 'android'] },
     toolchain: {
       type: 'object',
-      required: ['stimBuild'],
+      oneOf: stimIdentity,
       additionalProperties: false,
       properties: {
         stimBuild: { type: 'string', minLength: 1 },
+        compat: buildCompat,
         arch: { type: 'string', minLength: 1 },
         xcode: { type: 'string', minLength: 1 },
         simulatorSdk: { type: 'string', minLength: 1 },
@@ -2110,6 +2119,10 @@ export function protocolJsonSchema(): JsonSchema {
               },
               cacheArtifact: { type: 'boolean' },
               stimBuild: { type: 'string', minLength: 1 },
+              compat: {
+                ...buildCompat,
+                description: 'Compared instead of stimBuild by a machine whose build.offer toolchain reports compat.',
+              },
             },
           }),
           request('build.cancel', buildJob),

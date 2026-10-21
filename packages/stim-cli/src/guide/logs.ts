@@ -304,7 +304,13 @@ they stay in the local logs. These records carry no tokens.
 
 WHAT WRITES WHAT
   maintenance.ndjson   workspace maintenance actions, failures and explaining skips
-  metro.ndjson         the bundler, in every supervisor mode
+  metro.ndjson         the bundler, in every supervisor mode. Stim's
+                       middleware adds one record per bundle request
+                       (bundle_response_started, _progress, _finished,
+                       _failed) and, on Expo, one per dev-client manifest
+                       request (manifest_request_started, _finished,
+                       _failed: debug level, with platform and requestId;
+                       launch verification reads them as progress)
   client.ndjson        in-app console logs and redboxes -- BARE PROJECTS ONLY.
                        In expo-child and command-child mode everything the
                        dev server prints lands in metro.ndjson with raw: true,

@@ -1225,6 +1225,7 @@ describe('pairing', () => {
           'hosted-android-process',
           'hosted-metro-ports',
           'server-update',
+          'build-compat',
           'status-views',
         ],
         actions: [],
@@ -2281,6 +2282,48 @@ test('build.start rejects escaping or oversized macOS resources before probing t
         },
       }),
     ).toBe(false);
+  } finally {
+    toolchain.mockRestore();
+    await host.close();
+  }
+});
+
+test('build.start compares the build compatibility version when both machines report one, else the Stim build', async () => {
+  const host = new BuildHost({ worker: 'unused-worker', env: process.env });
+  const worker = {
+    stimBuild: 'b1',
+    compat: 3,
+    arch: 'arm64',
+    xcode: null,
+    simulatorSdk: null,
+    macosSdk: null,
+    cocoapods: null,
+    runtimes: [],
+    jdk: null,
+    androidSdk: null,
+  };
+  const toolchain = vi.spyOn(host, 'toolchain').mockResolvedValue(worker);
+  const launch = vi.spyOn(host, 'launch').mockReturnValue({ error: { code: 'build-refused', message: 'launched' } });
+  const socket = { readyState: 1, OPEN: 1, bufferedAmount: 0, send: () => {} };
+  const session = host.session('client', socket, () => {});
+  const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'digest' };
+  const macos = { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' };
+  const message = async (params: Record<string, unknown>) => {
+    const reply = await session.start({ ...base, macos, ...params });
+    return 'error' in reply ? reply.error.message : null;
+  };
+  try {
+    session.sync({ repo: 'app-1', files: [], done: true });
+    expect(await message({ stimBuild: 'b2', compat: 3 })).toBe('launched');
+    expect(launch.mock.calls.at(-1)?.[0].job).toMatchObject({ stimBuild: 'b2', compat: 3 });
+    expect(await message({ stimBuild: 'b1', compat: 4 })).toBe(
+      'This machine runs Stim build b1 with build compatibility 3, not 4.',
+    );
+    expect(await message({ stimBuild: 'b2' })).toBe('This machine runs Stim build b1.');
+    expect(await message({ stimBuild: 'b1' })).toBe('launched');
+    toolchain.mockResolvedValue({ ...worker, compat: undefined });
+    expect(await message({ stimBuild: 'b2', compat: 3 })).toBe('This machine runs Stim build b1.');
+    expect(launch).toHaveBeenCalledTimes(2);
   } finally {
     toolchain.mockRestore();
     await host.close();

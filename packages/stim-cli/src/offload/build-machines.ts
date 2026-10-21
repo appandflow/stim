@@ -121,7 +121,7 @@ type Inspected = { report: BuildMachineReport; finding: Finding | null };
 const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   unreachable: 'does not answer a build offer',
   checkout: 'cannot build an app outside a git checkout',
-  'stim-build': 'runs another Stim build',
+  'stim-build': 'runs an incompatible Stim build',
   arch: 'has another CPU architecture',
   xcode: 'has another Xcode',
   'macos-sdk': 'has another macOS SDK',
@@ -146,7 +146,7 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
     case 'checkout':
       return 'Offload syncs the files git lists; run Stim from a git checkout of the app.';
     case 'stim-build':
-      return `Update stim-server on ${entry} to the same Stim build as this machine: there, run \`stim-server service update --release <version>\` for this machine's release, or \`--from <dir>\` with the packed packages of this machine's checkout.`;
+      return `Update stim-server on ${entry} to a Stim release with the same build compatibility version as this machine (an older stim-server needs the same Stim build): there, run \`stim-server service update --release <version>\` for this machine's release, or \`--from <dir>\` with the packed packages of this machine's checkout.`;
     case 'arch':
       return 'Use a remote machine with the same CPU architecture as this machine.';
     case 'xcode':

@@ -1364,7 +1364,7 @@ approval** (someone on that machine approves it by running the setup command
 there; the row says when the request lapses, such as "Waiting for approval
 until 21:05", in local time),
 **Unreachable**,
-**Needs update** (it runs another Stim build; **Updating** while an update runs),
+**Needs update** (it runs an incompatible Stim build; **Updating** while an update runs),
 the short title of doctor's first reason the approved machine is not offloadable,
 such as **CocoaPods differs** or **Low on disk** (**Not offloading** for a reason
 this Desktop does not know), or the machine's other readiness or
@@ -1410,7 +1410,7 @@ While a `--fix` run goes, the row shows "Asking <machine>…" or "Removing
 <machine>…" beside the spinner. A `--fix` run stops after 2 minutes and a
 plain check after 30 seconds, and the tab shows that stim did not answer.
 
-A remote Mac that runs another Stim build than this Mac (doctor's
+A remote Mac whose Stim build is incompatible with this Mac's (doctor's
 `stim-build` reason) offers **Install This Mac's Build**, here and on its
 **Machines** page. Desktop asks the local stim-server, over its local control connection,
 to update that machine with `machines.update.start`. The local server connects
@@ -1443,7 +1443,7 @@ even when another update installed it. If the machine stops answering for 5 minu
 Then the row checks the machine again. **Keep remote machines on this Mac's Stim
 version** (off by default; "When this Mac's Stim changes, update stim-server on
 approved remote Macs so builds can keep offloading.") does the same the next time Desktop
-checks a machine that reports another Stim build. It runs once per machine and
+checks a machine that reports an incompatible Stim build. It runs once per machine and
 reason each time Desktop launches. Either way, the machine gets this Mac's build,
 whether it is newer or older than the one it runs.
 

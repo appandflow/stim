@@ -8,7 +8,7 @@ async function requestLocal(url: URL, platform: string, prefetch: boolean): Prom
       headers: {
         accept: 'application/json',
         'expo-platform': platform,
-        ...(prefetch ? { 'x-stim-metro-warmup': '1' } : {}),
+        'x-stim-metro-warmup': '1',
       },
     });
     const timer = setTimeout(() => req.destroy(), WARMUP_TIMEOUT_MS);
