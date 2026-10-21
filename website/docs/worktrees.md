@@ -77,9 +77,8 @@ Concurrent files can be overwritten or removed.
 Stim excludes:
 
 - Nested registered Git worktrees, including ignored parents containing them.
-- `.DS_Store` files and any `.DerivedData`, `.idea`, `.jj`, or `.pnpm-store` directory, including inside newly copied directories. A project-local pnpm store duplicates the global one, and pnpm refills it when it needs to.
-- `android/build/generated/autolinking`, including in nested apps, so Gradle
-  regenerates paths for the new checkout.
+- Ignored entries named `.DS_Store`, `.DerivedData`, `.idea`, `.jj`, or `.pnpm-store`, and `android/build/generated/autolinking`.
+- From a copied directory, these known paths: `.pnpm-store` in `node_modules` (a project-local pnpm store duplicates the global one, and pnpm refills it when it needs to), `android/build/generated/autolinking` under a copied `android`, `android/build`, or `android/build/generated` (Gradle regenerates it for the new checkout), and `expo-modules-jsi/apple/.DerivedData` in `node_modules`, hoisted or in the pnpm virtual store (Xcode build state that records the source checkout's paths). Stim does not walk copied directories, so a `.DS_Store` or `.idea` inside one stays.
 - Paths matched by the source checkout's nonempty `.worktreeexclude`, or its
   resolved `worktree.exclude` setting when that file is absent or empty.
 - Destination paths that overlap a registered nested worktree or have symlink

@@ -1,7 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
-import { chmod, lstat, mkdir, readdir, utimes } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, realpath, utimes } from 'node:fs/promises';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { getExecutor, isTimeoutError } from '../exec.ts';
 import { git, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
 import { removeTemporaryEntryAsync } from '../temporary.ts';
@@ -304,67 +304,63 @@ function missingDestinationReason(target: string, rel: string): string | null {
   return lstatSync(join(target, rel), { throwIfNoEntry: false }) ? 'exists' : null;
 }
 
-const SWEEP_CONCURRENCY = 32;
+const AUTOLINKING_PATH = ['android', 'build', 'generated', 'autolinking'];
 
-interface SweptDirectory {
-  path: string;
-  rel: string;
+function knownCopiedPaths(rel: string): string[] {
+  const segments = rel.split('/');
+  const paths: string[] = [];
+  if (segments.at(-1) === 'node_modules') paths.push('.pnpm-store', 'expo-modules-jsi/apple/.DerivedData');
+  for (let covered = 1; covered < AUTOLINKING_PATH.length; covered++) {
+    if (AUTOLINKING_PATH.slice(0, covered).every((segment, i) => segments.at(i - covered) === segment)) {
+      paths.push(AUTOLINKING_PATH.slice(covered).join('/'));
+    }
+  }
+  return paths;
 }
 
-async function removeExclusionsIn({ path, rel }: SweptDirectory, signal: AbortSignal): Promise<SweptDirectory[]> {
+function isMissingError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+}
+
+async function removeCopiedPath(root: string, rel: string, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();
-  const entries = await readdir(path, { withFileTypes: true });
-  const excluded = entries.filter((entry) => isCarrySkipped(`${rel}/${entry.name}`));
-  if (excluded.length) {
-    const stat = await lstat(path);
-    await chmod(path, stat.mode | 0o700);
-    try {
-      for (const entry of excluded) {
-        signal.throwIfAborted();
-        await removeTemporaryEntryAsync(join(path, entry.name), signal);
-      }
-    } finally {
-      await utimes(path, stat.atime, stat.mtime);
-      await chmod(path, stat.mode);
-    }
+  const path = join(root, rel);
+  let parent: string;
+  try {
+    parent = await realpath(dirname(path));
+  } catch (error) {
+    if (isMissingError(error)) return;
+    throw error;
   }
-  const children: SweptDirectory[] = [];
-  for (const entry of entries) {
-    const child = `${rel}/${entry.name}`;
-    if (entry.isDirectory() && !isCarrySkipped(child)) children.push({ path: join(path, entry.name), rel: child });
+  const inside = relative(root, parent);
+  if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return;
+  const stat = await lstat(parent);
+  const target = join(parent, basename(path));
+  if (!(await lstat(target).catch(() => null))) return;
+  await chmod(parent, stat.mode | 0o700);
+  try {
+    await removeTemporaryEntryAsync(target, signal);
+  } finally {
+    await utimes(parent, stat.atime, stat.mtime);
+    await chmod(parent, stat.mode);
   }
-  return children;
 }
 
-async function removeCopiedExclusionsAsync(path: string, rel: string, signal: AbortSignal): Promise<void> {
-  let active = 0;
-  const waiting: (() => void)[] = [];
-  const acquire = async (): Promise<void> => {
-    if (active < SWEEP_CONCURRENCY) active += 1;
-    else await new Promise<void>((wake) => waiting.push(wake));
-  };
-  const release = (): void => {
-    const next = waiting.shift();
-    if (next) next();
-    else active -= 1;
-  };
-  let failure: { error: unknown } | undefined;
-  const visit = async (directory: SweptDirectory): Promise<void> => {
-    await acquire();
-    let children: SweptDirectory[];
-    try {
-      if (failure) return;
-      children = await removeExclusionsIn(directory, signal);
-    } catch (error) {
-      failure ??= { error };
-      return;
-    } finally {
-      release();
+async function removeKnownCopiedPaths(path: string, rel: string, signal: AbortSignal): Promise<void> {
+  const paths = knownCopiedPaths(rel);
+  if (basename(rel) === 'node_modules') {
+    const virtualStore = await readdir(join(path, '.pnpm')).catch((error: unknown) => {
+      if (isMissingError(error)) return [];
+      throw error;
+    });
+    for (const name of virtualStore) {
+      if (name.startsWith('expo-modules-jsi@')) {
+        paths.push(`.pnpm/${name}/node_modules/expo-modules-jsi/apple/.DerivedData`);
+      }
     }
-    await Promise.all(children.map(visit));
-  };
-  await visit({ path, rel });
-  if (failure) throw failure.error;
+  }
+  const root = await realpath(path);
+  for (const known of paths) await removeCopiedPath(root, known, signal);
 }
 
 export async function cloneIgnoredEntries({
@@ -433,7 +429,7 @@ export async function cloneIgnoredEntries({
         await getExecutor().runFileAsync('cp', ['-R', from, to], options);
         cloned = false;
       }
-      if ((await lstat(to)).isDirectory()) await removeCopiedExclusionsAsync(to, rel, operation.signal);
+      if ((await lstat(to)).isDirectory()) await removeKnownCopiedPaths(to, rel, operation.signal);
       copied.push(rel);
     } catch (cause) {
       if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
