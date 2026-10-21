@@ -645,7 +645,7 @@ const PREBUILD_WRITTEN_IDS = [
   ['android', 'package'],
 ] as const;
 
-function expoConfigContents(sources: FingerprintSource[]): Record<string, unknown> | null {
+export function expoConfigContents(sources: readonly FingerprintSource[]): Record<string, unknown> | null {
   const source = sources.find((s) => s.type === 'contents' && s.id === 'expoConfig');
   if (source?.type !== 'contents') return null;
   try {

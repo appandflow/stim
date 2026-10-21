@@ -9,7 +9,7 @@ import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts'
 import { spawnDeclared } from './spawn-claims.ts';
 import { remoteCliInvocation } from './node-cli.ts';
 import { detectIsExpo } from '../workspace/project.ts';
-import { expoBinPath, expoBinRefusal, expoSdkMajor } from '../supervisor/server-expo.ts';
+import { expoBinPath, expoBinRefusal, expoSdkMajor, expoTelemetryEnv } from '../supervisor/server-expo.ts';
 import { readWorkspaceState, updateWorkspaceState, type WorkspaceState } from '../workspace/workspace-state.ts';
 import { ambientContext } from '@stim-cli/core';
 
@@ -276,7 +276,12 @@ export async function runPrebuild(
       spawn(invocation.file, invocation.args, {
         cwd: root,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...(ambientContext()?.env ?? process.env), FORCE_COLOR: '0', CI: '1' },
+        env: {
+          ...(ambientContext()?.env ?? process.env),
+          ...expoTelemetryEnv(ambientContext()?.env ?? process.env),
+          FORCE_COLOR: '0',
+          CI: '1',
+        },
       }),
     );
   } catch (err) {
