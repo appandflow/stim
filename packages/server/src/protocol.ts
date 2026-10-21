@@ -2004,6 +2004,13 @@ export function protocolJsonSchema(): JsonSchema {
                   'Paths relative to project that git ignores for fingerprint on the caller, such as through .git/info/exclude.',
                 items: { type: 'string', minLength: 1, maxLength: 1024 },
               },
+              fingerprintTracked: {
+                type: 'array',
+                maxItems: 20000,
+                description:
+                  'Top-level entries of project that the caller git tracks for fingerprint although an ignore pattern matches them.',
+                items: { type: 'string', minLength: 1, maxLength: 255, pattern: '^[^/\\u0000]+$' },
+              },
               native: {
                 oneOf: [
                   {

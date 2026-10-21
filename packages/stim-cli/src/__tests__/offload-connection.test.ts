@@ -394,9 +394,13 @@ describe('offloadBuild', () => {
     await busy.closed;
   });
 
-  it.each([true, false])(
-    'sends the paths the client git ignored only to a machine with the fingerprint-ignored feature: %s',
-    async (supported) => {
+  it.each([
+    { features: ['fingerprint-sources', 'fingerprint-ignored', 'fingerprint-tracked'], ignored: true, tracked: true },
+    { features: ['fingerprint-sources', 'fingerprint-ignored'], ignored: true, tracked: false },
+    { features: [], ignored: false, tracked: false },
+  ])(
+    'sends the paths the client git ignored or tracked only to a machine with the matching feature: $features',
+    async ({ features, ignored, tracked }) => {
       const machine = await fakeMachine(
         'mini',
         offer(0.1),
@@ -405,7 +409,7 @@ describe('offloadBuild', () => {
           hello: () => ({
             result: {
               capabilities: ['build'],
-              features: supported ? ['fingerprint-sources', 'fingerprint-ignored'] : [],
+              features,
             },
           }),
         },
@@ -436,6 +440,7 @@ describe('offloadBuild', () => {
           sources: [],
           ignored: [],
           ignoredPaths: ['.env.local', 'ios/main.jsbundle'],
+          trackedPaths: ['GoogleService-Info.plist'],
         }),
         stagingDir: join(repo, 'staging'),
         onPhase: () => {},
@@ -444,7 +449,8 @@ describe('offloadBuild', () => {
         note: () => {},
       });
       const start = machine.requests.find((entry) => entry.method === 'build.start')?.params;
-      expect(start?.fingerprintIgnored).toEqual(supported ? ['.env.local', 'ios/main.jsbundle'] : undefined);
+      expect(start?.fingerprintIgnored).toEqual(ignored ? ['.env.local', 'ios/main.jsbundle'] : undefined);
+      expect(start?.fingerprintTracked).toEqual(tracked ? ['GoogleService-Info.plist'] : undefined);
     },
   );
 

@@ -9,6 +9,7 @@ import {
   fingerprintDiffRecord,
   gitignoredFingerprintInputs,
   ignoredFingerprintPaths,
+  trackedFingerprintPaths,
   inputsChangedDuringBuild,
   refingerprintAfterMutation,
   untrackedMissLine,
@@ -567,6 +568,7 @@ function reactNativeIosArtifact(
           { env: operation?.env },
         ),
         ignoredPaths: ignoredFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
+        trackedPaths: trackedFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
       }),
       unchanged: async () => {
         const after = await refingerprintAfterMutation({

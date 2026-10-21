@@ -132,6 +132,8 @@ export interface WorkerJob {
   expectedSources?: BuildFingerprintSource[];
   /** The paths the client's git ignored for `expectedFingerprint`, which this checkout's git may not. */
   expectedIgnored?: string[];
+  /** The top-level entries the client counted although an ignore pattern matches them; this checkout has no index. */
+  expectedTracked?: string[];
   cacheArtifact?: boolean;
   stimBuild?: string;
   native?: BuildStartParams['native'];
@@ -716,6 +718,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
         iosProjectPath: iosProject.relative,
         androidLayout,
         ignoredPaths: job.expectedIgnored,
+        trackedPaths: job.expectedTracked,
       }),
     );
     if (!initial) return failed('no-fingerprint', 'The remote machine could not fingerprint the project.');
@@ -761,6 +764,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
           iosProjectPath: iosProject.relative,
           androidLayout,
           ignoredPaths: job.expectedIgnored,
+          trackedPaths: job.expectedTracked,
         }),
       );
       if (!after) return failed('no-fingerprint', `No fingerprint after ${mutations.join(', ')}.`);
@@ -795,6 +799,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
         iosProjectPath: iosProject.relative,
         androidLayout,
         ignoredPaths: job.expectedIgnored,
+        trackedPaths: job.expectedTracked,
       }),
     );
     if (!settled || settled.moved) return failed('fingerprint-moved', 'The inputs changed during the build there.');
