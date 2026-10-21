@@ -200,21 +200,27 @@ struct AppPreferencesView: View {
         LabeledContent("Setup guide") {
           Button("Open Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }.buttonStyle(.stim())
         }
-        Toggle("Show tips", isOn: $showsTips)
-        Toggle("Show new workspace cards", isOn: $showsWorkspaceCards)
-        Toggle("Offer the tutorial", isOn: $offersTutorial)
-        Text(
-          "Turning off Show tips also hides the suggestion banners. New workspace cards are the ones in the bottom-left corner; "
-            + "Notifications, system notifications and build requests are unchanged. "
-            + "With the tutorial off, Help > Stim Tutorial still opens it."
-        )
-        .foregroundStyle(Palette.tertiary)
         Toggle("Show in the menu bar", isOn: $showsMenuBarExtra)
         Toggle("Launch at login", isOn: $launchesAtLogin)
           .onChange(of: launchesAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
         if let loginError {
           Text(abbreviatingHome(loginError)).foregroundStyle(Palette.error)
         }
+      }
+
+      Section {
+        Toggle("Show tips", isOn: $showsTips)
+        Toggle("Show new workspace cards", isOn: $showsWorkspaceCards)
+        Toggle("Offer the tutorial", isOn: $offersTutorial)
+      } header: {
+        Text("Cards and Tips")
+      } footer: {
+        Text(
+          "Turning off Show tips also hides the suggestion banners. New workspace cards are the ones in the bottom-left corner; "
+            + "Notifications, system notifications and build requests are unchanged. "
+            + "With the tutorial off, Help > Stim Tutorial still opens it."
+        )
+        .foregroundStyle(Palette.tertiary)
       }
 
       Section {

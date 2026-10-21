@@ -3,6 +3,7 @@ import StimKit
 import SwiftUI
 
 struct TutorialPanel: View {
+  @AppStorage(AppPreferences.Key.showsWorkspaceCards) private var showsWorkspaceCards = true
   var snapshot: TutorialSnapshot
   #if DEBUG
     var fixtureRendering = false
@@ -195,7 +196,7 @@ struct TutorialPanel: View {
         if current, let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
         if ["build", "parallel"].contains(step.id), current, let openBuild {
           HStack(spacing: Space.sm) {
-            Text("Click Show to watch the build.")
+            Text(showsWorkspaceCards ? "Click Show to watch the build." : "Open the build to watch it.")
             Button("Open the build", action: openBuild).buttonStyle(.link).foregroundStyle(Palette.primary)
               .accessibilityLabel("Open the tutorial build")
           }

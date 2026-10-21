@@ -114,7 +114,6 @@ public struct TipInputs {
   /// The Phone app feature flag; without it no phone tip applies.
   public var phoneApp = false
   public var tutorialCompleted = false
-  /// The Settings switch for offering the tutorial; off, the tutorial tip never applies.
   public var tutorialOffered = true
   public var sidebar = SidebarOptions()
   public var rows = 0
