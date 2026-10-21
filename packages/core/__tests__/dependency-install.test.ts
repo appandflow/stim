@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, normalize } from 'node:path';
-import { dependencyInstall } from '../dependency-install.ts';
+import { dependencyInstall, reusableDependencies } from '../dependency-install.ts';
 
 test.each([
   ['pnpm-lock.yaml', 'pnpm', ['install', '--frozen-lockfile']],
@@ -68,5 +68,25 @@ test.each([
     expect(install?.marker === 'dependencies').toBe(dir === '.');
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  ['package-lock.json', 'hoisted to the workspace root', true],
+  ['yarn.lock', 'hoisted to the workspace root', true],
+  ['package-lock.json', 'missing everywhere', false],
+] as const)('reuses a %s install %s by where the install ran', (file, _, installed) => {
+  const area = mkdtempSync(join(tmpdir(), 'stim-dependency-install-'));
+  try {
+    const src = join(area, 'src');
+    mkdirSync(join(src, 'apps', 'mobile'), { recursive: true });
+    writeFileSync(join(src, file), 'lockfile');
+    const install = dependencyInstall(src, 'apps/mobile');
+    if (!install) throw new Error('expected an install');
+    writeFileSync(join(area, install.marker), install.digest);
+    if (installed) mkdirSync(join(src, 'node_modules'));
+    expect(reusableDependencies(area, 'apps/mobile', install.lockfile)).toBe(installed);
+  } finally {
+    rmSync(area, { recursive: true, force: true });
   }
 });

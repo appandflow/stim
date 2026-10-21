@@ -1,4 +1,4 @@
-import { dependencyInstall, type StimContext, withAmbientContext } from '@stim-cli/core';
+import { dependencyInstall, reusableDependencies, type StimContext, withAmbientContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -506,9 +506,7 @@ async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
   const { command, args, digest, lockfile } = install;
   const marker = join(job.area, install.marker);
   const installed = () => writeFileSync(join(job.area, 'lockfile'), lockfile);
-  if (existsSync(join(src, job.project, 'node_modules')) && existsSync(marker)) {
-    if (readFileSync(marker, 'utf8') === digest) return installed();
-  }
+  if (reusableDependencies(job.area, job.project, lockfile)) return installed();
   note('deps', `${command} ${args.join(' ')}${install.dir === '.' ? '' : ` in ${install.dir}`}`);
   const child = getExecutor().spawn(command, args, {
     cwd: join(src, install.dir),

@@ -73,7 +73,7 @@ export function reusableDependencies(
     const install = dependencyInstall(root, path, env);
     return (
       install?.lockfile === lockfile &&
-      existsSync(join(selected, 'node_modules')) &&
+      existsSync(join(root, install.dir, 'node_modules')) &&
       readFileSync(join(area, install.marker), 'utf8') === install.digest
     );
   } catch {
