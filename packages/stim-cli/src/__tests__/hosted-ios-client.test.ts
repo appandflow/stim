@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { BuildConnection } from '../offload/client.ts';
 import { deviceHostMachinesFile, queryLogs, type HostedIosPlacement, type HostedAppOffer } from '@stim-cli/core/state';
 import { prepareHostedIos, placeHostedIos, stopHostedIos } from '../device-host/hosted-ios.ts';
-import { iosAgentRemoteConfig } from '../device-host/hosted-native.ts';
+import { hostedMetroPortProbe, iosAgentRemoteConfig } from '../device-host/hosted-native.ts';
 import { readHostedIos, writeHostedIos } from '../device-host/ios-state.ts';
 import { applyHostedIosProbe } from '../device-host/hosted-ios-status.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
@@ -94,6 +94,7 @@ let methods: { method: string; params: Record<string, unknown> }[];
 let blobs: Map<string, Buffer>;
 let manifest: { sha256: string; size: number };
 let hostFeatures: string[];
+let hostBusy: number[];
 let agentGrant: unknown;
 let features: boolean;
 let appLaunched: true | 'unverified';
@@ -124,6 +125,7 @@ beforeEach(async () => {
   pressure = 'normal';
   tailnet.changed = false;
   hostFeatures = [];
+  hostBusy = [];
   agentGrant = undefined;
   fixtureConnection = Object.create(BuildConnection.prototype) as BuildConnection;
   fixtureConnection.close = vi.fn<() => void>();
@@ -168,6 +170,8 @@ beforeEach(async () => {
       return reply({ id: sessionId, platform: 'ios', state: 'stopped', device });
     }
     if (method === 'device-host.metro.open' || method === 'device-host.metro.close') return reply({ port: 8123 });
+    if (method === 'device-host.metro.ports')
+      return reply({ busy: hostBusy.filter((port) => (params.ports as number[]).includes(port)) });
     if (method === 'device-host.app.offer') {
       manifest = params.manifest;
       const files = blobs.has(manifest.sha256) ? JSON.parse(String(blobs.get(manifest.sha256))) : [manifest];
@@ -356,6 +360,19 @@ test('a dev-client Metro port held on the host refuses with the metro.port remed
     remedy: expect.stringContaining('metro.port'),
   });
   expect(methods.some((entry) => entry.method === 'device-host.app.offer')).toBe(false);
+});
+
+test('the host Metro port probe answers from the host and counts an older or unanswering host as free', async () => {
+  hostBusy = [8083];
+  const notes: string[] = [];
+  const free = hostedMetroPortProbe('mini', (line) => notes.push(line));
+  expect([await free(8082), await free(8083), await free(8084)]).toEqual([true, false, true]);
+  features = false;
+  expect(await hostedMetroPortProbe('mini', () => {})(8083)).toBe(true);
+  features = true;
+  errorMethod = 'device-host.metro.ports';
+  expect(await hostedMetroPortProbe('mini', (line) => notes.push(line))(8083)).toBe(true);
+  expect(notes).toEqual([expect.stringContaining('Could not check which Metro ports are free on mini')]);
 });
 
 test('delivery failure keeps the session available to stop', async () => {

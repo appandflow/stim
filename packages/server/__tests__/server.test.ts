@@ -1220,6 +1220,7 @@ describe('pairing', () => {
           'build-dependency-cache',
           'hosted-android-data',
           'hosted-android-process',
+          'hosted-metro-ports',
           'server-update',
           'status-views',
         ],

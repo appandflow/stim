@@ -4,6 +4,7 @@ import type { IosRuntimePlan } from './launch.ts';
 import { automaticDevicePlacement } from '../../device-host/auto-placement.ts';
 import { checkEasFallback } from '../../engine/eas-fallback.ts';
 import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
+import { hostedMetroPortProbe } from '../../device-host/hosted-native.ts';
 import { readHostedIos, writeHostedIos } from '../../device-host/ios-state.ts';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { buildIos, discoverXcodeProject } from '../../integrations/react-native-build.ts';
@@ -75,7 +76,7 @@ import { gitCommonDirAsync, repoRootAsync } from '../../workspace/worktree.ts';
 import { warmMetro } from '../../engine/metro-warmup.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { startDevServer } from '../start.ts';
-import { devClientScheme, devClientTakesDevMenuParams } from '../dev-client.ts';
+import { devClientScheme, devClientTakesDevMenuParams, hasDevClient } from '../dev-client.ts';
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
@@ -85,6 +86,7 @@ export interface IosDeps {
   checkEasFallback: typeof checkEasFallback;
   prepareHostedIos: typeof prepareHostedIos;
   placeHostedIos: typeof placeHostedIos;
+  hostedMetroPortProbe: typeof hostedMetroPortProbe;
   readHostedIos: typeof readHostedIos;
   writeHostedIos: typeof writeHostedIos;
   resolveEasDevelopmentBuild: typeof resolveEasDevelopmentBuild;
@@ -105,6 +107,7 @@ export interface IosDeps {
   detectBundleId: typeof detectBundleId;
   detectIsExpo: typeof detectIsExpo;
   devClientScheme: typeof devClientScheme;
+  hasDevClient: typeof hasDevClient;
   devClientTakesDevMenuParams: typeof devClientTakesDevMenuParams;
   getProject: typeof getProject;
   upsertProject: typeof upsertProject;
@@ -191,6 +194,7 @@ export const DEFAULT_DEPS: IosDeps = {
   checkEasFallback,
   prepareHostedIos,
   placeHostedIos,
+  hostedMetroPortProbe,
   readHostedIos,
   writeHostedIos,
   resolveEasDevelopmentBuild,
@@ -203,6 +207,7 @@ export const DEFAULT_DEPS: IosDeps = {
   detectBundleId,
   detectIsExpo,
   devClientScheme,
+  hasDevClient,
   devClientTakesDevMenuParams,
   getProject,
   upsertProject,
