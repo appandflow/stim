@@ -1009,7 +1009,7 @@ async function runIos(
         code: 'STIM_CANCELLED',
         message: 'while finishing the run',
       });
-      if (cancelled) return fail({ ...cancelled, build: artifact?.failureFields });
+      if (cancelled) return fail(cancelled);
       if (acquiredBuild) {
         const { code } = error as { code?: unknown };
         recordFailedBuild(acquiredBuild, typeof code === 'string' ? code : undefined);
