@@ -40,6 +40,7 @@ private struct CleanupRunRow: View {
       HStack(alignment: .firstTextBaseline, spacing: Space.md) {
         Image(systemName: run.failed.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
           .foregroundStyle(run.failed.isEmpty ? Palette.success : Palette.error)
+          .frame(width: 18)
         VStack(alignment: .leading, spacing: Space.xxs) {
           HStack {
             Text(run.title)
