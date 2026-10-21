@@ -4127,7 +4127,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                             ? await hostedDevices.logsQuery(session.id, raw)
                             : method === 'device-host.metro.open'
                               ? await hostedDevices.metroOpen(session.id, raw, peer)
-                              : await hostedDevices.metroClose(session.id, raw);
+                              : method === 'device-host.metro.ports'
+                                ? await hostedDevices.metroPorts(session.id, raw)
+                                : await hostedDevices.metroClose(session.id, raw);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 

@@ -4,6 +4,7 @@ import type { RuntimePreparationError, RuntimePreparationResult } from '../engin
 import { writeDevicePlacement } from '../device-host/ios-state.ts';
 import type { DevicePlacement } from '@stim-cli/core/state';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
+import { devClientPortRemedy } from '../device-host/hosted-native.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
 import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
@@ -867,6 +868,10 @@ async function runIos(
 
     async function prepareMetro(): Promise<RuntimePreparationResult<MobileRuntimePreparation>> {
       if (metroCheck) {
+        const hostedPorts =
+          hostedTarget && isExpo
+            ? { machine: hostedTarget.host.machine, free: d.hostedMetroPortProbe(hostedTarget.host.machine, note) }
+            : undefined;
         const gate = await ensureDevServer({
           env: context.env,
           root,
@@ -874,6 +879,7 @@ async function runIos(
           settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
           settingsContext,
           remote: Boolean(remoteDevice),
+          hostedPorts,
           note,
           resolve: d.resolveProjectMetro,
           start: d.startDevServer,
@@ -894,6 +900,15 @@ async function runIos(
         }
         metroPort = gate.port;
         devServer = gate.devServer;
+        if (hostedPorts && !(await hostedPorts.free(gate.port)))
+          return {
+            ok: false,
+            error: {
+              code: 'STIM_HOSTING_REFUSED',
+              message: `${hostedPorts.machine}: Port ${gate.port} is in use on ${hostedPorts.machine}, and an Expo dev client loads its bundle from this workspace's Metro port.`,
+              remedy: devClientPortRemedy(hostedPorts.machine),
+            },
+          };
       } else {
         const pin = metroPortSetting(settings, context.env);
         if (pin.error) {

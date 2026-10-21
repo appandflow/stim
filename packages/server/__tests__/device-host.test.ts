@@ -351,6 +351,9 @@ test('serves an Expo dev-client session on the client Metro port and refuses one
     clientMetroPort,
   };
   try {
+    expect(await host.metroPorts('client', { ports: [clientMetroPort, boundPort(metro)] })).toEqual({
+      result: { busy: [clientMetroPort, boundPort(metro)].toSorted((a, b) => a - b) },
+    });
     expect(await host.metroOpen('client', params, '127.0.0.1')).toMatchObject({
       error: { code: 'device-busy', message: expect.stringContaining(`Port ${clientMetroPort} is in use`) },
     });
@@ -361,6 +364,11 @@ test('serves an Expo dev-client session on the client Metro port and refuses one
     await new Promise<void>((resolve) => holder.close(() => resolve()));
     expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', clientMetroPort);
     expect(await (await fetch(`http://127.0.0.1:${clientMetroPort}/index.bundle`)).text()).toBe('workspace bundle');
+    expect(await host.metroPorts('client', { ports: [clientMetroPort] })).toEqual({ result: { busy: [] } });
+    allowed.add('other');
+    expect(await host.metroPorts('other', { ports: [clientMetroPort] })).toEqual({
+      result: { busy: [clientMetroPort] },
+    });
   } finally {
     await host.metroClose('client', params);
     if (holder.listening) await new Promise<void>((resolve) => holder.close(() => resolve()));

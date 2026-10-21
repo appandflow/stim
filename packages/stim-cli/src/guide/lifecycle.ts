@@ -727,9 +727,11 @@ uploads the app on every run. React Native and Expo Debug keep Metro here; the s
 private gateway bound to this machine's Tailscale address, pinned to the host peer
 and protected by a per-session secret. The host exposes only a loopback bridge.
 For an Expo dev client the bridge listens on this machine's Metro port, because
-the dev server writes that port into the manifest's bundle URL. If that port
-already accepts loopback connections on the host, the run refuses: pin a Metro
-port free on both Macs with metro.port, run stim stop; stim start, then retry.
+the dev server writes that port into the manifest's bundle URL. When this run
+starts Metro, it asks the host and picks a port free on both Macs, moving the
+recorded port if the host uses it. A running Metro or a metro.port pin on a port
+the host uses refuses before the build: run stim stop, then stim ios --remote
+<machine> without stim start, or pin a port free on both Macs.
 No start --remote is needed; metro.tunnel and metro.publicUrl are ignored.
 Debug requires a running supervisor with private gateway support before reserving
 a simulator. --no-metro-check refuses with STIM_BAD_ARG for hosted Debug runs.

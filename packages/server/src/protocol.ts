@@ -1451,6 +1451,14 @@ export function protocolJsonSchema(): JsonSchema {
               ['gatewayPort', 'secret'],
             ),
           ),
+          request('device-host.metro.ports', {
+            type: 'object',
+            required: ['ports'],
+            additionalProperties: false,
+            properties: {
+              ports: { type: 'array', maxItems: 256, items: { type: 'integer', minimum: 1, maximum: 65535 } },
+            },
+          }),
           request('device-host.metro.close', session({})),
           request(
             'device-host.frames.subscribe',

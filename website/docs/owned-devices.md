@@ -751,9 +751,12 @@ unreachable, declined or uncertain placement and its reason.
 Metro stays on this machine. Its supervisor runs a private tailnet gateway to the
 host's loopback bridge; no `stim start --remote` is needed. For an Expo dev
 client the bridge listens on this machine's Metro port, because the dev server
-writes that port into the manifest's bundle URL. If that port already accepts
-loopback connections on the host, the run refuses: pin a Metro port that is free
-on both Macs with `metro.port`, run `stim stop; stim start`, then retry. `metro.tunnel` and
+writes that port into the manifest's bundle URL. When the iOS run starts Metro,
+it asks the host first and picks a port free on both Macs, moving the workspace's
+recorded port if the host uses it. A Metro that is already running on a port the
+host uses, or a `metro.port` pin the host uses, refuses before the build: run
+`stim stop`, then `stim ios --remote <mac>` without `stim start`, or pin a port
+free on both Macs. `metro.tunnel` and
 `metro.publicUrl` are ignored, and non-Debug runs skip Metro. Hosted Debug runs
 require a running supervisor with private gateway support before reserving a
 simulator; `--no-metro-check` refuses with `STIM_BAD_ARG`. If Metro is missing or

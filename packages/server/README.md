@@ -1148,6 +1148,12 @@ stream over WireGuard with socket backpressure; no public tunnel, Funnel or
 Tailscale serve configuration change is needed. The 64 KiB server message
 limit remains unchanged.
 
+An approved client calls `device-host.metro.ports` with `{ports}`, at most 256
+of them, before it starts Metro for an iOS Expo dev client, and the host
+answers `{busy}`: the listed ports that already accept loopback connections,
+apart from the client's own dev-client bridges. The feature
+`hosted-metro-ports` advertises it.
+
 Replaying the same open request keeps the port. Client disconnection leaves
 the bridge available for the same session while its server owner lives. Call
 `device-host.metro.close` to replace a gateway, then reopen on the same port;

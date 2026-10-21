@@ -8488,6 +8488,34 @@ describe('iOS placement on a hosting Mac', () => {
     expect(stderr).toContain('metro.publicUrl and metro.tunnel are ignored');
   });
 
+  test('an Expo Metro already running on a port the host uses refuses before the build and reservation', async () => {
+    reserve();
+    let placed = false;
+    const { logs, calls } = await run(
+      { remote: 'mini', json: true },
+      {
+        detectIsExpo: () => true,
+        hostedMetroPortProbe: () => async (port: number) => port !== 8082,
+        prepareHostedIos: async () => ({
+          host: { machine: 'mini', connection: { close() {} } },
+          choice: hostedDevice,
+          session: null,
+        }),
+        placeHostedIos: async () => {
+          placed = true;
+          throw new Error('placed');
+        },
+      },
+    );
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_HOSTING_REFUSED',
+      message: expect.stringContaining('Port 8082 is in use on mini'),
+      remedy: expect.stringContaining('without stim start'),
+    });
+    expect(placed).toBe(false);
+    expect(calls.order).not.toContain('buildIos');
+  });
+
   test('a hosted named slot records a separate launch target for reload', async () => {
     reserve();
     const { exitCode } = await run(

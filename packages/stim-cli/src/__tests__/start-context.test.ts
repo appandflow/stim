@@ -46,6 +46,21 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
+test('a hosted dev-client run moves a recorded Metro port the host uses, but never a pinned one', async () => {
+  upsertProject(root, { metroPort: 24567 });
+  const busy = new Set([24567, ...Array.from({ length: 18 }, (_, index) => 8082 + index)]);
+  const hostedPorts = { machine: 'mini', free: async (port: number) => !busy.has(port) };
+  const notes: string[] = [];
+  const port = await resolveWorkspaceMetroPort(root, {}, (line) => notes.push(line), 'start', true, hostedPorts);
+  assert(typeof port === 'number');
+  expect(busy.has(port)).toBe(false);
+  expect(getProject(root)?.metroPort).toBe(port);
+  expect(notes.join('\n')).toContain('Port 24567 is in use on mini');
+  expect(await resolveWorkspaceMetroPort(root, { metro: { port: 24567 } }, () => {}, 'start', true, hostedPorts)).toBe(
+    24567,
+  );
+});
+
 test('pinned startup port lookup leaves the event loop responsive while its native probe is pending', async () => {
   const real = getExecutor();
   setExecutor({

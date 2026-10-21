@@ -4,6 +4,7 @@ import type { IosRuntimePlan } from './launch.ts';
 import { automaticDevicePlacement } from '../../device-host/auto-placement.ts';
 import { checkEasFallback } from '../../engine/eas-fallback.ts';
 import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
+import { hostedMetroPortProbe } from '../../device-host/hosted-native.ts';
 import { readHostedIos, writeHostedIos } from '../../device-host/ios-state.ts';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { buildIos, discoverXcodeProject } from '../../integrations/react-native-build.ts';
@@ -85,6 +86,7 @@ export interface IosDeps {
   checkEasFallback: typeof checkEasFallback;
   prepareHostedIos: typeof prepareHostedIos;
   placeHostedIos: typeof placeHostedIos;
+  hostedMetroPortProbe: typeof hostedMetroPortProbe;
   readHostedIos: typeof readHostedIos;
   writeHostedIos: typeof writeHostedIos;
   resolveEasDevelopmentBuild: typeof resolveEasDevelopmentBuild;
@@ -191,6 +193,7 @@ export const DEFAULT_DEPS: IosDeps = {
   checkEasFallback,
   prepareHostedIos,
   placeHostedIos,
+  hostedMetroPortProbe,
   readHostedIos,
   writeHostedIos,
   resolveEasDevelopmentBuild,

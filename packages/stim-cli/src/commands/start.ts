@@ -23,7 +23,7 @@ import {
   workspaceLogsDir,
   workspaceAgentDeviceDir,
 } from '../workspace/paths.ts';
-import { isMetroRunning, reserveMetroPort } from '../ports.ts';
+import { createPortProbe, isMetroRunning, reserveMetroPort } from '../ports.ts';
 import { PORT_INSPECTION_REMEDY, PortInspectionError } from '../listening-ports.ts';
 import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
@@ -529,8 +529,15 @@ export interface StartDevServerRequest {
   waitSeconds?: number;
   remote?: boolean;
   resetCache?: boolean;
+  /** The Mac a hosted Expo dev client will run on; a new port must be free there too. */
+  hostedPorts?: HostedMetroPorts;
   out: (line: string) => void;
   note: (line: string) => void;
+}
+
+export interface HostedMetroPorts {
+  machine: string;
+  free: (port: number) => Promise<boolean>;
 }
 
 export type StartDevServerResult =
@@ -545,6 +552,7 @@ export async function startDevServer(
     waitSeconds = DEFAULT_WAIT_SECONDS,
     remote: remoteFlag = false,
     resetCache = false,
+    hostedPorts,
     out,
     note,
   }: StartDevServerRequest,
@@ -702,7 +710,7 @@ export async function startDevServer(
 
       const logsDir = workspaceLogsDir(root);
       const logFile = supervisorLogFile(root);
-      const port = await resolvePort(root, settings, note, fail);
+      const port = await resolvePort(root, settings, note, fail, hostedPorts);
       let publicOrigin = remote ? publicUrl : null;
       let resolution = await resolveStartupMetro(port, root);
       let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
@@ -1550,8 +1558,9 @@ async function resolvePort(
   settings: SettingsObject,
   note: (line: string) => void,
   fail: (refusal: StartRefusalArgs) => never,
+  hostedPorts?: HostedMetroPorts,
 ): Promise<number> {
-  const result = await resolveWorkspaceMetroPort(root, settings, note, 'start');
+  const result = await resolveWorkspaceMetroPort(root, settings, note, 'start', true, hostedPorts);
   return typeof result === 'number' ? result : fail(result);
 }
 
@@ -1561,6 +1570,7 @@ export async function resolveWorkspaceMetroPort(
   note: (line: string) => void,
   command: 'start' | 'web',
   reserve = true,
+  hostedPorts?: HostedMetroPorts,
 ): Promise<number | StartError> {
   const setting = metroPortSetting(settings, ambientEnv());
   if (setting.error) return { code: 'STIM_BAD_ARG', message: setting.error, remedy: SETTING_SHAPE_REMEDY };
@@ -1602,21 +1612,35 @@ export async function resolveWorkspaceMetroPort(
     if (recorded === pinned) return recorded;
   } else if (recorded) {
     const held = await resolveStartupMetro(recorded, root);
-    if (!held.notOurs) return recorded;
-    const fresh = await reservePort(root, null);
+    const hostBusy =
+      !held.notOurs && hostedPorts && !held.metro && !(await hostedPorts.free(recorded)) ? hostedPorts.machine : null;
+    if (!held.notOurs && !hostBusy) return recorded;
+    const fresh = await reservePort(root, null, hostedPorts);
     if (typeof fresh === 'number' && fresh !== recorded) {
-      note(chalk.yellow(`Port ${recorded} is held by something else (${held.notOurs}).`));
+      note(
+        chalk.yellow(
+          hostBusy
+            ? `Port ${recorded} is in use on ${hostBusy}, where an Expo dev client loads its bundle from this workspace's Metro port.`
+            : `Port ${recorded} is held by something else (${held.notOurs}).`,
+        ),
+      );
       note(chalk.dim(`Reserved port ${fresh} for this project instead.`));
     }
     return fresh;
   }
   if (!reserve && pinned !== null) return pinned;
-  return reservePort(root, pinned);
+  return reservePort(root, pinned, hostedPorts);
 }
 
-async function reservePort(root: string, pinned: number | null): Promise<number | StartError> {
+async function reservePort(
+  root: string,
+  pinned: number | null,
+  hostedPorts?: HostedMetroPorts,
+): Promise<number | StartError> {
+  const local = hostedPorts && createPortProbe();
+  const isFree = local && (async (port: number) => (await local(port)) && (await hostedPorts.free(port)));
   try {
-    return await reserveMetroPort(root, undefined, undefined, pinned, ambientContext()?.signal);
+    return await reserveMetroPort(root, undefined, isFree, pinned, ambientContext()?.signal);
   } catch (error) {
     throwIfCancelled(ambientContext()?.signal, 'Metro startup');
     if (error instanceof PortInspectionError) {
