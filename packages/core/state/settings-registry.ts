@@ -736,7 +736,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 7,
     env: 'STIM_MAINTENANCE_OLDER_THAN_DAYS',
     description:
-      'Days unused before the age sweep removes it: workspace build outputs, shared cache entries, parked simulators and emulators, and, with maintenance.removeFinishedWorktrees, clean pushed linked worktrees; 0 never',
+      'Days unused before the age sweep removes it: workspace build outputs, shared cache entries, parked simulators and emulators, and, with maintenance.removeFinishedWorktrees, clean pushed linked worktrees; 0 turns those age removals off',
   },
   {
     key: 'maintenance.deviceIdleDays',

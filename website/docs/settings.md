@@ -806,7 +806,7 @@ build holds its claim on it or that claim is unresolved.
 `maintenance.pressureProtectMinutes` set the
 [disk pressure levels](./build-caches.md#disk-pressure-levels). `caches.ccacheMaxGb` is
 passed to ccache, which evicts by itself. `maintenance.sweepHours` (24) sets how
-often the age sweep runs. `maintenance.olderThanDays` (7; 0 never) is how long
+often the age sweep runs. `maintenance.olderThanDays` (7; 0 turns these off) is how long
 something stays unused before that sweep removes it: workspace build outputs,
 shared cache entries, parked simulators and emulators, and clean, pushed linked
 worktrees (with `maintenance.removeFinishedWorktrees`); `maintenance.deviceIdleDays` sets how long a workspace stays idle

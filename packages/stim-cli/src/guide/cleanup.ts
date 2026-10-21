@@ -76,8 +76,8 @@ In on mode a pass runs, cheapest to rebuild first:
      age sweep. Devices are recreated on the next run.
 The age sweep (every maintenance.sweepHours, 24) covers Stim Desktop's nightly
 cleanup, run in the background of commands instead of at an hour.
-maintenance.olderThanDays (7) is its age for steps 2, 3, 5 and 6; 0 never
-removes anything by age, while step 1 still runs.
+maintenance.olderThanDays (7) is its age for steps 2, 3, 5 and 6; with 0 the
+sweep removes none of those, while step 1 and step 7 still run.
 Disk-driven steps stop once free space is back above the floor. Kept for
 every pass: a workspace that is in use, holds a lock, was used within
 maintenance.protectRecentHours, is pinned with maintenance.keep, or is the
@@ -595,7 +595,8 @@ SWEEPING FINISHED WORKTREES
   one, else by the RECENT ACTIVITY sources above being older than
   --older-than days (reason recently-used while they are newer, and
   last-use-unknown when they cannot be read). Automatic maintenance removes it
-  only at disk pressure level 3, once that activity is older than
+  the same way in its daily age sweep, after maintenance.olderThanDays, and at
+  disk pressure level 3 once that activity is older than
   maintenance.pressureProtectMinutes and at least 5 minutes old, whatever
   the setting; unreadable activity keeps it. Removal re-checks, under the removal
   locks, that HEAD did not move and the worktree is still idle, and

@@ -208,7 +208,10 @@ export async function planWorktrees({
       target: worktree.path,
       bytes: 0,
       reason: worktreeRemovalReason(worktree, sweep),
-      check: worktree.merge?.merged || endedPullRequest(worktree.pullRequest) ? 'worktree' : 'sweep',
+      check:
+        level === undefined && idleDays !== null && !worktree.merge?.merged && !endedPullRequest(worktree.pullRequest)
+          ? 'sweep'
+          : 'worktree',
       ...(level ? { level } : {}),
     });
   }

@@ -503,7 +503,8 @@ The daily sweep covers what Stim Desktop's nightly cleanup does. It runs in
 the background of Stim commands every `maintenance.sweepHours` (24), never at a
 set hour, and waits while the host load is over `maintenance.maxLoadPerCore`.
 `maintenance.olderThanDays` (7) is the age for steps 2, 3, 5 and 6; set it to 0
-to never remove anything by age. Step 1 still runs.
+and the sweep removes none of those by age. Step 1 and step 7, which
+`maintenance.deviceIdleDays` controls, still run.
 
 A pass keeps a workspace that is in use, holds a lock, was used within
 `maintenance.protectRecentHours`, or is the workspace of the command that

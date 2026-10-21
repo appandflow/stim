@@ -325,7 +325,13 @@ stim gc --delete --worktrees --older-than 3`}
 />
 
 Automatic maintenance (`maintenance.mode`, on by default) removes finished
-worktrees on its own, by the same rules as `gc --delete`; turn that off with
+worktrees on its own, by the same rules as `gc --delete`. Its daily age sweep
+also removes clean, pushed worktrees unused for `maintenance.olderThanDays`
+(7 days), as `gc --delete --worktrees --older-than 7` does. Unused means no
+Stim command ran there, so a worktree you edit without running `stim` counts
+as unused once its git activity is older than `gc.worktreeGraceMinutes`, and
+removal takes its git-ignored files, such as `.env.local`, with it. Pin a
+worktree with `maintenance.keep`, or turn worktree removal off with
 `maintenance.removeFinishedWorktrees false`.
 
 `gc` lists every linked worktree that has a Stim workspace, and every other
@@ -388,7 +394,8 @@ holds nothing git would lose, but looks just like a worktree created a minute
 ago, so plain `gc --delete` keeps it. `--worktrees` removes it once it is idle:
 by its last Stim use when one is recorded, else by its git and Stim activity
 (the same sources as the grace period below) being older than `--older-than`
-days. Automatic maintenance removes it only at disk pressure level 3, once
+days. Automatic maintenance removes it the same way in its daily age sweep,
+after `maintenance.olderThanDays`, and at disk pressure level 3 once
 that activity is older than `maintenance.pressureProtectMinutes`, and never
 sooner than 5 minutes after it, even when that setting is 0. Before
 removing it, gc checks again that its HEAD did not move and that it is still
