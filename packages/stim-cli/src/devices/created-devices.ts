@@ -48,6 +48,13 @@ export function forgetCreatedDevice(platform: CreatedDevicePlatform, id: string)
   update(platform, (entries) => entries.delete(id));
 }
 
+/** Waits asynchronously for the ledger lock, then records the device. */
+export function recordCreatedDeviceAsync(platform: CreatedDevicePlatform, id: string): Promise<void> {
+  return withDirLockAsync(createdDevicesLock(), () => recordCreatedDevice(platform, id), {
+    ensureParent: () => ensurePrivateDir(getConfigDir()),
+  });
+}
+
 /** Waits asynchronously for the ledger lock, then atomically forgets the device. The synchronous transaction decides whether to commit the removal; cancellation stops admission. */
 export function forgetCreatedDeviceAsync(
   platform: CreatedDevicePlatform,

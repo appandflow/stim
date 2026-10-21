@@ -22,7 +22,11 @@ const GEM_SPECS = ['GEM', '  remote: https://rubygems.org/', '  specs:'];
 
 test('a resolved cocoapods spec pins the pods toolchain', () => {
   lock([...GEM_SPECS, '    activesupport (7.2.3.2)', '    cocoapods (1.15.2)', ''].join('\n'));
-  expect(bundlerPin(root)).toEqual({ gemfile: join(root, 'Gemfile'), lockfile: join(root, 'Gemfile.lock') });
+  expect(bundlerPin(root)).toEqual({
+    gemfile: join(root, 'Gemfile'),
+    lockfile: join(root, 'Gemfile.lock'),
+    cocoapods: '1.15.2',
+  });
 });
 
 test('a CRLF lockfile pins it too, because the match is anchored at the line start', () => {
@@ -78,10 +82,33 @@ test('a missing Gemfile, a missing lockfile, and a lockfile that is a directory 
 
 test('podInstallCommand follows the pin and keeps the extra pod flags', () => {
   lock([...GEM_SPECS, '    fastlane (2.219.0)', ''].join('\n'));
-  expect(podInstallCommand(root)).toBe('pod install');
-  expect(podInstallCommand(root, '--clean-install')).toBe('pod install --clean-install');
+  expect(podInstallCommand(root, root)).toBe('pod install');
+  expect(podInstallCommand(root, root, '--clean-install')).toBe('pod install --clean-install');
 
   lock([...GEM_SPECS, '    cocoapods (1.15.2)', ''].join('\n'));
-  expect(podInstallCommand(root)).toBe('bundle exec pod install');
-  expect(podInstallCommand(root, '--clean-install')).toBe('bundle exec pod install --clean-install');
+  expect(podInstallCommand(root, root)).toBe('bundle exec pod install');
+  expect(podInstallCommand(root, root, '--clean-install')).toBe('bundle exec pod install --clean-install');
+});
+
+test('the pin is the nearest Gemfile from the pods directory up to the project root, as Bundler finds it', () => {
+  const ios = join(root, 'ios');
+  mkdirSync(ios);
+  rmSync(join(root, 'Gemfile'));
+  writeFileSync(join(ios, 'Gemfile'), "gem 'cocoapods', '1.16.2'\n");
+  writeFileSync(join(ios, 'Gemfile.lock'), [...GEM_SPECS, '    cocoapods (1.16.2)', ''].join('\n'));
+  expect(bundlerPin(root, ios)).toEqual({
+    gemfile: join(ios, 'Gemfile'),
+    lockfile: join(ios, 'Gemfile.lock'),
+    cocoapods: '1.16.2',
+  });
+  expect(bundlerPin(root)).toBe(null);
+
+  writeFileSync(join(ios, 'Gemfile.lock'), [...GEM_SPECS, '    fastlane (2.219.0)', ''].join('\n'));
+  writeFileSync(join(root, 'Gemfile'), "gem 'cocoapods'\n");
+  lock([...GEM_SPECS, '    cocoapods (1.15.2)', ''].join('\n'));
+  expect(bundlerPin(root, ios)).toBe(null);
+
+  rmSync(join(ios, 'Gemfile'));
+  expect(bundlerPin(root, ios)?.gemfile).toBe(join(root, 'Gemfile'));
+  expect(bundlerPin(ios, ios)).toBe(null);
 });

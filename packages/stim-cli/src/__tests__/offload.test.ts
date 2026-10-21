@@ -39,6 +39,7 @@ const RUNTIME = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0';
 
 const LOCAL: IosToolchain = {
   stimBuild: 'b1',
+  compat: 1,
   arch: 'arm64',
   xcode: 'Xcode 27.0 / Build version 27A266a',
   simulatorSdk: '27.0',
@@ -49,7 +50,7 @@ const IOS: BuildTarget = { platform: 'ios', local: LOCAL, runtime: RUNTIME, coco
 
 const ANDROID: BuildTarget = {
   platform: 'android',
-  local: { stimBuild: 'b1', arch: 'arm64', jdk: '17' },
+  local: { stimBuild: 'b1', compat: 1, arch: 'arm64', jdk: '17' },
   requires: { ndk: '27.1.12297006', buildTools: '37.0.0', compileSdk: '37' },
 };
 
@@ -163,7 +164,7 @@ describe('pickOffer', () => {
   it('refuses any toolchain difference, a missing runtime, a busy machine and a full disk in either mode', () => {
     for (const mode of ['auto', 'force'] as const) {
       for (const refused of [
-        offer({ toolchain: { stimBuild: 'b2' } }),
+        offer({ toolchain: { compat: 2 } }),
         offer({ toolchain: { cocoapods: '1.17.0' } }),
         offer({ toolchain: { xcode: 'Xcode 26.4' } }),
         offer({ toolchain: { simulatorSdk: '27.1' } }),
@@ -177,7 +178,20 @@ describe('pickOffer', () => {
         expect(pick([refused], { mode }).order).toEqual([]);
       }
     }
-    expect(pick([offer()], {}, { ...IOS, local: { ...LOCAL, stimBuild: null } }).order).toEqual([]);
+    for (const compat of [undefined, 1])
+      expect(
+        pick([offer({ toolchain: { compat } })], {}, { ...IOS, local: { ...LOCAL, stimBuild: null } }).order,
+      ).toEqual([]);
+  });
+
+  it('compares the build compatibility version with a machine that reports one, else the Stim build', () => {
+    const codes = (toolchain: Partial<WorkerToolchain>) =>
+      toolchainMismatches(IOS, offer({ toolchain }).toolchain).map((problem) => problem.code);
+    expect(codes({ stimBuild: 'b2' })).toEqual([]);
+    expect(codes({ compat: 2 })).toEqual(['stim-build']);
+    expect(codes({ stimBuild: 'b2', compat: undefined })).toEqual(['stim-build']);
+    expect(codes({ compat: undefined })).toEqual([]);
+    expect(toolchainMismatches(ANDROID, offer({ toolchain: { stimBuild: 'b2' } }).toolchain)).toEqual([]);
   });
 
   it.each([
@@ -279,7 +293,7 @@ describe('pickOffer', () => {
 
   it('names every problem of one machine, as doctor reports them', () => {
     const offered = offer({
-      toolchain: { stimBuild: 'b2', runtimes: [] },
+      toolchain: { compat: 2, runtimes: [] },
       capacity: capacity({ loadPerCore: 8.2, builds: 2, declined: 'load at or above 2/core' }),
     });
     expect(offerProblems(offered, IOS).map((problem) => problem.code)).toEqual(['stim-build', 'runtime', 'busy']);
@@ -306,7 +320,7 @@ describe('pickOffer', () => {
     expect(reasons(offer(), bare)).toEqual(['CocoaPods 1.16.2 there, no CocoaPods here']);
     const macos: BuildTarget = {
       platform: 'macos',
-      local: { stimBuild: 'b1', arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
+      local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
     };
     expect(reasons(offer({ toolchain: { macosSdk: null } }), macos)).toEqual([
       'no macOS SDK there, macOS SDK 27.0 here',
@@ -401,7 +415,7 @@ describe('iphoneRuntimes', () => {
 describe('macOS build compatibility', () => {
   const target: BuildTarget = {
     platform: 'macos',
-    local: { stimBuild: 'b1', arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
+    local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
   };
   it('fetches a busy worker exact SwiftPM artifact only with compatible tools', () => {
     const fingerprint = 'a'.repeat(64);
@@ -425,7 +439,7 @@ describe('macOS build compatibility', () => {
     ).toEqual([]);
   });
   it.each([
-    ['stim-build', { stimBuild: 'b2' }],
+    ['stim-build', { compat: 2 }],
     ['arch', { arch: 'x64' }],
     ['xcode', { xcode: 'Xcode 26.0' }],
     ['macos-sdk', { macosSdk: '26.0' }],
@@ -433,6 +447,45 @@ describe('macOS build compatibility', () => {
     expect(toolchainMismatches(target, offer({ toolchain: mismatch }).toolchain)).toEqual([
       { code, reason: expect.any(String) },
     ]);
+  });
+  describe('for an app that runs on the worker that builds it', () => {
+    const onWorker: BuildTarget = { ...target, runsOnWorker: true };
+    const other = { arch: 'x64', xcode: 'Xcode 27.1 / Build version 27A9275', macosSdk: '27.1' };
+
+    it('needs no Xcode, macOS SDK or CPU match with this Mac', () => {
+      expect(toolchainMismatches(onWorker, offer({ toolchain: other }).toolchain)).toEqual([]);
+      expect(toolchainMismatches(target, offer({ toolchain: other }).toolchain).map((problem) => problem.code)).toEqual(
+        ['arch', 'xcode', 'macos-sdk'],
+      );
+    });
+
+    it('still needs the same build compatibility, a Mac, and a worker with Xcode and a macOS SDK', () => {
+      expect(toolchainMismatches(onWorker, offer({ toolchain: { compat: 2 } }).toolchain)).toEqual([
+        { code: 'stim-build', reason: expect.any(String) },
+      ]);
+      expect(toolchainMismatches(onWorker, offer({ toolchain: { os: 'linux' } }).toolchain)).toEqual([
+        { code: 'platform', reason: expect.stringContaining('macOS') },
+      ]);
+      expect(toolchainMismatches(onWorker, offer({ toolchain: { xcode: null, macosSdk: null } }).toolchain)).toEqual([
+        { code: 'xcode', reason: 'no Xcode there' },
+        { code: 'macos-sdk', reason: 'no macOS SDK there' },
+      ]);
+    });
+
+    it('takes a worker SwiftPM artifact built with another Xcode than this Mac has', () => {
+      const fingerprint = 'a'.repeat(64);
+      const artifact = {
+        fingerprint,
+        cacheKey: `swiftpm-peer-${fingerprint}`,
+        name: 'App.app',
+        size: 10,
+        sha256: 'b'.repeat(64),
+      };
+      const options = { mode: 'auto' as const, here: IDLE, artifact: 'swiftpm' as const, cacheOnly: true };
+      const offers = [{ machine: 'mini', offer: offer({ artifact, toolchain: other }) }];
+      expect(pickOffer({ ...options, target: onWorker, offers }).order).toEqual([0]);
+      expect(pickOffer({ ...options, target, offers }).order).toEqual([]);
+    });
   });
   it('accepts matching macOS tools without CocoaPods, runtimes or a JDK', () => {
     expect(
@@ -458,7 +511,7 @@ describe('a worker that is not a Mac', () => {
   }).toolchain;
   const macos: BuildTarget = {
     platform: 'macos',
-    local: { stimBuild: 'b1', arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
+    local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
   };
 
   it('refuses iOS and macOS builds with one platform reason instead of every missing Apple tool', () => {

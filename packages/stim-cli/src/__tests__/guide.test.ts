@@ -26,7 +26,6 @@ import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_FINGERPRINT_IGNORES } from '../cache/build-cache.ts';
-import { OUTPUT_LABELS } from '../command-output.ts';
 import { WATCHMAN_NESTED_WORKTREES } from '../diagnostics/doctor-watchman.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
 import { AUTOMATION_TOOLS } from '../devices/automation-tools.ts';
@@ -77,7 +76,59 @@ function scrapedCodes(source: string): Set<string> {
   );
 }
 
-const SUMMARY_ONLY_LABELS = ['app', 'compilation cache'];
+const PHASE_LABELS = [
+  'agent-device',
+  'branch',
+  'budget',
+  'build',
+  'cache',
+  'caches',
+  'carry',
+  'checkout',
+  'daemons',
+  'deps',
+  'device',
+  'devices',
+  'error',
+  'failed',
+  'findings',
+  'fingerprint',
+  'gems',
+  'install',
+  'installs',
+  'ip.txt',
+  'lan',
+  'launch',
+  'lease',
+  'lock',
+  'log',
+  'logs',
+  'meaning',
+  'metro',
+  'pods',
+  'port',
+  'prebuild',
+  'project',
+  'readiness',
+  'ready',
+  'remedy',
+  'removed',
+  'resolved',
+  'result',
+  'services',
+  'setting',
+  'settings',
+  'setup',
+  'state',
+  'stats',
+  'stop',
+  'storage',
+  'swap',
+  'verify',
+  'version',
+  'workspace',
+  'worktrees',
+];
 
 test('every advertised topic renders non-empty content', () => {
   for (const name of topicNames()) {
@@ -176,9 +227,7 @@ test('the lifecycle topic grids every label the output vocabulary allows, and no
   const start = body.indexOf('The labels are a closed set');
   expect(start).toBeGreaterThan(-1);
   const grid = body.slice(body.indexOf('column:', start) + 'column:'.length, body.indexOf('`app` and', start));
-  expect(grid.trim().split(/\s+/).toSorted()).toEqual(
-    OUTPUT_LABELS.filter((label) => label !== '' && !SUMMARY_ONLY_LABELS.includes(label)).toSorted(),
-  );
+  expect(grid.trim().split(/\s+/).toSorted()).toEqual(PHASE_LABELS.toSorted());
 });
 
 test('native-build cache fields are documented in the JSON failure contract', () => {
@@ -678,7 +727,7 @@ test('the agent and cleanup guides shut down owned simulators without an occupan
 test('the guide names every path Stim ignores by default', () => {
   const lifecycle = renderSection('lifecycle', 'builds') ?? '';
   for (const path of DEFAULT_FINGERPRINT_IGNORES) {
-    const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*$/, '');
+    const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*(\/\*)?$/, '');
     expect(lifecycle).toContain(bare);
   }
 });

@@ -5,7 +5,11 @@ import { discoverToolchain, projectNodeBin, type ToolchainProbe } from '../toolc
 const HOME = '/Users/me';
 const fixturePath = (path: string) => path.replaceAll('\\', '/');
 
-function probe(files: Record<string, string>, execPath = '/Applications/Stim.app/Contents/Resources/node/bin/node') {
+function probe(
+  files: Record<string, string>,
+  execPath = '/Applications/Stim.app/Contents/Resources/node/bin/node',
+  links: Record<string, string> = {},
+) {
   const paths = [...Object.keys(files), execPath];
   const isDir = (path: string) => paths.some((file) => file.startsWith(`${fixturePath(path)}/`));
   return {
@@ -24,6 +28,7 @@ function probe(files: Record<string, string>, execPath = '/Applications/Stim.app
             ),
           ]
         : [],
+    link: (path) => links[fixturePath(path)] ?? null,
   } satisfies ToolchainProbe;
 }
 
@@ -118,6 +123,7 @@ describe('projectNodeBin', () => {
       version: '20.18.3',
       pin: '.nvmrc',
       spec: 'v20',
+      match: 'exact',
     });
   });
 
@@ -129,6 +135,55 @@ describe('projectNodeBin', () => {
     expect(projectNodeBin('/app', {}, probe(files))?.bin).toBe(
       join(HOME, '.volta', 'tools', 'image', 'node', '22.12.0', 'bin'),
     );
+  });
+
+  const keg = (name: string, version: string) => ({
+    files: { [`/opt/homebrew/opt/${name}/bin/node`]: '' },
+    links: { [`/opt/homebrew/opt/${name}`]: `../Cellar/${name}/${version}` },
+  });
+
+  it("finds a linked Homebrew keg by its link's version, revision suffix dropped", () => {
+    const node22 = keg('node@22', '22.23.2_1');
+    const node = keg('node', '26.7.0');
+    expect(
+      projectNodeBin(
+        '/app',
+        {},
+        probe({ '/app/.nvmrc': '22\n', ...node22.files, ...node.files }, undefined, { ...node22.links, ...node.links }),
+      ),
+    ).toEqual({
+      bin: join('/opt/homebrew', 'opt', 'node@22', 'bin'),
+      version: '22.23.2',
+      pin: '.nvmrc',
+      spec: '22',
+      match: 'exact',
+    });
+  });
+
+  it('prefers an exact match, then the newest same-major install across stores that is not older than the pin', () => {
+    const node22 = keg('node@22', '22.23.2_1');
+    const resolve = (files: Record<string, string>) =>
+      projectNodeBin(
+        '/app',
+        {},
+        probe({ '/app/.nvmrc': '22.22.0\n', ...node22.files, ...files }, undefined, node22.links),
+      );
+    expect(resolve(nvm('v22.22.0'))).toMatchObject({ version: '22.22.0', match: 'exact' });
+    expect(resolve({ ...nvm('v22.12.0'), ...nvm('v24.11.0') })).toMatchObject({
+      bin: join('/opt/homebrew', 'opt', 'node@22', 'bin'),
+      version: '22.23.2',
+      match: 'major',
+    });
+    expect(resolve(nvm('v22.24.0'))).toMatchObject({ version: '22.24.0', match: 'major' });
+    expect(
+      projectNodeBin('/app', {}, probe({ '/app/.nvmrc': '22.22.0\n', ...nvm('v22.12.0'), ...nvm('v24.11.0') })),
+    ).toBeNull();
+  });
+
+  it('reads the pin of the nearest directory above the app, but not above the top directory', () => {
+    const files = { '/repo/.nvmrc': '22\n', '/.nvmrc': '20\n', ...nvm('v22.12.0'), ...nvm('v20.11.0') };
+    expect(projectNodeBin('/repo/apps/mobile', {}, probe(files), '/repo')?.version).toBe('22.12.0');
+    expect(projectNodeBin('/repo/apps/mobile', {}, probe(files), '/repo/apps/mobile')).toBeNull();
   });
 
   it('returns nothing when no installed version satisfies the pin', () => {

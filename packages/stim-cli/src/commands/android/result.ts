@@ -159,7 +159,7 @@ export function lastBuildRecord({
   appPath?: string | null;
   bundleId?: string | null;
   startedAt: string;
-  status: string;
+  status: 'ok' | 'failed';
   errorCode?: string | null;
   avdName?: string | null;
   deviceName?: string | null;
@@ -394,7 +394,7 @@ export function persistLastBuild({
   record: AndroidRecord;
   startedAt: string;
   durationMs: number;
-  status: string;
+  status: 'ok' | 'failed';
   errorCode?: string | null;
   diagnostics?: readonly unknown[] | null;
   out: (line: string) => void;
@@ -406,4 +406,21 @@ export function persistLastBuild({
     out(phaseLine('state', chalk.yellow(`could not record lastBuild: ${(err as Error)?.message || err}`)));
   }
   return lastBuild;
+}
+
+export function logPostBuildFailure(acquired: boolean, writer: AndroidWriter, record: Record<string, unknown>): void {
+  if (acquired) writer.write(record);
+}
+
+export function persistThrownBuild({
+  acquired,
+  error,
+  ...args
+}: Omit<Parameters<typeof persistLastBuild>[0], 'status' | 'errorCode' | 'diagnostics'> & {
+  acquired: boolean;
+  error: unknown;
+}): void {
+  if (!acquired) return;
+  const { code } = error as { code?: unknown };
+  persistLastBuild({ ...args, status: 'failed', errorCode: typeof code === 'string' ? code : undefined });
 }

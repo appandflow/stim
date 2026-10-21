@@ -76,7 +76,7 @@ export async function placeHostedMacos(
     handoff?: BuildHandoff | null;
     arguments: string[];
     recorded: HostedMacosPlacement | undefined;
-    reserved: (placement: HostedMacosPlacement) => void;
+    reserved: (placement: HostedMacosPlacement) => unknown;
     note: (line: string) => void;
   },
 ): Promise<HostedMacosRun> {
@@ -133,7 +133,7 @@ export async function placeHostedMacos(
     bundleId: hostedMacosBundleId(bundleId, appSlot),
     agent: { driver: 'none', setting: 'hosting.agentDriver' },
   };
-  reserved(placement);
+  await reserved(placement);
   session = await settle(
     host,
     session,

@@ -4,7 +4,7 @@ import type { StimContext } from '@stim-cli/core';
 import { constants, promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { loadCacheProvider } from '@stim-cli/cache';
-import { providerUploadOutcome } from '../../cache/build-cache.ts';
+import { providerUploadOutcome, storedAppId } from '../../cache/build-cache.ts';
 import { phaseLine } from '../../command-output.ts';
 import { hostSystemImageArch } from '../../devices/android.ts';
 import { workspaceShareURL } from '../../devices/stim-desktop.ts';
@@ -20,10 +20,10 @@ import { projectRegistry } from '../../integrations/projects.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { resolveBuildPlacement } from '../../offload/selection.ts';
 import { setRemoteLogSink } from '../../remote-log.ts';
-import { getConcurrencyLimits, getProject, upsertProject } from '../../workspace/config.ts';
+import { getConcurrencyLimits, getProject, upsertProject, withConfigLockAsync } from '../../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
 import { resolveProjectSettingsAsync } from '../../workspace/settings.ts';
-import { recordWorkspaceUse } from '../../workspace/workspace-state.ts';
+import { recordWorkspaceUseAsync } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './artifact.ts';
 import { resolveAndroidBuildPlan } from './plan.ts';
@@ -108,8 +108,10 @@ export async function buildAndroidOperation(
       root,
       { command: 'build', platform: 'android' },
       async (claim) => {
-        if (!getProject(root)) upsertProject(root, {});
-        recordWorkspaceUse(root, new Date(), context.env, context.cwd);
+        await withConfigLockAsync(() => {
+          if (!getProject(root)) upsertProject(root, {});
+        });
+        await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
         const started = Date.now();
         const startedAt = new Date(started).toISOString();
         const progress = startBuildProgress({ root, platform: 'android', slot: 'default', claim, note });
@@ -140,7 +142,7 @@ export async function buildAndroidOperation(
         let directory: string | undefined;
         let built: AndroidBuildFacts | null = null;
         let failureAfterCleanup: ReturnType<typeof cancelledError> | null = null;
-        const finishRecord = (status: string, errorCode?: string) =>
+        const finishRecord = (status: 'ok' | 'failed', errorCode?: string) =>
           persistLastBuild({
             root,
             record,
@@ -200,6 +202,7 @@ export async function buildAndroidOperation(
               resolveRemoteBuild: resolveRemote,
               uploadRemoteBuild: uploadRemote,
               loadCacheProviderModule: loadCacheProvider,
+              storedAppId,
               acquireSlot: acquireBuildSlot,
               releaseSlot: releaseBuildSlot,
               now: Date.now,

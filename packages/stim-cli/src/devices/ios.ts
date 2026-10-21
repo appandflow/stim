@@ -3,15 +3,16 @@ import { runOperationFile } from '../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { isJsonObject } from '@stim-cli/core/state';
-import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
+import { forgetCreatedDeviceAsync, recordCreatedDeviceAsync } from './created-devices.ts';
 import { isStimOwnedSim } from './device-ownership.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getExecutor, type Executor } from '../exec.ts';
+import { getExecutor, isTimeoutError, type Executor } from '../exec.ts';
+import { cancellableSleep } from '../cancellation.ts';
 import { parseAppContainerPath } from '../engine/installed-artifact.ts';
 import {
   hostMemoryPressureAdvice,
-  memoryCulpritsUnder,
+  memoryCulpritsUnderAsync,
   readHostMemoryPressure,
   type HostMemoryPressure,
 } from '../host-memory.ts';
@@ -198,11 +199,50 @@ export const IOS_BOOT_TIMEOUT_MS: number = 600000;
 const BOOTSTATUS_ATTEMPT_MS = 240000;
 const BOOTSTATUS_ATTEMPT_FLOOR_MS = 1000;
 const BOOT_STATE_LIST_TIMEOUT_MS = 30000;
+const SPRINGBOARD_QUERY_TIMEOUT_MS = 10000;
+const SPRINGBOARD_POLL_MS = 250;
 
-export function iosSimulatorFailureAdvice(exec: Executor = getExecutor()): string {
+type SpringBoardStartup = { state: 'started' } | { state: 'timed-out' } | { state: 'unreadable'; reason: string };
+
+// `simctl bootstatus -b` returns before SpringBoard has started. Until it has,
+// `simctl launch` blocks and SpringBoard resets the volume (#4075). It sets the
+// `com.apple.springboard.finishedstartup` notify state to its pid once started.
+async function waitForSpringBoard(udid: string, deadline: number): Promise<SpringBoardStartup> {
+  for (;;) {
+    let output: string | null = null;
+    try {
+      output = await getExecutor().runFileAsync(
+        'xcrun',
+        ['simctl', 'spawn', udid, 'notifyutil', '-g', 'com.apple.springboard.finishedstartup'],
+        {
+          timeoutMs: Math.max(
+            BOOTSTATUS_ATTEMPT_FLOOR_MS,
+            Math.min(SPRINGBOARD_QUERY_TIMEOUT_MS, deadline - Date.now()),
+          ),
+        },
+      );
+    } catch (error) {
+      if (!isTimeoutError(error)) return { state: 'unreadable', reason: (error as Error)?.message || String(error) };
+    }
+    if (output !== null) {
+      const state = /^com\.apple\.springboard\.finishedstartup (\d+)$/m.exec(output);
+      if (!state) {
+        return {
+          state: 'unreadable',
+          reason: `Could not read SpringBoard's startup state: ${output.trim() || 'no output'}.`,
+        };
+      }
+      if (Number(state[1]) > 0) return { state: 'started' };
+    }
+    if (Date.now() >= deadline) return { state: 'timed-out' };
+    await cancellableSleep(SPRINGBOARD_POLL_MS);
+  }
+}
+
+export async function iosSimulatorFailureAdvice(exec: Executor = getExecutor()): Promise<string> {
   const pressure = readHostMemoryPressure(exec);
   return (
-    hostMemoryPressureAdvice(pressure, memoryCulpritsUnder(pressure, exec)) ??
+    hostMemoryPressureAdvice(pressure, await memoryCulpritsUnderAsync(pressure, exec)) ??
     'The simulator may be unresponsive. Check Activity Monitor for memory pressure and free host memory before retrying.'
   );
 }
@@ -282,7 +322,7 @@ export async function bootIosSim(
     label?: string;
     out?: (message: string) => void;
   } = {},
-): Promise<void> {
+): Promise<{ springBoardUnreadable: string | null }> {
   const exec = getExecutor();
   const viewer = configuredIosSimulatorViewer(simulatorApp, env);
   const started = Date.now();
@@ -292,6 +332,7 @@ export async function bootIosSim(
   let sampledAt = started;
   let longestGapMs = 0;
   let phase = 'requesting boot';
+  let springBoardUnreadable: string | null = null;
   const ranks = { normal: 0, warning: 1, critical: 2 };
   const sample = () => {
     const now = Date.now();
@@ -363,8 +404,14 @@ export async function bootIosSim(
         throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
       }
     }
+    phase = 'waiting for SpringBoard';
+    const springBoard = await waitForSpringBoard(udid, deadline);
+    if (springBoard.state === 'timed-out') {
+      throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
+    }
+    if (springBoard.state === 'unreadable') springBoardUnreadable = springBoard.reason;
   } catch (error) {
-    const named = memoryCulpritAdvice(memoryCulpritsUnder(sample(), exec));
+    const named = memoryCulpritAdvice(await memoryCulpritsUnderAsync(sample(), exec));
     throw new Error(
       `${(error as Error)?.message || error} Last boot output: ${phase}. Highest observed memory pressure: ${worst ?? 'unknown'}; unavailable samples: ${unknown}.${coverage()}${named ? ` ${named}` : ''} ${recovery} These observations do not establish an OOM crash.`,
       { cause: error },
@@ -373,6 +420,7 @@ export async function bootIosSim(
     clearInterval(monitor);
   }
   if (openViewer) await viewer.open(udid);
+  return { springBoardUnreadable };
 }
 
 export async function shutdownIosSim(udid: string, operation?: StimContext): Promise<void> {
@@ -558,7 +606,7 @@ export async function createOwnedIosSim(
       killSignal: 'SIGKILL',
     })
   ).trim();
-  recordCreatedDevice('ios', udid);
+  await recordCreatedDeviceAsync('ios', udid);
   return { udid, name, deviceType: choice.deviceType, runtime: choice.runtime };
 }
 
@@ -691,7 +739,7 @@ export async function deleteIosSim(udid: string, operation?: StimContext): Promi
     ...SIMCTL_OPTIONS,
     cwd: operation?.cwd,
   });
-  forgetCreatedDevice('ios', udid);
+  await forgetCreatedDeviceAsync('ios', udid);
 }
 
 const PARKED_DELETE_TIMEOUT_MS = 30000;
@@ -713,7 +761,7 @@ export async function deleteParkedIosSim(udid: string, operation?: StimContext):
     timeoutMs: PARKED_DELETE_TIMEOUT_MS,
     cwd: operation?.cwd,
   });
-  forgetCreatedDevice('ios', udid);
+  await forgetCreatedDeviceAsync('ios', udid);
 }
 
 const LIST_RUNTIMES_ARGS = ['simctl', 'list', 'runtimes', '--json'];

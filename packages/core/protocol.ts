@@ -61,16 +61,23 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
  * `hosted-android-data` is Android APK build handoff and native log queries, persisted before device deletion.
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
+ * `hosted-metro-ports` is `device-host.metro.ports`, which names the listed ports that already accept loopback
+ * connections on the host, apart from the requesting client's own dev-client bridges.
  * `native-xcode-build` accepts native Xcode provider requests with a separate source-transfer identity.
  * `native-xcode-toolchain` accepts native Xcode discovery without unrelated platform or Ruby probes.
  * `build-artifact-cache` offers and fetches exact completed native Xcode archives without a build job.
  * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
  * `native-gradle-artifact-cache` applies caller cache policy to verified worker-scoped APK reuse.
  * `react-native-peer-cache` offers development archives with build-proven fingerprints, options and toolchains.
+ * `fingerprint-sources` accepts `fingerprintSources` on `build.start`, so a fingerprint mismatch names the differing sources.
+ * `fingerprint-ignored` accepts `fingerprintIgnored` on `build.start`, the paths the caller's git ignored that the machine's git cannot.
+ * `fingerprint-tracked` accepts `fingerprintTracked` on `build.start`, the top-level entries the caller's git tracks although an ignore pattern matches them.
  * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
  * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
  * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
+ * `build-compat` accepts `compat` on `build.start`, and in place of `stimBuild` in React Native and SwiftPM artifact
+ * queries.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
@@ -112,11 +119,16 @@ export const FEATURES = [
   'native-gradle-artifact-cache',
   'native-gradle-peer-cache',
   'react-native-peer-cache',
+  'fingerprint-sources',
+  'fingerprint-ignored',
+  'fingerprint-tracked',
   'swiftpm-peer-cache',
   'build-dependency-cache',
   'hosted-android-data',
   'hosted-android-process',
+  'hosted-metro-ports',
   'server-update',
+  'build-compat',
   'status-views',
   'desktop-reports',
   'desktop-report-platform',
@@ -222,6 +234,7 @@ export const METHODS = [
   'device-host.app.attach',
   'device-host.logs.query',
   'device-host.metro.open',
+  'device-host.metro.ports',
   'device-host.metro.close',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
@@ -276,6 +289,7 @@ export const DEVICE_HOST_METHODS = [
   'device-host.app.attach',
   'device-host.logs.query',
   'device-host.metro.open',
+  'device-host.metro.ports',
   'device-host.metro.close',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
@@ -977,6 +991,12 @@ export interface BuildOfferParams {
   swiftpmArtifact?: BuildSwiftpmArtifactQuery;
 }
 
+/**
+ * Which Stim built an artifact: the build compatibility version from a client that saw the `build-compat` feature,
+ * else the exact Stim build digest.
+ */
+export type BuildStimIdentity = { stimBuild: string; compat?: never } | { compat: number; stimBuild?: never };
+
 /** A post-mutation React Native fingerprint and the requested development build. */
 export type BuildReactNativeArtifactQuery = {
   project: string;
@@ -985,7 +1005,7 @@ export type BuildReactNativeArtifactQuery = {
 } & (
   | {
       platform: 'ios';
-      toolchain: { stimBuild: string; arch: string; xcode: string; simulatorSdk: string; cocoapods: string };
+      toolchain: BuildStimIdentity & { arch: string; xcode: string; simulatorSdk: string; cocoapods: string };
       ios: {
         runtime: string;
         configuration: string;
@@ -994,7 +1014,7 @@ export type BuildReactNativeArtifactQuery = {
         optimizations: { compilationCache: boolean; swiftCompilationCache: boolean | null; prefixMapping: boolean };
       };
     }
-  | { platform: 'android'; toolchain: { stimBuild: string; jdk: string }; android: BuildAndroidOptions }
+  | { platform: 'android'; toolchain: BuildStimIdentity & { jdk: string }; android: BuildAndroidOptions }
 );
 
 /** A declared native Gradle request with a resolved variant, excluding worker-private inputs and APK identity. */
@@ -1006,10 +1026,9 @@ export interface BuildGradleArtifactQuery {
 }
 
 /** A complete SwiftPM source transfer and repeatable build; private input values stay on the worker. */
-export interface BuildSwiftpmArtifactQuery {
+export type BuildSwiftpmArtifactQuery = BuildStimIdentity & {
   project: string;
   sourceDigest: string;
-  stimBuild: string;
   inputs: {
     complete: true;
     ignored: string[];
@@ -1023,7 +1042,7 @@ export interface BuildSwiftpmArtifactQuery {
     resources: Record<string, string>;
     assetCatalog: string | null;
   };
-}
+};
 
 /** A native artifact identity whose key includes its complete inputs, target and toolchain. */
 export interface BuildArtifactIdentity {
@@ -1041,6 +1060,8 @@ export interface CachedBuildArtifact extends BuildArtifactIdentity {
 /** The toolchain a build must match exactly on both machines. */
 export interface BuildToolchain {
   stimBuild: string | null;
+  /** The Stim build compatibility version, compared instead of `stimBuild`; absent from an older stim-server. */
+  compat?: number;
   /** The OS stim-server runs on, as Node names it; absent from a stim-server older than this field. */
   os?: string;
   arch: string;
@@ -1118,6 +1139,11 @@ export interface BuildAndroidOptions {
   module?: string | null;
 }
 
+export interface BuildFingerprintSource {
+  id: string;
+  hash: string | null;
+}
+
 export interface GradleOffloadInputs {
   complete: true;
   ignored: string[];
@@ -1138,6 +1164,12 @@ export interface BuildStartParams {
   iosProjectPath?: string | null;
   runtime?: string | null;
   fingerprint: string | null;
+  /** The id and hash of each source of `fingerprint`, so the machine can name the sources its fingerprint differs in. */
+  fingerprintSources?: BuildFingerprintSource[];
+  /** Paths relative to `project` that the client's git ignores for `fingerprint`, such as through .git/info/exclude. */
+  fingerprintIgnored?: string[];
+  /** Top-level entries of `project` that the client's git tracks although an ignore pattern matches them. */
+  fingerprintTracked?: string[];
   native?:
     | {
         provider: 'xcode';
@@ -1166,6 +1198,8 @@ export interface BuildStartParams {
     artifactInputs?: BuildSwiftpmArtifactQuery['inputs'];
   } | null;
   stimBuild: string;
+  /** The client's Stim build compatibility version, compared instead of `stimBuild` by a machine that reports one. */
+  compat?: number;
   cacheArtifact?: boolean;
 }
 
@@ -1550,6 +1584,7 @@ export interface Methods {
     params: { session: string; gatewayPort: number; secret: string; clientMetroPort?: number };
     result: { port: number };
   };
+  'device-host.metro.ports': { params: { ports: number[] }; result: { busy: number[] } };
   'device-host.metro.close': { params: { session: string }; result: { port: null } };
   'device-host.frames.subscribe': {
     params: { session: string; fps?: number; maxEdge?: number; video?: string[] };

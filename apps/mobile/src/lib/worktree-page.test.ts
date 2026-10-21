@@ -25,6 +25,40 @@ it('keeps native build detail tabs available independently of detected support',
   expect(buildEntries([app], true).map(({ platform }) => platform)).toEqual(['ios', 'android']);
 });
 
+it('lists the iOS and Android builds of an app that also has a macOS app, then its macOS build', () => {
+  const macos: EnvironmentState['macos'] = {
+    state: 'stopped',
+    launchId: 'launch',
+    arguments: [],
+    product: 'Notes',
+    bundle: '/w/Notes.app',
+    bundleId: 'dev.notes',
+    executable: 'Notes',
+    build: { state: 'ok', startedAt: '2026-10-05T10:00:00Z' },
+  };
+  const shared: EnvironmentState = {
+    path: '/w/mobile',
+    live: false,
+    warnings: [],
+    memoryMb: 0,
+    platforms: ['ios', 'android', 'macos'],
+    macos,
+  };
+  const desktop: EnvironmentState = { ...shared, path: '/w/desktop', platforms: ['macos'] };
+  const pairs = (entries: ReturnType<typeof buildEntries>) => entries.map(({ path, platform }) => [path, platform]);
+  expect(pairs(buildEntries([shared], true))).toEqual([
+    ['/w/mobile', 'ios'],
+    ['/w/mobile', 'android'],
+    ['/w/mobile', 'macos'],
+  ]);
+  expect(pairs(buildEntries([desktop, shared], true))).toEqual([
+    ['/w/mobile', 'ios'],
+    ['/w/mobile', 'android'],
+    ['/w/desktop', 'macos'],
+    ['/w/mobile', 'macos'],
+  ]);
+});
+
 it('counts shared disk once and sums independently measured app resources', () => {
   const apps: EnvironmentState[] = [
     {

@@ -83,6 +83,16 @@ it.each(['missing', 'reused'])(
   },
 );
 
+it('retires a completed recording from a run that is invalid for unrelated reasons', () => {
+  const record = JSON.parse(readFileSync(join(runDir, 'run.json')));
+  writeFileSync(
+    join(runDir, 'run.json'),
+    JSON.stringify({ ...record, valid: false, invalidReasons: ['in-timer daemon recovery'] }),
+  );
+  expect(retire()).toEqual(['/sdcard/agent-device-recording-active.json']);
+  expect(calls).toContain('shell rm -f /sdcard/agent-device-recording-active.json');
+});
+
 it('leaves devices without recording manifests unchanged', () => {
   files = [];
   expect(retire()).toEqual([]);
@@ -99,6 +109,7 @@ it.each([
   'foreign path',
   'remaining video',
   'modified proof',
+  'invalid recording',
   'unowned',
   'changed owner',
   'changed manifest',
@@ -113,6 +124,10 @@ it.each([
   if (failure === 'foreign path') manifest.chunks[0].remotePath = '/sdcard/someone-elses.mp4';
   if (failure === 'remaining video') files.push('agent-device-recording-123.mp4');
   if (failure === 'modified proof') writeFileSync(join(runDir, 'proof/session.mp4'), 'different');
+  if (failure === 'invalid recording') {
+    const record = JSON.parse(readFileSync(join(runDir, 'run.json')));
+    writeFileSync(join(runDir, 'run.json'), JSON.stringify({ ...record, valid: false, recording: { valid: false } }));
+  }
   if (failure === 'unowned') {
     config.projects[ownerWorktree].platforms.android.owned = false;
     writeFileSync(join(ownerHome, 'config.json'), JSON.stringify(config));

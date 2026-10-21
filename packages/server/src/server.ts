@@ -237,7 +237,7 @@ export interface ServerOptions {
   /** Whether this machine can host simulators and apps for other machines; only a Mac can. Defaults to running on macOS. */
   hostsDevices?: boolean;
   port: number;
-  /** The Unix socket for this machine's own user; defaults to `$STIM_HOME/server/local.sock`, null for none. */
+  /** The Unix socket for this machine's own user; defaults to core's serverLocalSocket(), null for none. */
   localSocket?: string | null;
   stimCli: string;
   stimVersion: string;
@@ -4127,7 +4127,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                             ? await hostedDevices.logsQuery(session.id, raw)
                             : method === 'device-host.metro.open'
                               ? await hostedDevices.metroOpen(session.id, raw, peer)
-                              : await hostedDevices.metroClose(session.id, raw);
+                              : method === 'device-host.metro.ports'
+                                ? await hostedDevices.metroPorts(session.id, raw)
+                                : await hostedDevices.metroClose(session.id, raw);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 

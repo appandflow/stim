@@ -95,8 +95,8 @@ DISK PRESSURE LEVELS
        android/build, android/.gradle and .build, at a project root, the
        worktree root, or apps/* and packages/*
     4. owned simulators and emulators of workspaces idle for the short window
-    5. Stim temp directories and xctrace recordings in TMPDIR unmodified for
-       24 hours, with gc --delete's checks (see stim guide cleanup gc)
+    5. Stim temp directories, xctrace recordings and SwiftPM temp directories
+       in TMPDIR unmodified for 24 hours, with gc --delete's checks (see stim guide cleanup gc)
   Level 3:
     1. the Swift compilation cache, emptied whole under the same build rule;
        when a build keeps it, the last pass's blocked reasons name its size
@@ -410,6 +410,24 @@ LINKED WORKTREES
   has locked (unlock it first; --force does not override) and, without
   --force, uncommitted or unpushed work and initialized submodules. It then
   reclaims any owned resources it finds and removes the linked checkout.
+  Before git removes it, the command renames the worktree's ignored
+  directories (node_modules, ios/Pods, build outputs) into
+  $STIM_HOME/trash/<entry>, so git removes a light tree, and a detached,
+  low-priority rm deletes the entry after the command returns. Disk is freed
+  when that rm finishes. Through the programmatic API (createStim), the entry
+  is deleted before the call resolves. A directory that does not rename stays
+  for git to delete as before; on Windows, or when $STIM_HOME is on another
+  volume, nothing is renamed. When git refuses the removal, the directories
+  are moved back. Each entry holds an ownership claim while the command or its
+  rm uses it; gc reports every directory under trash with its size ("deleting"
+  while a removal holds it) and, for an entry Stim wrote, its source worktree.
+  gc --delete deletes only a remove-* entry with a valid trash.json whose
+  claim is free and whose worktree path is gone, which finishes a removal that
+  was interrupted, and keeps any other directory. An entry whose worktree path
+  still exists, as after a removal killed between the rename and git, stays
+  with the reason; if that worktree is the one the entry came from, run
+  \`stim worktree remove\` on it to finish the removal.
+  gc never moves the directories back.
   When git still refuses the removal, the kept ownership record no longer
   names the devices that were parked or deleted. A workspace that is in use
   (see IN USE below) keeps its directory, devices and registry entry, and the
@@ -616,13 +634,19 @@ TMPDIR LEFTOVERS
   under "TMPDIR leftovers", with their count, size and a remedy: Stim temp
   directories (stim-claim-*, stim-host-*, stim-fakehome-*,
   stim-hosted-macos-*, stim-server-*, stim-ws-*), xctrace recordings
-  (instruments*.ktrace) and Jest's jest_<uid in base 36> cache. \`gc --delete\` checks
-  them again and deletes a Stim temp directory or recording only when nothing
-  in it changed for 24 hours. It keeps a Stim temp directory that contains or
+  (instruments*.ktrace), SwiftPM temp directories (TemporaryDirectory.* with a
+  six-character suffix, left by swift and xcodebuild) and Jest's
+  jest_<uid in base 36> cache. \`gc --delete\` checks them again and deletes a
+  Stim temp directory, recording or SwiftPM temp directory only when nothing in
+  it changed for 24 hours. It keeps a Stim temp directory that contains or
   sits inside a registered project, holds a live or unverifiable ownership
   claim or a .lock directory that is not a claim set, or cannot be listed. It
-  keeps a recording that cannot be read, and every recording while an xctrace
-  or Instruments process runs or the process list cannot be read. Jest's cache and every other entry
+  keeps a recording or SwiftPM temp directory that cannot be read, every
+  recording while an xctrace or Instruments process runs, and every SwiftPM
+  temp directory while a swift or xcodebuild process runs, or when the process
+  list cannot be read. Stim's own SwiftPM macOS builds run swift with the
+  ambient TMPDIR, because SwiftPM keeps the locks for its shared caches there,
+  so their temp directories land here too. Jest's cache and every other entry
   are never deleted. gc never follows a symlink and never acts outside TMPDIR.
   With STIM_HOME set it neither reports nor deletes them, because TMPDIR is
   shared by every Stim home. Automatic maintenance runs the same deletion at disk pressure
@@ -723,6 +747,9 @@ DEVICE LEASES
   its holder and expiry, including holders no config knows. \`stop\` and
   \`worktree remove\` release the leases of the workspace they act on, and
   nothing else deletes a lease file: never remove another workspace's.
+  They also remove the \`adb reverse\` that an \`android --device\` run added
+  for this workspace's Metro port on that phone, using the serial and port the
+  run recorded in its workspace state; any other reverse on the phone stays.
 
 A device leaks when a project is abandoned WITHOUT either delete path -- the
 sim survives with nothing pointing at it. \`stim gc\` (no flag, writes

@@ -97,16 +97,17 @@ export function buildEntries(apps: EnvironmentState[], tabs = false) {
       const native = supportedPlatforms(env).filter(
         (platform): platform is Platform => platform === 'ios' || platform === 'android',
       );
-      const platforms: (Platform | 'macos')[] =
-        tabs && env.macos
-          ? ['macos']
-          : [
-              ...(tabs ? ['ios' as const, 'android' as const] : native),
-              ...(!tabs && env.macos ? ['macos' as const] : []),
-            ];
+      const platforms: (Platform | 'macos')[] = [
+        ...(tabs && !env.macos ? ['ios' as const, 'android' as const] : native),
+        ...(env.macos ? ['macos' as const] : []),
+      ];
       return platforms.map((platform) => ({ path: env.path, platform, env }));
     })
     .sort((a, b) => PLATFORMS.indexOf(a.platform) - PLATFORMS.indexOf(b.platform));
+}
+
+export function hasBuildTabs(apps: EnvironmentState[]) {
+  return apps.length > 1 || (apps.some((env) => env.macos) && buildEntries(apps, true).length > 1);
 }
 
 export function worktreeDevices(apps: EnvironmentState[], now: number) {

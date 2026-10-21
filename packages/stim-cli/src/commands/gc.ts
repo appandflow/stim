@@ -20,8 +20,8 @@ import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
-import { loadConfig, removeProject } from '../workspace/config.ts';
-import { plural } from '../command-output.ts';
+import { loadConfig, removeProject, withConfigLockAsync } from '../workspace/config.ts';
+import { plural, quotedPath } from '../command-output.ts';
 import { directorySizeAsync, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
@@ -109,6 +109,7 @@ import { readCreatedDevices } from '../devices/created-devices.ts';
 import { collectWorkspaceLogs, trimWorkspaceLogs } from './gc/logs.ts';
 import { collectRecordings, deleteRecordings } from './gc/recordings.ts';
 import { collectTempLeftovers, deleteTempLeftovers } from './gc/temp-leftovers.ts';
+import { collectTrash, deleteTrash } from './gc/trash.ts';
 import {
   collectIdleDevices,
   collectIdleDevicesAsync,
@@ -213,10 +214,14 @@ export function readGcReport(options: GcReadOptions = {}, deps: GcDependencies =
   );
 }
 
-function removeInvalidProjectEntries(invalidProjects: string[], output: GcOutput, signal?: AbortSignal): void {
+async function removeInvalidProjectEntries(
+  invalidProjects: string[],
+  output: GcOutput,
+  signal?: AbortSignal,
+): Promise<void> {
   for (const path of invalidProjects) {
     signal?.throwIfAborted();
-    removeProject(path);
+    await withConfigLockAsync(() => removeProject(path), signal);
     output.log(chalk.green(`Removed the invalid registry entry ${path}`));
     output.record('project', 'done', path);
   }
@@ -339,6 +344,7 @@ export async function collectGcReport(
       swiftpmCacheUsage: null,
       machineCaches: null,
       tempLeftovers: null,
+      trash: null,
       gradleVersions: includesGradleVersions(scope)
         ? await collectGradleVersions({ olderThanDays: olderThan, now, operation })
         : null,
@@ -356,6 +362,8 @@ export async function collectGcReport(
   const machineCaches = await getMachineCacheReport(agentDeviceUsage, { operation });
   if (!deviceSweepIsScoped(env)) phase('TMPDIR', 'checking recognized leftovers', operation);
   const tempLeftovers = await collectTempLeftovers({ now, env, signal: operation?.signal, operation });
+  phase('trash', 'measuring worktree trash', operation);
+  const trash = await collectTrash({ signal: operation?.signal, operation });
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();
   let easSessionSweep = deps.precollectedEasSessionSweep;
@@ -618,10 +626,27 @@ export async function collectGcReport(
     swiftpmCacheUsage,
     machineCaches,
     tempLeftovers,
+    trash,
     cacheScope: null,
     olderThan,
     all,
   };
+}
+
+const shellWord = (value: string) => (/^[\w.:-]+$/.test(value) ? value : quotedPath(value));
+
+function gcRetryCommand(opts: RunGcOptions): string {
+  return [
+    'stim gc',
+    opts.delete && '--delete',
+    opts.worktrees && '--worktrees',
+    opts.olderThan !== undefined && `--older-than ${opts.olderThan}`,
+    opts.cache !== undefined && `--cache ${shellWord(opts.cache)}`,
+    opts.idle !== undefined && `--idle ${opts.idle / 60_000}m`,
+    opts.json && '--json',
+  ]
+    .filter(Boolean)
+    .join(' ');
 }
 
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
@@ -640,7 +665,7 @@ export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}):
     );
   } catch (error) {
     const failure =
-      claimFailure(error, opts.delete ? 'stim gc --delete' : 'stim gc --idle <duration>') ??
+      claimFailure(error, gcRetryCommand(opts)) ??
       (deps.operation?.signal.aborted
         ? { code: 'STIM_CANCELLED', message: 'GC was cancelled.', remedy: 'Retry the same GC command.' }
         : null);
@@ -968,6 +993,7 @@ function reportActionable(report: GcReport): boolean {
       report.workspaceLogs.some((entry) => entry.willTrim) ||
       report.recordings.some((entry) => entry.willDelete && !entry.withWorkspace) ||
       Boolean(report.tempLeftovers?.entries.some((entry) => entry.willDelete)) ||
+      Boolean(report.trash?.entries.some((entry) => entry.willDelete)) ||
       Boolean(report.worktreeSweep?.worktrees.some((entry) => !entry.skipped)) ||
       report.parkedSims.length > 0 ||
       report.parkedAvds.length + report.parkedHostedDevices.filter((device) => device.listed !== false).length > 0 ||
@@ -1136,7 +1162,7 @@ async function runGcCore(
   deleteFailures += await deleteGradleVersions(report.gradleVersions, output, deps.operation);
 
   throwIfCancelled(signal, 'GC');
-  removeInvalidProjectEntries(invalidProjects, output, signal);
+  await removeInvalidProjectEntries(invalidProjects, output, signal);
 
   throwIfCancelled(signal, 'GC');
   deleteFailures += await pruneDeadProjects(deadProjects, output, deps.operation);
@@ -1173,6 +1199,7 @@ async function runGcCore(
         output,
       )
     ).failures;
+  if (report.trash) deleteFailures += (await deleteTrash(deps.operation, output)).failures;
 
   for (const lock of buildLocks.stale) {
     throwIfCancelled(signal, 'GC');

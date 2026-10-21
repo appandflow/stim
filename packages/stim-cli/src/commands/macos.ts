@@ -31,11 +31,16 @@ import { stopBundleInstances, stopMacosAppHeld } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import { spawnEntry } from '../spawn-entry.ts';
-import { upsertProject } from '../workspace/config.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir, workspaceAgentDeviceDir } from '../workspace/paths.ts';
+import { upsertProject, withConfigLockAsync } from '../workspace/config.ts';
+import {
+  ensureWorkspaceStorageAsync,
+  workspaceDir,
+  workspaceLogsDir,
+  workspaceAgentDeviceDir,
+} from '../workspace/paths.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
-import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { recordWorkspaceUseAsync, writeWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 
 /**
  * Builds the Debug app and launches it here, or with `remote` on that approved remote Mac. A named host never falls
@@ -79,7 +84,7 @@ export async function runMacos(
   if (selected.failure) throw Object.assign(new Error(selected.failure.message), selected.failure);
   const buildMachine = selected.selected;
   const macos = await (await operation.load()).prepare(context, settings);
-  ensureWorkspaceStorage(root);
+  await ensureWorkspaceStorageAsync(root, context.signal);
   return withNativeBuildRun(
     context,
     root,
@@ -100,10 +105,15 @@ export async function runMacos(
             throw new Error(
               'macos.arguments is too large for a hosted app: at most 32 arguments of 1024 characters (8192 in total), without NUL or line breaks.',
             );
-          if (remote) (await connectHost(remote)).connection.close();
+          let hostServerKey: string | undefined;
+          if (remote) {
+            const probe = await connectHost(remote);
+            hostServerKey = probe.credential.serverKey;
+            probe.connection.close();
+          }
           if (!previous?.host) await stopMacosAppHeld(root);
-          upsertProject(root, {});
-          recordWorkspaceUse(root, new Date(), context.env, context.cwd);
+          await withConfigLockAsync(() => upsertProject(root, {}));
+          await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
           const bundle = join(macosDir(root), `${macos.product}.app`);
           const record: MacosAppRecord = {
             product: macos.product,
@@ -116,7 +126,16 @@ export async function runMacos(
             build: { state: 'running', startedAt: new Date().toISOString(), buildMachine },
             ...(previous?.host ? { host: previous.host, hostLaunched: previous.hostLaunched ?? false } : {}),
           };
-          const handoff = await buildBundle(context, root, macos, record, remote !== undefined, note, progress);
+          const handoff = await buildBundle(
+            context,
+            root,
+            macos,
+            record,
+            remote !== undefined,
+            hostServerKey,
+            note,
+            progress,
+          );
           progress.step('launch');
           const launched = (): void => {
             try {
@@ -132,7 +151,7 @@ export async function runMacos(
           }
           const connection = await connectHost(remote);
           const write = (patch: Partial<MacosAppRecord>) =>
-            writeWorkspaceState(root, { macos: { ...record, ...patch } });
+            writeWorkspaceStateAsync(root, { macos: { ...record, ...patch } });
           let placement = record.host;
           try {
             const run = await placeHostedMacos(connection, {
@@ -144,7 +163,7 @@ export async function runMacos(
               recorded: previous?.host,
               reserved: (reserved) => {
                 placement = reserved;
-                write({ host: reserved, hostLaunched: false });
+                return write({ host: reserved, hostLaunched: false });
               },
               note,
             });
@@ -155,11 +174,11 @@ export async function runMacos(
               host: run.placement,
               hostLaunched: run.launched,
             };
-            writeWorkspaceState(root, { macos: placed });
+            await writeWorkspaceStateAsync(root, { macos: placed });
             launched();
             return placed;
           } catch (error) {
-            write({ supervisor: undefined, ...(placement ? { host: placement, hostLaunched: false } : {}) });
+            await write({ supervisor: undefined, ...(placement ? { host: placement, hostLaunched: false } : {}) });
             throw error;
           } finally {
             connection.connection.close();
@@ -178,12 +197,13 @@ async function buildBundle(
   recipe: MacosArtifactRecipe,
   record: MacosAppRecord,
   hosted: boolean,
+  hostServerKey: string | undefined,
   note: (line: string) => void,
   progress: BuildProgress = NO_BUILD_PROGRESS,
 ): Promise<BuildHandoff | null> {
   const started = Date.parse(record.build.startedAt);
   const scratch = join(macosDir(root), 'build');
-  writeWorkspaceState(root, { macos: record });
+  await writeWorkspaceStateAsync(root, { macos: record });
   const writer = tapBuildLog(createNdjsonWriter(macosLogFile(root), { maxBytes: LOG_ROTATE_BYTES }), progress);
   try {
     const base = recipe.bundleId;
@@ -202,6 +222,7 @@ async function buildBundle(
       progress,
       record: record.build,
       buildMachine: record.build.buildMachine!,
+      hostServerKey,
     });
     record.bundleId = built.bundleId;
     record.displayName = displayName;
@@ -213,7 +234,7 @@ async function buildBundle(
       finishedAt: new Date().toISOString(),
       durationMs: Date.now() - started,
     };
-    writeWorkspaceState(root, { macos: record });
+    await writeWorkspaceStateAsync(root, { macos: record });
     recordMacosBuild(root, record.build, progress.steps());
     return built.handoff;
   } catch (error) {
@@ -229,7 +250,7 @@ async function buildBundle(
         ? { errorCode: (error as { code: string }).code }
         : {}),
     };
-    writeWorkspaceState(root, { macos: { ...record, supervisor: undefined, build } });
+    await writeWorkspaceStateAsync(root, { macos: { ...record, supervisor: undefined, build } });
     recordMacosBuild(root, build, progress.steps());
     throw error;
   } finally {

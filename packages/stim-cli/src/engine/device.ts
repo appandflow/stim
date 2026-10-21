@@ -36,7 +36,8 @@ export interface OwnedDeviceRecord {
   poolConfiguration?: string;
   /**
    * The boot this call started, and the promise that finishes it: the wait on
-   * `simctl bootstatus -b` and the SimSlim reconcile that follows it.
+   * `simctl bootstatus -b` and SpringBoard's startup, then the mute and the
+   * SimSlim reconcile that follow it.
    * `ensureBooted` joins it instead of listing simulators again. It is never
    * persisted.
    */
@@ -121,7 +122,7 @@ export async function ensureOwnedDevice({
   reconcileIosSimulator?: typeof reconcileSimSlim;
   simSnapshot?: IosSimSnapshot;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
-  clearDeviceIdleShutdown(projectPath, platform, slot);
+  await clearDeviceIdleShutdown(projectPath, platform, slot);
   if (slot && slot !== 'default') label = `${label}-${slot}`;
   const record = (deviceSlotPlatforms(project, slot)?.[platform] as OwnedDeviceRecord | undefined) ?? null;
   if (platform === 'ios') {

@@ -56,6 +56,7 @@ export interface AndroidArtifactRecipe {
       | Parameters<typeof chooseBuildMachine>[0]['target']
       | Promise<Parameters<typeof chooseBuildMachine>[0]['target']>;
     request: Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'android' }>;
+    fingerprintInputs?: Parameters<typeof offloadBuild>[0]['fingerprintInputs'];
     unchanged(): Promise<boolean>;
   } | null;
 }
@@ -92,6 +93,11 @@ export interface AndroidProject {
     | Promise<{ bundleId: string | null; androidPackage: string | null; androidPackageProblem?: string | null }>;
   variantProblem(variant: string | null): { code: string; reason: string; remedy: string } | null;
   targets: readonly AndroidRunPlan['target']['kind'][];
+  /** Refuses a run that a local build would fail before it prepares a device. */
+  preflight?(target: {
+    abi: string | null;
+    variant: string | null;
+  }): { code: string; reason: string; remedy: string } | null;
   eas: boolean;
   runtimeKind(build: Pick<AndroidBuildPlan['build'], 'release'>): AndroidRuntimeKind;
   runtime(args: {

@@ -75,7 +75,8 @@ android` reports it and `stim android` refuses with `STIM_BUILD_FAILED`
   x86_64 emulator build and 21 for arm64-v8a, such as `C:\src\trailhead`;
   other projects fit about twice that. `stim doctor --platform android`
   reports a root that leaves no room and `stim android` refuses it with
-  `STIM_PATH_TOO_LONG` before Gradle runs. Move or clone the project under a
+  `STIM_PATH_TOO_LONG` before it prepares the emulator, even when a cached build
+  would have installed. Move or clone the project under a
   short real path such as `C:\src\<name>`. A `subst` drive does not work: Node
   and Expo autolinking resolve it back to the long path. The check
   assumes the default native staging path and may also refuse a shorter

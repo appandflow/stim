@@ -1,7 +1,7 @@
 import { hostedAndroidStatus, type HostedDeviceSelectors, type HostedAppOffer } from '@stim-cli/core/state';
 import { placeHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
-import { writeHostedAndroid } from '../../device-host/ios-state.ts';
-import { writeWorkspaceLaunch, workspaceDevServerMode } from '../../supervisor/state.ts';
+import { writeHostedAndroidAsync } from '../../device-host/ios-state.ts';
+import { workspaceDevServerMode, writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
 import { verifyLaunch } from '../../engine/launch-verify.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../../engine/slot-launch.ts';
 import type { PreparedAndroidArtifact } from './artifact.ts';
@@ -56,9 +56,9 @@ export async function finishHostedAndroidRun({
   appMode?: HostedAppOffer['mode'];
   selectors: HostedDeviceSelectors;
   place: typeof placeHostedAndroid;
-  writePlacement: typeof writeHostedAndroid;
+  writePlacement: typeof writeHostedAndroidAsync;
   verifyLaunch: typeof verifyLaunch;
-  writeLaunch: typeof writeWorkspaceLaunch;
+  writeLaunch: typeof writeWorkspaceLaunchAsync;
   readApkPackage: (path: string | null) => string | null | Promise<string | null>;
   resolveDevClientScheme: typeof androidDevClientScheme;
   now: () => number;
@@ -96,8 +96,8 @@ export async function finishHostedAndroidRun({
       note: out,
       enterPhase,
     });
-    writePlacement(root, slot, run.placement);
-    writeLaunch(
+    await writePlacement(root, slot, run.placement);
+    await writeLaunch(
       root,
       'android',
       {
@@ -143,7 +143,7 @@ export async function finishHostedAndroidRun({
       record: report.record,
       startedAt,
       durationMs: now() - started,
-      status: 'success',
+      status: 'ok',
       out,
     });
     await finishAndroidUpload(artifact.uploadPending, artifact.remote, phase);

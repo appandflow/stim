@@ -175,6 +175,10 @@ serve bounded log queries.
   the safe direction: a client redbox that Fast Refresh already fixed keeps
   being reported until the next launch.
 
+  RUN FAILURES. A run that builds or reuses an app and then fails before the app
+  is running adds one build record with event run_failed, its code and the
+  phase it failed in, so \`status\` and \`logs --errors\` agree.
+
   OUTPUT. Every logs command, including --errors and --follow, shows full captured
   error, component and native stacks, with no frame or message-length limit.
   --errors shows the first 20 matching error records, plus stack context.
@@ -300,7 +304,13 @@ they stay in the local logs. These records carry no tokens.
 
 WHAT WRITES WHAT
   maintenance.ndjson   workspace maintenance actions, failures and explaining skips
-  metro.ndjson         the bundler, in every supervisor mode
+  metro.ndjson         the bundler, in every supervisor mode. Stim's
+                       middleware adds one record per bundle request
+                       (bundle_response_started, _progress, _finished,
+                       _failed) and, on Expo, one per dev-client manifest
+                       request (manifest_request_started, _finished,
+                       _failed: debug level, with platform and requestId;
+                       launch verification reads them as progress)
   client.ndjson        in-app console logs and redboxes -- BARE PROJECTS ONLY.
                        In expo-child and command-child mode everything the
                        dev server prints lands in metro.ndjson with raw: true,

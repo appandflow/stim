@@ -39,10 +39,10 @@ async function writeIosDevMenuOffDefaults(udid: string, bundleId: string, exec: 
   }
 }
 
-function describeIosSimulatorFailure(error: unknown, exec: Executor): string {
+async function describeIosSimulatorFailure(error: unknown, exec: Executor): Promise<string> {
   const detail = describe(error);
   return (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT'
-    ? `${detail}. ${iosSimulatorFailureAdvice(exec)}`
+    ? `${detail}. ${await iosSimulatorFailureAdvice(exec)}`
     : detail;
 }
 
@@ -130,7 +130,7 @@ export async function installIosApp(
       return {
         failed: true,
         code: INSTALL_ERROR,
-        reason: `simctl install failed for ${appPath}: ${describeIosSimulatorFailure(err, e)}`,
+        reason: `simctl install failed for ${appPath}: ${await describeIosSimulatorFailure(err, e)}`,
       };
     }
   }
@@ -167,7 +167,7 @@ export async function installIosApp(
       return {
         failed: true,
         code: INSTALL_ERROR,
-        reason: `Installed ${bundleId}, but could not prepare the dev client: ${describeIosSimulatorFailure(err, e)}`,
+        reason: `Installed ${bundleId}, but could not prepare the dev client: ${await describeIosSimulatorFailure(err, e)}`,
       };
     }
   }
@@ -271,14 +271,14 @@ export function appProcessFromPid(pid: number | null): AppProcessProbe {
 export async function iosAppProcess(
   udid: string,
   bundleId: string,
-  { exec = null }: ExecOpt = {},
+  { exec = null, timeoutMs = 2000 }: ExecOpt & { timeoutMs?: number } = {},
 ): Promise<AppProcessProbe> {
   const e = exec || getExecutor();
   const started = performance.now();
   let probe: AppProcessProbe = { state: 'unknown' };
   let failure: { code?: string; exit?: number } = {};
   try {
-    const out = await e.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 2000 });
+    const out = await e.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs });
     const label = `UIKitApplication:${bundleId}[`;
     probe = { state: 'stopped' };
     for (const line of out.split('\n')) {
@@ -362,7 +362,7 @@ export async function launchIosApp(
       return {
         failed: true,
         code: LAUNCH_ERROR,
-        reason: `simctl terminate ${bundleId} failed, so the running app (pid ${running.pid}) was not restarted: ${describeIosSimulatorFailure(err, e)}`,
+        reason: `simctl terminate ${bundleId} failed, so the running app (pid ${running.pid}) was not restarted: ${await describeIosSimulatorFailure(err, e)}`,
       };
     }
     restart.restartedPid = running.pid;
@@ -378,7 +378,7 @@ export async function launchIosApp(
       return {
         failed: true,
         code: LAUNCH_ERROR,
-        reason: `Could not point ${bundleId} at Metro port ${metroPort} (defaults write RCT_jsLocation): ${describeIosSimulatorFailure(err, e)}`,
+        reason: `Could not point ${bundleId} at Metro port ${metroPort} (defaults write RCT_jsLocation): ${await describeIosSimulatorFailure(err, e)}`,
       };
     }
 
@@ -394,7 +394,7 @@ export async function launchIosApp(
           return {
             failed: true,
             code: LAUNCH_ERROR,
-            reason: `Could not turn off ${bundleId}'s dev menu before opening it (defaults write): ${describeIosSimulatorFailure(err, e)}`,
+            reason: `Could not turn off ${bundleId}'s dev menu before opening it (defaults write): ${await describeIosSimulatorFailure(err, e)}`,
           };
         }
       }
@@ -422,7 +422,7 @@ export async function launchIosApp(
         return {
           failed: true,
           code: LAUNCH_ERROR,
-          reason: `simctl ${launchedWithInitialUrl ? `launch ${bundleId}` : `openurl ${url}`} failed: ${describeIosSimulatorFailure(err, e)}`,
+          reason: `simctl ${launchedWithInitialUrl ? `launch ${bundleId}` : `openurl ${url}`} failed: ${await describeIosSimulatorFailure(err, e)}`,
         };
       }
     }
@@ -443,7 +443,7 @@ export async function launchIosApp(
     return {
       failed: true,
       code: LAUNCH_ERROR,
-      reason: `simctl launch ${bundleId} failed: ${describeIosSimulatorFailure(err, e)}`,
+      reason: `simctl launch ${bundleId} failed: ${await describeIosSimulatorFailure(err, e)}`,
     };
   }
 }

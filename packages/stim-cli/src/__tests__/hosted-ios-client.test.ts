@@ -6,6 +6,8 @@ import { WebSocketServer } from 'ws';
 import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 import { createHash } from 'node:crypto';
 import {
+  type PathLike,
+  type WatchListener,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -20,14 +22,15 @@ import { join } from 'node:path';
 import { BuildConnection } from '../offload/client.ts';
 import { deviceHostMachinesFile, queryLogs, type HostedIosPlacement, type HostedAppOffer } from '@stim-cli/core/state';
 import { prepareHostedIos, placeHostedIos, stopHostedIos } from '../device-host/hosted-ios.ts';
-import { iosAgentRemoteConfig } from '../device-host/hosted-native.ts';
-import { readHostedIos, writeHostedIos } from '../device-host/ios-state.ts';
+import { hostedMetroPortProbe, iosAgentRemoteConfig } from '../device-host/hosted-native.ts';
+import { readHostedIos, writeHostedNative } from '../device-host/ios-state.ts';
 import { applyHostedIosProbe } from '../device-host/hosted-ios-status.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { gatewayAddresses, clearHostedMetro } from '../device-host/metro-gateway.ts';
 import { reconcileHostedMetro, watchHostedMetro } from '../supervisor/hosted-metro.ts';
 import { getConfigPath, getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { parseLogStreamLine } from '../collector/ios.ts';
 import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { followHostedMacosLogs, followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -42,6 +45,9 @@ import { runReload } from '../commands/reload.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { agentRemoteConfig } from '../device-host/hosted-macos.ts';
 
+const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | null): void =>
+  writeHostedNative(root, slot, host, 'ios');
+
 const loopbackAvailable = await new Promise<boolean>((resolve) => {
   const probe = createServer();
   probe.once('error', () => resolve(false));
@@ -49,6 +55,23 @@ const loopbackAvailable = await new Promise<boolean>((resolve) => {
 });
 
 const tailnet = vi.hoisted(() => ({ port: 0, changed: false }));
+const watcher = vi.hoisted(() => ({ dropEvents: false }));
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    watch: (
+      file: PathLike,
+      options: WatchListener<string> | { persistent?: boolean },
+      listener?: WatchListener<string>,
+    ) => {
+      const changed = typeof options === 'function' ? options : listener;
+      return fs.watch(file, (event, name) => {
+        if (!watcher.dropEvents) changed?.(event, name);
+      });
+    },
+  };
+});
 vi.mock('../offload/tailnet.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../offload/tailnet.ts')>()),
   realIo: { ...(await importOriginal<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },
@@ -94,6 +117,7 @@ let methods: { method: string; params: Record<string, unknown> }[];
 let blobs: Map<string, Buffer>;
 let manifest: { sha256: string; size: number };
 let hostFeatures: string[];
+let hostBusy: number[];
 let agentGrant: unknown;
 let features: boolean;
 let appLaunched: true | 'unverified';
@@ -124,6 +148,7 @@ beforeEach(async () => {
   pressure = 'normal';
   tailnet.changed = false;
   hostFeatures = [];
+  hostBusy = [];
   agentGrant = undefined;
   fixtureConnection = Object.create(BuildConnection.prototype) as BuildConnection;
   fixtureConnection.close = vi.fn<() => void>();
@@ -168,6 +193,8 @@ beforeEach(async () => {
       return reply({ id: sessionId, platform: 'ios', state: 'stopped', device });
     }
     if (method === 'device-host.metro.open' || method === 'device-host.metro.close') return reply({ port: 8123 });
+    if (method === 'device-host.metro.ports')
+      return reply({ busy: hostBusy.filter((port) => (params.ports as number[]).includes(port)) });
     if (method === 'device-host.app.offer') {
       manifest = params.manifest;
       const files = blobs.has(manifest.sha256) ? JSON.parse(String(blobs.get(manifest.sha256))) : [manifest];
@@ -226,6 +253,7 @@ async function deliver(
       mode,
       selectors: { deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
       devClientScheme: 'exp+fixture',
+      metroPort: 8086,
       reserved: (value) => writeHostedIos(root, slot, value),
       note: () => {},
       enterPhase,
@@ -300,6 +328,9 @@ test('offers before reservation, uploads digest-matching bytes, and development 
     mode: 'development',
     devClientScheme: 'exp+fixture',
   });
+  expect(methods.find((entry) => entry.method === 'device-host.metro.open')?.params).toMatchObject({
+    clientMetroPort: 8086,
+  });
   expect(readHostedIos(root).default?.device?.udid === device.udid).toBe(true);
   expect(getProject(root)?.platforms?.ios).toBeUndefined();
   for (const [digest, bytes] of blobs) expect(createHash('sha256').update(bytes).digest('hex')).toBe(digest);
@@ -342,6 +373,29 @@ test('missing configuration and approval keep their existing credential remedies
   rmSync(deviceHostMachinesFile());
   await expect(prepareHostedIos('mini', {})).rejects.toThrow('Run stim doctor --fix');
   expect(methods).toEqual([]);
+});
+
+test('a dev-client Metro port held on the host refuses with the metro.port remedy before any upload', async () => {
+  errorMethod = 'device-host.metro.open';
+  errorCode = 'device-busy';
+  await expect(deliver()).rejects.toMatchObject({
+    code: 'STIM_HOSTING_REFUSED',
+    remedy: expect.stringContaining('metro.port'),
+  });
+  expect(methods.some((entry) => entry.method === 'device-host.app.offer')).toBe(false);
+});
+
+test('the host Metro port probe answers from the host and counts an older or unanswering host as free', async () => {
+  hostBusy = [8083];
+  const notes: string[] = [];
+  const free = hostedMetroPortProbe('mini', (line) => notes.push(line));
+  expect([await free(8082), await free(8083), await free(8084)]).toEqual([true, false, true]);
+  features = false;
+  expect(await hostedMetroPortProbe('mini', () => {})(8083)).toBe(true);
+  features = true;
+  errorMethod = 'device-host.metro.ports';
+  expect(await hostedMetroPortProbe('mini', (line) => notes.push(line))(8083)).toBe(true);
+  expect(notes).toEqual([expect.stringContaining('Could not check which Metro ports are free on mini')]);
 });
 
 test('delivery failure keeps the session available to stop', async () => {
@@ -971,9 +1025,10 @@ test('hosted iOS native errors are paged into the workspace once per slot and pu
   expect(
     stored.every((record) => record.src === 'device' && record.platform === 'ios' && record.slot === 'tablet'),
   ).toBe(true);
-  expect(queryLogs({ dir: workspaceLogsDir(root), errorsOnly: true }).map((record) => record.msg)).toEqual([
-    'native 3',
-  ]);
+  expect(queryLogs({ dir: workspaceLogsDir(root), errorsOnly: true })).toEqual([]);
+  expect(
+    queryLogs({ dir: workspaceLogsDir(root), errorsOnly: true, sources: ['device'] }).map((record) => record.msg),
+  ).toEqual(['native 3']);
   logRecords.push(
     ...Array.from({ length: 130 }, (_, index) => ({
       ts: index + 4,
@@ -991,6 +1046,46 @@ test('hosted iOS native errors are paged into the workspace once per slot and pu
   expect(finalLogs).toContain('final error 130');
   expect(finalLogs.trim().split('\n')).toHaveLength(133);
   expect(readHostedIos(root)).toEqual({});
+});
+
+test('hosted iOS OS log lines leave --errors the way the same lines do on a local simulator', async () => {
+  const lines = [
+    ['com.apple.UIKit', '-[UIApplication statusBarStyle] API has been deprecated and is a no-op on 27.0 and later.'],
+    ['com.apple.coreanimation', 'cannot add handler to 0 from 0 - dropping'],
+    ['com.apple.UIKit', 'button text attributes only respected for UIControlStateNormal'],
+  ].map(([subsystem, eventMessage], index) =>
+    JSON.stringify({
+      eventType: 'logEvent',
+      messageType: 'Error',
+      timestamp: new Date(1_000 + index).toISOString(),
+      processImagePath: '/path/Stim.app/Stim',
+      subsystem,
+      eventMessage,
+    }),
+  );
+  const records = lines.map((line) => parseLogStreamLine(line)).filter((record) => record !== null);
+  expect(records).toHaveLength(3);
+  const local = mkdtempSync(join(tmpdir(), 'stim-local-logs-'));
+  try {
+    writeFileSync(
+      join(local, 'device.ndjson'),
+      records.map((record) => JSON.stringify({ ...record, platform: 'ios', slot: 'default' })).join('\n') + '\n',
+    );
+    writeHostedIos(root, 'default', placement());
+    logRecords = records;
+    const target = await prepareHostedIos('mini', {}, placement());
+    await pullHostedNativeLogs(root, 'default', placement(), target.host);
+    const hosted = workspaceLogsDir(root);
+    for (const criteria of [{ errorsOnly: true }, { errorsOnly: true, sources: ['device'] }, {}]) {
+      expect(queryLogs({ dir: hosted, ...criteria }).map((record) => record.msg)).toEqual(
+        queryLogs({ dir: local, ...criteria }).map((record) => record.msg),
+      );
+    }
+    expect(queryLogs({ dir: hosted, errorsOnly: true })).toEqual([]);
+    expect(queryLogs({ dir: hosted, errorsOnly: true, sources: ['device'] })).toHaveLength(3);
+  } finally {
+    rmSync(local, { recursive: true, force: true });
+  }
 });
 
 test('an older host gets no iOS log queries and follow warns once while retaining copied logs', async () => {
@@ -1068,10 +1163,13 @@ test('final log drain has a time bound even while pages advance', async () => {
 });
 
 test('follow discovers an iOS slot placed after the follower starts', async () => {
-  const stop = followHostedLogs(root, false);
+  let stop = () => {};
   try {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    stop = followHostedLogs(root, false);
     writeHostedIos(root, 'tablet', placement());
     logRecords = [{ ts: 1, src: 'device', level: 'error', msg: 'late slot failure' }];
+    await vi.advanceTimersByTimeAsync(10_500);
     await vi.waitFor(
       () =>
         expect(readFileSync(join(workspaceLogsDir(root), 'ios.tablet-host.ndjson'), 'utf8')).toContain(
@@ -1081,6 +1179,30 @@ test('follow discovers an iOS slot placed after the follower starts', async () =
     );
   } finally {
     stop();
+    vi.useRealTimers();
+  }
+});
+
+test('follow discovers a slot placed before the state watcher is live without waiting for the 10 s refresh', async () => {
+  let stop = () => {};
+  try {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    watcher.dropEvents = true;
+    stop = followHostedLogs(root, false);
+    writeHostedIos(root, 'tablet', placement());
+    logRecords = [{ ts: 1, src: 'device', level: 'error', msg: 'early slot failure' }];
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.waitFor(
+      () =>
+        expect(readFileSync(join(workspaceLogsDir(root), 'ios.tablet-host.ndjson'), 'utf8')).toContain(
+          'early slot failure',
+        ),
+      { timeout: 3000 },
+    );
+  } finally {
+    stop();
+    watcher.dropEvents = false;
+    vi.useRealTimers();
   }
 });
 

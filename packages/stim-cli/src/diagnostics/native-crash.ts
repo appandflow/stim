@@ -5,7 +5,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import { getExecutor, type ExecOptions } from '../exec.ts';
-import { parseLogcatLine } from '../collector/android.ts';
+import { androidLogGroups, isAndroidCrashText, parseLogcatLine } from '../collector/android.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { androidHome, androidToolCwd } from '../devices/android.ts';
 import { launchErrorPreview } from './launch-error-preview.ts';
@@ -139,14 +139,7 @@ export function parseAndroidCrashes(text: string, target: CrashTarget, clockOffs
       (record): record is NdjsonRecord =>
         record !== null && Number(record.ts) >= target.since && Number(record.ts) <= (target.until ?? Infinity),
     );
-  const groups: NdjsonRecord[][] = [];
-  for (const entry of entries) {
-    const last = groups.at(-1);
-    if (!last || entry.proc !== last.at(-1)?.proc || /^\s*(?:FATAL EXCEPTION:|\*\*\* \*\*\*)/.test(entry.msg ?? ''))
-      groups.push([entry]);
-    else last.push(entry);
-  }
-  return groups.flatMap((group) => {
+  return androidLogGroups(entries).flatMap((group) => {
     const messages = group.map((record) => record.msg ?? '');
     const process = messages
       .map((line) => /^\s*(?:Process: (.+?), PID: \d+|pid: \d+, tid: \d+, name: .*?>>> (.*?) <<<)/.exec(line))
@@ -154,7 +147,7 @@ export function parseAndroidCrashes(text: string, target: CrashTarget, clockOffs
     const appId = process?.[1] ?? process?.[2];
     if (appId !== target.appId) return [];
     const msg = messages.join('\n');
-    if (!/FATAL EXCEPTION:|signal \d+ \(/.test(msg)) return [];
+    if (!isAndroidCrashText(msg)) return [];
     return [
       {
         ts: group[0]!.ts,

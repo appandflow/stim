@@ -7,6 +7,9 @@ import {
   configInputsChanged,
   filesystemBuildCapability,
   fingerprintDiffRecord,
+  gitignoredFingerprintInputs,
+  ignoredFingerprintPaths,
+  trackedFingerprintPaths,
   inputsChangedDuringBuild,
   refingerprintAfterMutation,
   untrackedMissLine,
@@ -20,7 +23,7 @@ import type { FailArgs } from '../commands/ios/types.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
 import { easDeviceBuildRemedy } from '../engine/eas-build.ts';
 import { copyAppAside, writeIpTxt } from '../engine/ios-lan.ts';
-import { recordPrebuild, staleNativeDirRefusal } from '../engine/prebuild.ts';
+import { staleNativeDirRefusal, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { bundlerPin } from '../engine/bundler.ts';
 import { iosToolchainAsync } from '../offload/toolchain.ts';
 import { resolveIosProjectDir, type IosProjectDir, type SettingsObject } from '../workspace/settings.ts';
@@ -40,6 +43,7 @@ type ReactNativeIosDependencies = Pick<
   | 'untrackedNativeFiles'
   | 'resolveBuild'
   | 'storeBuild'
+  | 'readBundleId'
   | 'readWorkspaceState'
   | 'loadProjectProvider'
   | 'planPrebuild'
@@ -302,6 +306,7 @@ function reactNativeIosArtifact(
         resolve: d.resolveBuild,
         store: d.storeBuild,
         sources: storeSources,
+        readAppId: (path) => d.readBundleId(path),
       }),
     async validateExternal(path) {
       if (device) {
@@ -340,8 +345,8 @@ function reactNativeIosArtifact(
       if (mutates && cachePolicy.read) beforePrepare();
       if (prebuild === 'generate' || prebuild === 'regenerate') {
         step('prebuild');
-        recordPrebuild(root, PLATFORM, null);
-        const result = await d.runPrebuild(root, PLATFORM, logWriter(), { clean: prebuild === 'regenerate' });
+        await recordPrebuildAsync(root, PLATFORM, null);
+        const result = await d.runPrebuild(root, PLATFORM, logWriter());
         if (result?.failed) {
           phase('prebuild', 'FAILED');
           fail({
@@ -354,7 +359,7 @@ function reactNativeIosArtifact(
         const outcome =
           prebuild === 'generate'
             ? 'ios/ absent -> generated'
-            : 'ios/ not generated from this fingerprint -> regenerated with --clean';
+            : 'ios/ not generated from this fingerprint -> updated in place';
         phase('prebuild', `${outcome} (${formatDuration(result?.durationMs ?? 0)})`);
         mutatingSteps.push('prebuild');
       }
@@ -368,7 +373,7 @@ function reactNativeIosArtifact(
 
       const podState = d.readPodState(root, iosProject.dir);
       const verdict = d.podsAreStale(podState.lockText, podState.manifestText, podState.dir);
-      const action = podAction(podState, verdict);
+      const action = podAction(podState, verdict, { prebuildRan: mutatingSteps.includes('prebuild') });
       if (action.install) {
         step('pods');
         const result = await d.runPodInstall(root, logWriter(), {
@@ -407,7 +412,7 @@ function reactNativeIosArtifact(
         });
         const prebuildRan = mutatingSteps.includes('prebuild');
         const editedConfig = after ? configInputsChanged(fingerprintSources, after.sources, { prebuildRan }) : [];
-        if (after && !editedConfig.length && prebuildRan) recordPrebuild(root, PLATFORM, after.hash);
+        if (after && !editedConfig.length && prebuildRan) await recordPrebuildAsync(root, PLATFORM, after.hash);
         if (!after || editedConfig.length) {
           storeHash = null;
           note(
@@ -518,7 +523,7 @@ function reactNativeIosArtifact(
       physical || !cachePolicy.remote || buildProfile || buildScheme
         ? null
         : {
-            load: () => d.loadProjectProvider(root, { context: operation, isExpo }),
+            load: () => d.loadProjectProvider(root, { context: operation, isExpo, sources: fingerprintSources }),
             runOptions: iosProviderRunOptions(configuration, target.keyArch),
           },
     offload: {
@@ -540,11 +545,11 @@ function reactNativeIosArtifact(
       target: async (runtime) => ({
         platform: 'ios',
         local: {
-          ...(await iosToolchainAsync(root)),
+          ...(await iosToolchainAsync(root, iosProject.dir)),
           ...(target.hostedArchitecture ? { arch: target.hostedArchitecture === 'x86_64' ? 'x64' : 'arm64' } : {}),
         },
         runtime,
-        cocoapodsPinned: bundlerPin(root) !== null,
+        cocoapodsPinned: bundlerPin(root, iosProject.dir) !== null,
       }),
       request: (runtime) => ({
         platform: 'ios',
@@ -555,6 +560,17 @@ function reactNativeIosArtifact(
         iosProjectPath: iosProject.relative,
         isExpo,
         optimizations,
+      }),
+      fingerprintInputs: async () => ({
+        sources: storeSources,
+        ignored: await gitignoredFingerprintInputs(
+          root,
+          storeSources,
+          { platform: PLATFORM, iosProjectPath: iosProject.relative },
+          { env: operation?.env },
+        ),
+        ignoredPaths: ignoredFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
+        trackedPaths: trackedFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
       }),
       unchanged: async () => {
         const after = await refingerprintAfterMutation({

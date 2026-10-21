@@ -32,3 +32,9 @@ test('malformed and escaping queries cannot reach a worker private-input check',
   ])
     expect(swiftpmArtifactQuery(invalid)).toBeNull();
 });
+
+test('a query with a build compatibility version carries it instead of the Stim build', () => {
+  const { stimBuild: _, ...rest } = query;
+  expect(swiftpmArtifactQuery({ ...query, compat: 1 })).toEqual({ ...rest, compat: 1 });
+  expect(swiftpmArtifactQuery({ ...query, compat: 0 })).toBeNull();
+});

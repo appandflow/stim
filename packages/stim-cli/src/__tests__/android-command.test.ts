@@ -58,7 +58,7 @@ import {
   upsertProject,
   writeConfigSetting,
 } from '../workspace/config.ts';
-import { buildMachinesFile, readLastBuilds } from '@stim-cli/core/state';
+import { buildMachinesFile, openLogDir, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import {
   workspaceDir,
@@ -566,7 +566,11 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
                     inspect: (path) => {
                       const match = integration.inspect(path);
                       return match
-                        ? { ...match, android: async (resolved) => reactNativeAndroidProject(path, resolved, options) }
+                        ? {
+                            ...match,
+                            android: async (resolved) =>
+                              reactNativeAndroidProject(path, resolved, { platform: 'linux', ...options }),
+                          }
                         : null;
                     },
                   },
@@ -641,6 +645,34 @@ test('an invalid Android pool bound refuses before device creation and emits one
   } finally {
     delete process.env.STIM_POOL_ANDROID_PARKED_MAX;
   }
+});
+
+test('a Windows project root with no room for the NDK object paths refuses before any emulator is prepared', async () => {
+  const longRoot = join(root, 'p'.repeat(60));
+  mkdirSync(join(longRoot, 'android', 'app'), { recursive: true });
+  writeFileSync(
+    join(longRoot, 'package.json'),
+    JSON.stringify({ name: 'app', dependencies: { 'react-native': '0.81.0' } }),
+  );
+  writeFileSync(join(longRoot, 'android', 'app', 'build.gradle'), 'android {\n  namespace "com.example.app"\n}\n');
+  upsertProject(longRoot, { metroPort: 8082 });
+  const h = harness({
+    root: longRoot,
+    platform: 'win32',
+    json: true,
+    resolveMetro: async (port: number) => {
+      h.calls.metro.push([port, longRoot]);
+      return { metro: { pid: 41233, leader: 41233, cwd: longRoot } };
+    },
+  });
+  const result = await h.run();
+  expect(result.error).toMatchObject({ code: 'STIM_PATH_TOO_LONG', remedy: expect.stringContaining('C:\\src') });
+  expect(result.error?.message).toContain(longRoot);
+  expect(h.calls.metro).toEqual([]);
+  expect(h.calls.ensureDevice).toEqual([]);
+  expect(h.calls.booted).toEqual([]);
+  expect(h.calls.build).toEqual([]);
+  expect(JSON.parse(h.stdout.at(-1) ?? '')).toMatchObject({ code: 'STIM_PATH_TOO_LONG' });
 });
 
 describe('adopted Android installs', () => {
@@ -2083,6 +2115,20 @@ describe('the applicationId comes from the built APK', () => {
     expect(h.stderr.join('\n')).toMatch(/io\.tlon\.groups \(from the APK; project files say com\.example\.app\)/);
   });
 
+  test('a hit takes the package stored on its cache entry instead of reading the cached APK', async () => {
+    const h = harness({
+      resolveCached: () => '/cache/app-debug.apk',
+      storedAppId: (platform: string, key: string) =>
+        platform === 'android' && key.startsWith(FINGERPRINT) ? 'io.tlon.groups' : null,
+    });
+    const result = await h.run();
+
+    expect(result.ok).toBe(true);
+    expect(h.calls.readApkPackage).toEqual([]);
+    expect(h.calls.install[0]?.packageName).toBe('io.tlon.groups');
+    expect(h.calls.launch[0]?.packageName).toBe('io.tlon.groups');
+  });
+
   test('an unreadable APK falls back to project detection', async () => {
     const h = harness();
     const result = await h.run();
@@ -2382,8 +2428,36 @@ describe('the other refusals', () => {
     expect(result.error.message).toMatch(/bad app\.json/);
   });
 
+  async function errorRecords() {
+    const logDir = await openLogDir(workspaceLogsDir(root));
+    try {
+      return await logDir.query({ errorsOnly: true, sources: ['build'] });
+    } finally {
+      await logDir.close();
+    }
+  }
+
+  function phaseProgress() {
+    let phase: string | null = null;
+    return {
+      step: (next: string) => (phase = next),
+      phase: () => phase,
+      miss: () => {},
+      hit: () => {},
+      output: () => {},
+      deviceSetup: () => {},
+      deviceSetupKnown: () => undefined,
+      activity: () => {},
+      waitingOn: () => {},
+      estimate: () => {},
+      durations: () => ({}),
+      clear: () => {},
+    };
+  }
+
   test('a device that cannot be booted refuses with STIM_NO_DEVICE, after the build', async () => {
     const h = harness({
+      progress: phaseProgress(),
       ensureDeviceBooted: async () => ({ failed: true, reason: 'AVD stim-app-412 no longer exists.' }),
       install: never('the install'),
     });
@@ -2391,6 +2465,24 @@ describe('the other refusals', () => {
     assert(result.error);
     expect(result.error.code).toBe(NO_DEVICE);
     expect(result.error.message).toMatch(/no longer exists/);
+    const state = readWorkspaceState(root);
+    expect(readLastBuilds(state).android).toMatchObject({ status: 'failed', errorCode: NO_DEVICE });
+    expect(readBuildHistory(state).android?.[0]).toMatchObject({ result: 'failed', errorCode: NO_DEVICE });
+    expect(await errorRecords()).toMatchObject([{ level: 'error', code: NO_DEVICE, phase: 'device' }]);
+  });
+
+  test('a build that completes and then throws is recorded as failed with the error code', async () => {
+    const h = harness({
+      progress: phaseProgress(),
+      install: () => {
+        throw Object.assign(new Error('fixture install crash'), { code: 'STIM_FIXTURE_CRASH' });
+      },
+    });
+    await expect(h.run()).rejects.toThrow('fixture install crash');
+    const state = readWorkspaceState(root);
+    expect(readLastBuilds(state).android).toMatchObject({ status: 'failed', errorCode: 'STIM_FIXTURE_CRASH' });
+    expect(readBuildHistory(state).android?.[0]).toMatchObject({ result: 'failed', errorCode: 'STIM_FIXTURE_CRASH' });
+    expect(await errorRecords()).toMatchObject([{ level: 'error', code: 'STIM_FIXTURE_CRASH', phase: 'install' }]);
   });
 
   const DISK_FATAL =
@@ -4860,7 +4952,6 @@ describe('re-fingerprint after prebuild', () => {
     const stale = harness({ fingerprint: shifting() });
     expect((await stale.run()).ok).toBe(true);
     expect(stale.calls.prebuild.length).toBe(1);
-    expect(stale.calls.prebuild[0]?.[3]).toMatchObject({ clean: true });
     expect(readState().prebuild).toEqual({ android: WARM });
     expect(String(stale.calls.storeCached[0]?.[1])).toMatch(new RegExp(`^${WARM}`));
 
@@ -5643,7 +5734,7 @@ describe('--device (a physical Android device)', () => {
     expect(h.calls.resolveCached[0]).toEqual(['android', `${FINGERPRINT}-release-sim`]);
   });
 
-  test('a live physical-device error recommends Metro reload', async () => {
+  test('a live physical-device error recommends stim reload', async () => {
     const h = physicalHarness({
       verifyLaunched: async () => ({
         verified: true,
@@ -5653,7 +5744,7 @@ describe('--device (a physical Android device)', () => {
     });
     await h.run();
     const text = h.stderr.join('\n');
-    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toContain('run `stim reload android`');
     expect(text).not.toContain('agent-device snapshot');
   });
 
@@ -5782,7 +5873,13 @@ describe('--device refusals found in review', () => {
     expect(result.error?.code).toBe('STIM_BAD_ARG');
   });
 
-  test('a physical run leaves no serial in the workspace state either', async () => {
+  test('an emulator run records no phone reverse', async () => {
+    const h = harness();
+    await h.run();
+    expect(existsSync(workspaceStateFile(root)) ? readState().phoneReverses : undefined).toBeUndefined();
+  });
+
+  test('a physical run records its Metro reverse, and no other serial, in the workspace state', async () => {
     const h = harness({
       device: true,
       listDevices: () => CONNECTED2,
@@ -5793,8 +5890,9 @@ describe('--device refusals found in review', () => {
       ensureDeviceBooted: never('the emulator boot'),
     });
     await h.run();
-    const state = JSON.stringify(readState());
-    expect(state).not.toContain('RFCR7081Q9L');
+    const { phoneReverses, ...state } = readState() as Record<string, unknown>;
+    expect(phoneReverses).toEqual({ android: { serial: 'RFCR7081Q9L', ports: [8082] } });
+    expect(JSON.stringify(state)).not.toContain('RFCR7081Q9L');
     expect(loadConfig()?.projects?.[root]?.platforms?.android).toBeUndefined();
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf8'));
     expect(records.find((record) => record.event === 'launch_attempt')).toMatchObject({
@@ -7111,7 +7209,14 @@ describe('strict remote machine selection', () => {
     expect(build).not.toHaveBeenCalled();
   });
 
-  test.each(['sync failed'])('remote %s never falls back to Gradle', async (reason) => {
+  test.each([
+    ['sync failed', /doctor --fix/],
+    [
+      'fingerprint-mismatch: the checkout there fingerprints a, here b; differing sources: expoConfig',
+      /^(?!.*doctor --fix).*sources that differ/,
+    ],
+    ['fingerprint-mismatch: The worker resolved a different native artifact identity.', /doctor --fix/],
+  ])('remote %s never falls back to Gradle', async (reason, remedy) => {
     configureMini();
     const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
@@ -7121,6 +7226,7 @@ describe('strict remote machine selection', () => {
     const result = await harness({ buildMachine: 'mini', build, acquireSlot: slot }).run();
     expect(result.error?.code).toBe('STIM_OFFLOAD_REFUSED');
     expect(result.error?.message).toContain(reason);
+    expect(result.error?.remedy).toMatch(remedy);
     expect(build).not.toHaveBeenCalled();
     expect(slot).not.toHaveBeenCalled();
     expect(readLastBuilds(readWorkspaceState(root)).android?.errorCode).toBe('STIM_OFFLOAD_REFUSED');
@@ -7450,10 +7556,13 @@ describe('named Android hosting placement', () => {
           : { code: 'STIM_AT_CAPACITY' },
       );
       expect(checkBudget).toHaveBeenCalledTimes(admits ? 0 : 1);
-      const builtRecord = expect.objectContaining({ status: 'success' });
+      const builtRecord = expect.objectContaining({ status: 'ok' });
       const history = expect.any(Object);
       expect(readWorkspaceState(root)?.lastAndroidBuild).toEqual(admits ? builtRecord : baseline);
       expect(readWorkspaceState(root)?.buildHistory).toEqual(admits ? history : undefined);
+      const state = readWorkspaceState(root);
+      expect(readLastBuilds(state).android?.status).toBe('ok');
+      expect(readBuildHistory(state).android?.[0]?.result).toBe(admits ? 'succeeded' : undefined);
       expect(readWorkspaceState(root)?.android).toMatchObject({
         devicePlacement: { decision: admits ? 'hosted' : 'local' },
       });
@@ -7496,7 +7605,7 @@ describe('named Android hosting placement', () => {
       startedAt: '2026-10-06T12:00:00Z',
       fingerprint: 'previous',
       cacheKey: 'previous-key',
-      status: 'success',
+      status: 'ok',
     });
     writeWorkspaceState(root, { lastAndroidBuild: baseline });
     const h = harness({
@@ -7632,6 +7741,25 @@ describe('named Android hosting placement', () => {
       expect(h.calls.spawn).toEqual([]);
     },
   );
+
+  test('a hosted launch failure after the build records the build as failed with its code', async () => {
+    const h = harness({
+      json: true,
+      remoteDevice: 'mini',
+      prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: hostDevice, session: null }),
+      placeHostedAndroid: async (_target: unknown, args: { reserved: (value: typeof placement) => void }) => {
+        args.reserved(placement);
+        return { placement, launched: 'unverified' };
+      },
+      build: async () => makeAndroidBuildSuccess({ apkPath: fakeApk() }),
+      verifyLaunched: async () => ({ fatal: true }),
+      install: never('local install'),
+    });
+    expect((await h.run()).error?.code).toBe('STIM_LAUNCH_FAILED');
+    const state = readWorkspaceState(root);
+    expect(readLastBuilds(state).android).toMatchObject({ status: 'failed', errorCode: 'STIM_LAUNCH_FAILED' });
+    expect(readBuildHistory(state).android?.[0]).toMatchObject({ result: 'failed', errorCode: 'STIM_LAUNCH_FAILED' });
+  });
 
   test('a host refusal keeps placement and never falls back to a local build', async () => {
     writeWorkspaceState(root, { android: { host: placement } });

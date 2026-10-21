@@ -35,6 +35,7 @@ import {
   memoizeEmulatorProbe,
   parseAvdList,
   parseAdbDevices,
+  removeOwnedEmulatorMetroReverses,
   nextConsolePort,
   parseAvdRootIni,
   pickDefaultSystemImage,
@@ -46,6 +47,7 @@ import {
   resolveOwnedAvdSerial,
   resolveOwnedAvdSerialAsync,
   ownedAvdSerialResolver,
+  ownedAvdSerialResolverAsync,
   shutdownAndroidEmulator,
   physicalDeviceModel,
   resolvePhysicalDevice,
@@ -126,6 +128,36 @@ test('parseAdbDevices extracts running emulator console ports and physical devic
   ]);
   expect(result.physical).toEqual([{ serial: '0123456789ABCDEF' }]);
 });
+
+test.each([
+  [
+    'stim-app',
+    [
+      ['-s', 'emulator-5556', 'reverse', '--list'],
+      ['-s', 'emulator-5556', 'reverse', '--remove', 'tcp:8082'],
+      ['-s', 'emulator-5556', 'reverse', '--remove', 'tcp:8081'],
+    ],
+  ],
+  ['someone-else', []],
+])(
+  'removeOwnedEmulatorMetroReverses removes only reverses to the Metro port, and only when the console names the AVD (%s)',
+  async (consoleAvd, expected) => {
+    const adbCalls: string[][] = [];
+    setExecutor(
+      makeExecutor({
+        runFileQuietAsync: async (_file, args) => {
+          if (args.includes('emu')) return `${consoleAvd}\nOK\n`;
+          adbCalls.push(args);
+          return args.includes('--list')
+            ? 'host-21 tcp:8082 tcp:8082\nhost-21 tcp:8081 tcp:8082\nhost-21 tcp:9000 tcp:9000\nhost-21 localabstract:x tcp:8082\n'
+            : '';
+        },
+      }),
+    );
+    await removeOwnedEmulatorMetroReverses('stim-app', 'emulator-5556', 8082);
+    expect(adbCalls).toEqual(expected);
+  },
+);
 
 test('parseAdbDevices recognizes adb-over-TCP physical devices', () => {
   const out = `List of devices attached\n192.168.1.5:5555\tdevice\n`;
@@ -651,6 +683,148 @@ test('resolveOwnedAvdSerial caches a failed console query per serial so one reso
   expect(resolve('stim-a')).toEqual({ notRunning: true });
   expect(resolve('stim-b')).toEqual({ serial: 'emulator-5556' });
   expect(queried.filter((serial) => serial === 'emulator-5554')).toHaveLength(1);
+});
+
+describe('resolveOwnedAvdSerialAsync with a busy foreign emulator', () => {
+  const CONSOLE_TIMEOUT_MS = 10_000;
+  const AVD_BY_SERIAL: Record<string, string | undefined> = {
+    'emulator-5554': undefined,
+    'emulator-5556': 'stim-mine',
+    'emulator-5558': 'stim-b',
+  };
+
+  function stubEmulators(serials: string[]) {
+    const queried: string[] = [];
+    const aborted: string[] = [];
+    setExecutor(
+      makeExecutor({
+        runFile: (file, args = []) => {
+          const cmd = [file, ...args].join(' ');
+          if (cmd === 'emulator -list-avds') return 'stim-mine\nstim-b\n';
+          if (cmd === 'adb devices')
+            return `List of devices attached\n${serials.map((serial) => `${serial}\tdevice`).join('\n')}\n`;
+          return '';
+        },
+        runFileQuietAsync: async (file, args = [], opts) => {
+          const serial = /adb -s (\S+) emu avd name/.exec([file, ...args].join(' '))?.[1];
+          if (!serial) return null;
+          queried.push(serial);
+          const name = AVD_BY_SERIAL[serial];
+          if (name) return `${name}\nOK`;
+          return new Promise<string | null>((resolve, reject) => {
+            const timer = setTimeout(
+              () => resolve(null),
+              typeof opts.timeoutMs === 'number' ? opts.timeoutMs : CONSOLE_TIMEOUT_MS,
+            );
+            opts.signal?.addEventListener('abort', () => {
+              clearTimeout(timer);
+              aborted.push(serial);
+              reject(opts.signal?.reason);
+            });
+          });
+        },
+      }),
+    );
+    return { queried, aborted };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function settlesWithin<T>(promise: Promise<T>, ms: number): Promise<{ settled: boolean; value?: T }> {
+    let result: { settled: boolean; value?: T } = { settled: false };
+    void promise.then((value) => {
+      result = { settled: true, value };
+      return value;
+    });
+    await vi.advanceTimersByTimeAsync(ms);
+    return result;
+  }
+
+  test('reads the recorded serial first and never asks the foreign emulator', async () => {
+    const { queried } = stubEmulators(['emulator-5554', 'emulator-5556']);
+    const outcome = await settlesWithin(
+      resolveOwnedAvdSerialAsync('stim-mine', { timeoutMs: 600_000, preferredSerial: 'emulator-5556' }),
+      100,
+    );
+    expect(outcome).toEqual({ settled: true, value: { serial: 'emulator-5556' } });
+    expect(queried).toEqual(['emulator-5556']);
+  });
+
+  test('does not trust the recorded serial when it runs another AVD', async () => {
+    const { queried } = stubEmulators(['emulator-5558', 'emulator-5556']);
+    const outcome = await settlesWithin(
+      resolveOwnedAvdSerialAsync('stim-mine', { preferredSerial: 'emulator-5558' }),
+      100,
+    );
+    expect(outcome).toEqual({ settled: true, value: { serial: 'emulator-5556' } });
+    expect(queried).toEqual(['emulator-5558', 'emulator-5556']);
+  });
+
+  test('a hung emulator listed first does not delay the match and its read is cancelled', async () => {
+    const { aborted } = stubEmulators(['emulator-5554', 'emulator-5556']);
+    const outcome = await settlesWithin(resolveOwnedAvdSerialAsync('stim-mine'), 100);
+    expect(outcome).toEqual({ settled: true, value: { serial: 'emulator-5556' } });
+    expect(aborted).toEqual(['emulator-5554']);
+  });
+
+  test('wedged emulators cost one timeout together, not one each', async () => {
+    AVD_BY_SERIAL['emulator-5560'] = undefined;
+    try {
+      const { queried } = stubEmulators(['emulator-5554', 'emulator-5560']);
+      const outcome = await settlesWithin(resolveOwnedAvdSerialAsync('stim-mine'), CONSOLE_TIMEOUT_MS);
+      expect(outcome).toEqual({ settled: true, value: { notRunning: true } });
+      expect(queried).toEqual(['emulator-5554', 'emulator-5560']);
+    } finally {
+      delete AVD_BY_SERIAL['emulator-5560'];
+    }
+  });
+
+  test('a cancelled read is asked again when a later AVD needs it', async () => {
+    AVD_BY_SERIAL['emulator-5554'] = 'stim-b';
+    const hung = new Set(['emulator-5554']);
+    const queried: string[] = [];
+    setExecutor(
+      makeExecutor({
+        runFile: (file, args = []) => {
+          const cmd = [file, ...args].join(' ');
+          if (cmd === 'emulator -list-avds') return 'stim-mine\nstim-b\n';
+          if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\n';
+          return '';
+        },
+        runFileQuietAsync: async (file, args = [], opts) => {
+          const serial = /adb -s (\S+) emu avd name/.exec([file, ...args].join(' '))?.[1];
+          if (!serial) return null;
+          queried.push(serial);
+          if (hung.has(serial)) {
+            return new Promise<string | null>((_resolve, reject) =>
+              opts.signal?.addEventListener('abort', () => reject(opts.signal?.reason)),
+            );
+          }
+          return `${AVD_BY_SERIAL[serial]}\nOK`;
+        },
+      }),
+    );
+    try {
+      const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 600_000 });
+      expect(await settlesWithin(resolve('stim-mine'), 100)).toEqual({
+        settled: true,
+        value: { serial: 'emulator-5556' },
+      });
+      hung.clear();
+      expect(await settlesWithin(resolve('stim-b'), 100)).toEqual({
+        settled: true,
+        value: { serial: 'emulator-5554' },
+      });
+      expect(queried.filter((serial) => serial === 'emulator-5554')).toHaveLength(2);
+    } finally {
+      AVD_BY_SERIAL['emulator-5554'] = undefined;
+    }
+  });
 });
 
 test('assertOwnedAvdStopped rejects a live process and accepts a stale lock', () => {

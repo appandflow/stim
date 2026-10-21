@@ -162,8 +162,10 @@ While details are open, hover another resource figure to switch the contents. Cl
 CPU covers active workspace processes; memory covers the whole Mac.
 
 The bell at the top right opens **Notifications** and shows the unread count.
-**Dismiss All** above the floating notification cards hides the whole stack,
-including queued cards. The notifications remain available under the bell.
+**Dismiss All** on either floating card stack hides both stacks, including queued cards.
+Notifications remain available under the bell. New-workspace cards in the bottom-left stack dismiss
+after one minute. Other notices in that stack stay until acted on or dismissed. Workspace cards keep
+the same layout for short and long names.
 **Overview**, **Active Workspaces** and **Machines** stay pinned at the top of
 the sidebar; only the list below them scrolls.
 
@@ -1013,8 +1015,10 @@ While Desktop's stim-server runs (see [stim-server](#stim-server)),
 each simulator, emulator and web page's device viewer offers a replay bar
 once the server has recorded it,
 like the phone app's device viewer. Stim Desktop connects to that server over
-its Unix socket, `server/local.sock` under the Stim home `/health` reports, with
-a WebSocket that carries the protocol's JSON in the clear. The socket is mode
+its Unix socket with a WebSocket that carries the protocol's JSON in the clear.
+The socket is normally `server/local.sock` under the Stim home `/health` reports.
+Paths longer than macOS's 103-byte limit use
+`/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock` instead. The socket is mode
 0600 in a 0700 directory, so only your user can connect, and the server gives
 that connection every local capability without pairing or a token. The app names
 itself "Stim Desktop", or "Stim Dev" for a Stim Dev build (see
@@ -1361,7 +1365,7 @@ approval** (someone on that machine approves it by running the setup command
 there; the row says when the request lapses, such as "Waiting for approval
 until 21:05", in local time),
 **Unreachable**,
-**Needs update** (it runs another Stim build; **Updating** while an update runs),
+**Needs update** (it runs an incompatible Stim build; **Updating** while an update runs),
 the short title of doctor's first reason the approved machine is not offloadable,
 such as **CocoaPods differs** or **Low on disk** (**Not offloading** for a reason
 this Desktop does not know), or the machine's other readiness or
@@ -1407,7 +1411,7 @@ While a `--fix` run goes, the row shows "Asking <machine>…" or "Removing
 <machine>…" beside the spinner. A `--fix` run stops after 2 minutes and a
 plain check after 30 seconds, and the tab shows that stim did not answer.
 
-A remote Mac that runs another Stim build than this Mac (doctor's
+A remote Mac whose Stim build is incompatible with this Mac's (doctor's
 `stim-build` reason) offers **Install This Mac's Build**, here and on its
 **Machines** page. Desktop asks the local stim-server, over its local control connection,
 to update that machine with `machines.update.start`. The local server connects
@@ -1440,7 +1444,7 @@ even when another update installed it. If the machine stops answering for 5 minu
 Then the row checks the machine again. **Keep remote machines on this Mac's Stim
 version** (off by default; "When this Mac's Stim changes, update stim-server on
 approved remote Macs so builds can keep offloading.") does the same the next time Desktop
-checks a machine that reports another Stim build. It runs once per machine and
+checks a machine that reports an incompatible Stim build. It runs once per machine and
 reason each time Desktop launches. Either way, the machine gets this Mac's build,
 whether it is newer or older than the one it runs.
 
@@ -1616,8 +1620,10 @@ so Back does not return to Overview from it.
 
 News the user can act on later shows as a card at the main window's bottom
 left: a title, one line of detail, a primary action and a dismiss button. A
-card stays until it is acted on or dismissed, with or without VoiceOver. Several
-cards stack, newest first, with a counter and previous and next buttons.
+new-workspace card expires after one minute; other cards stay until acted on or
+dismissed, with or without VoiceOver. Several cards stack, newest first, with a
+counter and previous and next buttons. **Dismiss All** in either notification
+stack clears both stacks, including queued cards.
 Two things use them. When `stim status` first lists a workspace, the card reads
 "New workspace <workspace>" with **Show**, which opens the workspace and focuses
 the device of its running build. Each path gets one card per Desktop session:
@@ -1679,8 +1685,8 @@ replaces its card. With the main window closed, the link reopens it.
   `zsh -lic` once instead and logs that it did; the `login-environment` launch milestone
   marks it, where a bundled build reaches `toolchain-environment`.
   **Settings > App > Stim CLI** shows the resolved home, and the sidebar shows non-default homes.
-  Desktop refuses a local socket path longer than macOS's 103-byte limit and asks
-  for a shorter Stim home.
+  Homes whose local socket path exceeds macOS's 103-byte limit use the private
+  per-user socket directory described in [Replay](#replay).
   It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
   tells `stim` that Stim Desktop is installed without a Launch Services lookup.
   It runs `stim` and `stim-server` as their JavaScript file under the Node that
@@ -2133,6 +2139,14 @@ STIM_WORKSPACE_SHOTS=/tmp/stim-workspace-shots swift test --filter VisualFixture
 
 On a native 1x window, add `STIM_ARCHIVE_REFERENCE_SHOTS=1` to also export the four
 archive comparison captures at their reference dimensions. Inspect them before replacing references.
+
+To render the toolbar status pill with a status error inside a real window toolbar item, in light and dark:
+
+```sh
+STIM_TOOLBAR_STATUS_SHOTS=/tmp/stim-toolbar-status swift test --filter ToolbarStatusErrorScreenshotTests
+```
+
+The test skips without the variable. A toolbar draws a `Label` as its icon only, so check that the images show the message beside the icon.
 
 These fixtures use failed iOS and successful Android build history with phase timings,
 a merged PR, ended agents, expired logs and two recording slots. The real archive sidebar,

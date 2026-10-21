@@ -1,7 +1,7 @@
 import Foundation
 
-/// What only a person can act on or decide, from one machine's status. `apps/mobile/src/lib/needs-attention.ts` holds
-/// the same rule; both replay `Tests/StimKitTests/Fixtures/needs-attention-vectors.json`.
+/// What only a person can act on or decide, from one machine's status. `needsAttention` in
+/// `@stim-cli/core/oversight` holds the same rule; both replay `Tests/StimKitTests/Fixtures/needs-attention-vectors.json`.
 public struct NeedsAttentionItem: Decodable, Hashable, Sendable {
   public enum Category: String, Decodable, Sendable {
     case attention, stuck, looping, machine

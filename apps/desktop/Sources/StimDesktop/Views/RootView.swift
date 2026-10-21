@@ -150,8 +150,10 @@ struct RootView: View {
           .hidden()
       }
       .overlay(alignment: .topTrailing) { inspectorSideControls }
-      .overlay(alignment: .topTrailing) { ToastStack(center: toasts) }
-      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
+      .overlay(alignment: .topTrailing) {
+        ToastStack(center: toasts, onDismissAll: dismissAllCards)
+      }
+      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices, onDismissAll: dismissAllCards) }
       .onGeometryChange(for: CGFloat.self) {
         $0.size.width
       } action: {
@@ -750,6 +752,11 @@ struct RootView: View {
     }
   }
 
+  private func dismissAllCards() {
+    toasts.dismissAll()
+    notices.dismissAll()
+  }
+
   private func showNewWorkspaces(in payload: StatusPayload) -> [String] {
     let arrived = notices.arrivals.update(payload.environments)
     for workspace in arrived {
@@ -1151,6 +1158,7 @@ struct MachineSummary: View {
     HStack(spacing: Space.md) {
       if let error = store.error {
         Label(abbreviatingHome(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
+          .labelStyle(.titleAndIcon)
           .lineLimit(1)
           .frame(maxWidth: 220)
           .help(abbreviatingHome(error))

@@ -44,9 +44,15 @@ import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
 import { getProject, setDevice, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { prepareHostedIos } from '../device-host/hosted-ios.ts';
-import { writeHostedIos } from '../device-host/ios-state.ts';
+import { writeHostedNative } from '../device-host/ios-state.ts';
 import type { HostedIosPlacement } from '@stim-cli/core/state';
-import { buildMachinesFile, deviceHostMachinesFile, readLastBuilds } from '@stim-cli/core/state';
+import {
+  buildMachinesFile,
+  deviceHostMachinesFile,
+  openLogDir,
+  readBuildHistory,
+  readLastBuilds,
+} from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import { IOS_DEV_MENU_OFF_DEFAULTS_PLIST } from '../engine/app-install.ts';
 import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -103,7 +109,7 @@ import {
   type RecordStatsResult,
   type StatsRun,
 } from '../engine/stats.ts';
-import { buildCacheKey, entryDir, resolveBuild } from '../cache/build-cache.ts';
+import { buildCacheKey, entryDir, resolveBuild, storeBuild } from '../cache/build-cache.ts';
 import { resolveRemote } from '../engine/remote-cache.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
@@ -127,6 +133,9 @@ const RUNTIMES = [
   },
 ];
 import { DEBUG_VERIFY_STEP_MS, type RunLease } from '../engine/device-lease-run.ts';
+
+const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | null): void =>
+  writeHostedNative(root, slot, host, 'ios');
 
 const UDID = 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9';
 const FINGERPRINT = 'a3f9b1c2d3e4f5';
@@ -243,7 +252,7 @@ interface RecordedArgs {
   uploadRemote: { fingerprintHash?: unknown; buildPath?: unknown };
   resolveRemote: { projectRoot?: unknown; platform?: unknown; fingerprintHash?: unknown };
   replaceCollector: { udid?: unknown; bundleId?: unknown; appName?: unknown; appExecutable?: unknown };
-  loadProjectProvider: { isExpo?: unknown };
+  loadProjectProvider: { isExpo?: unknown; sources?: unknown };
   acquireBuildLock: { root?: unknown; platform?: unknown; logFile?: unknown; key?: unknown };
   untrackedNativeFiles: { projectRoot?: unknown; iosProjectPath?: unknown };
   ensureWorkspaceStorage: unknown;
@@ -490,6 +499,15 @@ function harness(overrides: LooseDeps = {}) {
     ),
   );
   return { deps, calls, appPath };
+}
+
+async function errorRecords() {
+  const logDir = await openLogDir(workspaceLogsDir(root));
+  try {
+    return await logDir.query({ errorsOnly: true, sources: ['build'] });
+  } finally {
+    await logDir.close();
+  }
 }
 
 async function run(opts: Record<string, unknown> = {}, overrides: LooseDeps = {}, onExit?: () => void) {
@@ -1517,6 +1535,20 @@ describe('the cache', () => {
       },
     );
     expect(calls.args.launchIosApp.bundleId).toBe('com.example.fromplist');
+  });
+
+  test('a stored build keeps its bundle id, so the next hit launches without reading the binary', async () => {
+    reserve();
+    const realCache = { resolveBuild, storeBuild };
+    mkdirSync(join(root, 'build', 'Fixture.app'), { recursive: true });
+    writeFileSync(join(root, 'build', 'Fixture.app', 'Info.plist'), 'plist');
+    const first = await run({}, realCache);
+    expect(first.calls.order).toContain('buildIos');
+
+    const second = await run({}, realCache);
+    expect(second.calls.order).not.toContain('buildIos');
+    expect(second.calls.order).not.toContain('readBundleId');
+    expect(second.calls.args.launchIosApp.bundleId).toBe('com.example.app');
   });
 
   test('a miss runs prebuild, then pods, then a RE-fingerprint, then the build, then stores it', async () => {
@@ -2619,6 +2651,7 @@ describe('failure output', () => {
     expect(lastBuild.fingerprint).toBe(FINGERPRINT);
     expect(lastBuild.cacheHit).toBe(false);
     expect(lastBuild.startedAt).toBeTruthy();
+    expect(await errorRecords()).toEqual([]);
   });
 
   test('a device that will not boot is refused at install, after the build has been stored', async () => {
@@ -2634,6 +2667,33 @@ describe('failure output', () => {
     expect(!calls.order.includes('installIosApp')).toBeTruthy();
     expect(errs.join('\n')).toMatch(/no longer exists/);
     expect(errs.join('\n')).toMatch(/STIM_NO_DEVICE/);
+    const state = readWorkspaceState(root);
+    expect(readLastBuilds(state).ios).toMatchObject({
+      status: 'failed',
+      errorCode: 'STIM_NO_DEVICE',
+      fingerprint: FINGERPRINT,
+      cacheHit: false,
+    });
+    expect(readBuildHistory(state).ios?.[0]).toMatchObject({ result: 'failed', errorCode: 'STIM_NO_DEVICE' });
+    expect(await errorRecords()).toMatchObject([{ level: 'error', code: 'STIM_NO_DEVICE', phase: 'device' }]);
+  });
+
+  test('a build that completes and then throws is recorded as failed with the error code', async () => {
+    reserve();
+    await expect(
+      run(
+        {},
+        {
+          installIosApp: () => {
+            throw Object.assign(new Error('fixture install crash'), { code: 'STIM_FIXTURE_CRASH' });
+          },
+        },
+      ),
+    ).rejects.toThrow('fixture install crash');
+    const state = readWorkspaceState(root);
+    expect(readLastBuilds(state).ios).toMatchObject({ status: 'failed', errorCode: 'STIM_FIXTURE_CRASH' });
+    expect(readBuildHistory(state).ios?.[0]).toMatchObject({ result: 'failed', errorCode: 'STIM_FIXTURE_CRASH' });
+    expect(await errorRecords()).toMatchObject([{ level: 'error', code: 'STIM_FIXTURE_CRASH' }]);
   });
 
   test.each([false, true])('a failed install preserves completed cache statistics (json: %s)', async (json) => {
@@ -4693,7 +4753,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     },
   );
 
-  test('a CNG ios/ generated from another fingerprint is regenerated with --clean before the build is stored', async () => {
+  test('a CNG ios/ generated from another fingerprint is updated in place and pod installed before the build is stored', async () => {
     reserve();
     let planned: unknown[] = [];
     const { exitCode, errs, calls } = await run(
@@ -4704,18 +4764,19 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
           planned = args;
           return 'regenerate';
         },
-        readPodState: () => ({ hasPodfile: true, lockText: null, manifestText: null }),
+        readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'A' }),
         fingerprintProject: shifting(),
       },
     );
     expect(exitCode).toBe(null);
+    expect(calls.order.includes('runPodInstall')).toBe(true);
     expect(planned).toEqual([
       root,
       'ios',
       { isExpo: true, fingerprint: COLD, sources: [{ type: 'dir', filePath: 'ios' }] },
     ]);
-    expect((calls.args.runPrebuild as unknown[])[3]).toEqual({ clean: true });
-    expect(errs.join('\n')).toMatch(/prebuild +ios\/ not generated from this fingerprint -> regenerated with --clean/);
+    expect(errs.join('\n')).toMatch(/prebuild +ios\/ not generated from this fingerprint -> updated in place/);
+    expect(errs.join('\n')).toMatch(/pods +prebuild updated ios\/ in place -> installed/);
     expect((readWorkspaceState(root) as WorkspaceState).prebuild).toEqual({ ios: WARM });
     expect(String(calls.args.storeBuild.key)).toMatch(new RegExp(`^${WARM}`));
   });
@@ -5349,6 +5410,7 @@ describe('the project cache provider', () => {
         ['resolveBuild', 'loadProjectProvider', 'acquireBuildLock', 'buildIos', 'storeBuild'].includes(c),
       ),
     ).toEqual(['resolveBuild', 'loadProjectProvider', 'acquireBuildLock', 'buildIos', 'storeBuild']);
+    expect(Array.isArray(calls.args.loadProjectProvider.sources)).toBe(true);
   });
 
   test('a fresh build uploads to the provider and the Expo provider independently', async () => {
@@ -5849,7 +5911,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     );
     const text = errs.join('\n');
     expect(text).toMatch(/native app is still running/);
-    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toContain('run `stim reload ios`');
     expect(text).not.toContain("press Reload on the app's own error screen");
   });
 
@@ -8407,6 +8469,35 @@ describe('iOS placement on a hosting Mac', () => {
     },
   );
 
+  test('a hosted refusal after the build records the build as failed with its code', async () => {
+    reserve();
+    const { exitCode } = await run(
+      { remote: 'mini', json: true },
+      {
+        prepareHostedIos: async () => ({
+          host: { machine: 'mini', connection: { close() {} } },
+          choice: hostedDevice,
+          session: null,
+        }),
+        buildIos: async () => makeIosBuildSuccess({ appPath: join(root, 'Fixture.app'), bundleId: 'com.example.app' }),
+        placeHostedIos: async () => {
+          throw Object.assign(new Error('mini is unreachable'), { code: 'STIM_HOSTING_REFUSED' });
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    const state = readWorkspaceState(root);
+    expect(readLastBuilds(state).ios).toMatchObject({
+      status: 'failed',
+      errorCode: 'STIM_HOSTING_REFUSED',
+      fingerprint: FINGERPRINT,
+      cacheHit: false,
+    });
+    expect(state?.lastIosBuild).toMatchObject({ appPath: join(root, 'Fixture.app'), bundleId: 'com.example.app' });
+    expect(readBuildHistory(state).ios?.[0]).toMatchObject({ result: 'failed', errorCode: 'STIM_HOSTING_REFUSED' });
+    expect(await errorRecords()).toMatchObject([{ code: 'STIM_HOSTING_REFUSED', msg: /mini is unreachable/ }]);
+  });
+
   test('a missing watcher preserves the restart remedy without claiming a simulator was reserved', async () => {
     reserve();
     const { logs } = await run(
@@ -8471,6 +8562,7 @@ describe('iOS placement on a hosting Mac', () => {
           session: null,
         }),
         placeHostedIos: async (_target, args) => {
+          expect(args.metroPort).toBe(8082);
           args.reserved(placement);
           return { placement, launched: 'unverified' };
         },
@@ -8484,6 +8576,62 @@ describe('iOS placement on a hosting Mac', () => {
       android: { remote: undefined },
     });
     expect(stderr).toContain('metro.publicUrl and metro.tunnel are ignored');
+  });
+
+  test('an Expo Metro already running on a port the host uses refuses before the build and reservation', async () => {
+    reserve();
+    let placed = false;
+    const { logs, calls } = await run(
+      { remote: 'mini', json: true },
+      {
+        detectIsExpo: () => true,
+        hasDevClient: () => true,
+        hostedMetroPortProbe: () => async (port: number) => port !== 8082,
+        prepareHostedIos: async () => ({
+          host: { machine: 'mini', connection: { close() {} } },
+          choice: hostedDevice,
+          session: null,
+        }),
+        placeHostedIos: async () => {
+          placed = true;
+          throw new Error('placed');
+        },
+      },
+    );
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_HOSTING_REFUSED',
+      message: expect.stringContaining('Port 8082 is in use on mini'),
+      remedy: expect.stringContaining('without stim start'),
+    });
+    expect(placed).toBe(false);
+    expect(calls.order).not.toContain('buildIos');
+  });
+
+  test('an Expo app without a dev client keeps its random bridge port and skips the host port check', async () => {
+    reserve();
+    let probed = false;
+    const { exitCode } = await run(
+      { remote: 'mini', json: true },
+      {
+        detectIsExpo: () => true,
+        hasDevClient: () => false,
+        hostedMetroPortProbe: () => {
+          probed = true;
+          return async () => false;
+        },
+        prepareHostedIos: async () => ({
+          host: { machine: 'mini', connection: { close() {} } },
+          choice: hostedDevice,
+          session: null,
+        }),
+        placeHostedIos: async (_target, args) => {
+          args.reserved(placement);
+          return { placement, launched: 'unverified' };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(probed).toBe(false);
   });
 
   test('a hosted named slot records a separate launch target for reload', async () => {

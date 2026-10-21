@@ -13,10 +13,10 @@ import { buildMacosBundle } from '../macos/build.ts';
 import { macosDir } from '../macos/state.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement } from '../offload/selection.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { ensureWorkspaceStorageAsync, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
-import { getProject, upsertProject } from '../workspace/config.ts';
-import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
+import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 
 export type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'macos' }>, 'platform'>;
 
@@ -54,14 +54,16 @@ export async function buildMacosOperation(
   const placement = resolveBuildPlacement(options.remoteBuild);
   if (placement.failure) throw Object.assign(new Error(placement.failure.message), placement.failure);
   const recipe = await (await selected.load()).prepare(context, settings);
-  ensureWorkspaceStorage(root);
+  await ensureWorkspaceStorageAsync(root, context.signal);
   return withNativeBuildRun(
     context,
     root,
     { command: 'build', platform: 'macos' },
     async (claim) => {
-      if (!getProject(root)) upsertProject(root, {});
-      recordWorkspaceUse(root, new Date(), context.env, context.cwd);
+      await withConfigLockAsync(() => {
+        if (!getProject(root)) upsertProject(root, {});
+      });
+      await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
       const started = Date.now();
       const progress = startBuildProgress({ root, platform: 'macos', slot: 'default', claim, note });
       const logs = workspaceLogsDir(root);

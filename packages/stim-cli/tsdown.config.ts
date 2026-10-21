@@ -36,6 +36,7 @@ export default defineConfig({
     'build:done': () => {
       writeFileSync(`dist/${SETTINGS_SCHEMA_FILE}`, `${JSON.stringify(settingsJsonSchema(), null, 2)}\n`);
       copyFileSync('helper/stim-footprint.swift', 'dist/stim-footprint.swift');
+      copyFileSync('helper/stim-clonefile.c', 'dist/stim-clonefile.c');
       copyFileSync('helper/windows-report.ps1', 'dist/windows-report.ps1');
     },
   },

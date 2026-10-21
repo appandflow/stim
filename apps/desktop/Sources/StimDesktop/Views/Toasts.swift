@@ -138,13 +138,14 @@ struct ToastStack: View {
   static let topInset: CGFloat = 56
   @ObservedObject var center: ToastCenter
   var reduceMotionOverride: Bool? = nil
+  var onDismissAll: (() -> Void)? = nil
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     let reducedMotion = reduceMotionOverride ?? reduceMotion
     VStack(alignment: .trailing, spacing: Space.md) {
-      if center.toasts.count > 1 {
-        Button("Dismiss All", action: center.dismissAll)
+      if !center.toasts.isEmpty {
+        Button("Dismiss All", action: onDismissAll ?? center.dismissAll)
           .buttonStyle(.stim(.plain))
           .background(Capsule().fill(.regularMaterial))
           .transition(.opacity)

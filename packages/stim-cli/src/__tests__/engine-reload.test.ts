@@ -307,3 +307,57 @@ test('a refused connection reports itself unreachable rather than a missing peer
   expect(result.reason).toContain('Metro reload failed:');
   expect(result.noPeer).toBeUndefined();
 });
+
+test('without an app id, a reload for Android reaches every non-iOS peer and leaves iOS alone', async () => {
+  const harness = peerServer(peers({ 'client#1': IOS_PEER, 'client#2': ANDROID_PEER, 'client#3': ANDROID_PEER_RAW }));
+
+  await withServer(harness, async (port) => {
+    await expect(reloadThroughMetro(port, { role: 'android' })).resolves.toEqual({ ok: true, peers: 3, targets: 2 });
+    await harness.reloadSeen;
+    expect(harness.messages).toEqual([
+      expect.objectContaining({ method: 'getpeers' }),
+      { version: 2, method: 'reload', target: 'client#2' },
+      { version: 2, method: 'reload', target: 'client#3' },
+    ]);
+  });
+});
+
+test('without a platform, a reload reaches every peer and names the platforms they reported', async () => {
+  const harness = peerServer(peers({ 'client#1': IOS_PEER, 'client#2': ANDROID_PEER }));
+
+  await withServer(harness, async (port) => {
+    await expect(reloadThroughMetro(port, {})).resolves.toEqual({
+      ok: true,
+      peers: 2,
+      targets: 2,
+      platforms: ['ios', 'android'],
+    });
+    await harness.reloadSeen;
+    expect(harness.messages).toEqual([
+      expect.objectContaining({ method: 'getpeers' }),
+      { version: 2, method: 'reload', target: 'client#1' },
+      { version: 2, method: 'reload', target: 'client#2' },
+    ]);
+  });
+});
+
+test('without a platform, Metro with no peers reports no app instead of an iOS or Android one', async () => {
+  const harness = peerServer(peers({}));
+
+  await withServer(harness, async (port) => {
+    const result = await reloadThroughMetro(port, { peersOnly: true });
+    expect(result).toMatchObject({ failed: true, noPeer: true, peers: 0 });
+    expect(result.reason).toMatch(/^No React Native app is connected/);
+  });
+});
+
+test('an exact reload that finds no matching peer broadcasts nothing to the other clients', async () => {
+  const harness = peerServer(peers({ 'client#1': ANDROID_PEER }));
+
+  await withServer(harness, async (port) => {
+    const result = await reloadThroughMetro(port, { role: 'ios', exact: true });
+    expect(result).toMatchObject({ failed: true, noPeer: true, peers: 1 });
+    await delay(50);
+    expect(harness.messages).toEqual([expect.objectContaining({ method: 'getpeers' })]);
+  });
+});

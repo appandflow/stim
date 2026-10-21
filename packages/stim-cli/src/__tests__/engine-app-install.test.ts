@@ -40,6 +40,8 @@ import {
   clearOtherUserApps,
 } from '../engine/app-install.ts';
 import {
+  MANIFEST_GRACE_MS,
+  MANIFEST_VERIFY_TIMEOUT_MS,
   STABILITY_WINDOW_MS,
   VERIFY_TIMEOUT_MS,
   isBundleProof,
@@ -886,6 +888,12 @@ describe('ios', () => {
     expect(exec.calls[0]).toEqual(['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list']);
   });
 
+  test('iosAppProcess gives the launchctl probe the caller-supplied timeout', async () => {
+    const exec = recordingExec({ outputs: { 'launchctl list': '-\t0\tcom.apple.foo\n' } });
+    await iosAppProcess('U1', 'com.example.app', { exec, timeoutMs: 12_000 });
+    expect(exec.options[0]).toMatchObject({ timeoutMs: 12_000 });
+  });
+
   test('iosAppProcess reports stopped when the app is not running', async () => {
     const exec = recordingExec({ outputs: { 'launchctl list': '-\t0\tcom.apple.foo\n' } });
     expect(await iosAppProcess('U1', 'com.example.app', { exec })).toEqual({ state: 'stopped' });
@@ -1395,6 +1403,87 @@ describe('verifyLaunch', () => {
     expect(result.verified).toBe(false);
     expect(result.timedOut).toBe(true);
     expect(result.waitedMs >= VERIFY_TIMEOUT_MS).toBeTruthy();
+  });
+
+  describe('manifest requests from an Expo dev client', () => {
+    const manifest = (
+      stage: 'started' | 'finished' | 'failed',
+      ts: number,
+      requestId = 'm1',
+      platform = 'android',
+    ) => ({
+      ts,
+      src: 'metro',
+      level: 'debug',
+      event: `manifest_request_${stage}`,
+      platform,
+      requestId,
+    });
+    const bundle = (stage: 'started' | 'finished', ts: number, platform = 'android') => ({
+      ts,
+      src: 'metro',
+      level: 'debug',
+      event: `bundle_response_${stage}`,
+      platform,
+      requestId: 'b1',
+    });
+    const run = async (records: NdjsonRecord[], platform: 'ios' | 'android' = 'android') => {
+      const clock = fakeClock();
+      const result = await verifyLaunch({
+        since: clock.at(),
+        platform,
+        metroPort: 8082,
+        now: clock.now,
+        sleep: clock.sleep,
+        readRecords: () => records.filter((record) => Number(record.ts) <= clock.at()),
+      });
+      return { result, elapsed: clock.at() - 1000 };
+    };
+
+    test.each(['android', 'ios'] as const)(
+      'a served manifest keeps the window open for a bundle request that comes after it (%s)',
+      async (platform) => {
+        const { result } = await run(
+          [
+            manifest('started', 1000 + 16000, 'm1', platform),
+            manifest('finished', 1000 + 18500, 'm1', platform),
+            bundle('started', 1000 + 25000, platform),
+            bundle('finished', 1000 + 27000, platform),
+          ],
+          platform,
+        );
+        expect(result).toMatchObject({ verified: true });
+        expect(result.record?.event).toBe('bundle_response_finished');
+      },
+    );
+
+    test('without any request the launch is unverified at the plain deadline', async () => {
+      const { result, elapsed } = await run([]);
+      expect(result).toMatchObject({ verified: false, timedOut: true });
+      expect(result.requested).toBeUndefined();
+      expect(elapsed).toBe(VERIFY_TIMEOUT_MS);
+    });
+
+    test('a served manifest that no bundle request follows is unverified once the grace after it passes', async () => {
+      const { result, elapsed } = await run([manifest('started', 1000 + 16000), manifest('finished', 1000 + 18500)]);
+      expect(result).toMatchObject({ verified: false, timedOut: true });
+      expect(result.requested).toBeUndefined();
+      expect(elapsed).toBe(18500 + MANIFEST_GRACE_MS);
+    });
+
+    test('a manifest that never finishes stops the wait at the hard bound', async () => {
+      const { result, elapsed } = await run([manifest('started', 1000 + 5000)]);
+      expect(result).toMatchObject({ verified: false, timedOut: true });
+      expect(result.requested).toBeUndefined();
+      expect(elapsed).toBe(MANIFEST_VERIFY_TIMEOUT_MS);
+    });
+
+    test('a manifest request for the other platform, or one that failed, extends nothing', async () => {
+      expect((await run([manifest('started', 1000 + 5000, 'm1', 'ios')])).elapsed).toBe(VERIFY_TIMEOUT_MS);
+      expect((await run([manifest('started', 1000 + 5000), manifest('failed', 1000 + 6000)])).elapsed).toBe(
+        VERIFY_TIMEOUT_MS,
+      );
+    });
   });
 
   test('an app that died before fetching a bundle is fatal at the deadline, with its device errors', async () => {

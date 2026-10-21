@@ -49,8 +49,8 @@ and [device-host clients](#device-host-approval). The plain listing shows
 [Actions](#actions).
 
 `GET http://127.0.0.1:7787/health` answers requests from this machine with the
-server's name, versions, `stimBuild` (the digest of the bundled Stim's build,
-which offload compares between machines), protocol, `stimHome`, `startup`, `busy`
+server's name, versions, `stimBuild` (the digest of the bundled Stim's build),
+protocol, `stimHome`, `startup`, `busy`
 (the offloaded `builds` and `hostedSessions` running now) and the current
 Tailscale state. It answers HTTP 200 once `startup.state` is `ready`; while the
 state is `pending` or `degraded` (see the LaunchAgent notes below) it answers
@@ -547,8 +547,11 @@ are not carried over: phones pair again, and remote machines are approved
 again with a new setup ticket.
 
 Stim Desktop and other clients of the server's own user on the same machine do
-not pair. They connect to the Unix socket `$STIM_HOME/server/local.sock`, mode
-0600 in a 0700 directory, which serves only this user and needs no handshake.
+not pair. They connect to the Unix socket `$STIM_HOME/server/local.sock`. If
+that path exceeds the platform's limit (103 UTF-8 bytes on macOS, 107 on Linux), the socket instead lives at
+`/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`, so long hosted
+session homes remain usable and distinct homes keep distinct sockets. The
+socket is mode 0600 in a mode 0700 directory owned by this user and needs no handshake.
 That connection gets read and control. The Desktop-only methods (`route.setup`,
 `machines.update.*`, `device-host.sessions` and `device-host.sessions.stop`)
 work only there; on a server Desktop started, only after the private Desktop
@@ -556,8 +559,13 @@ bootstrap proof (see [Private Desktop bootstrap](#private-desktop-bootstrap)).
 Windows has no socket.
 
 The network address, `tailscale whois` and the `X-Forwarded-For` header that
-`tailscale serve` adds never authenticate. They only label a record (`from` in
-`stim-server devices`) and key the rate limits below.
+`tailscale serve` adds never authenticate. They label a record (`from` in
+`stim-server devices`) and key the rate limits below. Tailscale rewrites the
+header to the real tailnet source, so remote clients cannot forge it. A local
+process on the host can connect to the loopback port and forge it to lock one
+named peer, or the shared local bucket, out for the lockout window. It
+authenticates nothing and reads nothing. This is accepted because it needs
+local code execution on the host.
 
 A connection must finish the handshake and send `hello` within 5 seconds of
 each step. Five failed attempts from the same peer address within a minute
@@ -1143,6 +1151,12 @@ stream over WireGuard with socket backpressure; no public tunnel, Funnel or
 Tailscale serve configuration change is needed. The 64 KiB server message
 limit remains unchanged.
 
+An approved client calls `device-host.metro.ports` with `{ports}`, at most 256
+of them, before it starts Metro for an iOS Expo dev client, and the host
+answers `{busy}`: the listed ports that already accept loopback connections,
+apart from the client's own dev-client bridges. The feature
+`hosted-metro-ports` advertises it.
+
 Replaying the same open request keeps the port. Client disconnection leaves
 the bridge available for the same session while its server owner lives. Call
 `device-host.metro.close` to replace a gateway, then reopen on the same port;
@@ -1601,6 +1615,8 @@ connected since stim-server started keeps its directory when revoked.
   same Ruby selection and UTF-8 locale defaults as `pod install`; omitting
   `rubyVersion` uses the worker's default Ruby. It
   returns `toolchain` (`stimBuild`, a digest of the bundled Stim's built code;
+  `compat`, the bundled Stim's build compatibility version, which a client
+  compares instead of `stimBuild` when it is present;
   `os`, the OS stim-server runs on as Node names it (`darwin`, `linux`, `win32`);
   `arch`; `xcode`; `simulatorSdk`; `macosSdk` (from
   `xcrun --sdk macosx --show-sdk-version`); `cocoapods`; `runtimes`, the simulator
@@ -1638,8 +1654,10 @@ connected since stim-server started keeps its directory when revoked.
   architecture and target options. These are exact lookups, not a full inventory.
   With `react-native-peer-cache`, a React Native/Expo development offer can send
   `reactNativeArtifact: { project, fingerprint, isExpo, platform, toolchain, ios | android }`.
-  The query includes the caller's compatible toolchain and normalized native
-  build choices; the worker constructs its own receipt around compilation.
+  The query includes the caller's compatible toolchain, whose `toolchain.compat`
+  takes the place of `stimBuild` with `build-compat`, and normalized native
+  build choices; a caller sends React Native and SwiftPM queries only to a
+  server with `build-compat`; the worker constructs its own receipt around compilation.
   The returned identity is opaque, not an alias for the caller's local cache key.
   The completed receipt binds the worker-verified post-mutation fingerprint
   and native options to the toolchain checked before and after compilation.
@@ -1647,7 +1665,7 @@ connected since stim-server started keeps its directory when revoked.
   does not discard a matching archive. Older workers receive no new query
   parameters and continue through their normal build path.
   With `swiftpm-peer-cache`, `swiftpmArtifact` carries `project`, `sourceDigest`,
-  `stimBuild`, complete `inputs` (`ignored`, `outputs`, `localFiles`,
+  `stimBuild` or, with `build-compat`, `compat` in its place, complete `inputs` (`ignored`, `outputs`, `localFiles`,
   `environment`) and `build` (`product`, `infoPlist`, `resources`, `assetCatalog`).
   Resource and catalog paths are repository-relative; the plist is
   project-relative. The worker verifies actual transferred files and full
@@ -1697,14 +1715,25 @@ connected since stim-server started keeps its directory when revoked.
   simulator runtime identifier, required for `ios`, null for `android`),
   `fingerprint`, `packageName`, `isExpo`, `optimizations`, `android` (for
   `android`: `variant`, `abi`, `gradleBuildCache`, `pch` and `compilerCache`,
-  `ccache` or `none`) and `stimBuild`, after the whole manifest of `repo` was
+  `ccache` or `none`), `stimBuild` and, from a caller that saw `build-compat`, `compat`, after the whole manifest of `repo` was
   synced on this connection. A peer-cache-capable React Native caller can set
   `cacheArtifact: true` to retain a completed development archive when its cache
-  write and remote policies allow it. It returns `{ "job" }`. It fails with
+  write and remote policies allow it. With the `fingerprint-sources` feature, a
+  caller can send `fingerprintSources`, the `id` and `hash` of each source of
+  `fingerprint`, and a `fingerprint-mismatch` failure names the sources that
+  differ and the synced files prebuild or `pod install` rewrote. With the
+  `fingerprint-ignored` feature, it can send `fingerprintIgnored`, the paths
+  relative to `project` that its git ignores for `fingerprint` through
+  `.git/info/exclude` or a global excludes file, which the machine's synced
+  checkout has no copy of. With the `fingerprint-tracked` feature, it can
+  send `fingerprintTracked`, the top-level entry names of `project` that its
+  git tracks although an ignore pattern matches them, which the machine's
+  empty index would skip. It returns `{ "job" }`. It fails with
   `build-busy` while the offer would be declined, naming the reason, or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with
-  `build-refused` when `stimBuild` differs. The build runs `offload-worker.mjs` of the bundled Stim with
+  `build-refused` when `compat` differs from this machine's, or, when either
+  side has no `compat`, when `stimBuild` differs. The build runs `offload-worker.mjs` of the bundled Stim with
   `STIM_HOME` set to the repository's area. It makes the area's checkout
   hold exactly the manifest (a file git lists as untracked and not ignored,
   and not in the manifest, is deleted; ignored dependencies and generated
@@ -2497,7 +2526,6 @@ silent only when every notification it sums up is. An older server ignores
 `levels` and alerts for every event but `started`.
 
 The server and phone import the same pure rules from `@stim-cli/core/oversight`.
-The phone formats home attention messages locally from the facts the shared rule selects.
 `__tests__/oversight-agreement.test.ts` checks their categories, workspace names
 and needs-attention vectors. Notification delivery remains local to each.
 

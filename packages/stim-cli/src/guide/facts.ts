@@ -124,8 +124,10 @@ warns when gh is unavailable.
 
 status's remoteDevices lists each environment's recorded EAS Simulator
 session. The session is billable while it runs, and it makes the environment
-live. status reads only local records; it does not ask EAS whether the session
-is still running.
+live. EAS stops it by itself after remote.easMaxDurationMinutes (default 30).
+status reads only local records; it does not ask EAS whether the session is
+still running, so a session EAS already stopped stays listed until the next
+run replaces it or stop clears it.
 
   remoteDevices   [{ platform, backend, sessionId, state, startedAt,
                   webPreviewUrl }], empty when the workspace has none
@@ -336,6 +338,15 @@ leased until <time>" for each one.`,
                                  finishing
                     "unverified" nothing was observed at all: usually a
                                  dev-client server picker awaiting a tap
+                  The wait for the app's bundle request is 20 seconds. On
+                  Expo, the dev client's manifest request (recorded in the
+                  metro log as manifest_request_started, _finished or _failed)
+                  counts as progress: the wait stays open while one is in
+                  flight and for 15 seconds after one was served, up to 60
+                  seconds after the launch, on any target (a new or adopted
+                  emulator already waits 60). A manifest is never launch
+                  evidence, so a launch that makes no bundle request is still
+                  "unverified". Bare React Native makes no manifest request.
                   Neither "bundling" nor "unverified" is reported for an app
                   whose process is gone when the bundle timeout closes: the
                   run fails as FATAL, "the app process exited", with the
@@ -454,10 +465,15 @@ leased until <time>" for each one.`,
 
   platform        "ios" | "android" | "web"
   deviceId        the exact owned simulator UDID or emulator serial targeted;
-                  for web, the owned Chrome's DevTools endpoint
-  deviceName      the owned simulator or AVD name; for web, the Chrome version
+                  for web, the owned Chrome's DevTools endpoint; metro:<port>
+                  when the apps were reached through Metro alone
+  deviceName      the owned simulator or AVD name; for web, the Chrome version;
+                  "EAS Simulator session <id>" or "devices connected to
+                  Metro" when reached through Metro alone
   appId           the live bundle id or Android package; for web, the URL the
-                  owned page was on when Stim sent the reload
+                  owned page was on when Stim sent the reload; null when no
+                  launch is recorded (a physical device or EAS Simulator
+                  session) and Stim reloaded the apps connected to Metro
   metroPort       the workspace's verified Metro port; for web, the reserved
                   Metro port or null
   strategy        how the reload was addressed.
@@ -549,10 +565,11 @@ leased until <time>" for each one.`,
                   brew and adb: source "environment" when this process's
                   environment provides it, "discovered" when stim-server's
                   toolchain discovery would find it (from says where), or
-                  "missing". projectNode is { pin, spec, bin, version } when
+                  "missing". projectNode is { pin, spec, bin, version, match } when
                   .nvmrc, .node-version, .tool-versions or package.json volta
-                  pins Node (bin and version are null when no install
-                  satisfies the pin), else null
+                  pins Node (bin, version and match are null when no install
+                  fits the pin; match is "exact", or "major" for the newest
+                  install of the pinned major not older than the pin), else null
   remoteMachines  one { machine, state, dnsName?, deviceId?, requestedAt?,
                   expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
                   remote.machines entry, for its build approval; state is "approved", "pending", "not-asked",
@@ -804,7 +821,8 @@ RULES
                   buildLock, buildSlot, deviceLease, easSession, worktree,
                   cache, gradleVersion, tempLeftover (one "done" labelled
                   with the TMPDIR it cleared, plus a "kept" or "failed" per
-                  entry gc checked again or could not delete).
+                  entry gc checked again or could not delete), trash (the
+                  same, labelled with $STIM_HOME/trash).
                   label is a device, path or cache name; id is the UDID,
                   AVD name or path behind it, or null. Under --cache
                   parked, a "done" parkedDevice was erased and stays
@@ -1029,10 +1047,23 @@ RULES
                               kind is stim (stim-claim-*, stim-host-*,
                               stim-fakehome-*, stim-hosted-macos-*,
                               stim-server-*, stim-ws-* directories), xctrace
-                              (instruments*.ktrace) or jest (Jest's
+                              (instruments*.ktrace), swiftpm
+                              (TemporaryDirectory.* directories) or jest (Jest's
                               jest_<uid in base 36> cache, never deleted). deleteCount
                               is what --delete removes. null with STIM_HOME
                               set or any --cache scope
+    trash                   { root, entries: [{ path, worktree, removedAt,
+                              bytes, willDelete, kept }] } | null  ignored
+                              directories worktree remove moved out of a
+                              worktree into $STIM_HOME/trash before git
+                              removed it. bytes is null while a removal is
+                              deleting the entry. kept names the live or
+                              unresolved ownership claim, the missing or
+                              invalid trash.json, or the worktree that
+                              still exists, that keeps a directory;
+                              --delete deletes the rest, only remove-*
+                              entries with a valid trash.json. null when the
+                              trash is empty or under any --cache scope
     caches                  { name, dir, source, bytes, note, willEmpty,
                               emptySkipped, scopedEmpty }  alive, not
                               garbage; willEmpty marks the ones --delete
@@ -1615,7 +1646,9 @@ RULES
                  existed count their device time in prepare and install
 
   Only runs that record a last build are listed: a run that stops before
-  looking up a build, such as a bad flag, is not. Estimates (expectedMs) come from run statistics, not builds.
+  looking up a build, such as a bad flag, is not. A run that builds or reuses
+  an app and then fails at the device, install or launch step is listed as
+  failed with its error code. Estimates (expectedMs) come from run statistics, not builds.
 
   done and total are counts, not a completion fraction: a target or task
   can take a second or ten minutes, and cached work finishes instantly.

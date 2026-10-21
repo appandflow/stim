@@ -173,7 +173,7 @@ export function parkSim<P extends PoolPlatform>({
   });
 }
 
-export function adoptParked<P extends PoolPlatform>({
+export async function adoptParked<P extends PoolPlatform>({
   platform,
   projectPath,
   slot = 'default',
@@ -185,11 +185,11 @@ export function adoptParked<P extends PoolPlatform>({
   slot?: string;
   udid: string;
   device: DeviceRecord;
-}): PoolRecords[P] | null {
+}): Promise<PoolRecords[P] | null> {
   const claim = claimParkedOperation(platform, udid);
   if (!claim) return null;
   try {
-    return withConfigLock(() => {
+    return await withConfigLockAsync(() => {
       const cfg = ensureConfig();
       const records = readParked(platform, { config: cfg });
       const taken = records.find((r) => r.udid === udid);

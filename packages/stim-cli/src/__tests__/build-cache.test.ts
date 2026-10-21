@@ -31,11 +31,15 @@ import {
   fingerprintDiffRecord,
   DEFAULT_FINGERPRINT_IGNORES,
   fingerprintProject,
+  gitignoredFingerprintInputs,
+  ignoredFingerprintPaths,
+  trackedFingerprintPaths,
   prepareProviderDownloadDir,
   providerDownloadPath,
   refingerprintAfterMutation,
   resolveBuild,
   storeBuild,
+  storedAppId,
   storedAssetManifest,
   storedSources,
   untrackedMissLine,
@@ -333,7 +337,11 @@ test('fingerprintProject ignores the paths a fresh checkout does not have', asyn
     return { hash: 'h', sources: [] };
   };
   await fingerprintProject(root, { platform: 'ios', createFingerprint });
-  expect(options?.ignorePaths).toEqual(['**/android/local.properties', '**/android/.idea/**']);
+  expect(options?.ignorePaths).toEqual([
+    '**/android/local.properties',
+    '**/android/.idea/**',
+    '**/*.xcodeproj/xcuserdata/**/*',
+  ]);
   expect(options?.platforms).toEqual(['ios']);
 });
 
@@ -550,6 +558,36 @@ test('storedAssetManifest is null for an entry stored without one, or with unrea
   expect(storedAssetManifest('android', 'ak3', root)).toBe(null);
 });
 
+test('a capability store records the app id read from the stored artifact, and storedAppId reads it back', async () => {
+  resetExecutor();
+  const build = join(root, 'build5', 'App.apk');
+  mkdirSync(join(root, 'build5'), { recursive: true });
+  writeFileSync(build, 'apk');
+  const readFrom: string[] = [];
+  const cache = filesystemBuildCapability({
+    root,
+    readAppId: (path) => {
+      readFrom.push(path);
+      return 'io.example.app';
+    },
+  });
+
+  await cache.store({
+    projectRoot: root,
+    platform: 'android',
+    key: 'ak5',
+    sourcePath: build,
+    overwrite: false,
+    signal: new AbortController().signal,
+  });
+
+  expect(readFrom).toEqual([build]);
+  expect(storedAppId('android', 'ak5', root)).toBe('io.example.app');
+  await storeBuild('android', 'ak6', build, { root, readAppId: () => null });
+  expect(storedAppId('android', 'ak6', root)).toBe(null);
+  expect(storedAppId('android', 'missing', root)).toBe(null);
+});
+
 test('{ overwrite } REPLACES the manifest too, so a refusing entry stops refusing', async () => {
   resetExecutor();
   const build = join(root, 'build4', 'App.apk');
@@ -633,6 +671,167 @@ test('the real @expo/fingerprint differ reports additions and removals with thei
   expect(changes).toHaveLength(2);
 });
 
+describe('gitignored fingerprint inputs', () => {
+  const write = (path: string, content = path) => {
+    mkdirSync(join(root, path, '..'), { recursive: true });
+    writeFileSync(join(root, path), content);
+  };
+  beforeEach(() => {
+    resetExecutor();
+    write('package.json', '{"name":"app"}');
+    write(
+      '.gitignore',
+      'node_modules/\n.env.local\nios/Pods/\nios/assets/\n*.jsbundle\nxcuserdata\nios/GoogleService-Info.plist\ncreds/\n',
+    );
+    write('.env.sample');
+    write('ios/Podfile');
+    getExecutor().runFile('git', ['init', '--quiet', root], { timeoutMs: 10_000 });
+    getExecutor().runFile('git', ['-C', root, 'add', '.'], { timeoutMs: 10_000 });
+    write('.env.local');
+    write('ios/GoogleService-Info.plist');
+    write('ios/Pods/Manifest.lock');
+    write('ios/assets/node_modules/icon.png');
+    write('ios/main.jsbundle');
+    write('ios/App.xcodeproj/xcuserdata/me.xcuserdatad/xcschemes/xcschememanagement.plist');
+    write('node_modules/expo-camera/ios/Camera.swift');
+    write('creds/google-services.json');
+    write('creds/release.keystore');
+  });
+
+  test('are the ignored files a checkout lacks, without dependencies or build leftovers', async () => {
+    const sources: FingerprintSource[] = [
+      { type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: 'a' },
+      { type: 'dir', filePath: 'node_modules/expo-camera/ios', reasons: ['expoAutolinkingIos'], hash: 'b' },
+      { type: 'contents', id: 'expoConfig', contents: '{}', reasons: ['expoConfig'], hash: 'c' },
+      { type: 'file', filePath: 'creds/google-services.json', reasons: ['expoConfigExternalFile'], hash: 'd' },
+      { type: 'dir', filePath: '../outside-the-repository', reasons: ['extraSources'], hash: 'e' },
+    ];
+    const real = realpathSync(root);
+    expect(await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: {} })).toEqual([
+      join(real, '.env.local'),
+      join(real, 'creds/google-services.json'),
+      join(real, 'ios/GoogleService-Info.plist'),
+    ]);
+    expect(
+      await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: { EXPO_NO_DOTENV: '1' } }),
+    ).toEqual([join(real, 'creds/google-services.json'), join(real, 'ios/GoogleService-Info.plist')]);
+    expect(await gitignoredFingerprintInputs(real, sources.slice(0, 2), { platform: 'ios' }, { env: {} })).toEqual([
+      join(real, 'ios/GoogleService-Info.plist'),
+    ]);
+  });
+
+  test('gitignored build leftovers in ios/ leave the real fingerprint unchanged; native inputs move it', async () => {
+    const hashOf = async () => (await fingerprintProject(root, { platform: 'ios' }))?.hash;
+    rmSync(join(root, 'ios/GoogleService-Info.plist'));
+    getExecutor().runFile('git', ['-C', root, 'add', '-f', 'ios/main.jsbundle'], { timeoutMs: 10_000 });
+    const withLeftovers = await hashOf();
+    rmSync(join(root, 'ios/assets'), { recursive: true });
+    rmSync(join(root, 'ios/main.jsbundle'));
+    rmSync(join(root, 'ios/App.xcodeproj'), { recursive: true });
+    expect(await hashOf()).toBe(withLeftovers);
+    write('ios/GoogleService-Info.plist');
+    expect(await hashOf()).not.toBe(withLeftovers);
+    const withPlist = await hashOf();
+    write('.gitignore', 'node_modules/\n');
+    write('ios/assets/Sound.caf');
+    expect(await hashOf()).not.toBe(withPlist);
+  }, 30_000);
+});
+
+describe('fingerprints that depend on a local git exclude', () => {
+  const git = (dir: string, ...args: string[]) =>
+    getExecutor().runFile('git', ['-C', dir, ...args], { timeoutMs: 10_000 });
+  const files: Record<string, string> = {
+    'package.json': '{"name":"app"}',
+    '.gitignore': 'node_modules/\n',
+    'ios/Podfile': 'platform :ios',
+    'ios/main.jsbundle': 'bundle',
+    '.env.local': 'KEY=1',
+  };
+  let worker: string;
+  const checkout = (dir: string) => {
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(join(dir, path, '..'), { recursive: true });
+      writeFileSync(join(dir, path), content);
+    }
+    getExecutor().runFile('git', ['init', '--quiet', dir], { timeoutMs: 10_000 });
+    git(dir, 'config', 'core.excludesFile', '/dev/null');
+  };
+  beforeEach(() => {
+    resetExecutor();
+    worker = mkdtempSync(join(tmpdir(), 'stim-bc-worker-'));
+    checkout(root);
+    checkout(worker);
+    git(root, 'add', 'package.json', '.gitignore', 'ios');
+  });
+  afterEach(() => rmSync(worker, { recursive: true, force: true }));
+
+  const excludeLocally = (where: 'info/exclude' | 'core.excludesFile', ...patterns: string[]) => {
+    const file = where === 'info/exclude' ? join(root, '.git/info/exclude') : join(root, '.git/global-excludes');
+    mkdirSync(join(file, '..'), { recursive: true });
+    writeFileSync(file, `${patterns.join('\n')}\n`);
+    if (where === 'core.excludesFile') git(root, 'config', 'core.excludesFile', file);
+  };
+
+  test.each(['info/exclude', 'core.excludesFile'] as const)(
+    'a build worker ignores the committed bundle output the client ignores through %s',
+    async (where) => {
+      excludeLocally(where, 'ios/main.jsbundle');
+      const target = { platform: 'ios' };
+      const ignoredPaths = ignoredFingerprintPaths(root, target);
+      expect(ignoredPaths).toEqual(['ios/main.jsbundle']);
+      const client = (await fingerprintProject(root, target))?.hash;
+      expect((await fingerprintProject(worker, target))?.hash).not.toBe(client);
+      expect((await fingerprintProject(worker, { ...target, ignoredPaths }))?.hash).toBe(client);
+    },
+    30_000,
+  );
+
+  test.each(['info/exclude', 'core.excludesFile'] as const)(
+    'a build worker skips the top-level file the client ignores through %s with ios.projectPath .',
+    async (where) => {
+      excludeLocally(where, '.env.local');
+      const target = { platform: 'ios', iosProjectPath: '.' };
+      const ignoredPaths = ignoredFingerprintPaths(root, target);
+      expect(ignoredPaths).toEqual(['.env.local']);
+      const client = (await fingerprintProject(root, target))?.hash;
+      expect((await fingerprintProject(worker, target))?.hash).not.toBe(client);
+      expect((await fingerprintProject(worker, { ...target, ignoredPaths }))?.hash).toBe(client);
+    },
+    30_000,
+  );
+
+  test('names nothing for Android or when nothing is ignored', () => {
+    expect(ignoredFingerprintPaths(root, { platform: 'android' })).toEqual([]);
+    expect(ignoredFingerprintPaths(root, { platform: 'ios', iosProjectPath: '.' })).toEqual([]);
+  });
+
+  test('a build worker counts the top-level file the client tracks although a .gitignore pattern matches it', async () => {
+    for (const dir of [root, worker]) {
+      writeFileSync(join(dir, '.gitignore'), 'node_modules/\n*.plist\nconfig/\n');
+      mkdirSync(join(dir, 'config'));
+      writeFileSync(join(dir, 'config/app.json'), 'tracked');
+      writeFileSync(join(dir, 'GoogleService-Info.plist'), 'tracked');
+      writeFileSync(join(dir, 'Other.plist'), 'untracked');
+    }
+    git(root, 'add', '.gitignore');
+    git(root, 'add', '-f', 'GoogleService-Info.plist', 'config/app.json');
+    const target = { platform: 'ios', iosProjectPath: '.' };
+    const trackedPaths = trackedFingerprintPaths(root, target);
+    expect(trackedPaths).toEqual(['GoogleService-Info.plist', 'config']);
+    expect(ignoredFingerprintPaths(root, target)).toEqual(['Other.plist']);
+    const client = (await fingerprintProject(root, target))?.hash;
+    expect((await fingerprintProject(worker, target))?.hash).not.toBe(client);
+    expect((await fingerprintProject(worker, { ...target, trackedPaths }))?.hash).toBe(client);
+  }, 30_000);
+
+  test('names no tracked entries for Android, the default iOS layout, or when no pattern matches a tracked file', () => {
+    expect(trackedFingerprintPaths(root, { platform: 'android' })).toEqual([]);
+    expect(trackedFingerprintPaths(root, { platform: 'ios' })).toEqual([]);
+    expect(trackedFingerprintPaths(root, { platform: 'ios', iosProjectPath: '.' })).toEqual([]);
+  });
+});
+
 test('fingerprintDiffRecord caps the logged list at 20 names and carries the total count', () => {
   const changed = Array.from({ length: 25 }, (_, i) => `src/file-${i}`);
   const record = fingerprintDiffRecord({ changed, previousHash: 'aaa', hash: 'bbb' });
@@ -655,6 +854,21 @@ describe('refingerprintAfterMutation', () => {
       fingerprint: async () => ({ hash: '7ea8b7c', sources: [fpDir('android', 'dd')] }),
     });
     expect(shifted).toEqual({ hash: '7ea8b7c', sources: [fpDir('android', 'dd')], moved: true });
+  });
+
+  test('recomputes with the ignore decisions the caller was given', async () => {
+    let target: { ignoredPaths?: readonly string[] } = {};
+    await refingerprintAfterMutation({
+      projectRoot: root,
+      platform: 'ios',
+      previousHash: 'abc123',
+      ignoredPaths: ['.env.local'],
+      fingerprint: async (_, given) => {
+        target = given ?? {};
+        return { hash: 'abc123', sources: [] };
+      },
+    });
+    expect(target.ignoredPaths).toEqual(['.env.local']);
   });
 
   test('a hash that did not move is reported as not moved, so nothing is re-keyed', async () => {

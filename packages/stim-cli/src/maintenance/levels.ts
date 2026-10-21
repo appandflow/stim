@@ -78,7 +78,8 @@ async function planLevel2({
       kind: 'would-delete-temp-leftovers',
       target: leftovers.root,
       bytes: deletable.reduce((sum, entry) => sum + entry.bytes, 0),
-      reason: 'disk pressure level 2, Stim temp directories and xctrace recordings unmodified for 24 hours',
+      reason:
+        'disk pressure level 2, Stim temp directories, xctrace recordings and SwiftPM temp directories unmodified for 24 hours',
       level: 2,
     });
   const options = { now, windowMs, protectedRoot, pinned };

@@ -5,6 +5,7 @@ export default defineConfig({
   ...config,
   test: {
     ...config.test,
+    globalSetup: [],
     include: ['packages/*/src/**/*.compat.test.ts', 'packages/*/__tests__/**/*.compat.test.ts'],
     exclude: [],
     provide: {

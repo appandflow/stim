@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { openLogDir } from '../state/log-reader.ts';
 import { followLogs } from '../state/logs-query.ts';
 import type { NdjsonRecord } from '../state/ndjson.ts';
 
@@ -76,6 +77,53 @@ test('default following drains the previous rotation before reading its smaller 
   renameSync(join(root, 'metro.ndjson'), join(root, 'metro.ndjson.1'));
   writeFileSync(join(root, 'metro.ndjson'), line('new'));
   await vi.waitFor(() => expect(records.map((record) => record.msg)).toEqual(['before rotation', 'new']));
+});
+
+test('default following reads a replacement file that is larger than the previous offset from its first record', async () => {
+  writeFileSync(join(root, 'client.ndjson'), line('before following'));
+  const { records } = following();
+  appendFileSync(join(root, 'client.ndjson'), line('before rotation'));
+  renameSync(join(root, 'client.ndjson'), join(root, 'client.ndjson.1'));
+  writeFileSync(
+    join(root, 'client.ndjson'),
+    line('a replacement record much longer than the old file') + line('after'),
+  );
+  await vi.waitFor(() =>
+    expect(records.map((record) => record.msg)).toEqual([
+      'before rotation',
+      'a replacement record much longer than the old file',
+      'after',
+    ]),
+  );
+});
+
+test('following from a log view recognizes a larger replacement made after the view was opened', async () => {
+  writeFileSync(join(root, 'client.ndjson'), line('backfilled'));
+  const view = await openLogDir(root);
+  const records: NdjsonRecord[] = [];
+  appendFileSync(join(root, 'client.ndjson'), line('before rotation'));
+  renameSync(join(root, 'client.ndjson'), join(root, 'client.ndjson.1'));
+  writeFileSync(
+    join(root, 'client.ndjson'),
+    line('a replacement record much longer than the old file') + line('after'),
+  );
+  stops.push(
+    followLogs({
+      dir: root,
+      offsets: view.sizes,
+      identities: view.identities,
+      criteria: { minLevel: 'info' },
+      onRecord: (record) => records.push(record),
+    }),
+  );
+  await view.close();
+  await vi.waitFor(() =>
+    expect(records.map((record) => record.msg)).toEqual([
+      'before rotation',
+      'a replacement record much longer than the old file',
+      'after',
+    ]),
+  );
 });
 
 test('filesystem hints preserve Expo context until a quiet settle, including without another write', async () => {

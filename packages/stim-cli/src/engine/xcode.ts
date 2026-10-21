@@ -721,7 +721,7 @@ export async function buildXcode({
     event: 'build_start',
   });
 
-  const diagnosticCollector = createXcodeDiagnosticCollector(root, sdk);
+  const diagnosticCollector = createXcodeDiagnosticCollector(root, sdk, resolvedTarget.dir || root);
   const tail: string[] = [];
   let transcriptLines = 0;
   let compilationCacheActivity: CompilationCacheActivity = COMPILATION_CACHE_UNAVAILABLE;

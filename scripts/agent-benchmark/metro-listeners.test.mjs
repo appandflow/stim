@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { expect, it } from 'vitest';
 import { ownedMetroListeners } from './metro-listeners.mjs';
@@ -30,8 +30,11 @@ it.skipIf(process.platform !== 'darwin')(
       };
       const owned = await launch(root);
       const foreign = await launch(sibling);
-      expect(ownedMetroListeners(root)).toEqual([owned]);
-      expect(ownedMetroListeners(sibling)).toEqual([foreign]);
+      const pids = `${owned.pid},${foreign.pid}`;
+      const fixtureOnly = (file, args, options) =>
+        execFileSync(file, args.includes('-iTCP') ? ['-a', '-p', pids, ...args] : args, options);
+      expect(ownedMetroListeners(root, fixtureOnly)).toEqual([owned]);
+      expect(ownedMetroListeners(sibling, fixtureOnly)).toEqual([foreign]);
     } finally {
       await Promise.all(
         children.map(async (child) => {
