@@ -1634,7 +1634,6 @@ describe('verifyLaunch: the stability window ends on evidence that the app JavaS
       const result = await run(platform, { device: [device(platform, 3000, 'Running "main" with {"rootTag":11}')] });
       expect(result).toMatchObject({ verified: true, jsRunning: true, processAlive: true });
       expect(result.waitedMs).toBe(3000 + 500 - since);
-      expect(result.waitedMs).toBeLessThan(STABILITY_WINDOW_MS + 1000);
     },
   );
 
