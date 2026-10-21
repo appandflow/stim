@@ -21,6 +21,7 @@ import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import * as idleGc from '../commands/gc/idle.ts';
 import * as metroReset from '../supervisor/cache-reset.ts';
 import { liveClaimOwner } from './_factories.ts';
+import { gcLogFile, readGcLog } from '@stim-cli/core/state';
 
 const GB = 1024;
 const BUDGET_ENV = [
@@ -182,6 +183,24 @@ describe('enforceBudget', () => {
     });
   });
 
+  test('what the reclaim steps clear is logged as a budget run, and a dry run logs nothing', async () => {
+    const { deps } = fakeDeps([10 * GB, 25 * GB]);
+    const recording: Partial<BudgetDeps> = {
+      ...deps,
+      step: async (step, context) => {
+        if (step === 'idle-devices') context.record?.('workspaceOutputs', 'done', '/w/old', { bytes: 4096 });
+        return { targets: [`${step}-target`], failures: 0 };
+      },
+    };
+    await enforceBudget({ root: apps, note: () => {}, budget: limits(), dryRun: true }, recording);
+    expect(existsSync(gcLogFile())).toBe(false);
+
+    await enforceBudget({ root: apps, note: () => {}, budget: limits() }, recording);
+    expect(readGcLog()).toMatchObject([
+      { trigger: 'budget', kind: 'workspaceOutputs', status: 'done', label: '/w/old', path: '/w/old', bytes: 4096 },
+    ]);
+  });
+
   test('the simulator snapshot is dropped after each reclaim step, so the re-measure lists again', async () => {
     const { deps } = fakeDeps([100 * GB], [30 * GB]);
     let invalidations = 0;
@@ -270,6 +289,7 @@ describe('reclaiming in a scratch STIM_HOME with a floor above the free disk', (
     expect(outcome.reclaimed.find((entry) => entry.step === 'workspace-outputs')?.targets).toEqual([other]);
     expect(existsSync(join(workspaceDir(other), 'derived-data'))).toBe(false);
     expect(existsSync(join(workspaceDir(current), 'derived-data'))).toBe(true);
+    expect(readGcLog()).toMatchObject([{ trigger: 'budget', kind: 'workspaceOutputs', status: 'done', label: other }]);
   });
 
   test.each(['devices', 'dev servers'] as const)('cancelling idle %s inventory starts no reclamation', async (kind) => {

@@ -17,6 +17,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { METRO_NAMED_CACHE_LAYOUT, withAmbientContext, withDirLockTransaction, type StimContext } from '@stim-cli/core';
 import {
+  gcLogFile,
+  readGcLog,
   deviceHostArea,
   deviceHostRoot,
   hostedDeviceId,
@@ -40,9 +42,11 @@ import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devi
 import { getProject, saveConfig, loadConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { ensureRemoteBootOwned, withRemoteSessionLock } from '../engine/device-remote.ts';
+import * as deviceLease from '../engine/device-lease.ts';
 import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { collectEasSessionSweep, deleteEasSessions } from '../commands/gc/eas-sessions.ts';
+import * as ownershipClaim from '../ownership-claim.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -2885,7 +2889,7 @@ test("Stim Desktop's disk-pressure run (gc --delete --json) deletes this home's 
   try {
     const { stdout } = await captureJson(() => sweepingGc({ delete: true, json: true }));
     const payload = JSON.parse(stdout[0] ?? '');
-    expect(payload.results).toEqual([
+    expect(payload.results.filter((result: { kind: string }) => result.kind === 'device')).toEqual([
       expect.objectContaining({ kind: 'device', status: 'done', label: 'stim-orphan-2', id: 'UDID-2' }),
     ]);
     expect(payload.sections.unverifiedDevices).toEqual([
@@ -5166,5 +5170,68 @@ describe('parked hosted device GC', () => {
     expect(readHostedDeviceLedger(join(deviceHostArea(sessionId), 'home'))?.ios).toEqual([udid]);
     const scoped = await collectGcReport({ cache: 'parked' });
     expect(scoped.parkedHostedDevices).toEqual([]);
+  });
+});
+
+describe('the gc log', () => {
+  function stageRun() {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    installExecutor();
+    writeLeaseFile({ id: 'UDID-OLD', expiresInMs: -1000 });
+    writeLeaseFile({ id: 'UDID-BAD', expiresInMs: -1000 });
+    writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
+    const remove = deviceLease.removeExpiredLease;
+    vi.spyOn(deviceLease, 'removeExpiredLease').mockImplementation((entry) => {
+      if (entry.id === 'UDID-BAD') throw new Error('permission denied');
+      return remove(entry);
+    });
+    vi.spyOn(ownershipClaim, 'clearFreeClaimSet').mockReturnValue({ status: 'refused', reason: 'builder unresolved' });
+  }
+
+  test('a deleting run records each cleared, kept and failed item with the run that did it', async () => {
+    stageRun();
+    await captureLog(() => sweepingGc({ delete: true, olderThan: 3 }));
+
+    const records = readGcLog();
+    expect(records.map((r) => [r.kind, r.status, r.id?.split('/').pop() ?? null]).toSorted()).toEqual([
+      ['buildLock', 'kept', expect.stringContaining('android-def-debug-sim')],
+      ['deviceLease', 'done', expect.stringContaining('UDID-OLD')],
+      ['deviceLease', 'failed', expect.stringContaining('UDID-BAD')],
+    ]);
+    const failed = records.find((r) => r.status === 'failed');
+    expect(failed).toMatchObject({
+      src: 'gc',
+      level: 'error',
+      trigger: 'manual',
+      options: { delete: true, olderThan: 3 },
+      detail: 'permission denied',
+      path: failed?.id,
+    });
+    expect(failed?.path).toMatch(/^\//);
+    expect(records.find((r) => r.kind === 'buildLock')).toMatchObject({ level: 'info', detail: 'builder unresolved' });
+    expect(new Set(records.map((r) => r.runId)).size).toBe(1);
+  });
+
+  test('a dry run writes no record and creates no log', async () => {
+    stageRun();
+    await captureLog(() => sweepingGc({}));
+    expect(existsSync(gcLogFile())).toBe(false);
+  });
+
+  test('a deleting run that only keeps things writes no record', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    installExecutor();
+    writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
+    vi.spyOn(ownershipClaim, 'clearFreeClaimSet').mockReturnValue({ status: 'refused', reason: 'builder unresolved' });
+    const output = await captureLog(() => sweepingGc({ delete: true }));
+    expect(output).toMatch(/Left the build lock/);
+    expect(existsSync(gcLogFile())).toBe(false);
+  });
+
+  test('a run started by Stim Desktop is recorded as desktop', async () => {
+    stageRun();
+    vi.stubEnv('STIM_DESKTOP_APP', '/Applications/Stim.app');
+    await captureLog(() => sweepingGc({ delete: true }));
+    expect(new Set(readGcLog().map((r) => r.trigger))).toEqual(new Set(['desktop']));
   });
 });

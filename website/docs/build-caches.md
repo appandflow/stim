@@ -536,6 +536,15 @@ In report mode actions and explaining skips are logged only when newly planned.
 In on mode every action taken, failure and explaining skip is logged with its
 size, and pass records carry the bytes freed. Removed worktrees and orphaned
 directories appear in the machine log only.
+Every run that deletes or changes something also appends one record per item
+to the machine gc log, `$STIM_HOME/gc/gc.ndjson`: `stim gc --delete`, `--idle`
+and `--cache`, each maintenance action taken, and what the budget gate reclaims
+before a build. A dry run writes nothing. Each record has the run, the trigger
+(`manual`, `desktop`, `maintenance` or `budget`), the item's kind, label, path,
+bytes freed and status (`done`, `kept` or `failed`), and the reason a kept or
+failed item was left. It rotates and expires with the maintenance log. Read it
+from any directory with `stim logs --source gc`, add `--json` for raw records
+or `--errors` for failures.
 The hook skips every `stim gc` invocation, and live or unresolved claims.
 `stim gc` without `--delete` prints the maintenance plan itself. Failed attempts
 back off for at least one minute; child crash logs are truncated above 64 KiB.

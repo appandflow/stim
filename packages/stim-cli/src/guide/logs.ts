@@ -69,6 +69,7 @@ FLAGS
                   shared untagged Metro and app client records (not the web
                   page's); default also includes untagged legacy records
   --source <s...>  metro, client, device, build, agent, maintenance, placement (one or more), or all.
+                   gc alone reads the machine-wide gc log (GC LOG below).
                    An unknown value is REJECTED rather than quietly matching
                    nothing.
   --level <l>      minimum level: debug, info, warn, error, fatal
@@ -245,6 +246,27 @@ Add --errors to --source maintenance to show only maintenance_failure events;
 failures before a later launch marker are hidden. Machine passes are reported in
 status and maintenance/maintenance.ndjson; this command reads workspace logs.
 
+GC LOG
+stim logs --source gc reads $STIM_HOME/gc/gc.ndjson from any directory: one
+record per item that a gc run, a maintenance action or the budget gate
+cleared, kept or failed to clear. It cannot be combined with other sources,
+and --source all does not include it. --errors shows the failed items.
+Each record has src: gc, level (info, or error for a failed item), msg and
+  runId    the stim invocation, or the pass id of maintenance.ndjson
+  trigger  manual (stim gc in a terminal), desktop (STIM_DESKTOP_APP is set, so also a gc run through a stim-server Desktop started),
+           maintenance, or budget (the disk, memory or workspace check before
+           start, ios and android)
+  via      maintenance only: the command whose run started the pass
+  options  gc only: delete, worktrees, olderThan, cache, idleMs
+  kind     what the item was (the kind of gc --json results, plus devServer
+           for a dev server the budget gate stops; maintenance also writes
+           buildDirectory and dependencies)
+  status   done, kept or failed
+  label, id, path, bytes, detail
+           name, identifier, absolute path when the item is one, bytes freed,
+           and the reason a kept or failed item was left
+Records of one run share runId. See stim guide cleanup, WHAT WAS CLEARED.
+
 REMOTE REQUEST RECORDS
 A request to another machine that fails is a warn record with src: build in the
 run's build log: remote_connect_failed { host, capability, ms, timeoutMs, msg,
@@ -304,6 +326,8 @@ they stay in the local logs. These records carry no tokens.
 
 WHAT WRITES WHAT
   maintenance.ndjson   workspace maintenance actions, failures and explaining skips
+  $STIM_HOME/gc/gc.ndjson  machine-wide, not in a workspace: what gc, maintenance
+                       and the budget gate cleared (stim logs --source gc)
   metro.ndjson         the bundler, in every supervisor mode. Stim's
                        middleware adds one record per bundle request
                        (bundle_response_started, _progress, _finished,

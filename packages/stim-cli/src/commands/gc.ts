@@ -43,6 +43,7 @@ import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import type { StimConfig } from '@stim-cli/core/state';
 import type { GcSkip, OrphanedDevice } from './gc/types.ts';
+import { gcOptionsOf, openGcLog } from './gc/log.ts';
 import { createGcResults, GC_OUTPUT, type GcOutput, type GcResult } from './gc/results.ts';
 import { phase } from './gc/progress.ts';
 import {
@@ -734,7 +735,16 @@ export async function executeGc(
   write: (stream: 'stdout' | 'stderr', line: string) => void,
   claim?: ClaimHandle,
 ): Promise<GcExecutionResult> {
-  const results = createGcResults();
+  const log =
+    opts.delete || opts.idle !== undefined
+      ? openGcLog({
+          trigger: (deps.operation?.env ?? process.env).STIM_DESKTOP_APP ? 'desktop' : 'manual',
+          env: deps.operation?.env,
+          options: gcOptionsOf(opts),
+          holdKept: true,
+        })
+      : null;
+  const results = createGcResults(log?.record);
   let failed = false;
   const output: GcOutput = {
     log: (line) => write('stdout', line),
@@ -897,7 +907,10 @@ async function pruneDeadProjects(deadProjects: string[], output: GcOutput, opera
       output.log(chalk.green(`Pruned ${path}`));
       output.record('project', 'done', path);
     }
-    for (const dir of result.removedWorkspaceDirs) output.log(chalk.dim(`  removed workspace output ${dir}`));
+    for (const dir of result.removedWorkspaceDirs) {
+      output.log(chalk.dim(`  removed workspace output ${dir}`));
+      output.record('workspaceDirectory', 'done', dir);
+    }
     for (const dir of result.failedWorkspaceDirs) {
       output.log(chalk.red(`  could not remove workspace output ${dir}`));
       output.record('workspaceDirectory', 'failed', dir, { detail: `could not remove it while pruning ${path}` });

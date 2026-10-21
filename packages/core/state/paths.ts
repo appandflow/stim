@@ -178,6 +178,14 @@ export function maintenanceNdjsonFile(): string {
   return join(maintenanceDir(), 'maintenance.ndjson');
 }
 
+export function gcLogDir(): string {
+  return join(configDir(), 'gc');
+}
+
+export function gcLogFile(): string {
+  return join(gcLogDir(), 'gc.ndjson');
+}
+
 export function maintenanceChildLogFile(): string {
   return join(maintenanceDir(), 'child.log');
 }

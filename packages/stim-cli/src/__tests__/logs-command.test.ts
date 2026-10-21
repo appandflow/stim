@@ -177,6 +177,13 @@ describe('option validation', () => {
     expect(validateSources(['metrro']).error).toMatch(/or all/);
   });
 
+  test('validateSources takes gc alone, keeps it out of all, and refuses it beside other sources', async () => {
+    expect(validateSources(['gc'])).toEqual({ sources: ['gc'] });
+    expect(validateSources(['all']).sources).not.toContain('gc');
+    expect(validateSources(['gc', 'metro']).error).toMatch(/cannot be combined/);
+    expect(validateSources(['gc', 'all']).error).toMatch(/cannot be combined/);
+  });
+
   test('validateLevel accepts the Contract-1 levels and names the valid set otherwise', async () => {
     expect(validateLevel('warn')).toEqual({ level: 'warn' });
     const r = validateLevel('loud');
@@ -262,6 +269,62 @@ describe('logs command', () => {
     expect(exitCode).toBe(null);
     expect(out).toHaveLength(1);
     expect(out[0]).toContain('bundling');
+  });
+
+  describe('--source gc', () => {
+    const gcRecord = (ts: number, status: string, level: string, label: string) => ({
+      ts,
+      src: 'gc',
+      level,
+      msg: `${status} ${label}`,
+      event: 'gc_item',
+      runId: 'r1',
+      trigger: 'manual',
+      kind: 'worktree',
+      status,
+      label,
+      id: null,
+      path: label,
+      bytes: null,
+      detail: null,
+    });
+
+    beforeEach(() => {
+      mkdirSync(join(tmpHome, 'gc'), { recursive: true });
+      writeFileSync(
+        join(tmpHome, 'gc', 'gc.ndjson'),
+        [gcRecord(1, 'done', 'info', '/w/a'), gcRecord(2, 'failed', 'error', '/w/b')]
+          .map((r) => `${JSON.stringify(r)}\n`)
+          .join(''),
+      );
+      writeLog('metro.ndjson', [{ ts: 1, src: 'metro', level: 'info', msg: 'bundling' }]);
+    });
+
+    test('prints the machine gc log without the workspace timeline', async () => {
+      await run({ source: ['gc'], json: true });
+      expect(out.map((line) => parseNdjsonLine(line)?.label)).toEqual(['/w/a', '/w/b']);
+    });
+
+    test('filters by level and tail like any other source', async () => {
+      await run({ source: ['gc'], json: true, errors: true });
+      expect(out.map((line) => parseNdjsonLine(line)?.label)).toEqual(['/w/b']);
+      out.length = 0;
+      await run({ source: ['gc'], json: true, tail: '1' });
+      expect(out.map((line) => parseNdjsonLine(line)?.label)).toEqual(['/w/b']);
+    });
+
+    test('works from a directory that is no workspace', async () => {
+      process.chdir(tmpHome);
+      await run({ source: ['gc'], json: true });
+      expect(exitCode).toBe(null);
+      expect(out).toHaveLength(2);
+    });
+
+    test('refuses gc beside another source', async () => {
+      await run({ source: ['gc', 'metro'] });
+      expect(exitCode).toBe(1);
+      expect(errOut.join('\n')).toMatch(/cannot be combined/);
+    });
   });
 
   test('--json emits the raw records, one valid NDJSON object per line', async () => {

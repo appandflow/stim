@@ -29,6 +29,7 @@ import { measureDisk, measurePressure, measureSizes, sizeScanDeferred } from './
 import { diskRecovered, executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
+import { maintenanceItem, openGcLog, type GcLog } from '../commands/gc/log.ts';
 import { diskPressureLevel, levelFloors, levelStillShort, lowestFree } from './pressure.ts';
 
 function writeState(state: MaintenanceState): void {
@@ -187,6 +188,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
   }
   if (!claim) return;
   let logger: ReturnType<typeof maintenanceLogger> | undefined;
+  let gcLog: GcLog | undefined;
   try {
     const settings = resolveMaintenanceSettings();
     if (settings.mode === 'off') return;
@@ -217,6 +219,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
     } catch (error) {
       noteWriteError(error);
     }
+    gcLog = openGcLog({ trigger: 'maintenance', runId: `p-${claim.claimId}`, via: trigger });
     const record = (
       event: MaintenanceRecord['event'],
       level: MaintenanceRecord['level'],
@@ -361,6 +364,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
           outcome = { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
         }
         results.push({ action, outcome });
+        if (outcome.status !== 'kept') gcLog?.record(maintenanceItem(action, outcome));
         const fields = {
           action: {
             kind: executedKind(action),
@@ -386,6 +390,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
           });
         } else if (!loggedSkips.has(action.target)) {
           loggedSkips.add(action.target);
+          gcLog?.record(maintenanceItem(action, outcome));
           record('maintenance_skip', 'info', `Kept ${action.target}: ${outcome.detail}`, {
             target: action.target,
             reason: outcome.detail,

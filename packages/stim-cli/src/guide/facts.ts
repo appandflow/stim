@@ -1759,6 +1759,8 @@ RULES
     lastPass carries startedAt, durationMs, trigger, mode, freedBytes
     (0 in report mode), actions, stopped (0), blocked. recent holds the last 20 action, failure
     and blocked NDJSON records from maintenance/maintenance.ndjson.
+    What each run cleared, kept or failed is in $STIM_HOME/gc/gc.ndjson,
+    read with \`stim logs --source gc --json\` (\`guide logs\`, GC LOG).
     invalid names invalid settings; invalid cache caps use their defaults,
     while invalid maintenance settings disable passes. claim contains an
     unresolved claim's path and reason, plus removeCommand from the claim

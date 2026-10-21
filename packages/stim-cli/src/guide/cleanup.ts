@@ -159,6 +159,23 @@ claim fails with ENOSPC or EDQUOT, the pass deletes it and retries once, so a
 pass starts at zero free disk as long as an earlier pass left the reserve; the
 pass writes it again at its end.
 
+WHAT WAS CLEARED
+Every run that deletes or changes something appends one record per item to
+the machine gc log, $STIM_HOME/gc/gc.ndjson: gc --delete with any flags, gc
+--idle, gc --cache --delete, each maintenance action taken, and what the budget gate
+reclaims before stim start, ios or android. A dry run writes nothing, and a
+gc run that only kept items writes nothing. Failed and kept items carry their
+reason. The file rotates at maintenance.logMaxMb and its old generation is
+kept for maintenance.logRetentionDays, like the maintenance log.
+  stim logs --source gc           the retained records, oldest first
+  stim logs --source gc --json    one record per line
+  stim logs --source gc --errors  only the items that failed
+gc works from any directory because the log is machine-wide; it cannot be
+combined with other --source values and --source all leaves it out. Fields
+(\`guide logs\`, GC LOG): runId, trigger (manual, desktop, maintenance or
+budget), options, kind, status (done, kept or failed), label, id, path,
+bytes, detail.
+
 CLEANUP AND DISK
 
 worktree remove stops the agent-device daemon when the workspace's
