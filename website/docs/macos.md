@@ -195,6 +195,13 @@ Invalid, unlisted or unpaired selections refuse before stopping the running app
 or changing its build record. To change placement, rerun with `--remote-build auto`
 or `--remote-build local`.
 
+When `--remote <machine>` and `--remote-build <name>` name the same Mac (the same
+paired node), the worker builds the app and runs it, so this Mac's Xcode, macOS SDK
+and CPU architecture do not have to match the worker's. The Stim build must still
+match, and the worker needs Xcode and a macOS SDK. This Mac's cache is skipped;
+the worker's completed-app cache is keyed on its own toolchain. In every other
+combination, including `--remote-build auto`, the Xcode and macOS SDK match applies.
+
 With `auto`, `remote.buildMode` also places these SwiftPM Debug builds: `auto` builds here while
 this Mac has capacity, `force` uses an approved remote Mac when one accepts,
 and `off` builds here when local remains in the automatic build pool.
@@ -202,7 +209,7 @@ and `off` builds here when local remains in the automatic build pool.
 members from automatic placement and its local fallback; explicit local or named
 placement bypasses membership. Configure `remote.machines` and approve build
 access as described in [settings](./settings.md). The worker needs matching Stim,
-CPU architecture, Xcode and macOS SDK, and network access to fetch package
+CPU architecture, Xcode and macOS SDK (except for an app built and run on the same Mac, above), and network access to fetch package
 dependencies the first time. It keeps SwiftPM dependencies per client and
 incremental outputs per repository. Verified completed apps can also be reused
 as described above. It runs no

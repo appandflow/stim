@@ -40,6 +40,7 @@ export async function buildMacosBundle({
   note,
   record,
   buildMachine,
+  hostServerKey,
   progress = NO_BUILD_PROGRESS,
 }: {
   context: StimContext;
@@ -53,6 +54,7 @@ export async function buildMacosBundle({
   note: (line: string) => void;
   record?: MacosBuild;
   buildMachine: string;
+  hostServerKey?: string;
   progress?: BuildProgress;
 }): Promise<{
   bundleId: string;
@@ -63,6 +65,9 @@ export async function buildMacosBundle({
   const signal = runCancellationSignal(context) ?? context.signal;
   return withDrainingCancellation(context, signal, async () => {
     throwIfCancelled(signal, 'macOS build');
+    const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
+    const builder = namedBuildMachine(buildMachine) ? machines[0] : undefined;
+    const runsOnWorker = hostServerKey !== undefined && builder?.serverKey === hostServerKey;
     if (record) record.buildMachine = buildMachine;
     setRemoteLogSink(context, (entry) => writer.write({ ...entry, platform: 'macos' }));
     const write = (msg: string) => {
@@ -135,7 +140,7 @@ export async function buildMacosBundle({
     };
     try {
       if (record) record.cacheHit = false;
-      if (recipe.cache) {
+      if (recipe.cache && !runsOnWorker) {
         try {
           identity = await recipe.cache.identity();
           if (record) {
@@ -166,7 +171,6 @@ export async function buildMacosBundle({
       }
       let cacheOnly = false;
       try {
-        const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
         const peer = recipe.cache?.peer?.() ?? null;
         const request = {
           ...recipe.offload.request(bundleId),
@@ -185,7 +189,7 @@ export async function buildMacosBundle({
         if (placement.offload || cacheOnly) {
           const chosen = await chooseBuildMachine({
             projectRoot: root,
-            target: await recipe.offload.target(),
+            target: await recipe.offload.target(runsOnWorker),
             mode,
             here,
             machines,
@@ -225,7 +229,13 @@ export async function buildMacosBundle({
           progress.step('install');
           if (outcome.cacheHit) {
             await reidentifyBundle(context, outcome.artifactPath, bundleId, displayName);
-            await validateMacosArtifactPlatform(context, outcome.artifactPath, recipe.product, signal);
+            await validateMacosArtifactPlatform(
+              context,
+              outcome.artifactPath,
+              recipe.product,
+              signal,
+              runsOnWorker ? chosen.offer.toolchain.arch : undefined,
+            );
           }
           await recipe.validateFetched(outcome.artifactPath, bundleId, displayName);
           throwIfCancelled(signal, 'macOS build');

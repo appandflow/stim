@@ -983,7 +983,8 @@ STIM_REMOTE_BUILD_MODE overrides it for one command. Device, Release and
 and iOS/Android runs with the build cache off, always build here. Hosted iOS
 Debug builds can use a separate --remote-build, targeting the hosting Mac's
 architecture and runtime.
-macOS uses matching Xcode and macOS SDK, with a per-client SwiftPM dependency
+macOS uses matching Xcode and macOS SDK (not when --remote-build and --remote name the
+same Mac; see stim guide macos), with a per-client SwiftPM dependency
 cache on the worker. It skips JavaScript dependencies, prebuild and pods; see
 stim guide macos. Completed caching requires macos.artifactInputs and a locally
 verified compile; remote output is not published under an unverified client key.

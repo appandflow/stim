@@ -467,7 +467,7 @@ in that order:
   and installs the pinned gems itself on the first build. This machine's side of
   the comparison runs `pod --version` in the directory `pod install` runs in. The comparison uses
   `.ruby-version` when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.
-- For macOS, its Xcode and macOS SDK must match. The worker needs network
+- For macOS, its Xcode and macOS SDK must match, unless `--remote-build` and `--remote` name the same Mac, which builds and runs the app and then needs only the same Stim build (see [macOS development](./macos.md#run-it-on-another-mac)). The worker needs network
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally. Completed
   caching requires `macos.artifactInputs` and a locally verified compile; remote

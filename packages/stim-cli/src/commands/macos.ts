@@ -100,7 +100,12 @@ export async function runMacos(
             throw new Error(
               'macos.arguments is too large for a hosted app: at most 32 arguments of 1024 characters (8192 in total), without NUL or line breaks.',
             );
-          if (remote) (await connectHost(remote)).connection.close();
+          let hostServerKey: string | undefined;
+          if (remote) {
+            const probe = await connectHost(remote);
+            hostServerKey = probe.credential.serverKey;
+            probe.connection.close();
+          }
           if (!previous?.host) await stopMacosAppHeld(root);
           upsertProject(root, {});
           recordWorkspaceUse(root, new Date(), context.env, context.cwd);
@@ -116,7 +121,16 @@ export async function runMacos(
             build: { state: 'running', startedAt: new Date().toISOString(), buildMachine },
             ...(previous?.host ? { host: previous.host, hostLaunched: previous.hostLaunched ?? false } : {}),
           };
-          const handoff = await buildBundle(context, root, macos, record, remote !== undefined, note, progress);
+          const handoff = await buildBundle(
+            context,
+            root,
+            macos,
+            record,
+            remote !== undefined,
+            hostServerKey,
+            note,
+            progress,
+          );
           progress.step('launch');
           const launched = (): void => {
             try {
@@ -178,6 +192,7 @@ async function buildBundle(
   recipe: MacosArtifactRecipe,
   record: MacosAppRecord,
   hosted: boolean,
+  hostServerKey: string | undefined,
   note: (line: string) => void,
   progress: BuildProgress = NO_BUILD_PROGRESS,
 ): Promise<BuildHandoff | null> {
@@ -202,6 +217,7 @@ async function buildBundle(
       progress,
       record: record.build,
       buildMachine: record.build.buildMachine!,
+      hostServerKey,
     });
     record.bundleId = built.bundleId;
     record.displayName = displayName;
