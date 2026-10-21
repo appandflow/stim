@@ -1262,14 +1262,16 @@ build passes `APP_VARIANT` to it. The two variants have different bundle ids,
 so they never share a runtime.
 
 The Expo dev server sets `EXPO_DEV_SERVER_ORIGIN` once it starts, and
-`app.config.ts` gives the `expo-updates runtimeversion:resolve` child that
-inherits it the static runtime `dev-server`. That child otherwise recomputes the
-fingerprint on every manifest request, which costs seconds on each dev-client
-launch ([expo/expo#46415](https://github.com/expo/expo/issues/46415)), and the
-dev launcher does not compare the manifest's runtime. Builds (`expo run:*`
-build before they start the dev server), `eas update` and
-`expo-updates fingerprint:generate` run outside the dev server and keep the
-fingerprint, so the runtime of TestFlight builds and updates is unchanged.
+`app.config.ts` gives the static runtime `dev-server` to the `expo-updates
+runtimeversion:resolve` child that inherits it. That child otherwise recomputes
+the fingerprint on every manifest request, which costs seconds on each
+dev-client launch ([expo/expo#46415](https://github.com/expo/expo/issues/46415)),
+and the dev launcher does not compare the manifest's runtime. Every other
+evaluation of the config keeps the fingerprint: builds, `eas update` and
+`expo-updates fingerprint:generate`, including a build started with
+`expo run:* --configuration Release`, which sets the variable before it builds
+but does not run `runtimeversion:resolve`. The runtime of TestFlight builds and
+updates is unchanged.
 
 The app checks for an update on every launch without waiting for it: it
 starts the update it already has and downloads a newer one in the background.
