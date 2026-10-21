@@ -27,7 +27,7 @@ interface TrashEntry {
   path: string;
   worktree: string | null;
   removedAt: string | null;
-  bytes: number;
+  bytes: number | null;
   willDelete: boolean;
   kept: string | null;
 }
@@ -39,13 +39,16 @@ export interface TrashReport {
 
 const CLAIM_LABEL = 'worktree trash';
 
-function claimKept(dir: string): string | null {
+function claimKept(dir: string): { kept: string | null; live: boolean } {
   const survey = readClaimSet(join(dir, TRASH_CLAIMS));
-  if (survey.live.length) return 'a worktree removal is still moving or deleting it';
+  if (survey.live.length) return { kept: 'a worktree removal is still moving or deleting it', live: true };
   const problem = survey.unresolved[0];
   if (problem)
-    return `its ownership claim cannot be verified (${problem.reason}); run \`${claimRemoveCommand(problem.path)}\``;
-  return null;
+    return {
+      kept: `its ownership claim cannot be verified (${problem.reason}); run \`${claimRemoveCommand(problem.path)}\``,
+      live: false,
+    };
+  return { kept: null, live: false };
 }
 
 async function readManifest(dir: string): Promise<TrashManifest | null> {
@@ -77,12 +80,14 @@ export async function collectTrash({
     const stat = await lstat(path).catch(() => null);
     if (!stat?.isDirectory()) continue;
     const manifest = name.startsWith(TRASH_ENTRY_PREFIX) ? await readManifest(path) : null;
-    const kept = manifest ? claimKept(path) : 'it has no valid trash.json, so Stim did not create it';
+    const { kept, live } = manifest
+      ? claimKept(path)
+      : { kept: 'it has no valid trash.json, so Stim did not create it', live: false };
     entries.push({
       path,
       worktree: manifest?.worktree ?? null,
       removedAt: manifest?.createdAt ?? null,
-      bytes: await directorySizeAsync(path, { timeoutMs: 'unbounded', signal, operation }),
+      bytes: live ? null : await directorySizeAsync(path, { timeoutMs: 'unbounded', signal, operation }),
       willDelete: kept === null,
       kept,
     });
@@ -92,11 +97,13 @@ export async function collectTrash({
 
 export function trashLines(report: TrashReport | null | undefined): string[] {
   if (!report) return [];
-  const total = report.entries.reduce((sum, entry) => sum + entry.bytes, 0);
+  const total = report.entries.reduce((sum, entry) => sum + (entry.bytes ?? 0), 0);
   const lines = [`Worktree trash (${formatBytes(total)} in ${report.entries.length}) - ${report.root}:`];
   for (const entry of report.entries) {
     const from = entry.worktree ? ` from ${entry.worktree}` : '';
-    lines.push(`  ${formatBytes(entry.bytes).padStart(10)}  ${entry.path}${from}`);
+    lines.push(
+      `  ${(entry.bytes === null ? 'deleting' : formatBytes(entry.bytes)).padStart(10)}  ${entry.path}${from}`,
+    );
     lines.push(entry.kept ? `              kept: ${entry.kept}` : '              --delete would DELETE it');
   }
   return lines;
@@ -116,13 +123,13 @@ export async function deleteTrash(
       claim = tryAcquireClaim({ root: join(entry.path, TRASH_CLAIMS), mode: 'exclusive', label: CLAIM_LABEL });
     } catch (error) {
       if (!isClaimRefusal(error) && !isClaimUnavailable(error)) throw error;
-      output.record('trash', 'kept', entry.path, { bytes: entry.bytes, detail: error.reason });
+      output.record('trash', 'kept', entry.path, { bytes: entry.bytes ?? 0, detail: error.reason });
       continue;
     }
     if (!claim.acquired) {
       if (claim.pending) releaseClaim(claim.pending);
       output.record('trash', 'kept', entry.path, {
-        bytes: entry.bytes,
+        bytes: entry.bytes ?? 0,
         detail: 'a worktree removal is still moving or deleting it',
       });
       continue;
@@ -130,7 +137,7 @@ export async function deleteTrash(
     try {
       await deleteTrashEntry(entry.path, operation);
       done.count++;
-      done.bytes += entry.bytes;
+      done.bytes += entry.bytes ?? 0;
     } catch (error) {
       if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
         throw error;
@@ -138,7 +145,7 @@ export async function deleteTrash(
       done.failures++;
       const detail = error instanceof Error ? error.message : String(error);
       output.log(chalk.red(`Could not delete ${entry.path}: ${detail}`));
-      output.record('trash', 'failed', entry.path, { bytes: entry.bytes, detail });
+      output.record('trash', 'failed', entry.path, { bytes: entry.bytes ?? 0, detail });
     } finally {
       releaseClaim(claim.acquired);
     }

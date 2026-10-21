@@ -1396,87 +1396,98 @@ async function removeOrRefuse(
             return;
           }
           onRemoved();
-          if (trash) {
-            const moved = plural(trash.moved.length, 'ignored directory', 'ignored directories');
-            const disposed = await disposeTrash(trash, opts.operation);
-            output.error(
-              chalk.dim(
-                phaseLine(
-                  'trash',
-                  disposed === 'background'
-                    ? `deleting ${moved} in the background from ${trash.dir}`
-                    : disposed === 'deleted'
-                      ? `deleted ${moved}`
-                      : `left ${moved} in ${trash.dir}; stim gc --delete deletes them`,
+          try {
+            forgetStatusMeasures(path, result.reclaimedKeys);
+            const finish = (): void => {
+              printRemovalCleanup(result, false, output);
+              output.error(chalk.dim(phaseLine('removed', path)));
+            };
+            if (deleteOwnedBranch && branch) {
+              if (!approvedBranchSha) {
+                output.error(
+                  chalk.yellow(phaseLine('branch', `kept ${branch} (Stim could not record its commit before removal)`)),
+                );
+                output.fail();
+                finish();
+                return;
+              }
+              await withConfigLockAsync(() =>
+                upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha }),
+              );
+              let checkedOutAt: string | undefined;
+              try {
+                checkedOutAt = (await listWorktreesAsync(branchDeleteCwd, options)).find(
+                  (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
+                )?.path;
+              } catch (error) {
+                if (
+                  error instanceof WorkspaceProcessCleanupError ||
+                  (error instanceof Error && 'reportCleanup' in error)
+                )
+                  throw error;
+                opts.operation?.signal.throwIfAborted();
+                if (!isTimeoutError(error)) throw error;
+                output.error(
+                  chalk.yellow(
+                    phaseLine('branch', `kept ${branch} (git did not list the worktrees in time to check it)`),
+                  ),
+                );
+                output.error(chalk.dim(`  Retry: stim worktree remove ${path}`));
+                output.fail();
+                finish();
+                return;
+              }
+              if (checkedOutAt) {
+                output.error(
+                  chalk.yellow(phaseLine('branch', `kept ${branch} (it is checked out at ${checkedOutAt})`)),
+                );
+                output.error(
+                  chalk.dim(`  Switch that worktree to another branch, then retry: stim worktree remove ${path}`),
+                );
+                output.fail();
+                finish();
+                return;
+              }
+              try {
+                await deleteBranchAsync(branchDeleteCwd, branch, approvedBranchSha, options);
+                output.error(chalk.dim(phaseLine('branch', `deleted ${branch}`)));
+              } catch (error) {
+                if (
+                  error instanceof WorkspaceProcessCleanupError ||
+                  (error instanceof Error && 'reportCleanup' in error)
+                )
+                  throw error;
+                output.error(
+                  chalk.yellow(phaseLine('branch', `kept ${branch} (${String((error as Error)?.message || error)})`)),
+                );
+                output.error(chalk.dim(`  Retry with: git -C ${branchDeleteCwd} branch -D -- ${branch}`));
+                output.fail();
+                finish();
+                return;
+              }
+            } else if (branch && retainedBranchReason) {
+              output.error(chalk.dim(phaseLine('branch', `kept ${branch} (${retainedBranchReason})`)));
+            }
+            await withConfigLockAsync(() => removeProject(path));
+            finish();
+          } finally {
+            if (trash) {
+              const moved = plural(trash.moved.length, 'ignored directory', 'ignored directories');
+              const disposed = await disposeTrash(trash, opts.operation);
+              output.error(
+                chalk.dim(
+                  phaseLine(
+                    'trash',
+                    disposed === 'background'
+                      ? `deleting ${moved} in the background from ${trash.dir}`
+                      : disposed === 'deleted'
+                        ? `deleted ${moved}`
+                        : `left ${moved} in ${trash.dir}; stim gc --delete deletes them`,
+                  ),
                 ),
-              ),
-            );
+              );
+            }
           }
-          forgetStatusMeasures(path, result.reclaimedKeys);
-          const finish = (): void => {
-            printRemovalCleanup(result, false, output);
-            output.error(chalk.dim(phaseLine('removed', path)));
-          };
-          if (deleteOwnedBranch && branch) {
-            if (!approvedBranchSha) {
-              output.error(
-                chalk.yellow(phaseLine('branch', `kept ${branch} (Stim could not record its commit before removal)`)),
-              );
-              output.fail();
-              finish();
-              return;
-            }
-            await withConfigLockAsync(() =>
-              upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha }),
-            );
-            let checkedOutAt: string | undefined;
-            try {
-              checkedOutAt = (await listWorktreesAsync(branchDeleteCwd, options)).find(
-                (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
-              )?.path;
-            } catch (error) {
-              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-                throw error;
-              opts.operation?.signal.throwIfAborted();
-              if (!isTimeoutError(error)) throw error;
-              output.error(
-                chalk.yellow(
-                  phaseLine('branch', `kept ${branch} (git did not list the worktrees in time to check it)`),
-                ),
-              );
-              output.error(chalk.dim(`  Retry: stim worktree remove ${path}`));
-              output.fail();
-              finish();
-              return;
-            }
-            if (checkedOutAt) {
-              output.error(chalk.yellow(phaseLine('branch', `kept ${branch} (it is checked out at ${checkedOutAt})`)));
-              output.error(
-                chalk.dim(`  Switch that worktree to another branch, then retry: stim worktree remove ${path}`),
-              );
-              output.fail();
-              finish();
-              return;
-            }
-            try {
-              await deleteBranchAsync(branchDeleteCwd, branch, approvedBranchSha, options);
-              output.error(chalk.dim(phaseLine('branch', `deleted ${branch}`)));
-            } catch (error) {
-              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-                throw error;
-              output.error(
-                chalk.yellow(phaseLine('branch', `kept ${branch} (${String((error as Error)?.message || error)})`)),
-              );
-              output.error(chalk.dim(`  Retry with: git -C ${branchDeleteCwd} branch -D -- ${branch}`));
-              output.fail();
-              finish();
-              return;
-            }
-          } else if (branch && retainedBranchReason) {
-            output.error(chalk.dim(phaseLine('branch', `kept ${branch} (${retainedBranchReason})`)));
-          }
-          await withConfigLockAsync(() => removeProject(path));
-          finish();
         },
         opts.operation,
         opts.beforeRemove,

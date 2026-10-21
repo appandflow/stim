@@ -167,6 +167,7 @@ export async function deleteTrashEntry(dir: string, operation?: StimContext): Pr
       await runOperationFile(operation, getExecutor(), 'rm', ['-rf', '--', join(dir, TRASH_ENTRIES)], {
         timeoutMs: 'unbounded',
         signal: operation?.signal,
+        cwd: dirname(dir),
       });
     } catch (error) {
       rethrowCancellation(error, operation?.signal);

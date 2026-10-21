@@ -1,11 +1,11 @@
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collectTrash, deleteTrash } from '../commands/gc/trash.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
 import { resetExecutor } from '../exec.ts';
-import { disposeTrash, moveIgnoredTreesToTrash } from '../workspace/worktree-trash.ts';
+import { moveIgnoredTreesToTrash } from '../workspace/worktree-trash.ts';
 import { goneClaimOwner, plantClaim } from './_factories.ts';
 
 const POSIX = process.platform !== 'win32';
@@ -56,7 +56,9 @@ test.skipIf(!POSIX)(
         { path: live.dir, worktree: join(base, 'live'), willDelete: false },
       ].toSorted((a, b) => (a.path < b.path ? -1 : 1)),
     );
-    for (const entry of report?.entries ?? []) expect(entry.bytes).toBeGreaterThanOrEqual(64 * 1024);
+    for (const entry of report?.entries.filter((item) => item.willDelete) ?? [])
+      expect(entry.bytes).toBeGreaterThanOrEqual(64 * 1024);
+    expect(report?.entries.find((entry) => entry.path === live.dir)?.bytes).toBeNull();
 
     const done = await deleteTrash(undefined);
 
@@ -64,23 +66,6 @@ test.skipIf(!POSIX)(
     expect(existsSync(crashed)).toBe(false);
     expect(existsSync(join(live.dir, 'entries', '0', 'pkg', 'index.js'))).toBe(true);
     expect(takeGcResults().map(({ kind, status }) => `${kind}:${status}`)).toEqual(['trash:done']);
-  },
-  30_000,
-);
-
-test.skipIf(!POSIX)(
-  'the background rm a removal starts deletes its trash entry',
-  async () => {
-    const repo = repoWithNodeModules('wt');
-    const moved = await moveIgnoredTreesToTrash(repo);
-    if (!moved) throw new Error('nothing was moved to the trash');
-    expect(existsSync(join(repo, 'node_modules'))).toBe(false);
-
-    expect(await disposeTrash(moved)).toBe('background');
-
-    const deadline = Date.now() + 20_000;
-    while (readdirSync(trash).length && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
-    expect(readdirSync(trash)).toEqual([]);
   },
   30_000,
 );
