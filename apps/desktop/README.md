@@ -1636,6 +1636,9 @@ Desktop keeps the current page and opens the workspace only when **Show** is
 clicked. A newer `stim` shows a card with
 **Update** (see below); dismissing it keeps it away until a newer version is
 released. Agent and build notifications keep appearing as cards at the top right.
+Turn off **Settings > App > Show new workspace cards** to stop the "New workspace" cards. It hides only
+those cards: the workspace still appears in the sidebar, and Notifications, system notifications and the
+other cards are unchanged. A workspace link still shows its "workspace started" card.
 
 ## Workspace links
 
@@ -1780,7 +1783,11 @@ package app that has not run as a macOS app yet, and `stim logs --errors` when a
 errors. Only applicable tips appear. One tip stays for the calendar day;
 the next day picks the least recently shown applicable tip, with unseen tips
 first. **Next Tip** cycles through the remaining choices. The X hides the card
-until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
+until tomorrow. Turn off **Settings > App > Show tips** to disable tips and the lightbulb suggestion
+banners in the bottom-left stack; the Machine page card stays, and suggestions that go to system
+notifications are unchanged. Turn off **Offer the tutorial** to remove the tutorial tip and the setup
+guide's **Take the Tutorial** button and to stop the panel from opening on its own at launch or when a
+tutorial workspace appears. **Help > Stim Tutorial…** still opens it.
 
 Tips and suggestions share state for remote Macs, phone pairing, and
 hosted simulators. A shown, permanently dismissed, or currently snoozed

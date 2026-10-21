@@ -221,10 +221,12 @@ final class DiscoveryCoordinator: ObservableObject {
       candidates.append(prompt)
     }
     candidates = Discovery.suppressedByMacSuggestion(candidates, macSuggested: persistence.macSuggested)
-    let tipsShown = TipStore(defaults: .standard).state.lastShown
+    let tips = TipStore(defaults: .standard)
+    let tipsShown = tips.state.lastShown
     candidates.removeAll { Tips.suppressesDiscovery($0.type, lastShown: tipsShown) }
     guard !delivering, allowed(now: now),
-      let prompt = Discovery.select(candidates, states: persistence.states, now: now, bannersAvailable: MainWindow.isOpen)
+      let prompt = Discovery.select(
+        candidates, states: persistence.states, now: now, bannersAvailable: MainWindow.isOpen && tips.enabled)
     else { return }
     if prompt.surface == .banner {
       let previous = persistence.state(prompt.type)

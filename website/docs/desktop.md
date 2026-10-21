@@ -637,6 +637,8 @@ supported. Binary video uses its existing stream format.
 When an agent creates a workspace while Desktop is open, a "New workspace"
 card appears at the bottom left with **Show**, once per workspace. It reads
 "Building iOS" or "Building Android" while that workspace's build runs.
+Turn off **Settings > App > Show new workspace cards** to stop these cards;
+Notifications and the other cards are unchanged.
 
 Stim prints an `Open in Stim: https://stim.appandflow.com/open?...` link when it
 starts work. The link contains a persistent Stim-home ID and the registered
@@ -736,7 +738,10 @@ package app that has not run as a macOS app yet, and `stim logs --errors` when a
 errors. Only applicable tips appear. One tip stays for the calendar day;
 the next day picks the least recently shown applicable tip, with unseen tips
 first. **Next Tip** cycles through the remaining choices. The X hides the card
-until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
+until tomorrow. Turn off **Settings > App > Show tips** to disable tips and the lightbulb suggestion
+banners in the bottom-left stack; the Machine page card stays. Turn off **Offer the tutorial** to
+remove the tutorial tip and the setup guide's **Take the Tutorial** button, and to stop the tutorial
+panel from opening on its own. **Help > Stim Tutorial…** still opens it.
 
 Tips and suggestions share state for remote machines, phone pairing, and
 hosted simulators. A shown, permanently dismissed, or currently snoozed

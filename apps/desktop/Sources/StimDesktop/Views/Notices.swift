@@ -30,15 +30,19 @@ final class NoticeCenter: ObservableObject {
   @Published private(set) var index = 0
   var arrivals = WorkspaceArrivals()
   private let workspaceLifetime: TimeInterval
+  private let defaults: UserDefaults
   private var timers: [Notice.ID: Timer] = [:]
 
-  init(workspaceLifetime: TimeInterval = 60) {
+  init(workspaceLifetime: TimeInterval = 60, defaults: UserDefaults = .standard) {
     self.workspaceLifetime = workspaceLifetime
+    self.defaults = defaults
   }
 
   var current: Notice? { notices.indices.contains(index) ? notices[index] : nil }
 
-  func show(_ notice: Notice) {
+  @discardableResult
+  func show(_ notice: Notice) -> Bool {
+    if notice.newWorkspace != nil, !AppPreferences.showsWorkspaceCards(defaults) { return false }
     if let key = notice.key { remove(key: key) }
     notices.insert(notice, at: 0)
     index = 0
@@ -48,11 +52,12 @@ final class NoticeCenter: ObservableObject {
         MainActor.assumeIsolated { self?.remove(id) }
       }
     }
-    guard NSWorkspace.shared.isVoiceOverEnabled else { return }
+    guard NSWorkspace.shared.isVoiceOverEnabled else { return true }
     let text = [notice.title, notice.detail, "Action: \(notice.actionTitle)"].compactMap { $0 }.joined(separator: ". ")
     NSAccessibility.post(
       element: NSApp as Any, notification: .announcementRequested,
       userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+    return true
   }
 
   func step(_ offset: Int) {

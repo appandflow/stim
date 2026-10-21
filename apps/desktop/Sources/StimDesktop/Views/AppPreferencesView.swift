@@ -15,6 +15,8 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.diffViewer) private var diffViewer = DiffViewer.builtIn
   @AppStorage(AppPreferences.Key.terminalBundleID) private var terminal = ""
   @AppStorage(AppPreferences.Key.tipsEnabled) private var showsTips = true
+  @AppStorage(AppPreferences.Key.showsWorkspaceCards) private var showsWorkspaceCards = true
+  @AppStorage(AppPreferences.Key.offersTutorial) private var offersTutorial = true
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
   @AppStorage(AppPreferences.Key.stimExecutable) private var stimExecutable = ""
   @AppStorage(AppPreferences.Key.remoteSessionMinutes) private var remoteMinutes = 30
@@ -199,6 +201,14 @@ struct AppPreferencesView: View {
           Button("Open Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }.buttonStyle(.stim())
         }
         Toggle("Show tips", isOn: $showsTips)
+        Toggle("Show new workspace cards", isOn: $showsWorkspaceCards)
+        Toggle("Offer the tutorial", isOn: $offersTutorial)
+        Text(
+          "Turning off Show tips also hides the suggestion banners. New workspace cards are the ones in the bottom-left corner; "
+            + "Notifications, system notifications and build requests are unchanged. "
+            + "With the tutorial off, Help > Stim Tutorial still opens it."
+        )
+        .foregroundStyle(Palette.tertiary)
         Toggle("Show in the menu bar", isOn: $showsMenuBarExtra)
         Toggle("Launch at login", isOn: $launchesAtLogin)
           .onChange(of: launchesAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
