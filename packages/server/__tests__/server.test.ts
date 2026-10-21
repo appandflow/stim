@@ -46,6 +46,7 @@ import {
   isJsonObject,
   loadConfig,
   settingsJsonSchema,
+  serverLocalSocket,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
 import * as stim from 'stim';
@@ -1530,12 +1531,13 @@ require('node:net').createServer().listen(0, '127.0.0.1');
 });
 
 describe.skipIf(process.platform === 'win32')('local socket', () => {
-  const another = (name: string) =>
+  const another = (name: string, localSocket?: string) =>
     startServer({
       hosts: ['127.0.0.1'],
       port: 0,
       stimCli: join(root, 'fake-stim.mjs'),
       name,
+      localSocket,
       stimVersion: '9.9.9',
       serverVersion: '1.2.3',
       tailscaleState: { state: 'not-running', backendState: 'Stopped' },
@@ -1547,9 +1549,27 @@ describe.skipIf(process.platform === 'win32')('local socket', () => {
       pullRequests: async () => new Map(),
     });
 
+  test('a long hosted home serves a private socket and removes it on close', async () => {
+    process.env.STIM_HOME = join(root, 'device-host', 'sessions', 'x'.repeat(80), 'home');
+    expect(Buffer.byteLength(join(process.env.STIM_HOME, 'server', 'local.sock'))).toBeGreaterThan(107);
+    mkdirSync(process.env.STIM_HOME, { recursive: true });
+    await start();
+    const socket = serverLocalSocket();
+    expect(Buffer.byteLength(socket)).toBeLessThanOrEqual(103);
+    expect(server!.localSocket).toBe(socket);
+    expect(statSync(socket).mode & 0o777).toBe(0o600);
+    expect(statSync(dirname(socket)).mode & 0o777).toBe(0o700);
+    const client = await localConnect(socket);
+    expect(await client.request('hello', { client: CLIENT })).toHaveProperty('result.device.id', 'local');
+    await server!.close();
+    server = null;
+    expect(existsSync(socket)).toBe(false);
+    expect(existsSync(`${socket}.claims`)).toBe(false);
+  });
+
   test('two servers starting on one home over a stale socket leave exactly one serving it', async () => {
-    const socketPath = join(process.env.STIM_HOME!, 'server', 'local.sock');
-    mkdirSync(join(process.env.STIM_HOME!, 'server'), { recursive: true, mode: 0o700 });
+    const socketPath = serverLocalSocket();
+    mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 });
     writeFileSync(socketPath, 'stale');
     writeFileSync(join(root, 'fake-stim.mjs'), FAKE_STIM);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1571,7 +1591,7 @@ describe.skipIf(process.platform === 'win32')('local socket', () => {
     symlinkSync(elsewhere, join(process.env.STIM_HOME!, 'server'));
     writeFileSync(join(root, 'fake-stim.mjs'), FAKE_STIM);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const linked = await another('Linked');
+    const linked = await another('Linked', join(process.env.STIM_HOME!, 'server', 'local.sock'));
     try {
       await linked.ready;
       expect(linked.localSocket).toBeNull();
@@ -1584,13 +1604,13 @@ describe.skipIf(process.platform === 'win32')('local socket', () => {
   });
 
   test('is private to this user, replaces a stale file and refuses a second server', async () => {
-    const socketPath = join(process.env.STIM_HOME!, 'server', 'local.sock');
-    mkdirSync(join(process.env.STIM_HOME!, 'server'), { recursive: true, mode: 0o755 });
+    const socketPath = serverLocalSocket();
+    mkdirSync(dirname(socketPath), { recursive: true, mode: 0o755 });
     writeFileSync(socketPath, 'stale');
     await start();
     expect(server!.localSocket).toBe(socketPath);
     expect(statSync(socketPath).mode & 0o777).toBe(0o600);
-    expect(statSync(join(process.env.STIM_HOME!, 'server')).mode & 0o777).toBe(0o700);
+    expect(statSync(dirname(socketPath)).mode & 0o777).toBe(0o700);
     expect(await (await desktop()).request('stats.get')).toHaveProperty('result');
 
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});

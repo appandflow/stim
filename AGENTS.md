@@ -73,8 +73,11 @@ read-capable session serves the same Stim home, and for device replay and a leas
 device's screen. Status and explicit refresh use only the matching server's views;
 connection errors retain the last good display without a CLI status fallback. It runs remaining Stim commands
 through the CLI, never by reading or writing `$STIM_HOME`. It connects to
-stim-server only over the server's Unix socket `$STIM_HOME/server/local.sock`,
-which serves the server's own user without pairing or Noise. Build and test it with `swift build` and
+stim-server only over the server's Unix socket, normally `$STIM_HOME/server/local.sock`.
+When that path exceeds macOS's 103-byte limit, core and Desktop use
+`/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`. Its directory
+is mode 0700 and owned by the server's user; the socket serves only that user
+without pairing or Noise. Build and test it with `swift build` and
 `swift test` from that directory, both with `-Xswiftc -warnings-as-errors` in
 CI. Format and lint its Swift sources with `scripts/format.sh` and
 `scripts/format.sh --check`. Its design tokens and empty-state agent prompts are generated from

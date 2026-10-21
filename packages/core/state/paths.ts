@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { configDir, workspaceStateDir as workspaceDir } from '../index.ts';
@@ -207,9 +208,16 @@ export function clientIdentityKeyFile(): string {
   return join(configDir(), 'client-identity.key');
 }
 
-/** The Unix socket stim-server serves this machine's own user on, without Noise or pairing. */
+/**
+ * The local Unix socket. sun_path permits 103 UTF-8 bytes on macOS and 107 on Linux. Longer paths use
+ * /tmp/stim-sockets-<uid>/<SHA-256 of the normalized absolute socket path>.sock.
+ */
 export function serverLocalSocket(): string {
-  return join(configDir(), 'server', 'local.sock');
+  const path = join(configDir(), 'server', 'local.sock');
+  const uid = process.getuid?.();
+  const maximumPathBytes = process.platform === 'linux' ? 107 : 103;
+  if (uid === undefined || Buffer.byteLength(path) <= maximumPathBytes) return path;
+  return join('/tmp', `stim-sockets-${uid}`, `${createHash('sha256').update(path).digest('hex')}.sock`);
 }
 
 export function serverSetupDir(): string {
