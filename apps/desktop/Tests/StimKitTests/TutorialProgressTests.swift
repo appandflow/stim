@@ -265,7 +265,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(state("share", in: result).link?.number == 7)
 }
 
-@Test func tutorialAgentTicksViewerEventsOnTheTourDeviceAndNextRecordsItDone() throws {
+@Test func tutorialAgentAdvancesAfterViewingActionsAndPlayingReplay() throws {
   var progress = TutorialProgress()
   let checked = try log("press", at: afterBuild, source: "agent", event: "agent_action", device: "tutorial-simulator")
   var input = TutorialInput(
@@ -275,12 +275,12 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   var result = progress.update(input)
   #expect(state("agent", in: result).detail.isEmpty)
   #expect(state("agent", in: result).ticks.allSatisfy { !$0.done })
-  input.viewerEvents = [.actionsViewed("tutorial-simulator"), .replayPlayed("tutorial-simulator")]
+  input.viewerEvents = [.actionsViewed("tutorial-simulator")]
   result = progress.update(input)
   #expect(result.currentStep == "agent")
+  input.viewerEvents = [.replayPlayed("tutorial-simulator")]
+  result = progress.update(input)
   #expect(state("agent", in: result).ticks.map(\.done) == [true, true])
-  progress.next(now: afterRebuild.addingTimeInterval(1))
-  result = progress.update(TutorialInput(environment: try environment(), now: afterRebuild.addingTimeInterval(1)))
   #expect(result.currentStep == "logs")
   #expect(state("agent", in: result).state == .done)
 }

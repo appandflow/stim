@@ -633,6 +633,7 @@ public struct TutorialProgress: Sendable {
       }
       let off = input.replayOff || environment?.recording?.enabled == false
       return Checkpoint(
+        completed: actionsViewed && replayPlayed ? now : nil,
         detail: !recorded
           ? "No agent actions were recorded on the first change's simulator."
           : off ? "Replay is off: Settings > Advanced" : "",
