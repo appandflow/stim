@@ -483,7 +483,10 @@ names refuse at setup before checking the cache. See [machine settings](./settin
 The app builds locally by default; `--eas-profile` can instead download an
 [EAS development build](./eas-builds.md). `stim start --remote` creates the
 Metro route required by the remote device. Remote EAS sessions can incur cost
-independently of the build source. Stim prepares the app before it creates or
+independently of the build source. Stim has EAS stop every session it creates
+after `remote.easMaxDurationMinutes` (machine setting, default 30), which ends a
+session whose workspace was deleted by hand; the next run replaces an expired
+session. EAS rejects a value above the account plan's session limit. Stim prepares the app before it creates or
 reconnects the session, so a failed build starts no session and the install
 follows the connection directly.
 

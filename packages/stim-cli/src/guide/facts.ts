@@ -124,8 +124,10 @@ warns when gh is unavailable.
 
 status's remoteDevices lists each environment's recorded EAS Simulator
 session. The session is billable while it runs, and it makes the environment
-live. status reads only local records; it does not ask EAS whether the session
-is still running.
+live. EAS stops it by itself after remote.easMaxDurationMinutes (default 30).
+status reads only local records; it does not ask EAS whether the session is
+still running, so a session EAS already stopped stays listed until the next
+run replaces it or stop clears it.
 
   remoteDevices   [{ platform, backend, sessionId, state, startedAt,
                   webPreviewUrl }], empty when the workspace has none

@@ -7,7 +7,7 @@ import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { operationState } from './operation-state.ts';
 import { formatElapsed } from '../command-output.ts';
 import type { ClaimHolder } from '../ownership-claim.ts';
-import { readJsonObject, type RemoteDeviceBackend } from '@stim-cli/core/state';
+import { readJsonObject, settingDefinition, settingValueError, type RemoteDeviceBackend } from '@stim-cli/core/state';
 import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
 import { workspaceDir, workspaceId, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -55,7 +55,7 @@ import {
   removeEasSessionClaim,
   removeEasSessionClaimAsync,
 } from './eas-session-ledger.ts';
-import { getConfigDir } from '../workspace/config.ts';
+import { getConfigDir, loadConfig } from '../workspace/config.ts';
 
 export type { RemoteDeviceBackend } from '@stim-cli/core/state';
 
@@ -547,6 +547,21 @@ export async function resolveRemoteContext({
     }
   }
 
+  let sessionMaxMinutes = maxDurationMinutes;
+  if (backend === 'eas' && sessionMaxMinutes === null) {
+    const setting = settingDefinition('remote.easMaxDurationMinutes');
+    const configured = loadConfig()?.remote?.easMaxDurationMinutes;
+    const problem = setting && configured !== undefined ? settingValueError(setting, configured) : null;
+    if (problem) {
+      return {
+        failed: `Invalid remote.easMaxDurationMinutes value ${JSON.stringify(configured)}. Expected ${problem}.`,
+        remedy: 'Run `stim settings set remote.easMaxDurationMinutes <minutes> --scope machine`, then retry.',
+        code: 'STIM_BAD_ARG',
+      };
+    }
+    sessionMaxMinutes = typeof configured === 'number' ? configured : Number(setting?.default);
+  }
+
   return {
     ctx: {
       root,
@@ -557,7 +572,7 @@ export async function resolveRemoteContext({
       easBin: easBin ?? '',
       agentDeviceBin,
       operation,
-      maxDurationMinutes,
+      maxDurationMinutes: sessionMaxMinutes,
       deviceType: backend === 'eas' ? deviceType : null,
       publicMetroUrl: null,
       existingDaemon,

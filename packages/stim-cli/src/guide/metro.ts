@@ -117,7 +117,9 @@ REMOTE DEVICE BACKENDS
   are Apple silicon. The cache key ends in that architecture.
 
   The EAS backend needs eas-cli 21.6.0 or later and an account with EAS
-  Simulator access. An EAS session is billable. Stim prepares the app before
+  Simulator access. An EAS session is billable; Stim has EAS stop each session
+  it creates after remote.easMaxDurationMinutes (default 30), and a later run
+  replaces a session that expired. Stim prepares the app before
   it creates or reconnects the session, so a failed build starts no session
   and the install follows the connection directly. EAS does not inherit the
   proxy credentials. Always tear the session down: \`stop\`,

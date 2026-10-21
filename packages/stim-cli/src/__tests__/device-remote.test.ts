@@ -21,6 +21,7 @@ import { PUBLIC_METRO_ENV } from '../engine/metro-reach.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { easSessionLedgerLock } from '@stim-cli/core/state';
 import { readEasSessionLedger, recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
+import { saveConfig } from '../workspace/config.ts';
 
 const EAS_CLI_VERSION = () => 'eas-cli/24.8.0 darwin-arm64 node-v22.22.2';
 
@@ -890,10 +891,39 @@ describe('session creation', () => {
     expect(exec.calls[0]?.cwd).toBe(root);
   });
 
-  test('sends no duration of its own, because the cap is per-account', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    await remoteIosDeps(ctx()).ensureBooted({});
-    expect(exec.calls[0]?.args ?? []).not.toContain('--max-duration-minutes');
+  describe('session duration cap', () => {
+    const create = async () => {
+      const resolved = await resolveRemoteContext({
+        root,
+        backend: 'eas',
+        easBin: '/bin/eas',
+        env: {},
+        lookupAgentDevice: () => '/bin/agent-device',
+        readEasCliVersion: EAS_CLI_VERSION,
+      });
+      if (!('ctx' in resolved)) return resolved;
+      const exec = mockExec({ outputs: { sim: CREATED } });
+      await remoteIosDeps({ ...resolved.ctx, easLedgerRoot: tmpHome, sleep: async () => {} }).ensureBooted({});
+      const args = exec.calls[0]?.args ?? [];
+      return args[args.indexOf('--max-duration-minutes') + 1];
+    };
+
+    test('every session Stim creates is capped at 30 minutes unless the machine setting says otherwise', async () => {
+      expect(await create()).toBe('30');
+    });
+
+    test('remote.easMaxDurationMinutes in the machine config sets the cap', async () => {
+      saveConfig({ projects: {}, repos: {}, remote: { easMaxDurationMinutes: 45 } });
+      expect(await create()).toBe('45');
+    });
+
+    test('an invalid machine value refuses instead of creating an uncapped session', async () => {
+      saveConfig({ projects: {}, repos: {}, remote: { easMaxDurationMinutes: 0 } });
+      expect(await create()).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        failed: expect.stringContaining('remote.easMaxDurationMinutes'),
+      });
+    });
   });
 
   test('a caller-chosen duration is still sent', async () => {
