@@ -7,6 +7,11 @@ import { withAmbientContext } from '@stim-cli/core';
 import { runId } from '@stim-cli/core/state';
 import { getExecutor, isUnsafeBatchSpawn, resetExecutor } from '../exec.ts';
 
+vi.mock('../process-group-exit.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../process-group-exit.ts')>()),
+  groupExitBudgetMs: () => 1000,
+}));
+
 test('default executor runs commands and returns stdout trimmed', () => {
   resetExecutor();
   const out = getExecutor().run('echo hello', { timeoutMs: 60_000 });
