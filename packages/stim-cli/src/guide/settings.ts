@@ -366,9 +366,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         still end a session sooner; a run after the cap expires
                         replaces the stopped session. Stim passes it to eas sim
                         as --max-duration-minutes. EAS rejects a value above the
-                        account plan's session limit (40 minutes on the Free
-                        plan, 115 on paid plans), so raise it only as far as
-                        the plan allows.
+                        account plan's session limit, so raise it only as far
+                        as the plan allows. A run reuses a live session without
+                        checking its remaining time.
   metro.tunnel          selects how a remote device reaches this workspace's
                         Metro after remote intent exists. Plain \`start\` stays
                         local. For Expo and bare React Native, "auto" (default)

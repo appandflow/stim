@@ -935,7 +935,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 30,
     description:
-      "Maximum minutes of each EAS Simulator session Stim creates, after which EAS stops it and stops billing; stim stop and gc end a session sooner. EAS rejects a value above the account plan's session limit (40 minutes on the Free plan)",
+      "Maximum minutes of each EAS Simulator session Stim creates, after which EAS stops it and stops billing; stim stop and gc --delete end a session sooner. EAS rejects a value above the account plan's session limit",
   },
   {
     key: 'remote.build',
