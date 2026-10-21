@@ -11,7 +11,14 @@ import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts'
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
 import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
-import { NO_BUILD_PROGRESS, startBuildProgress, tapBuildLog, type BuildProgress } from '../engine/build-progress.ts';
+import {
+  NO_BUILD_PROGRESS,
+  runFailureRecord,
+  startBuildProgress,
+  tapBuildLog,
+  thrownRunFailureRecord,
+  type BuildProgress,
+} from '../engine/build-progress.ts';
 import { basename, join } from 'node:path';
 import { artifactCachePolicy, optimizationBuildProfile } from '../optimizations.ts';
 import { type Command, InvalidArgumentError } from 'commander';
@@ -493,6 +500,7 @@ async function runIos(
     if (logPath) note(chalk.dim(phaseLine('log', logPath)));
     const failedBuild = build ?? acquiredBuild;
     if (failedBuild) recordFailedBuild(failedBuild, code);
+    if (acquiredBuild) logWriter().write(runFailureRecord({ code, message, phase: progress.phase() }));
     note(chalk.red(phaseLine('failed', code)));
     if (!setup) recordRun({ failed: true, durationMs: elapsed() });
     if (json) {
@@ -1013,6 +1021,7 @@ async function runIos(
       if (acquiredBuild) {
         const { code } = error as { code?: unknown };
         recordFailedBuild(acquiredBuild, typeof code === 'string' ? code : undefined);
+        logWriter().write(thrownRunFailureRecord(error, progress.phase()));
       }
       recordRun({ failed: true, durationMs: elapsed() });
       throw error;
