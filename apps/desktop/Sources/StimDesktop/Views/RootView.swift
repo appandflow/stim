@@ -416,7 +416,9 @@ struct RootView: View {
       ticks: tutorial.snapshot?.steps.first { $0.id == tutorial.snapshot?.currentStep }?.ticks ?? [],
       showMe: {
         if tutorial.snapshot?.isFinished == true {
-          openTutorialArchive()
+          if let archive = tutorial.snapshot?.record.latestArchive(in: store.payload?.archived ?? []) {
+            navigate(.archived(archive.id), .click("tutorial Show me"))
+          }
         } else if let path = tutorial.tourPath {
           navigate(.environment(path), .click("tutorial Show me"))
           if ["logs", "refresh", "agent"].contains(tutorial.snapshot?.currentStep ?? "") { showsLogs = true }
@@ -458,10 +460,14 @@ struct RootView: View {
     openRequests.viewer = ViewedDevice(id: device.id, workspace: path)
   }
 
-  private func openTutorialArchive() {
-    if let archive = ArchivedWorkspace.newest(removedFrom: tutorial.tourPath ?? "", in: store.payload?.archived ?? []) {
-      navigate(.archived(archive.id), .click("tutorial Show me"))
+  private var tutorialArchiveUnavailableReason: String {
+    if store.payload == nil { return "Waiting for Stim to load saved archives." }
+    if tutorial.archiveEnabled == false { return "Archiving is off. No saved archive is available for this tutorial run." }
+    let paths = tutorial.snapshot?.record.trackedPaths ?? []
+    if store.payload?.environments.contains(where: { paths.contains($0.path) }) == true {
+      return "Finish removing the tutorial worktrees to see their saved builds and logs in Archived."
     }
+    return "No saved archive is available for this tutorial run. It may have expired or been removed."
   }
 
   private var showsWorkspace: Bool {
@@ -496,7 +502,8 @@ struct RootView: View {
   }
 
   private func tutorialPanelContent(_ snapshot: TutorialSnapshot) -> some View {
-    TutorialPanel(
+    let archive = snapshot.record.latestArchive(in: store.payload?.archived ?? [])
+    return TutorialPanel(
       snapshot: snapshot, message: tutorial.notice,
       issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState,
       agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
@@ -504,7 +511,10 @@ struct RootView: View {
       copied: { tutorial.copiedPrompt() }, next: tutorial.next,
       restart: tutorial.restart,
       close: tutorial.close,
-      openArchived: openTutorialArchive,
+      openArchived: archive.map { archive in
+        { navigate(.archived(archive.id), .click("tutorial Open Archived")) }
+      },
+      archiveUnavailableReason: tutorialArchiveUnavailableReason,
       openBuild: tutorial.tourPath.map { path in
         {
           navigate(.environment(path), .click("tutorial Open the build"))

@@ -2064,10 +2064,11 @@ tutorial version is 2, from the repository's `expo.extra.stimTutorial`. A stored
 version 1 record is dropped and starts over on a version 2 workspace. Restart and
 "take the tutorial" start a fresh record at the current time that forgets the old tour paths even
 while the old worktrees are still registered; only linked worktrees whose creation time is after
-that start count, and the oldest one becomes the tour. Every step has one Next
+that start count, and the oldest one becomes the tour. Every step has one Skip step
 button: it records the step as done when its non-optional ticks are all done or
 its checkpoint completed, and as skipped otherwise. Detected steps advance on
-their own.
+their own, including Agent Actions after viewing and replaying. The first step explains automatic advancement. Waiting states show a spinner; blocked or interactive steps show an information icon and guidance.
+The summary distinguishes completed required steps from an ended tour with skipped steps, shows completed/skipped counts and time in the tutorial, and keeps Restart only in the footer. Open Archived selects the newest archive from either tracked worktree removed after this run began; when unavailable, the summary explains why. Stepper tooltips include the number, title and status, with the viewing ring separate from the current-step dot.
 Pair a Phone opens the Pair a Phone wizard, which
 turns on serving itself when the server is off. A pairing that exists when the step starts shows Done Already,
 followed by "Open Stim on your phone: the tutorial workspaces are there".

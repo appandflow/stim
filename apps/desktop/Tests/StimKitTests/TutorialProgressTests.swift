@@ -67,6 +67,40 @@ private func log(
   #expect(record.archivedProjectRoots(in: [entry]).isEmpty)
 }
 
+@Test func tutorialArchiveSelectionUsesEitherWorktreeAndExcludesEarlierRuns() throws {
+  var record = TutorialRecord(version: 2, tourPath: tourPath, startedAt: afterRebuild)
+  record.secondPath = tourPath + "-second"
+  var first = try #require(fixture("06-archived").archived?.first)
+  first.id = "first"
+  first.removedAt = "2026-10-07T05:07:00.000Z"
+  var second = first
+  second.id = "second"
+  second.projectRoot = try #require(record.secondPath)
+  second.removedAt = "2026-10-07T05:08:00.000Z"
+  #expect(record.latestArchive(in: [second])?.id == "second")
+  #expect(record.latestArchive(in: [first, second])?.id == "second")
+  second.removedAt = "2026-10-07T05:05:00.000Z"
+  #expect(record.latestArchive(in: [first, second])?.id == "first")
+  #expect(record.latestArchive(in: [second]) == nil)
+  second.projectRoot = tourPath + "-unrelated"
+  second.removedAt = "2026-10-07T05:09:00.000Z"
+  #expect(record.latestArchive(in: [second]) == nil)
+  #expect(record.latestArchive(in: []) == nil)
+}
+
+@Test func tutorialCompletionRequiresRequiredStepsButAllowsOptionalSkips() {
+  let steps = TutorialSteps.steps(phoneApp: false)
+  var record = TutorialRecord(version: 2, startedAt: tourStart, step: "done")
+  record.skipped = steps.map(\.id)
+  #expect(!record.hasCompletedRequiredSteps(in: steps))
+  record.done = steps.filter { !$0.optional }.map(\.id)
+  record.skipped = steps.filter(\.optional).map(\.id)
+  #expect(record.hasCompletedRequiredSteps(in: steps))
+  record.done.removeAll { $0 == "finish" }
+  record.skipped.append("finish")
+  #expect(!record.hasCompletedRequiredSteps(in: steps))
+}
+
 @Test func tutorialBeginCheckpointDoesNotOfferRestartBeforeRunPromptCopy() throws {
   let legacy = try JSONDecoder().decode(
     TutorialRecord.self,
@@ -273,7 +307,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
     viewerEvents: [.actionsViewed("other"), .replayPlayed("other")], now: afterRebuild,
     record: saved(at: "agent", since: afterRebuild))
   var result = progress.update(input)
-  #expect(state("agent", in: result).detail.isEmpty)
+  #expect(state("agent", in: result).activity == .needsAction)
   #expect(state("agent", in: result).ticks.allSatisfy { !$0.done })
   input.viewerEvents = [.actionsViewed("tutorial-simulator")]
   result = progress.update(input)
@@ -526,6 +560,18 @@ private func disk(_ bytes: Double) throws -> WorkspaceDisk {
       environment: try environment(), logRecords: [wrong, failed], now: afterRebuild, record: saved(at: "agent")))
   #expect(result.currentStep == "agent")
   #expect(state("agent", in: result).detail.hasPrefix("No agent actions"))
+  #expect(state("agent", in: result).activity == .blocked)
+}
+
+@Test func tutorialReplayDisabledRequiresActionInsteadOfWaiting() throws {
+  var progress = TutorialProgress()
+  let action = try log("press", at: afterBuild, source: "agent", event: "agent_action", device: "tutorial-simulator")
+  var input = TutorialInput(
+    environment: try environment(), logRecords: [action], replayOff: true, now: afterRebuild,
+    record: saved(at: "agent"))
+  #expect(state("agent", in: progress.update(input)).activity == .blocked)
+  input.replayOff = false
+  #expect(state("agent", in: progress.update(input)).activity == .needsAction)
 }
 
 @Test func tutorialArchiveDisabledRelaunchRecognizesAnAlreadyRemovedTour() {

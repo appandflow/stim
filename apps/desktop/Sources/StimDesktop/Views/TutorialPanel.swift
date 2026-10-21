@@ -16,7 +16,8 @@ struct TutorialPanel: View {
   var next: () -> Void = {}
   var restart: () -> Void = {}
   var close: () -> Void = {}
-  var openArchived: () -> Void = {}
+  var openArchived: (() -> Void)? = nil
+  var archiveUnavailableReason = "No saved archive is available for this tutorial run."
   var openBuild: (() -> Void)? = nil
   var openAgentActions: (() -> Void)? = nil
   var openLogs: (() -> Void)? = nil
@@ -114,7 +115,7 @@ struct TutorialPanel: View {
   }
 
   private func title(of id: String) -> String {
-    id == TutorialSlides.completion ? "Tutorial complete" : steps.first { $0.id == id }?.title ?? id
+    id == TutorialSlides.completion ? "Tutorial summary" : steps.first { $0.id == id }?.title ?? id
   }
 
   @ViewBuilder private var illustration: some View {
@@ -158,8 +159,7 @@ struct TutorialPanel: View {
       if shown == TutorialSlides.completion {
         TutorialCompletionCard(
           snapshot: snapshot, steps: steps,
-          archiveOff: snapshot.steps.first(where: { $0.id == "finish" })?.detail == "Archived is off",
-          openArchived: openArchived, restart: restart)
+          archiveUnavailableReason: archiveUnavailableReason, openArchived: openArchived)
       } else if let step = steps.first(where: { $0.id == shown }),
         let state = snapshot.steps.first(where: { $0.id == shown })
       {
@@ -193,6 +193,13 @@ struct TutorialPanel: View {
       .accessibilityAddTraits(.isHeader)
       VStack(alignment: .leading, spacing: Space.md) {
         Text(explanation(step.id)).foregroundStyle(Palette.secondary)
+        if step.id == "begin" {
+          Text(
+            "Stim detects your progress and moves to the next step automatically. Use Skip step to move on without completing it."
+          )
+          .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        }
         if current, let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
         if ["build", "parallel"].contains(step.id), current, let openBuild {
           HStack(spacing: Space.sm) {
@@ -219,16 +226,21 @@ struct TutorialPanel: View {
         }
         let notice = (current ? message : nil) ?? TutorialNotice(state.detail, action: state.action)
         let detail = notice.text
-        if current, state.state == .current, notice.action == nil {
+        if current, state.state == .current, notice.action == nil, message == nil {
           let waitingText =
             detail == "Waiting for the tutorial workspace..."
             ? "Waiting for your agent to clone the app..."
             : detail.isEmpty ? "Waiting for this step to finish..." : detail
           HStack(alignment: .top, spacing: Space.sm) {
-            if reduceMotion {
-              Image(systemName: "hourglass").foregroundStyle(Palette.accent)
-            } else {
-              ProgressView().controlSize(.small).tint(Palette.accent)
+            switch state.activity {
+            case .waiting:
+              if reduceMotion {
+                Image(systemName: "hourglass").foregroundStyle(Palette.accent)
+              } else {
+                ProgressView().controlSize(.small).tint(Palette.accent)
+              }
+            case .needsAction, .blocked:
+              Image(systemName: "info.circle").foregroundStyle(Palette.accent)
             }
             Text(waitingText)
               .font(.stim(.callout, weight: .medium))
