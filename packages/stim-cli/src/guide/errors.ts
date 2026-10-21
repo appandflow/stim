@@ -1036,7 +1036,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       aliases: ['STIM_RELOAD_UNOWNED', 'STIM_RELOAD_PROBE_FAILED'],
       body: () => `STIM_RELOAD_STOPPED / STIM_RELOAD_UNOWNED / STIM_RELOAD_PROBE_FAILED
   The recorded app is gone, its exact device is not live and owned by this
-  workspace, or simctl/adb could not prove the process exists. For web,
+  workspace, or Metro has no peer for the app and simctl/adb could not prove the
+  process exists (a probe that times out alone does not stop the reload). For web,
   STOPPED means no owned Chrome is running (run stim web) and PROBE_FAILED
   that its identity could not be verified. A bare reload picks the Chrome page
   only when no native launch is recorded. No launch or

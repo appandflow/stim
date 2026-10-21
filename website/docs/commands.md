@@ -826,6 +826,12 @@ Every native reload goes over the workspace Metro websocket, on both platforms. 
 reopens a development-client URL, because that restarts the app rather than
 reloading its JavaScript.
 
+Before sending, Stim checks that the app process exists. On iOS that probe
+(`simctl spawn launchctl list`) waits 5 seconds, scaled up with host load to at
+most 30. When the device tool still does not answer, Stim sends the reload anyway;
+`STIM_RELOAD_PROBE_FAILED` is then reported only if Metro also finds no peer.
+A process the probe proves is gone still fails with `STIM_RELOAD_STOPPED`.
+
 An Android reload first checks `adb reverse` on each live owned emulator launched
 against this Metro and re-applies the Metro port's reverse where it is missing.
 adb ties a reverse to its transport, so an emulator whose adb connection drops
