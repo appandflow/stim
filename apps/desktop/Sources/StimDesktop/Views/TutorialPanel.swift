@@ -345,7 +345,7 @@ struct TutorialPanel: View {
         "Your agent opens a public PR on appandflow/stim-tutorial with before/after screenshots. Needs gh access. Do it before Finish."
     case "finish":
       return
-        "Your agent stops the apps and removes the two worktrees and drops their changes. Their builds, logs and agent actions stay under Archived."
+        "Ask your agent to stop both apps and remove their worktrees, discarding the experimental changes. Keep the test app's clone for later. If archiving is enabled, you can review the saved builds, logs, and agent actions in Archived."
     case "delete": return "Delete the test app's clone, or skip this step to keep it."
     default: return ""
     }
