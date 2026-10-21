@@ -34,7 +34,6 @@ public enum AppPreferences {
     public static let autopilotNightlyOlderThanDays = "autopilot.nightlyOlderThanDays"
     public static let autopilotPressure = "autopilot.pressure"
     public static let autopilotLastNightly = "autopilot.lastNightly"
-    public static let autopilotLog = "autopilot.log"
     public static let notifiesDiskPressure = "notify.diskPressure"
     public static let servesPhones = "servesPhones"
     public static let updatesBuildMachines = "updatesBuildMachines"
@@ -109,6 +108,7 @@ public enum AppPreferences {
   /// over to the sidebar status selection.
   public static func migrate(_ defaults: UserDefaults) {
     removeLegacyRunDestinations(defaults)
+    defaults.removeObject(forKey: "autopilot.log")
     if let home = defaults.string(forKey: Key.lastLoginStimHome) {
       if defaults.string(forKey: Key.stimHome) == nil, home.hasPrefix("/"), !StimHome.isDefault(home) {
         defaults.set(home, forKey: Key.stimHome)

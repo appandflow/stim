@@ -6,6 +6,7 @@ import SwiftUI
 struct SettingsView: View {
   @ObservedObject var store: StatusStore
   @StateObject private var model: SettingsModel
+  @StateObject private var history: GcHistoryModel
   @ObservedObject private var openRequests = OpenRequests.shared
   @ObservedObject private var flags = FeatureFlagStore.shared
   @State private var workspace: String?
@@ -25,11 +26,12 @@ struct SettingsView: View {
     self.machine = machine
     self.buildMachines = buildMachines
     _model = StateObject(wrappedValue: SettingsModel(cli: cli, machine: machine))
+    _history = StateObject(wrappedValue: GcHistoryModel(cli: cli))
   }
 
   var body: some View {
     TabView(selection: $tab) {
-      AppPreferencesView(stimHome: store.stimHome)
+      AppPreferencesView(stimHome: store.stimHome, history: history)
         .tabItem { Label("App", systemImage: "macwindow") }
         .tag("app")
       if flags.phoneApp {

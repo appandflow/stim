@@ -343,6 +343,12 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   report and shows its age and the error. If the server lacks storage-report
   support, update Stim and restart its local server. Storage reads share the
   same response limit and do not retry through the CLI.
+- **Cleanup history.** **Settings > App > Cleanup History** lists every run that deleted
+  or changed something, newest first: `stim gc` from this app, an agent or a terminal,
+  automatic maintenance, and the budget check before a build. A row shows what started
+  the run, when, how many items it cleared, kept and failed, and the bytes freed; expand it
+  for each item's path and the reason a kept or failed item was left. It reads
+  `stim logs --source gc --json`, so it needs a Stim version that writes the gc log.
 - **Workspace Changes.** Click the workspace header's Git chip, then **Review
   changes**, to browse staged, unstaged and new files. The built-in viewer loads
   each patch when you select its file, with a 200-file list and 256 KiB preview

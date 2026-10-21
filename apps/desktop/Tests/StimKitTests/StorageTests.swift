@@ -479,17 +479,6 @@ import Testing
     let bare = try #require(PressurePlan.make(freeBytes: 4 * gib, minimumFreeGb: 20, hardFloorGb: 5, report: nil))
     #expect(bare.isEmpty && bare.belowHardFloor)
   }
-
-  @Test func keepsTheNewestLogEntriesFirst() {
-    var log: [AutopilotLogEntry] = []
-    for index in 0..<(AutopilotLog.limit + 5) {
-      log = AutopilotLog.appending(
-        AutopilotLogEntry(date: Date(), trigger: .idle, command: "\(index)", exitStatus: 0, note: nil), to: log)
-    }
-    #expect(log.count == AutopilotLog.limit)
-    #expect(log.first?.command == "\(AutopilotLog.limit + 4)")
-    #expect(AutopilotLog.decode(AutopilotLog.encode(log)) == log)
-  }
 }
 
 @Suite struct GcDeleteScopeTests {

@@ -12,7 +12,7 @@ import StimStores
 /// the budget, the app asks with a notification instead of running `stim gc --delete`, which would clear what the
 /// CLI keeps.
 /// Every run goes through the CLI on the machine action slot, so it never overlaps a cleanup the user
-/// started, and is recorded in the activity log.
+/// started.
 @MainActor
 final class AutopilotRunner: ObservableObject {
   static let tick: TimeInterval = 60
@@ -21,7 +21,6 @@ final class AutopilotRunner: ObservableObject {
   static let budgetMaxAge: TimeInterval = 30 * 60
   static let reportMaxAge: TimeInterval = 10 * 60
 
-  @Published private(set) var log: [AutopilotLogEntry]
   /// Set while free disk is under the Stim budget.
   @Published private(set) var pressure: PressurePlan?
   /// The volume Stim writes to with the least free space, measured on every check.
@@ -52,7 +51,6 @@ final class AutopilotRunner: ObservableObject {
     self.gc = gc
     self.disks = disks
     self.settings = settings
-    log = AutopilotLog.decode(UserDefaults.standard.data(forKey: AppPreferences.Key.autopilotLog))
     maintenanceSubscription = status.$payload.map { $0?.maintenance }.removeDuplicates().sink { [weak self] in
       self?.cliMaintenance = $0
     }
@@ -79,11 +77,6 @@ final class AutopilotRunner: ObservableObject {
     }
   }
 
-  func clearLog() {
-    log = []
-    defaults.removeObject(forKey: AppPreferences.Key.autopilotLog)
-  }
-
   /// The Do it of a pressure notification, which can be clicked long after it was posted: it runs the plan
   /// only while disk is still under the budget, and otherwise opens the Machine page.
   func runPlanFromNotification() {
@@ -95,16 +88,16 @@ final class AutopilotRunner: ObservableObject {
     runPressurePlan(trigger: .manual, present: true)
   }
 
-  func runPressurePlan(trigger: AutopilotLogEntry.Trigger, present: Bool) {
+  func runPressurePlan(trigger: AutopilotTrigger, present: Bool) {
     lastPressureRun = Date()
-    run(trigger, "Reclaim disk space", PressurePlan.arguments, present: present) { run, summary in
+    run("Reclaim disk space", PressurePlan.arguments, present: present) { run, summary in
       guard trigger == .pressure else { return }
       let archived = run.gcOutcome.flatMap { try? $0.get().archivedWorktrees.isEmpty } == false
       Notifier.postPressure(
         id: "\(archived ? Notifier.archivedPressurePrefix : Notifier.ranPressurePrefix)\(run.id)",
         title: "Free disk is under the Stim budget",
         body: summary
-          ?? "Stim Desktop ran stim gc --delete. \(run.exitStatus == 0 ? "It finished" : "It exited with an error"); see the autopilot log.",
+          ?? "Stim Desktop ran stim gc --delete. \(run.exitStatus == 0 ? "It finished" : "It exited with an error"); see Settings > App > Cleanup History.",
         offersPlan: false)
     }
   }
@@ -123,7 +116,7 @@ final class AutopilotRunner: ObservableObject {
     {
       defaults.set(now, forKey: AppPreferences.Key.autopilotLastNightly)
       let days = defaults.integer(forKey: AppPreferences.Key.autopilotNightlyOlderThanDays)
-      run(.nightly, "Nightly cleanup", AutopilotSchedule.nightlyArguments(olderThanDays: days), present: false)
+      run("Nightly cleanup", AutopilotSchedule.nightlyArguments(olderThanDays: days), present: false)
       return
     }
     let minutes = defaults.integer(forKey: AppPreferences.Key.autopilotIdleMinutes)
@@ -133,7 +126,7 @@ final class AutopilotRunner: ObservableObject {
     {
       lastIdleRun = now
       run(
-        .idle, "Shut down idle devices", ["gc", "--idle", AutopilotSchedule.idleDuration(minutes: minutes), "--json"],
+        "Shut down idle devices", ["gc", "--idle", AutopilotSchedule.idleDuration(minutes: minutes), "--json"],
         present: false)
       return
     }
@@ -221,7 +214,7 @@ final class AutopilotRunner: ObservableObject {
   }
 
   private func run(
-    _ trigger: AutopilotLogEntry.Trigger, _ title: String, _ arguments: [String], present: Bool,
+    _ title: String, _ arguments: [String], present: Bool,
     completion: ((ActionRun, String?) -> Void)? = nil
   ) {
     let command = StimCommand(arguments, cwd: NSHomeDirectory())
@@ -235,16 +228,7 @@ final class AutopilotRunner: ObservableObject {
       let summary = run.gcOutcome.flatMap { try? $0.get() }.map {
         $0.summary(name: { titles[$0] ?? PathNames(path: $0).title })
       }
-      self.record(
-        AutopilotLogEntry(
-          date: Date(), trigger: trigger, command: "stim \(arguments.joined(separator: " "))",
-          exitStatus: run.launchError == nil ? run.exitStatus : nil, note: summary ?? run.summary))
       completion?(run, summary)
     }
-  }
-
-  private func record(_ entry: AutopilotLogEntry) {
-    log = AutopilotLog.appending(entry, to: log)
-    defaults.set(AutopilotLog.encode(log), forKey: AppPreferences.Key.autopilotLog)
   }
 }
