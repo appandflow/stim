@@ -13,6 +13,8 @@ import { readHostedIos, readHostedAndroid } from './ios-state.ts';
 import { pullHostedNativeLogs, pullHostedMacosLogs } from './hosted-logs.ts';
 import { connectHost, type HostConnection } from './hosted-macos.ts';
 
+const WATCH_RECHECK_MS = 100;
+
 type ReadContext = Pick<StimContext, 'signal' | 'output'>;
 
 function warn(context: ReadContext | undefined, machine: string, error: unknown): void {
@@ -191,10 +193,12 @@ export function followHostedLogs(root: string, failing: boolean, context?: ReadC
   const stateFile = workspaceStateFile(root);
   const home = resolve(configDir());
   let watcher: FSWatcher | null = null;
+  let recheck: NodeJS.Timeout | undefined;
   const observe = () => {
     if (closed) return;
     watcher?.close();
     watcher = null;
+    clearTimeout(recheck);
     let directory = dirname(stateFile);
     for (;;) {
       try {
@@ -210,6 +214,10 @@ export function followHostedLogs(root: string, failing: boolean, context?: ReadC
         });
         next.unref();
         watcher = next;
+        // Node fs.watch on macOS can drop events for changes made just after watch() returns:
+        // https://github.com/nodejs/node/issues/52601
+        recheck = setTimeout(refresh, WATCH_RECHECK_MS);
+        recheck.unref();
         return;
       } catch (error) {
         if (directory === home || !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) return;
@@ -226,6 +234,7 @@ export function followHostedLogs(root: string, failing: boolean, context?: ReadC
   return () => {
     closed = true;
     watcher?.close();
+    clearTimeout(recheck);
     clearInterval(timer);
     for (const stop of stops.values()) stop();
   };
