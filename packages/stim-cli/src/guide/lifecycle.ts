@@ -1540,9 +1540,10 @@ AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
 A RUNNING APP IS RESTARTED, LIKE XCODE'S RUN
   Before it launches, \`ios\` and \`android\` read the device's process list.
   When the app is already running, from an earlier run or after an install
-  that was skipped, Stim stops it and launches it fresh: \`simctl terminate\`
-  on a simulator, \`am force-stop\` on an emulator or an \`android --device\`
-  phone. The new process requests its bundle, so launch verification has real
+  that was skipped, Stim stops it and launches it fresh: \`simctl launch
+  --terminate-running-process\` on a simulator (a separate \`simctl
+  terminate\` when the app opens through a URL), \`am force-stop\` on an
+  emulator or an \`android --device\` phone. The new process requests its bundle, so launch verification has real
   evidence instead of an old process that fetched nothing. In-app state from
   the previous session does not survive. The launch line says so:
 

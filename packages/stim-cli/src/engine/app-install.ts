@@ -346,16 +346,19 @@ export async function launchIosApp(
   const e = exec || getExecutor();
   const running = await iosAppProcess(udid, bundleId, { exec: e });
   const stateUnknown = running.state === 'unknown';
+  const launchRestarts = metroPort === null || !devClientScheme || Boolean(consolePaths);
   const launchArgs = [
     'simctl',
     'launch',
     ...(consolePaths ? [`--stdout=${consolePaths.stdout}`, `--stderr=${consolePaths.stderr}`] : []),
-    ...(stateUnknown ? ['--terminate-running-process'] : []),
+    ...(stateUnknown || (running.state === 'running' && launchRestarts) ? ['--terminate-running-process'] : []),
     udid,
     bundleId,
   ];
   const restart: { restartedPid?: number } = {};
-  if (running.state === 'running') {
+  if (running.state === 'running' && launchRestarts) {
+    restart.restartedPid = running.pid;
+  } else if (running.state === 'running') {
     try {
       await e.runFileAsync('xcrun', ['simctl', 'terminate', udid, bundleId], { timeoutMs: 30000 });
     } catch (err) {
