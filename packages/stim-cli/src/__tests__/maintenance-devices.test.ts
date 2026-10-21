@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   maintenanceNdjsonFile,
+  maintenanceStateFile,
+  readMaintenanceState,
   readDeviceIdleShutdowns,
   type MaintenanceRecord,
   type MaintenanceSize,
@@ -14,6 +16,7 @@ import * as gcIdle from '../commands/gc/idle.ts';
 import * as ios from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import * as measurements from '../maintenance/measure.ts';
+import { previewMaintenance } from '../maintenance/preview.ts';
 import { runMaintenance } from '../maintenance/run.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { ownedDeviceUsage, planDeviceDeletion } from '../maintenance/devices.ts';
@@ -336,8 +339,8 @@ test('at level 3 an idle workspace with no dev server loses its devices through 
   ]);
 });
 
-test('a maintenance pass shuts down devices idle past their workspace devices.idleShutdownMinutes, and keeps the rest', async () => {
-  vi.stubEnv('STIM_MAINTENANCE', 'on');
+function idlePass(mode: 'on' | 'report') {
+  vi.stubEnv('STIM_MAINTENANCE', mode);
   vi.stubEnv('STIM_MAINTENANCE_SWEEP_HOURS', '0');
   vi.stubEnv('STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES', 'false');
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
@@ -347,28 +350,71 @@ test('a maintenance pass shuts down devices idle past their workspace devices.id
     memory: { level: 'normal', availableBytes: null, pressured: false },
     warningSince: null,
   });
-  const now = Date.now();
-  const idle = (name: string, minutes: number): gcIdle.OwnedDeviceActivity => {
-    const root = workspaceWithSim(name, minutes);
-    return {
-      kind: 'ios',
-      id: `UDID-${name}`,
-      name: `stim-${name}`,
-      project: root,
-      slot: 'default',
-      activity: {
-        state: 'idle',
-        basis: ['workspace-use'],
-        lastActivityAt: new Date(now - minutes * MINUTE_MS).toISOString(),
-      },
-    };
+}
+
+function idleDevice(name: string, minutes: number): gcIdle.OwnedDeviceActivity {
+  const root = workspaceWithSim(name, minutes);
+  return {
+    kind: 'ios',
+    id: `UDID-${name}`,
+    name: `stim-${name}`,
+    project: root,
+    slot: 'default',
+    activity: {
+      state: 'idle',
+      basis: ['workspace-use'],
+      lastActivityAt: new Date(Date.now() - minutes * MINUTE_MS).toISOString(),
+    },
   };
-  const quiet = idle('quiet', 45);
-  const optedOut = idle('opted-out', 120);
-  const longer = idle('longer', 45);
-  const locked = idle('locked', 120);
-  const current = idle('current', 120);
-  const devices = [quiet, idle('recent', 10), optedOut, longer, locked, current, idle('broken', 45), idle('moved', 45)];
+}
+
+test('a report pass keeps a planned idle shutdown until the next idle check, and gc previews it', async () => {
+  idlePass('report');
+  const device = idleDevice('quiet', 45);
+  vi.spyOn(gcIdle, 'collectOwnedDeviceActivity').mockImplementation((config) =>
+    config?.projects[device.project] ? [device] : [],
+  );
+  const shutDown = vi.spyOn(teardown, 'teardownOwnedIosSim');
+  const planned = () =>
+    (readMaintenanceState()?.plan ?? []).filter((action) => action.kind === 'would-shutdown-device');
+
+  await runMaintenance('test');
+  expect(planned().map((action) => action.target)).toEqual(['UDID-quiet']);
+  const state = readMaintenanceState();
+  const now = Date.now();
+  writeFileSync(
+    maintenanceStateFile(),
+    JSON.stringify({ ...state, lastAt: { pressure: 0, size: now, worktree: now, sweep: now, idle: now } }),
+  );
+  await runMaintenance('test');
+
+  expect(planned().map((action) => action.target)).toEqual(['UDID-quiet']);
+  const would = readFileSync(maintenanceNdjsonFile(), 'utf8')
+    .trim()
+    .split('\n')
+    .filter((line) => line.includes('Would shutdown device'));
+  expect(would).toHaveLength(1);
+  expect((await previewMaintenance()).actions.map((action) => action.target)).toContain('UDID-quiet');
+  expect(shutDown).not.toHaveBeenCalled();
+});
+
+test('a maintenance pass shuts down devices idle past their workspace devices.idleShutdownMinutes, and keeps the rest', async () => {
+  idlePass('on');
+  const quiet = idleDevice('quiet', 45);
+  const optedOut = idleDevice('opted-out', 120);
+  const longer = idleDevice('longer', 45);
+  const locked = idleDevice('locked', 120);
+  const current = idleDevice('current', 120);
+  const devices = [
+    quiet,
+    idleDevice('recent', 10),
+    optedOut,
+    longer,
+    locked,
+    current,
+    idleDevice('broken', 45),
+    idleDevice('moved', 45),
+  ];
   writeFileSync(join(optedOut.project, '.stim.json'), JSON.stringify({ devices: { idleShutdownMinutes: 0 } }));
   writeFileSync(join(longer.project, '.stim.json'), JSON.stringify({ devices: { idleShutdownMinutes: 60 } }));
   writeFileSync(join(current.project, 'package.json'), '{}');
