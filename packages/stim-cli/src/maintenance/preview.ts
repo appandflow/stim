@@ -229,6 +229,7 @@ export async function previewMaintenance({
     const result = await plannedMaintenance(pressure, state?.sizes ?? [], settings, {
       devices,
       sweep: true,
+      idle: true,
       refresh,
       operation,
     });

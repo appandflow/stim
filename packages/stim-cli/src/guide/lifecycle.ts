@@ -2064,7 +2064,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   shorter, the dev server's idle stop first shuts down the devices idle that
   long, because no supervisor is left to check afterwards. Devices with no
   supervisor (release runs, a dev server that exited) are shut down by
-  automatic maintenance (guide cleanup): every maintenance.idleCheckMinutes
+  automatic maintenance while maintenance.mode is on (guide cleanup): every maintenance.idleCheckMinutes
   (5) a command starts a background check that applies each workspace's
   current setting with the same idle rules, native-run lock recheck, status
   and log record, and skips the workspace of the command that started it.

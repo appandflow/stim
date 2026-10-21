@@ -88,6 +88,7 @@ export interface IdleShutdownEvent {
   level: 'info' | 'warn';
   event: 'device_idle_shutdown' | 'device_idle_shutdown_failed';
   msg: string;
+  skipped?: true;
 }
 
 /** Appends an idle shutdown record to the workspace's metro.ndjson, where the supervisor writes its own. */
@@ -159,6 +160,7 @@ export async function shutDownIdleDevices(
         level: 'warn',
         event: 'device_idle_shutdown_failed',
         msg: `could not shut down idle ${what}: ${outcome.reason}`,
+        ...(outcome.status === 'skipped' ? { skipped: true as const } : {}),
       });
     }
   }

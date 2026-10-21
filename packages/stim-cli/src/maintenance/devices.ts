@@ -250,8 +250,11 @@ export function planIdleShutdown({
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
   if (deviceSweepIsScoped(env)) return plan;
   const minutes = new Map(
-    Object.keys(loadConfig()?.projects ?? {}).flatMap((root) => {
-      const value = canonicalPath(root) === protectedRoot ? 0 : idleShutdownMinutes(root);
+    Object.entries(loadConfig()?.projects ?? {}).flatMap(([root, project]) => {
+      const owns = projectDeviceSlots(project).some(
+        ({ platforms }) => platforms.ios?.owned === true || platforms.android?.owned === true,
+      );
+      const value = !owns || canonicalPath(root) === protectedRoot ? 0 : idleShutdownMinutes(root);
       return value > 0 ? [[root, value] as const] : [];
     }),
   );

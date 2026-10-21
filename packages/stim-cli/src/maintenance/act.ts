@@ -219,9 +219,10 @@ async function shutDownIdleDevice(action: MaintenanceAction): Promise<ActionOutc
   const due = dueIdleDevices(root, idleMs).find(({ device }) => device.id === action.target);
   if (!due) return kept(`it is no longer idle for ${minutes} minutes`);
   const failures: string[] = [];
+  const skips: string[] = [];
   const log = (event: IdleShutdownEvent) => {
     writeIdleShutdownEvent(root, event);
-    if (event.event === 'device_idle_shutdown_failed') failures.push(event.msg);
+    if (event.event === 'device_idle_shutdown_failed') (event.skipped ? skips : failures).push(event.msg);
   };
   const run = await withIdleWorkspace(
     root,
@@ -230,9 +231,8 @@ async function shutDownIdleDevice(action: MaintenanceAction): Promise<ActionOutc
   );
   if (!run.ran) return kept(`in use: ${run.reasons.join('; ')}`);
   if (run.value) return { status: 'done', bytes: 0, detail: action.target };
-  return failures.length
-    ? { status: 'failed', bytes: 0, detail: failures.join('; ') }
-    : kept(`it is no longer idle for ${minutes} minutes`);
+  if (failures.length) return { status: 'failed', bytes: 0, detail: failures.join('; ') };
+  return kept(skips.join('; ') || `it is no longer idle for ${minutes} minutes`);
 }
 
 async function deleteParkedDevice(action: MaintenanceAction): Promise<ActionOutcome> {

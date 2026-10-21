@@ -336,10 +336,10 @@ test('at level 3 an idle workspace with no dev server loses its devices through 
   ]);
 });
 
-test('a maintenance pass shuts down devices idle past devices.idleShutdownMinutes with no supervisor, and keeps the rest', async () => {
-  process.env.STIM_MAINTENANCE = 'on';
-  process.env.STIM_MAINTENANCE_SWEEP_HOURS = '0';
-  process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
+test('a maintenance pass shuts down devices idle past their workspace devices.idleShutdownMinutes, and keeps the rest', async () => {
+  vi.stubEnv('STIM_MAINTENANCE', 'on');
+  vi.stubEnv('STIM_MAINTENANCE_SWEEP_HOURS', '0');
+  vi.stubEnv('STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES', 'false');
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
   vi.spyOn(measurements, 'sizeScanDeferred').mockReturnValue(false);
   vi.spyOn(measurements, 'measurePressure').mockReturnValue({
@@ -365,20 +365,31 @@ test('a maintenance pass shuts down devices idle past devices.idleShutdownMinute
   };
   const quiet = idle('quiet', 45);
   const optedOut = idle('opted-out', 120);
+  const longer = idle('longer', 45);
   const locked = idle('locked', 120);
-  const devices = [quiet, idle('recent', 10), optedOut, locked];
+  const current = idle('current', 120);
+  const devices = [quiet, idle('recent', 10), optedOut, longer, locked, current, idle('broken', 45), idle('moved', 45)];
   writeFileSync(join(optedOut.project, '.stim.json'), JSON.stringify({ devices: { idleShutdownMinutes: 0 } }));
+  writeFileSync(join(longer.project, '.stim.json'), JSON.stringify({ devices: { idleShutdownMinutes: 60 } }));
+  writeFileSync(join(current.project, 'package.json'), '{}');
+  vi.spyOn(process, 'cwd').mockReturnValue(current.project);
   plantClaim(join(workspaceDir(locked.project), 'native-run.lock'), 'exclusive', liveClaimOwner());
   vi.spyOn(gcIdle, 'collectOwnedDeviceActivity').mockImplementation((config) =>
     devices.filter((device) => Boolean(config?.projects[device.project])),
   );
   const shutDown = vi
     .spyOn(teardown, 'teardownOwnedIosSim')
-    .mockImplementation(async (id) => ({ status: 'torn-down', label: id }));
+    .mockImplementation(async (id) =>
+      id === 'UDID-broken'
+        ? { status: 'failed', reason: 'simctl shutdown failed' }
+        : id === 'UDID-moved'
+          ? { status: 'skipped', kind: 'not-owned', reason: 'no longer owned' }
+          : { status: 'torn-down', label: id },
+    );
 
   await runMaintenance('test');
 
-  expect(shutDown.mock.calls.map(([id]) => id)).toEqual(['UDID-quiet']);
+  expect(shutDown.mock.calls.map(([id]) => id).toSorted()).toEqual(['UDID-broken', 'UDID-moved', 'UDID-quiet']);
   expect(readDeviceIdleShutdowns(readWorkspaceState(quiet.project))).toEqual({
     ios: expect.objectContaining({ idleMinutes: 45 }),
   });
@@ -389,5 +400,8 @@ test('a maintenance pass shuts down devices idle past devices.idleShutdownMinute
     .map((line) => JSON.parse(line));
   expect(records.filter((record) => record.event === 'maintenance_action').map((record) => record.action)).toEqual([
     expect.objectContaining({ kind: 'shutdown-device', target: 'UDID-quiet' }),
+  ]);
+  expect(records.filter((record) => record.event === 'maintenance_failure').map((record) => record.target)).toEqual([
+    'UDID-broken',
   ]);
 });

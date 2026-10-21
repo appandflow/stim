@@ -437,15 +437,16 @@ restart the dev server with `stim stop` and `stim start` after changing it.
 When `metro.idleStopMinutes` is shorter, the dev server's idle stop shuts down
 the devices idle that long first.
 
-[Automatic maintenance](./build-caches.md#automatic-maintenance) applies the
+With `maintenance.mode on`, the default,
+[automatic maintenance](./build-caches.md#automatic-maintenance) applies the
 same setting to devices with no supervisor, such as those of release runs or of
 a dev server that exited. Every `maintenance.idleCheckMinutes` (5) a Stim command
 starts a background check that shuts down each owned device idle for its
 workspace's `devices.idleShutdownMinutes`, read fresh each time. It uses the same
 idle rules, rechecks under the workspace's native-run lock, records the same
 `shut down after 30m idle` status and `device_idle_shutdown` log record, and
-never touches the workspace of the command that started the check. This
-replaces Stim Desktop's **Shut down idle devices** option.
+never touches the workspace of the command that started the check. It covers
+what Stim Desktop's **Shut down idle devices** option does.
 
 Queue reclaim is a separate, faster path. With `concurrency.maxDevices` set,
 the waiting run uses its own effective `devices.reclaimIdleMinutes`, default 10, to shut down the

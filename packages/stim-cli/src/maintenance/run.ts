@@ -400,7 +400,9 @@ export async function runMaintenance(trigger: string): Promise<void> {
       return results;
     }
     const retained = state.plan.filter(
-      (action) => (action.check === 'sweep' || action.check === 'worktree') && !ran.has(action.check),
+      (action) =>
+        ((action.check === 'sweep' || action.check === 'worktree') && !ran.has(action.check)) ||
+        (action.kind === 'would-shutdown-device' && action.check === undefined && !ran.has('idle')),
     );
     const previousActions = new Set(state.plan.map(actionKey));
     const previousSkips = new Set(state.skipKeys ?? []);
