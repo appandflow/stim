@@ -1,3 +1,4 @@
+import { withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import type { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, openSync } from 'node:fs';
@@ -148,7 +149,7 @@ export async function launchOwnedBrowser(
         const since = Date.now();
         try {
           await sendToOwnedPage(live, 'Page.navigate', { url }, signal);
-          updateWebRecord(root, live, { url });
+          await withWorkspaceStateLockAsync(root, () => updateWebRecord(root, live, { url }));
           note(chalk.dim(phaseLine('device', `reusing the owned Chrome (pid ${live.chromeProcess?.pid})`)));
           return { ok: true, record: { ...live, url }, since, reused: true };
         } catch (error) {

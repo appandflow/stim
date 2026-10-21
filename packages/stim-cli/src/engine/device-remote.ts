@@ -1,3 +1,4 @@
+import { withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
@@ -253,7 +254,8 @@ function remoteDeviceDeps(ctx: RemoteContext) {
                 remedy: 'Inspect the recorded session, then run `stim stop` again.',
               };
             }
-            clearRemoteSession(ctx.root, recorded.sessionId);
+            const sessionId = recorded.sessionId;
+            await withWorkspaceStateLockAsync(ctx.root, () => clearRemoteSession(ctx.root, sessionId));
           }
         }
       }

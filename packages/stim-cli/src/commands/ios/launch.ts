@@ -646,7 +646,7 @@ async function readRunExecutable(
   return executable;
 }
 
-function recordIosReloadTarget({
+async function recordIosReloadTarget({
   d,
   root,
   physical,
@@ -671,10 +671,10 @@ function recordIosReloadTarget({
   runtimeKind: IosRuntimeKind;
   launchedAt: number;
   note: (line: string) => void;
-}): void {
+}): Promise<void> {
   if (physical || remoteDevice) return;
   try {
-    d.writeWorkspaceLaunch(root, 'ios', {
+    await d.writeWorkspaceLaunch(root, 'ios', {
       appId: bundleId,
       deviceId: udid,
       metroPort,
@@ -791,7 +791,7 @@ export async function finishIosRun({
     });
   }
 
-  if (bundleId) d.upsertProject(root, { bundleId });
+  if (bundleId) await d.upsertProject(root, { bundleId });
 
   enterPhase('device');
   if (bootPending()) enterActivity('booting');
@@ -1038,7 +1038,7 @@ export async function finishIosRun({
     phase('launch', `${bundleId!}${restartedAppNote(launched.restartedPid)} ${launchTimer()}`);
   }
 
-  recordIosReloadTarget({
+  await recordIosReloadTarget({
     d,
     root,
     slot,

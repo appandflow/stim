@@ -38,6 +38,15 @@ export function writeWorkspaceState(root: string, patch: WorkspaceState): Worksp
   return updateWorkspaceState(root, (state) => ({ ...state, ...patch }));
 }
 
+/** Merges a patch into workspace state after asynchronously acquiring its lock. */
+export function writeWorkspaceStateAsync(
+  root: string,
+  patch: WorkspaceState,
+  signal?: AbortSignal,
+): Promise<WorkspaceState> {
+  return updateWorkspaceStateAsync(root, (state) => ({ ...state, ...patch }), signal);
+}
+
 export function updateWorkspaceState(root: string, update: (state: WorkspaceState) => WorkspaceState): WorkspaceState {
   return withWorkspaceStateLock(root, () => replaceWorkspaceState(root, update(readWorkspaceState(root) ?? {})));
 }

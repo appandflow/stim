@@ -9,7 +9,7 @@ import type { WebFailure } from '../integrations/web-project.ts';
 import type { WebLaunched } from '../web/launch.ts';
 import { liveWebRecord } from '../web/page.ts';
 import { cdpEndpoint, readWebRecord } from '../web/state.ts';
-import { getProject, upsertProject } from '../workspace/config.ts';
+import { getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
 import { resolveProjectSettingsAsync, SETTING_SHAPE_REMEDY, settingShapeErrors } from '../workspace/settings.ts';
@@ -40,7 +40,9 @@ export async function runWeb({
 }): Promise<{ ok: true; facts: WebFacts; remedy: string | null } | { ok: false; error: WebFailure }> {
   const startedAt = Date.now();
   await ensureWorkspaceStorageSafely(root, { note });
-  if (!getProject(root)) upsertProject(root, {});
+  await withConfigLockAsync(() => {
+    if (!getProject(root)) upsertProject(root, {});
+  });
   const { settings } = await resolveProjectSettingsAsync(
     root,
     context ? { env: context.env, signal: context.signal } : undefined,

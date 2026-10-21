@@ -40,7 +40,7 @@ import {
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
-import { writeWorkspaceLaunch, workspaceDevServerMode } from '../../supervisor/state.ts';
+import { workspaceDevServerMode, writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
 import type {
   VerifyLaunchResultLike,
   RemoteUploadLike,
@@ -483,7 +483,7 @@ interface FinishAndroidRunArgs {
   kill: (pid: number, signal: NodeJS.Signals) => boolean;
   pidAlive: typeof pidExists;
   verifyCollector: typeof verifyCollectorOwnership;
-  writeLaunch: typeof writeWorkspaceLaunch;
+  writeLaunch: typeof writeWorkspaceLaunchAsync;
   recordBuild?: typeof recordFinishedBuild;
   now: () => number;
   out: (line: string) => void;
@@ -841,7 +841,7 @@ export async function finishAndroidRun({
     writer.write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
   }
 
-  if (androidPackage) upsertProject(root, { androidPackage });
+  if (androidPackage) await withConfigLockAsync(() => upsertProject(root, { androidPackage }));
   record.bundleId = androidPackage;
   if (!androidPackage) {
     return fail(
@@ -908,7 +908,7 @@ export async function finishAndroidRun({
 
   if (!physical && !remoteDevice) {
     try {
-      writeLaunch(root, 'android', {
+      await writeLaunch(root, 'android', {
         appId: androidPackage,
         deviceId: serial,
         metroPort,
