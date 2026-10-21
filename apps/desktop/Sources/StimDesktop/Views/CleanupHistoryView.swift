@@ -1,7 +1,6 @@
 import StimKit
 import SwiftUI
 
-/// What Stim cleared, when, why and how much it freed, one row per run.
 struct CleanupHistorySection: View {
   @ObservedObject var history: GcHistoryModel
 
@@ -23,12 +22,6 @@ struct CleanupHistorySection: View {
       .multilineTextAlignment(.leading)
       .frame(maxWidth: .infinity, alignment: .leading)
       .foregroundStyle(Palette.tertiary)
-    }
-    .task {
-      while !Task.isCancelled {
-        await history.refresh()
-        try? await Task.sleep(for: .seconds(30))
-      }
     }
   }
 }

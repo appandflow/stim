@@ -107,7 +107,6 @@ public struct PressurePlan: Hashable, Sendable {
 
 }
 
-/// What started a disk-reclaim run.
 public enum AutopilotTrigger: Sendable {
   case pressure, manual
 }

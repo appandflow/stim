@@ -4,8 +4,6 @@ import Testing
 @testable import StimKit
 
 @Suite struct GcHistoryTests {
-  // Lines as `stim logs --source gc --json` prints them: two items of a manual run, a failed item of another, and a
-  // record with a trigger and a field this app does not know.
   private let output = """
     {"ts":1792619100000,"src":"gc","level":"info","msg":"Cleared worktree /w/old (2.0 GB)","event":"gc_item","runId":"a1","trigger":"manual","options":{"delete":true,"worktrees":true,"olderThan":7},"kind":"worktree","status":"done","label":"/w/old","id":null,"path":"/w/old","bytes":2000000000,"detail":"merged"}
     {"ts":1792619101000,"src":"gc","level":"info","msg":"Kept worktree /w/busy","event":"gc_item","runId":"a1","trigger":"manual","options":{"delete":true,"worktrees":true,"olderThan":7},"kind":"worktree","status":"kept","label":"/w/busy","id":null,"path":"/w/busy","bytes":null,"detail":"in use"}

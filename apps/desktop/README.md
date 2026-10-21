@@ -749,8 +749,9 @@ build, whoever started them (this app, an agent or a terminal). It runs
 `stim logs --source gc --json` from the home directory every 30 seconds while the window is open
 and never reads `$STIM_HOME`. A row shows what started the run, when, how many items it cleared,
 kept and failed, and the bytes freed; expanding it lists each item with its path and the reason a
-kept or failed item was left. This app's nightly, idle and disk-pressure runs all appear as
-Cleanup from Stim Desktop, with the `stim gc` options that ran. An older `stim` without the gc log
+kept or failed item was left. The bundled app's nightly, idle and disk-pressure runs all appear as
+Cleanup from Stim Desktop, with the `stim gc` options that ran; an unbundled development build
+appears as Cleanup from stim gc. An older `stim` without the gc log
 shows its error instead.
 
 ## Autopilot

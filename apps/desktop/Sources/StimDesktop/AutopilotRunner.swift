@@ -12,7 +12,7 @@ import StimStores
 /// the budget, the app asks with a notification instead of running `stim gc --delete`, which would clear what the
 /// CLI keeps.
 /// Every run goes through the CLI on the machine action slot, so it never overlaps a cleanup the user
-/// started. The CLI records what each run cleared in its gc log, which the App preferences show.
+/// started.
 @MainActor
 final class AutopilotRunner: ObservableObject {
   static let tick: TimeInterval = 60

@@ -41,6 +41,7 @@ struct AppPreferencesView: View {
     ScrollViewReader { proxy in
       form
         .background(ResignFirstResponder())
+        .task { await history.poll() }
         .onAppear {
           onboarding.refreshLatestStim(interval: StimRelease.settingsInterval)
           guard !scrolledToTop else { return }

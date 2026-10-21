@@ -1,8 +1,6 @@
 import Foundation
 import StimKit
 
-/// The machine-wide record of what `stim gc`, automatic maintenance and the budget gate cleared, read through
-/// `stim logs --source gc --json`.
 @MainActor
 final class GcHistoryModel: ObservableObject {
   @Published private(set) var runs: [GcRun] = []
@@ -15,7 +13,14 @@ final class GcHistoryModel: ObservableObject {
     self.cli = cli
   }
 
-  func refresh() async {
+  func poll() async {
+    while !Task.isCancelled {
+      await refresh()
+      try? await Task.sleep(for: .seconds(30))
+    }
+  }
+
+  private func refresh() async {
     let cli = await cli.value
     let result = await Result.awaiting { try await cli.gcHistory() }
     guard !Task.isCancelled else { return }

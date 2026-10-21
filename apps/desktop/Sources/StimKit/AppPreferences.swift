@@ -108,6 +108,7 @@ public enum AppPreferences {
   /// over to the sidebar status selection.
   public static func migrate(_ defaults: UserDefaults) {
     removeLegacyRunDestinations(defaults)
+    defaults.removeObject(forKey: "autopilot.log")
     if let home = defaults.string(forKey: Key.lastLoginStimHome) {
       if defaults.string(forKey: Key.stimHome) == nil, home.hasPrefix("/"), !StimHome.isDefault(home) {
         defaults.set(home, forKey: Key.stimHome)

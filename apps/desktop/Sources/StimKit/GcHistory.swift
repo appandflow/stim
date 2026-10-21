@@ -12,7 +12,6 @@ public struct GcHistoryItem: Decodable, Hashable, Sendable {
   public var runId: String
   /// `manual`, `desktop`, `maintenance` or `budget`; a trigger newer than this app decodes as written.
   public var trigger: String
-  /// For maintenance, the command whose run started the pass.
   public var via: String?
   public var options: Options?
   public var kind: String
@@ -32,7 +31,6 @@ public struct GcHistoryItem: Decodable, Hashable, Sendable {
 
   public var date: Date { Date(timeIntervalSince1970: ts / 1000) }
 
-  /// What the item was, in words; a kind newer than this app shows as written.
   public var kindTitle: String {
     Self.kindTitles[kind] ?? kind
   }
@@ -49,7 +47,6 @@ public struct GcHistoryItem: Decodable, Hashable, Sendable {
   ]
 }
 
-/// The items one run wrote, newest run first in `GcHistory.runs`.
 public struct GcRun: Identifiable, Hashable, Sendable {
   public var id: String
   public var trigger: String
@@ -73,7 +70,6 @@ public struct GcRun: Identifiable, Hashable, Sendable {
     }
   }
 
-  /// Why the run happened, such as the command that started a maintenance pass or the `stim gc` options.
   public var reason: String? {
     switch trigger {
     case "maintenance": return via.map { "Started by stim \($0)" }
@@ -82,7 +78,6 @@ public struct GcRun: Identifiable, Hashable, Sendable {
     }
   }
 
-  /// "Cleared 3, kept 1, failed 1, freed 1.2 GB".
   public var summary: String {
     var parts: [String] = []
     if !cleared.isEmpty { parts.append("Cleared \(cleared.count)") }
@@ -95,7 +90,6 @@ public struct GcRun: Identifiable, Hashable, Sendable {
 }
 
 extension GcHistoryItem.Options {
-  /// The `stim gc` line these options came from.
   public var command: String {
     var words = ["stim", "gc"]
     if delete == true { words.append("--delete") }
@@ -108,14 +102,12 @@ extension GcHistoryItem.Options {
 }
 
 public enum GcHistory {
-  /// The records of NDJSON `output`, skipping lines that are not gc log records.
   public static func parse(_ output: Data) -> [GcHistoryItem] {
     String(decoding: output, as: UTF8.self).split(separator: "\n").compactMap { line in
       try? JSONDecoder().decode(GcHistoryItem.self, from: Data(line.utf8))
     }
   }
 
-  /// `items` grouped by run, the run that wrote last first. A run keeps its items in the order they were written.
   public static func runs(_ items: [GcHistoryItem]) -> [GcRun] {
     var order: [String] = []
     var byId: [String: GcRun] = [:]
@@ -134,7 +126,6 @@ public enum GcHistory {
 }
 
 extension StimCLI {
-  /// The newest `limit` records of the machine gc log. The log is machine-wide, so any directory works.
   public func gcHistory(limit: Int = 2000) async throws -> [GcHistoryItem] {
     GcHistory.parse(try await run(["logs", "--source", "gc", "--json", "--tail", String(limit)], cwd: NSHomeDirectory()))
   }
