@@ -143,7 +143,7 @@ project's own `metro.config.js` calls `sharedCacheStores()` from
 `metro.warmupUrl.ios` and `metro.warmupUrl.android` replace the bundle URL that
 `ios` and `android` prefetch while the native build runs. Unset, Stim uses the
 app's most recent bundle request on that platform from the workspace's metro
-log, then Expo's manifest or the bare React Native default. Give an HTTP(S) URL or a path
+log (skipped when its entry file no longer exists), then Expo's manifest or the bare React Native default. Give an HTTP(S) URL or a path
 ending in `.bundle` with the app's full query, including a matching `platform`.
 Stim keeps the path and query but always requests this workspace's Metro port.
 The setting only changes the prefetch, not the app. Setting

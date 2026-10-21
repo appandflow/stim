@@ -71,7 +71,9 @@ BUNDLE WARMUP
   platform's development bundle while native work continues. The prefetch
   requests the URL of the app's most recent bundle request on that platform,
   read from this workspace's metro log, so it matches the app's entry point
-  and options and does not ask Expo for its manifest. Expo computes the
+  and options and does not ask Expo for its manifest. A recorded URL whose
+  entry file no longer exists under the project root or its ancestors is
+  skipped. Expo computes the
   runtime version fingerprint for every manifest request. Without a recorded
   request, Expo supplies the entry point and bundle options through its
   manifest, and bare React Native uses the standard index entry and
