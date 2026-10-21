@@ -7,7 +7,7 @@ import {
   configuredAndroidEmulatorApp,
   openEmulatorInStimDesktop,
 } from './android-emulator-viewer.ts';
-import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
+import { forgetCreatedDeviceAsync, recordCreatedDeviceAsync } from './created-devices.ts';
 import { isStimOwnedAvd } from './device-ownership.ts';
 import {
   existsSync,
@@ -281,7 +281,7 @@ export async function createOwnedAvd(
     );
   }
   const avdName = ownedAvdName(label);
-  recordCreatedDevice('android', avdName);
+  await recordCreatedDeviceAsync('android', avdName);
   const tool = androidToolPath('avdmanager');
   const args = ['create', 'avd', '-n', avdName, '-k', pick.pkg, '--device', deviceProfile];
   // avdmanager (cmdline-tools 19.0) writes to $XDG_CONFIG_HOME/.android/avd when XDG_CONFIG_HOME is set, and
@@ -417,7 +417,7 @@ export async function deleteAvd(avdName: string, operation?: StimContext): Promi
       ...(root ? { env: { ANDROID_AVD_HOME: root } } : {}),
     },
   );
-  forgetCreatedDevice('android', avdName);
+  await forgetCreatedDeviceAsync('android', avdName);
 }
 
 export function parseAvdList(text: string): string[] {

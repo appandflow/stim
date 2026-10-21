@@ -243,9 +243,7 @@ export async function prepareOwnedAvd({
     const cleanup = await teardown(avdName, {
       del: true,
       owner: { projectPath, slot, expectedRecord: reservation },
-      onRemoved: () => {
-        clearDevice(projectPath, 'android', slot, avdName);
-      },
+      onRemoved: () => withConfigLockAsync(() => clearDevice(projectPath, 'android', slot, avdName)),
     });
     const kept = cleanup.status === 'failed' || cleanup.status === 'skipped';
     const orphan = kept

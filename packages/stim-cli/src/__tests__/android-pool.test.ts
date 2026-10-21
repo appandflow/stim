@@ -331,7 +331,7 @@ test('a concurrent adoption cannot be overwritten by a new AVD creation using an
   upsertProject('/adopter', {});
   const previous = getProject('/adopter');
   expect(
-    adoptParked({
+    await adoptParked({
       platform: 'android',
       projectPath: '/adopter',
       udid: 'stim-source',
@@ -555,13 +555,13 @@ test('pool deletion excludes adoption and an adopted emulator cannot be deleted 
     device: { avdName: 'stim-source', owned: true },
   };
   await expect(
-    removeParkedAfter('android', 'stim-source', () => {
-      expect(adoptParked(request)).toBeNull();
+    removeParkedAfter('android', 'stim-source', async () => {
+      expect(await adoptParked(request)).toBeNull();
       throw new Error('retain for retry');
     }),
   ).rejects.toThrow('retain for retry');
   const report = await collectParkedAvds({ directorySize: () => 1024 });
-  expect(adoptParked(request)?.name).toBe('stim-source');
+  expect((await adoptParked(request))?.name).toBe('stim-source');
   expect(await deleteParkedAvds(report)).toBe(0);
   expect(avds.has('stim-source')).toBe(true);
 });

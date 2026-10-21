@@ -963,7 +963,7 @@ export async function finishIosRun({
         build: { ...buildFailure, appPath, bundleId },
       });
     }
-    if (adopting) d.clearIosAdoptionPending(root, slot);
+    if (adopting) await d.clearIosAdoptionPending(root, slot);
     installSkipped = Boolean(installed?.skipped);
     const artifactDuration =
       installed?.artifactDurationMs === undefined
@@ -978,7 +978,7 @@ export async function finishIosRun({
     if (!remoteDevice && installed?.devClientPreparationDurationMs !== undefined) {
       phase('install', `dev client prepared (${formatDuration(installed.devClientPreparationDurationMs)})`);
     }
-    if (installed.schemeApprovals) d.recordIosSchemeApprovals(root, udid, installed.schemeApprovals, slot);
+    if (installed.schemeApprovals) await d.recordIosSchemeApprovals(root, udid, installed.schemeApprovals, slot);
 
     dropSwapDir();
 

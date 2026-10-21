@@ -329,7 +329,7 @@ test('parked deletion skips a simulator adopted after report collection', async 
   parkSim({ platform: 'ios', projectPath: '/tmp/source', record, max: 3 });
   const report = describeParkedSims([record], [makeIosSim({ udid: 'P1', name: record.name })], []);
   const device = { deviceUdid: 'P1', deviceName: 'stim-adopter', owned: true };
-  adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: 'P1', device });
+  await adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: 'P1', device });
   let deleted = false;
 
   const output = await captureLog(() =>
