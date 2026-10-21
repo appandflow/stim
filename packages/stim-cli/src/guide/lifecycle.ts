@@ -193,8 +193,9 @@ does not restart initialization. Confirm the bundle request and expected UI.
 
 Debug Android launches on an owned emulator that the run creates, or whose
 adoption from the pool it finishes, get up to 60 seconds for bundle loading;
-the verify phase names that budget. Existing emulators, remote targets, and physical devices keep the
-20-second budget.
+the verify phase names that budget. Existing emulators, remote targets, and physical devices get 20 seconds,
+extended up to 60 while an Expo dev client's manifest request is pending or was
+just served.
 Bundle delivery still requires the usual stability or app readiness check;
 an observed fatal error ends verification without waiting for the deadline.
 

@@ -39,7 +39,7 @@ function manifestPlatform(req) {
     return null;
   }
   if (!MANIFEST_PATHS.has(url.pathname)) return null;
-  const platform = req.headers['expo-platform'] ?? url.searchParams.get('platform');
+  const platform = url.searchParams.get('platform') || req.headers['expo-platform'] || req.headers['exponent-platform'];
   return platform === 'ios' || platform === 'android' ? platform : null;
 }
 

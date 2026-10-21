@@ -178,7 +178,7 @@ describe('the Expo Metro config adapter', () => {
                     res.resume();
                     res.on('end', () => setTimeout(() => process.exit(0), 100));
                   });
-                }, 600);
+                }, 1500);
               });
             }, 400);
           });

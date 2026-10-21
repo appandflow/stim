@@ -172,13 +172,6 @@ async function nativeLaunchFailure({
     : null;
 }
 
-/**
- * The bundle deadline once the app's manifest requests are counted: Expo's dev server computes the fingerprint runtime
- * version per manifest request, so the dev client can need longer than `timeoutMs` to get as far as asking for its bundle.
- * A manifest request still in flight holds the deadline open, a served one extends it to `MANIFEST_GRACE_MS` after it
- * was served, and `MANIFEST_VERIFY_TIMEOUT_MS` from the start bounds both. A manifest is progress, never proof: it moves
- * the deadline and nothing else.
- */
 function manifestDeadline(
   records: NdjsonRecord[],
   { startedAt, timeoutMs }: { startedAt: number; timeoutMs: number },

@@ -127,8 +127,6 @@ function runLsof(args) {
   );
 }
 
-// The manifest observer installs itself on the first request that reaches Stim's middleware, and the dev client's
-// manifest request can come first, so the dev server asks itself for the warmup endpoint as soon as it listens.
 function armManifestObserver() {
   const port = Number(process.env.STIM_METRO_PORT);
   if (armed || !Number.isInteger(port) || port <= 0) return;
