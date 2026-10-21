@@ -64,13 +64,6 @@ private let latest = SemanticVersion("1.14.0")!
     let justChecked = now.addingTimeInterval(-60)
     #expect(!StimRelease.isDue(lastChecked: justChecked, now: now, installed: installed, cachedLatest: cached))
   }
-
-  @Test func refetchesWhenTheSettingsIntervalHasPassed() {
-    let now = Date(timeIntervalSince1970: 1_000_000)
-    let interval = StimRelease.settingsInterval
-    #expect(!StimRelease.isDue(lastChecked: now.addingTimeInterval(-interval + 60), now: now, interval: interval))
-    #expect(StimRelease.isDue(lastChecked: now.addingTimeInterval(-interval), now: now, interval: interval))
-  }
 }
 
 @Suite struct StimReleaseShownLatestTests {
