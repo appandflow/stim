@@ -823,11 +823,19 @@ and reports `strategy: "cdp"`, with `appId` set to the URL the page was on when
 Stim sent the reload.
 
 Stim does not record launches on a physical device (`--device`) or an EAS
-Simulator session (`--remote eas`), so `reload` cannot reach them. With a
-recorded EAS session it refuses with `STIM_RELOAD_UNSUPPORTED`; with no
-recorded launch it refuses with `STIM_RELOAD_STOPPED`. Both remedies name
-`agent-device metro reload --metro-port <port>`, which asks every app connected
-to the workspace Metro to reload.
+Simulator session (`--remote eas`). When no owned launch is live, `reload` asks
+this workspace's Metro for its connected apps and reloads them, so it reaches an
+app on a phone or in an EAS session that is running and connected to that Metro.
+Without a recorded package name, every connected client that is not an iOS client counts as Android. Name the platform when Metro reports apps on both, and a platform with no connected client is never sent a request. The facts have `appId: null`
+and `deviceId: "metro:<port>"` because Stim does not know the device, and
+Stim changes nothing on it. An Android phone needs its `adb reverse` for the
+Metro port, which `android --device` adds; reload does not restore it. When no
+app is connected, it refuses with `STIM_RELOAD_STOPPED`. A launch error that
+leaves an app without a Metro connection (an iOS first-bundle failure) is not
+reached; use the device's own Reload control. An app in an EAS Simulator
+session may not open Metro's websocket through the tunnel; `reload` then finds
+no app there and refuses, and `stim ios --remote eas` relaunches it on the
+session.
 
 Every native reload goes over the workspace Metro websocket, on both platforms. It never
 reopens a development-client URL, because that restarts the app rather than

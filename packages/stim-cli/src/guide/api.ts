@@ -226,9 +226,10 @@ STIM_CLAIM_UNAVAILABLE, taking precedence over cancellation or callback failure;
 follow its remedy before retrying. Startup never retries automatically.
 
 reload({ platform?, signal?, beforeReload? }) requests a JavaScript reload in
-the live iOS/Android app or reloads the owned Chrome page. It returns the flat
-stim reload --json facts: platform, deviceId, deviceName, appId, metroPort,
-strategy, targets and reverseRestored. Choose ios, android or web when more
+the live iOS/Android app (owned, on a physical device or in an EAS Simulator
+session) or reloads the owned Chrome page. It returns the flat
+stim reload --json facts: platform, deviceId, deviceName, appId (null for an
+app Stim did not launch), metroPort, strategy, targets and reverseRestored. Choose ios, android or web when more
 than one platform is live. A request does not prove completion; verify the UI
 and inspect logs. A Metro broadcast can reach other connected clients.
 beforeReload(workspace) runs once after resolving the workspace and before
