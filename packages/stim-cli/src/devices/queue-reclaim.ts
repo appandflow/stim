@@ -1,13 +1,15 @@
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { DEVICE_RECLAIM_REASON } from '@stim-cli/core/state';
 import { realpathSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
-import { dueIdleDevices, shutDownIdleDevices, type IdleShutdownEvent } from './idle-shutdown.ts';
+import {
+  dueIdleDevices,
+  shutDownIdleDevices,
+  writeIdleShutdownEvent,
+  type IdleShutdownEvent,
+} from './idle-shutdown.ts';
 
 export async function reclaimIdleDevice(
   root: string,
@@ -32,11 +34,7 @@ export async function reclaimIdleDevice(
     const { device, idleForMs } = candidate;
     const label = loadConfig()?.projects[device.project]?.label || basename(device.project);
     const log = (event: IdleShutdownEvent) => {
-      const writer = createNdjsonWriter(join(workspaceLogsDir(device.project), 'metro.ndjson'), {
-        maxBytes: LOG_ROTATE_BYTES,
-      });
-      writer.write({ src: 'metro', ...event });
-      writer.close();
+      writeIdleShutdownEvent(device.project, event);
       if (event.level === 'warn') out(`${'device'.padEnd(11)} ${event.msg}`);
     };
     skipped.add(`${device.kind}:${device.id}`);

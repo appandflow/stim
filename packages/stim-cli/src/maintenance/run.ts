@@ -105,6 +105,7 @@ const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
   'would-clear-build-dirs': 3,
   'would-empty-cache': 3,
   'would-remove-worktree': 4,
+  'would-shutdown-device': 5,
   'would-stop-workspace': 5,
   'would-delete-devices': 5,
   'would-delete-dependencies': 6,
@@ -167,6 +168,8 @@ function describeDone(action: MaintenanceAction): string {
       return `Deleted the unpinned Gradle ${action.target} caches and distributions`;
     case 'would-stop-workspace':
       return `Stopped ${name} and deleted its owned devices`;
+    case 'would-shutdown-device':
+      return `Shut down the idle device ${action.target} of ${name}`;
     default:
       return `Unregistered the stale cache ${action.target}`;
   }
@@ -259,7 +262,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
       delete state.deferredAt?.[check];
       keepState();
       try {
-        if (check === 'worktree' || check === 'sweep') continue;
+        if (check === 'worktree' || check === 'sweep' || check === 'idle') continue;
         if (check === 'pressure') {
           state.pressure = measurePressure(settings, state.pressure, state.lastAt[check]!);
           state.pressure.diskLevel = diskPressureLevel(lowestFree(state.pressure.disk), budget, settings);
@@ -327,6 +330,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
       result = await plannedMaintenance(state.pressure, state.sizes, settings, {
         sweep: ran.has('sweep'),
         worktrees: ran.has('worktree'),
+        idle: ran.has('idle'),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -401,7 +405,9 @@ export async function runMaintenance(trigger: string): Promise<void> {
       return results;
     }
     const retained = state.plan.filter(
-      (action) => (action.check === 'sweep' || action.check === 'worktree') && !ran.has(action.check),
+      (action) =>
+        ((action.check === 'sweep' || action.check === 'worktree') && !ran.has(action.check)) ||
+        (action.kind === 'would-shutdown-device' && action.check === undefined && !ran.has('idle')),
     );
     const previousActions = new Set(state.plan.map(actionKey));
     const previousSkips = new Set(state.skipKeys ?? []);

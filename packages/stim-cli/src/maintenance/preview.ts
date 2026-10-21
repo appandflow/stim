@@ -18,6 +18,7 @@ import { listWorktreesAsync } from '../workspace/worktree.ts';
 import { plan, type MaintenancePlan } from './plan.ts';
 import { maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { planSweep, planWorktrees } from './sweep.ts';
+import { planIdleShutdown } from './devices.ts';
 import { planPressureLevels } from './levels.ts';
 import { diskPressureLevel, lowestFree } from './pressure.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
@@ -42,9 +43,17 @@ export async function plannedMaintenance(
     devices = true,
     sweep = false,
     worktrees = false,
+    idle = false,
     refresh = true,
     operation,
-  }: { devices?: boolean; sweep?: boolean; worktrees?: boolean; refresh?: boolean; operation?: StimContext } = {},
+  }: {
+    devices?: boolean;
+    sweep?: boolean;
+    worktrees?: boolean;
+    idle?: boolean;
+    refresh?: boolean;
+    operation?: StimContext;
+  } = {},
 ): Promise<PlannedMaintenance> {
   const env = operation?.env ?? process.env;
   const resolved = resolveBudget({ env });
@@ -150,6 +159,7 @@ export async function plannedMaintenance(
     merge(planned);
     result.worktreeSweep = planned.sweep;
   }
+  if (idle && devices) merge(planIdleShutdown({ protectedRoot: root, now: Date.now(), env }));
   if (pressure) {
     const level = diskPressureLevel(lowestFree(pressure.disk), budget, settings);
     const pressured = await planPressureLevels(level, {
@@ -219,6 +229,7 @@ export async function previewMaintenance({
     const result = await plannedMaintenance(pressure, state?.sizes ?? [], settings, {
       devices,
       sweep: true,
+      idle: true,
       refresh,
       operation,
     });

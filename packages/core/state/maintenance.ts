@@ -3,7 +3,7 @@ import { maintenanceStateFile, maintenanceAttemptFile } from './paths.ts';
 import type { NdjsonRecord } from './ndjson.ts';
 
 export type MaintenanceMode = 'off' | 'report' | 'on';
-export type MaintenanceCheck = 'pressure' | 'size' | 'worktree' | 'sweep';
+export type MaintenanceCheck = 'pressure' | 'size' | 'worktree' | 'sweep' | 'idle';
 export type MaintenanceActionKind =
   | 'would-clear-outputs'
   | 'would-trim-cache'
