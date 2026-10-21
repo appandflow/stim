@@ -370,7 +370,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: 30,
     description:
-      'Minutes an owned simulator or emulator stays idle before the workspace supervisor shuts it down; 0 never',
+      'Minutes an owned simulator or emulator stays idle before the workspace supervisor, or automatic maintenance when no supervisor runs, shuts it down; 0 never',
   },
   {
     key: 'devices.reclaimIdleMinutes',
@@ -711,6 +711,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 15,
     env: 'STIM_MAINTENANCE_WORKTREE_CHECK_MINUTES',
     description: 'Finished-worktree check interval in minutes',
+  },
+  {
+    key: 'maintenance.idleCheckMinutes',
+    type: { kind: 'number', integer: true, minimum: 1 },
+    scopes: MACHINE,
+    default: 5,
+    env: 'STIM_MAINTENANCE_IDLE_CHECK_MINUTES',
+    description:
+      'Interval in minutes of the check that shuts down owned simulators and emulators idle for devices.idleShutdownMinutes, also with no dev server running',
   },
   {
     key: 'maintenance.sweepHours',

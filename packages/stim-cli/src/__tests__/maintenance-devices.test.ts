@@ -1,19 +1,28 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { MaintenanceSize } from '@stim-cli/core/state';
+import {
+  maintenanceNdjsonFile,
+  readDeviceIdleShutdowns,
+  type MaintenanceRecord,
+  type MaintenanceSize,
+} from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { collectFinishedDevices, deleteFinishedDevices } from '../commands/gc/finished-devices.ts';
 import type { WorktreeSkipCode, WorktreeSweep } from '../commands/gc/worktrees.ts';
+import * as gcIdle from '../commands/gc/idle.ts';
 import * as ios from '../devices/ios.ts';
+import * as teardown from '../devices/teardown.ts';
+import * as measurements from '../maintenance/measure.ts';
+import { runMaintenance } from '../maintenance/run.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { ownedDeviceUsage, planDeviceDeletion } from '../maintenance/devices.ts';
 import { planPressureLevels } from '../maintenance/levels.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { maintenanceLine } from '../maintenance/status.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
-import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
-import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
 import { takeLease } from '../engine/device-lease.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
@@ -324,5 +333,61 @@ test('at level 3 an idle workspace with no dev server loses its devices through 
 
   expect(result.actions.filter((action) => action.target === idle)).toEqual([
     expect.objectContaining({ kind: 'would-delete-devices', level: 2 }),
+  ]);
+});
+
+test('a maintenance pass shuts down devices idle past devices.idleShutdownMinutes with no supervisor, and keeps the rest', async () => {
+  process.env.STIM_MAINTENANCE = 'on';
+  process.env.STIM_MAINTENANCE_SWEEP_HOURS = '0';
+  process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  vi.spyOn(measurements, 'sizeScanDeferred').mockReturnValue(false);
+  vi.spyOn(measurements, 'measurePressure').mockReturnValue({
+    disk: [{ volume: '/', freeMb: 500 * 1024 }],
+    memory: { level: 'normal', availableBytes: null, pressured: false },
+    warningSince: null,
+  });
+  const now = Date.now();
+  const idle = (name: string, minutes: number): gcIdle.OwnedDeviceActivity => {
+    const root = workspaceWithSim(name, minutes);
+    return {
+      kind: 'ios',
+      id: `UDID-${name}`,
+      name: `stim-${name}`,
+      project: root,
+      slot: 'default',
+      activity: {
+        state: 'idle',
+        basis: ['workspace-use'],
+        lastActivityAt: new Date(now - minutes * MINUTE_MS).toISOString(),
+      },
+    };
+  };
+  const quiet = idle('quiet', 45);
+  const optedOut = idle('opted-out', 120);
+  const locked = idle('locked', 120);
+  const devices = [quiet, idle('recent', 10), optedOut, locked];
+  writeFileSync(join(optedOut.project, '.stim.json'), JSON.stringify({ devices: { idleShutdownMinutes: 0 } }));
+  plantClaim(join(workspaceDir(locked.project), 'native-run.lock'), 'exclusive', liveClaimOwner());
+  vi.spyOn(gcIdle, 'collectOwnedDeviceActivity').mockImplementation((config) =>
+    devices.filter((device) => Boolean(config?.projects[device.project])),
+  );
+  const shutDown = vi
+    .spyOn(teardown, 'teardownOwnedIosSim')
+    .mockImplementation(async (id) => ({ status: 'torn-down', label: id }));
+
+  await runMaintenance('test');
+
+  expect(shutDown.mock.calls.map(([id]) => id)).toEqual(['UDID-quiet']);
+  expect(readDeviceIdleShutdowns(readWorkspaceState(quiet.project))).toEqual({
+    ios: expect.objectContaining({ idleMinutes: 45 }),
+  });
+  expect(readFileSync(join(workspaceLogsDir(quiet.project), 'metro.ndjson'), 'utf8')).toContain('device_idle_shutdown');
+  const records: MaintenanceRecord[] = readFileSync(maintenanceNdjsonFile(), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  expect(records.filter((record) => record.event === 'maintenance_action').map((record) => record.action)).toEqual([
+    expect.objectContaining({ kind: 'shutdown-device', target: 'UDID-quiet' }),
   ]);
 });

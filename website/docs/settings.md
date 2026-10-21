@@ -659,7 +659,9 @@ stim settings set budget.minFreeDiskGb 40
 ```
 
 Without waiting for a budget, `devices.idleShutdownMinutes` shuts down a
-workspace's owned simulators and emulators once they have been idle that long.
+workspace's owned simulators and emulators once they have been idle that long,
+through the workspace's dev server supervisor or, with no supervisor, through
+automatic maintenance every `maintenance.idleCheckMinutes` (5).
 It is on by default at 30 minutes; see
 [idle shutdown](./owned-devices.md#idle-shutdown).
 

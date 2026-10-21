@@ -451,15 +451,18 @@ minute while a dev server or Stim Desktop is running even when no command does. 
 would remove, under the caps and floors in
 [settings](./settings.md#automatic-maintenance). In `report` mode it only
 measures, plans and logs.
-Disk and memory pressure are checked every minute, Stim-owned directory sizes
-every hour, finished worktrees every 15 minutes and the age sweep once a day.
+Disk and memory pressure are checked every minute, idle devices every
+`maintenance.idleCheckMinutes` (5), Stim-owned directory sizes every hour,
+finished worktrees every 15 minutes and the age sweep once a day.
 On macOS the memory signal is the sysctl pressure level, with no signal when
 sysctl fails. Only other platforms use `os.freemem()`. Memory pressure is
-recorded; below disk pressure level 3 a pass never shuts down idle devices or
-dev servers or stops helpers.
+recorded; below disk pressure level 3 a pass never stops dev servers or
+helpers. The idle check shuts down owned simulators and emulators idle for
+their workspace's `devices.idleShutdownMinutes`, also when no dev server runs;
+see [idle shutdown](./owned-devices.md#idle-shutdown).
 Removing a finished worktree or orphaned directory does tear down that
 workspace's own dev server, owned devices and Chrome profile, as `gc --delete` does.
-Size, worktree and sweep checks defer under high host load. The size scan covers
+Size, idle, worktree and sweep checks defer under high host load. The size scan covers
 workspace build outputs, native build and Metro caches, ccache, Swift
 compilation cache, and other registered Stim caches. It also records the disk of
 each owned and parked simulator and emulator, which `stim status` reports as

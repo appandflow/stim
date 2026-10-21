@@ -3,12 +3,16 @@ import type { StimContext } from '@stim-cli/core';
 import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { worktreeRemovalReason, type WorktreeSweep } from '../commands/gc/worktrees.ts';
+import { formatLongDuration } from '../command-output.ts';
+import { workspaceDeviceLastUseAt } from '../devices/activity.ts';
 import { listAvds, ownedAvdDirectory } from '../devices/android.ts';
+import { dueIdleDevices } from '../devices/idle-shutdown.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
+import { deviceIdleShutdownMinutesSetting, resolveProjectSettings } from '../workspace/settings.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
@@ -219,4 +223,51 @@ export function finishedWorkspaces(
     const reason = `its worktree is finished (${worktreeRemovalReason(worktree, sweep)}) but kept`;
     return worktree.keys.map((root) => ({ root: canonicalPath(root), reason }));
   });
+}
+
+/** Each workspace's effective devices.idleShutdownMinutes, or 0 when it cannot be resolved. */
+export function idleShutdownMinutes(root: string): number {
+  try {
+    return deviceIdleShutdownMinutesSetting(resolveProjectSettings(root).settings);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Plans shutting down each booted owned simulator and emulator idle for its workspace's devices.idleShutdownMinutes,
+ * whether or not a supervisor runs there. The devices are shut down, never deleted.
+ */
+export function planIdleShutdown({
+  protectedRoot,
+  now,
+  env = process.env,
+}: {
+  protectedRoot: string;
+  now: number;
+  env?: NodeJS.ProcessEnv;
+}): MaintenancePlan {
+  const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
+  if (deviceSweepIsScoped(env)) return plan;
+  const minutes = new Map(
+    Object.keys(loadConfig()?.projects ?? {}).flatMap((root) => {
+      const value = canonicalPath(root) === protectedRoot ? 0 : idleShutdownMinutes(root);
+      return value > 0 ? [[root, value] as const] : [];
+    }),
+  );
+  if (minutes.size === 0) return plan;
+  for (const { device, idleForMs } of dueIdleDevices(undefined, Math.min(...minutes.values()) * 60_000, now)) {
+    const own = minutes.get(device.project);
+    if (own === undefined || idleForMs < own * 60_000 || now - workspaceDeviceLastUseAt(device.project) < own * 60_000)
+      continue;
+    const root = canonicalPath(device.project);
+    plan.actions.push({
+      kind: 'would-shutdown-device',
+      target: device.id,
+      workspace: root,
+      bytes: 0,
+      reason: `${device.kind === 'ios' ? 'simulator' : 'emulator'} ${device.name} idle ${formatLongDuration(idleForMs)}, over devices.idleShutdownMinutes ${own}`,
+    });
+  }
+  return plan;
 }

@@ -2062,9 +2062,13 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   status\` shows "shut down after 30m idle" on the device until the next
   \`ios\` or \`android\` run boots it again. When metro.idleStopMinutes is
   shorter, the dev server's idle stop first shuts down the devices idle that
-  long, because no supervisor is left to check afterwards. The supervisor
-  path does not check without a supervisor: release runs, and after
-  \`stim stop\`. The setting is read when the supervisor starts. Stim Desktop's simulator view is not a
+  long, because no supervisor is left to check afterwards. Devices with no
+  supervisor (release runs, a dev server that exited) are shut down by
+  automatic maintenance (guide cleanup): every maintenance.idleCheckMinutes
+  (5) a command starts a background check that applies each workspace's
+  current setting with the same idle rules, native-run lock recheck, status
+  and log record, and skips the workspace of the command that started it.
+  The supervisor reads the setting when it starts. Stim Desktop's simulator view is not a
   stim-server client and does not count as a viewer. Change it with
   \`stim settings set devices.idleShutdownMinutes <minutes> --scope machine\`;
   0 turns it off, and an explicit 0 stays 0.

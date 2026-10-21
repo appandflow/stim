@@ -25,13 +25,14 @@ and logs, and never deletes anything. off disables it. It is off in CI and
 scoped STIM_HOME homes unless STIM_MAINTENANCE is explicit, so a scratch home
 or CI run never deletes on its own.
 Commands trigger a detached pass when a check is due: disk and memory pressure
-(every minute), directory sizes (hourly), finished worktrees (every 15
-minutes) and the age sweep (daily). guide, settings, help and every gc
+(every minute), idle devices (every 5 minutes, maintenance.idleCheckMinutes),
+directory sizes (hourly), finished worktrees (every 15 minutes) and the age
+sweep (daily). guide, settings, help and every gc
 invocation do not trigger it; gc without --delete prints the maintenance plan
 itself.
 status --watch and every running dev server supervisor also trigger checks
 each minute, so the disk check runs while no command does.
-Size, worktree and sweep checks defer under high load. Attempts back off for at
+Size, idle, worktree and sweep checks defer under high load. Attempts back off for at
 least one minute. Measured directories are workspace build outputs and Stim's
 shared native, Metro, ccache, Swift compilation and registered caches. The size
 check also records the disk of each owned and parked simulator and emulator
@@ -40,7 +41,10 @@ Pressure checks read free disk on the Stim home, projects and worker root
 volumes. On macOS the memory signal is the sysctl pressure level, with no
 signal if sysctl fails. Other platforms use os.freemem(); macOS never falls
 back to it. Memory pressure is recorded only; stopping devices, dev servers
-and helpers is not automatic. While the level is warning or critical, the
+and helpers for memory is not automatic. The idle check shuts down (never
+deletes) owned simulators and emulators idle for their workspace's
+devices.idleShutdownMinutes, also with no supervisor running, through the
+supervisor's idle rules and records (guide lifecycle budget). While the level is warning or critical, the
 check also names abnormally large processes (guide lifecycle simslim) in
 status's maintenance block and the maintenance log.
 
