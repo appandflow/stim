@@ -39,6 +39,7 @@ import {
   refingerprintAfterMutation,
   resolveBuild,
   storeBuild,
+  storedAppId,
   storedAssetManifest,
   storedSources,
   untrackedMissLine,
@@ -555,6 +556,36 @@ test('storedAssetManifest is null for an entry stored without one, or with unrea
   expect(storedAssetManifest('android', 'ak3', root)).toBe(null);
   writeFileSync(join(entryDir('android', 'ak3', root), 'assets-manifest.json'), '{"version":99,"assets":[]}');
   expect(storedAssetManifest('android', 'ak3', root)).toBe(null);
+});
+
+test('a capability store records the app id read from the stored artifact, and storedAppId reads it back', async () => {
+  resetExecutor();
+  const build = join(root, 'build5', 'App.apk');
+  mkdirSync(join(root, 'build5'), { recursive: true });
+  writeFileSync(build, 'apk');
+  const readFrom: string[] = [];
+  const cache = filesystemBuildCapability({
+    root,
+    readAppId: (path) => {
+      readFrom.push(path);
+      return 'io.example.app';
+    },
+  });
+
+  await cache.store({
+    projectRoot: root,
+    platform: 'android',
+    key: 'ak5',
+    sourcePath: build,
+    overwrite: false,
+    signal: new AbortController().signal,
+  });
+
+  expect(readFrom).toEqual([build]);
+  expect(storedAppId('android', 'ak5', root)).toBe('io.example.app');
+  await storeBuild('android', 'ak6', build, { root, readAppId: () => null });
+  expect(storedAppId('android', 'ak6', root)).toBe(null);
+  expect(storedAppId('android', 'missing', root)).toBe(null);
 });
 
 test('{ overwrite } REPLACES the manifest too, so a refusing entry stops refusing', async () => {

@@ -43,6 +43,7 @@ type ReactNativeIosDependencies = Pick<
   | 'untrackedNativeFiles'
   | 'resolveBuild'
   | 'storeBuild'
+  | 'readBundleId'
   | 'readWorkspaceState'
   | 'loadProjectProvider'
   | 'planPrebuild'
@@ -305,6 +306,7 @@ function reactNativeIosArtifact(
         resolve: d.resolveBuild,
         store: d.storeBuild,
         sources: storeSources,
+        readAppId: (path) => d.readBundleId(path),
       }),
     async validateExternal(path) {
       if (device) {

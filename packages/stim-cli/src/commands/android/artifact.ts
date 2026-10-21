@@ -16,7 +16,7 @@ import {
   type LoadCacheProviderResult,
   type ProviderCallResult,
 } from '@stim-cli/cache';
-import { prepareProviderDownloadDir, providerDownloadPath } from '../../cache/build-cache.ts';
+import { prepareProviderDownloadDir, providerDownloadPath, type storedAppId } from '../../cache/build-cache.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
@@ -111,6 +111,7 @@ interface AndroidArtifactDeps {
   resolveRemoteBuild: typeof resolveRemote;
   uploadRemoteBuild: typeof uploadRemote;
   loadCacheProviderModule: typeof loadCacheProvider;
+  storedAppId: typeof storedAppId;
   acquireSlot: typeof acquireBuildSlot;
   releaseSlot: typeof releaseBuildSlot;
   now: () => number;
@@ -121,6 +122,8 @@ export interface PreparedAndroidArtifact {
   apkPath: string | null;
   handoff?: BuildHandoff | null;
   androidPackage: string | null;
+  /** The package read from the APK when its cache entry was stored, for an APK that entry provided. */
+  apkPackage: string | null;
   /** Waits for cache uploads that read temporary copies before removing them; repeated calls are safe. */
   release(): void | Promise<void>;
   waitedForBuild: WaitedForBuild | null;
@@ -170,6 +173,7 @@ export async function acquireAndroidArtifact(
     resolveRemoteBuild,
     uploadRemoteBuild,
     loadCacheProviderModule,
+    storedAppId: entryAppId,
     acquireSlot,
     releaseSlot,
     now,
@@ -959,6 +963,7 @@ export async function acquireAndroidArtifact(
       apkPath: acquired.artifact,
       handoff,
       androidPackage,
+      apkPackage: record.cacheHit && storeKey ? entryAppId(PLATFORM, storeKey) : null,
       release: async () => {
         await settleArtifactUploads(providerUpload, uploadPending);
         acquired.release();

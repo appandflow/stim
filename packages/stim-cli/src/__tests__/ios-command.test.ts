@@ -109,7 +109,7 @@ import {
   type RecordStatsResult,
   type StatsRun,
 } from '../engine/stats.ts';
-import { buildCacheKey, entryDir, resolveBuild } from '../cache/build-cache.ts';
+import { buildCacheKey, entryDir, resolveBuild, storeBuild } from '../cache/build-cache.ts';
 import { resolveRemote } from '../engine/remote-cache.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
@@ -1535,6 +1535,20 @@ describe('the cache', () => {
       },
     );
     expect(calls.args.launchIosApp.bundleId).toBe('com.example.fromplist');
+  });
+
+  test('a stored build keeps its bundle id, so the next hit launches without reading the binary', async () => {
+    reserve();
+    const realCache = { resolveBuild, storeBuild };
+    mkdirSync(join(root, 'build', 'Fixture.app'), { recursive: true });
+    writeFileSync(join(root, 'build', 'Fixture.app', 'Info.plist'), 'plist');
+    const first = await run({}, realCache);
+    expect(first.calls.order).toContain('buildIos');
+
+    const second = await run({}, realCache);
+    expect(second.calls.order).not.toContain('buildIos');
+    expect(second.calls.order).not.toContain('readBundleId');
+    expect(second.calls.args.launchIosApp.bundleId).toBe('com.example.app');
   });
 
   test('a miss runs prebuild, then pods, then a RE-fingerprint, then the build, then stores it', async () => {

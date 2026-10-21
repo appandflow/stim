@@ -4,7 +4,7 @@ import type { StimContext } from '@stim-cli/core';
 import { constants, promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { loadCacheProvider } from '@stim-cli/cache';
-import { providerUploadOutcome } from '../../cache/build-cache.ts';
+import { providerUploadOutcome, storedAppId } from '../../cache/build-cache.ts';
 import { phaseLine } from '../../command-output.ts';
 import { hostSystemImageArch } from '../../devices/android.ts';
 import { workspaceShareURL } from '../../devices/stim-desktop.ts';
@@ -202,6 +202,7 @@ export async function buildAndroidOperation(
               resolveRemoteBuild: resolveRemote,
               uploadRemoteBuild: uploadRemote,
               loadCacheProviderModule: loadCacheProvider,
+              storedAppId,
               acquireSlot: acquireBuildSlot,
               releaseSlot: releaseBuildSlot,
               now: Date.now,
