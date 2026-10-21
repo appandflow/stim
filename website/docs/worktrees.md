@@ -398,7 +398,8 @@ ago, so plain `gc --delete` keeps it. `--worktrees` removes it once it is idle:
 by its last Stim use when one is recorded, else by its git and Stim activity
 (the same sources as the grace period below) being older than `--older-than`
 days. Automatic maintenance removes it the same way in its daily age sweep,
-after `maintenance.olderThanDays`, and at disk pressure level 3 once
+after `maintenance.olderThanDays`, only with `maintenance.removeIdleWorktrees`
+(off by default), and at disk pressure level 3 once
 that activity is older than `maintenance.pressureProtectMinutes`, and never
 sooner than 5 minutes after it, even when that setting is 0. Before
 removing it, gc checks again that its HEAD did not move and that it is still

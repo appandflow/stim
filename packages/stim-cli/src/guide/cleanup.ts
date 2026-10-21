@@ -597,8 +597,9 @@ SWEEPING FINISHED WORKTREES
   one, else by the RECENT ACTIVITY sources above being older than
   --older-than days (reason recently-used while they are newer, and
   last-use-unknown when they cannot be read). Automatic maintenance removes it
-  the same way in its daily age sweep, after maintenance.olderThanDays, and at
-  disk pressure level 3 once that activity is older than
+  the same way in its daily age sweep, after maintenance.olderThanDays, only
+  with maintenance.removeIdleWorktrees (off by default), and at disk pressure
+  level 3 once that activity is older than
   maintenance.pressureProtectMinutes and at least 5 minutes old, whatever
   the setting; unreadable activity keeps it. Removal re-checks, under the removal
   locks, that HEAD did not move and the worktree is still idle, and
