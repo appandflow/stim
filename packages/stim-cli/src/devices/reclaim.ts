@@ -40,6 +40,7 @@ import { macosAppPresent } from '../macos/state.ts';
 import { readWebRecord } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
+import { removePhoneReverses } from './phone-reverses.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from '../engine/tunnel.ts';
 import { getExecutor } from '../exec.ts';
@@ -486,6 +487,7 @@ async function reclaimIdleProject(
   verifyAvdClaims(project, operation);
   const dereferenced = describeDereferenced(project);
   const initialState = readWorkspaceState(path);
+  await removePhoneReverses(path, { operation });
 
   let killedPid: number | null = null;
   let skippedMetro: string | null = null;

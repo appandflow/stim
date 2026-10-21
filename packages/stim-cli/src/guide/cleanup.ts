@@ -729,6 +729,9 @@ DEVICE LEASES
   its holder and expiry, including holders no config knows. \`stop\` and
   \`worktree remove\` release the leases of the workspace they act on, and
   nothing else deletes a lease file: never remove another workspace's.
+  They also remove the \`adb reverse\` that an \`android --device\` run added
+  for this workspace's Metro port on that phone, using the serial and port the
+  run recorded in its workspace state; any other reverse on the phone stays.
 
 A device leaks when a project is abandoned WITHOUT either delete path -- the
 sim survives with nothing pointing at it. \`stim gc\` (no flag, writes

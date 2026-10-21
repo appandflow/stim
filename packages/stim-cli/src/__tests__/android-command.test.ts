@@ -5828,7 +5828,13 @@ describe('--device refusals found in review', () => {
     expect(result.error?.code).toBe('STIM_BAD_ARG');
   });
 
-  test('a physical run leaves no serial in the workspace state either', async () => {
+  test('an emulator run records no phone reverse', async () => {
+    const h = harness();
+    await h.run();
+    expect(existsSync(workspaceStateFile(root)) ? readState().phoneReverses : undefined).toBeUndefined();
+  });
+
+  test('a physical run records its Metro reverse, and no other serial, in the workspace state', async () => {
     const h = harness({
       device: true,
       listDevices: () => CONNECTED2,
@@ -5839,8 +5845,9 @@ describe('--device refusals found in review', () => {
       ensureDeviceBooted: never('the emulator boot'),
     });
     await h.run();
-    const state = JSON.stringify(readState());
-    expect(state).not.toContain('RFCR7081Q9L');
+    const { phoneReverses, ...state } = readState() as Record<string, unknown>;
+    expect(phoneReverses).toEqual({ android: { serial: 'RFCR7081Q9L', ports: [8082] } });
+    expect(JSON.stringify(state)).not.toContain('RFCR7081Q9L');
     expect(loadConfig()?.projects?.[root]?.platforms?.android).toBeUndefined();
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf8'));
     expect(records.find((record) => record.event === 'launch_attempt')).toMatchObject({

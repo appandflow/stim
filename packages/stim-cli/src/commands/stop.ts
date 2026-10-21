@@ -72,6 +72,7 @@ import {
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { removeOwnedEmulatorMetroReverses } from '../devices/android.ts';
+import { removePhoneReverses } from '../devices/phone-reverses.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { fileLeaseIo, releaseWorkspaceLeasesAsync, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
@@ -527,7 +528,28 @@ async function stopWorkspace({
     isAlive,
     inspectIdentity,
   });
-  const releaseReverses = () => removeOwnedEmulatorReverses(proj, reservedPort, operation);
+  let phoneReversesRemoved = false;
+  const releasePhoneReverses = async () => {
+    if (phoneReversesRemoved) return;
+    phoneReversesRemoved = true;
+    try {
+      await removePhoneReverses(root, { slot: hostedSlot, operation });
+    } catch (error) {
+      operation?.signal.throwIfAborted();
+      report(
+        chalk.yellow(
+          phaseLine(
+            'device',
+            `could not remove the adb reverse from the phone: ${error instanceof Error ? error.message : error}`,
+          ),
+        ),
+      );
+    }
+  };
+  const releaseReverses = async () => {
+    await removeOwnedEmulatorReverses(proj, reservedPort, operation);
+    await releasePhoneReverses();
+  };
   if (target.status === 'none') {
     report(chalk.dim(phaseLine('stop', 'no supervisor recorded')));
   } else if (target.status === 'stale') {
@@ -595,6 +617,7 @@ async function stopWorkspace({
     outcomes.metro = { status: 'skipped', reason: 'the supervisor owns the dev server on this port' };
   } else if (reservedPort === null) {
     report(chalk.dim(phaseLine('metro', 'no port reserved')));
+    await releasePhoneReverses();
   } else {
     const metro = await stopMetro(reservedPort, root, {
       server: sup,

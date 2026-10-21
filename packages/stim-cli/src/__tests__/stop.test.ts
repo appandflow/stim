@@ -25,6 +25,7 @@ import { captureProcessToken } from '../process-identity.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
+import { recordPhoneReverse } from '../devices/phone-reverses.ts';
 
 test('a live legacy supervisor is retained without signalling or releasing its port', async () => {
   const { calls, opts } = seams({
@@ -664,6 +665,90 @@ test.each([
     expect(events).toEqual(expected);
   },
 );
+
+describe('stop removes the adb reverses a --device run left on a physical phone', () => {
+  const listing =
+    'UsbFfs tcp:8083 tcp:8083\nUsbFfs tcp:8085 tcp:8085\nUsbFfs tcp:8081 tcp:8083\nUsbFfs tcp:9000 tcp:9000\n';
+  const PHONE_REVERSES_REMOVED = [
+    '-s RFCR7081Q9L reverse --list',
+    '-s RFCR7081Q9L reverse --remove tcp:8083',
+    '-s RFCR7081Q9L reverse --remove tcp:8085',
+    '-s RFCR7081Q9L reverse --remove tcp:8081',
+  ];
+
+  function recordAdb(events: string[]) {
+    setExecutor(
+      makeExecutor({
+        runFileQuietAsync: async (_file, args) => {
+          events.push(args.join(' '));
+          return args.includes('--list') ? listing : '';
+        },
+      }),
+    );
+  }
+
+  test.each([
+    [
+      'a verified supervisor',
+      { state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083 }, isAlive: (pid: number) => pid === 4242 },
+      [...PHONE_REVERSES_REMOVED, 'supervisor'],
+    ],
+    ['no dev server on the port', {}, PHONE_REVERSES_REMOVED],
+    ['no reserved port', { project: { platforms: {} } }, PHONE_REVERSES_REMOVED],
+    [
+      'an unverified supervisor',
+      { state: { pid: 4242, processToken: 'upid1.supervisor', port: 9999 }, isAlive: (pid: number) => pid === 4242 },
+      [],
+    ],
+  ])('before it stops Metro, and not while it refuses to: %s', async (_case, over, expected) => {
+    await recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8085);
+    await recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8083);
+    const events: string[] = [];
+    recordAdb(events);
+    const { opts } = seams({
+      root: tmpRoot,
+      killGroup: () => {
+        events.push('supervisor');
+        return true;
+      },
+      ...over,
+    });
+    await runStop(opts);
+    expect(events).toEqual(expected);
+    const recordKept = expected.length === 0;
+    expect(readWorkspaceState(tmpRoot)?.phoneReverses !== undefined).toBe(recordKept);
+  });
+
+  test('stop --slot removes only that slot phone, and keeps the others recorded', async () => {
+    await recordPhoneReverse(tmpRoot, 'default', 'DEFAULT-PHONE', 8083);
+    await recordPhoneReverse(tmpRoot, 'tablet', 'RFCR7081Q9L', 8083);
+    const events: string[] = [];
+    recordAdb(events);
+    const { opts } = seams({ root: tmpRoot });
+    await runStop({ ...opts, slot: 'tablet' });
+    expect(events).toEqual([
+      '-s RFCR7081Q9L reverse --list',
+      '-s RFCR7081Q9L reverse --remove tcp:8083',
+      '-s RFCR7081Q9L reverse --remove tcp:8081',
+    ]);
+    expect(readWorkspaceState(tmpRoot)?.phoneReverses).toEqual({ android: { serial: 'DEFAULT-PHONE', ports: [8083] } });
+  });
+
+  test('an unreachable phone does not fail stop, and its record is dropped', async () => {
+    await recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8083);
+    setExecutor(
+      makeExecutor({
+        runFileQuietAsync: async () => {
+          throw makeError('device offline');
+        },
+      }),
+    );
+    const { opts } = seams({ root: tmpRoot });
+    const result = await runStop(opts);
+    expect(result.ok).toBe(true);
+    expect(readWorkspaceState(tmpRoot)?.phoneReverses).toBeUndefined();
+  });
+});
 
 test('a project with no reserved port has nothing to free', async () => {
   const { calls, opts } = seams({ project: { platforms: {} } });

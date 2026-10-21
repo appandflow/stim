@@ -41,6 +41,7 @@ import {
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
 import { workspaceDevServerMode, writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
+import { recordPhoneReverse } from '../../devices/phone-reverses.ts';
 import type {
   VerifyLaunchResultLike,
   RemoteUploadLike,
@@ -873,6 +874,7 @@ export async function finishAndroidRun({
     physical,
     msg: `launching ${androidPackage} on ${serial}`,
   });
+  await notePhoneReverse({ root, slot, serial, metroPort, physical, remoteDevice, runtimeKind: runtime.kind }, out);
   const launched = await runtime.launch(runtimePreparation, {
     serial,
     androidPackage,
@@ -1085,6 +1087,34 @@ function launchRemedy(
     remoteDevice?.failureRemedy() ??
     `Check the app installed correctly (\`adb -s ${serial} shell pm list packages ${packageName}\`).`
   );
+}
+
+async function notePhoneReverse(
+  args: {
+    root: string;
+    slot?: string;
+    serial: string;
+    metroPort: number | null;
+    physical: boolean;
+    remoteDevice: unknown;
+    runtimeKind: string;
+  },
+  out: (line: string) => void,
+): Promise<void> {
+  const { root, slot = 'default', serial, metroPort } = args;
+  if (!args.physical || args.remoteDevice || args.runtimeKind !== 'metro' || typeof metroPort !== 'number') return;
+  try {
+    await recordPhoneReverse(root, slot, serial, metroPort);
+  } catch (error) {
+    out(
+      phaseLine(
+        'state',
+        chalk.yellow(
+          `could not record the adb reverse on ${serial}: ${error instanceof Error ? error.message : error}`,
+        ),
+      ),
+    );
+  }
 }
 
 function reportMetroRoute({
