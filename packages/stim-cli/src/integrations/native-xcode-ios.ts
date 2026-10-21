@@ -362,7 +362,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
         platform: 'ios',
         native: 'xcode',
         local: {
-          ...(await iosToolchainAsync(root, 'xcode')),
+          ...(await iosToolchainAsync(root, null)),
           ...(context.target.hostedArchitecture
             ? {
                 arch: context.target.hostedArchitecture === 'x86_64' ? 'x64' : 'arm64',

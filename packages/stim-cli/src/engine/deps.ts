@@ -526,7 +526,7 @@ async function ensureBundledGems(
       failed: true,
       code: DEPS_ERROR,
       reason: `\`bundle install\` failed (${how}).`,
-      remedy: frozenRemedy(root, pin, transcript) || gemInstallRemedy(root, pin),
+      remedy: frozenRemedy(pin, transcript) || gemInstallRemedy(root, pin),
       diagnosticSource: extracted ? extracted.source : 'tail',
       diagnosticLines: extracted ? extracted.lines : [],
       lastLines: install.transcript.slice(-LAST_LINES),
@@ -561,15 +561,11 @@ function missingBundlerNote(pin: { gemfile: string; lockfile: string }): string 
   );
 }
 
-function frozenRemedy(
-  root: string,
-  pin: { gemfile: string; lockfile: string },
-  transcript: string,
-): string | undefined {
+function frozenRemedy(pin: { gemfile: string; lockfile: string }, transcript: string): string | undefined {
   if (!BUNDLER_FROZEN.test(transcript)) return undefined;
   return (
     `Stim runs bundler with BUNDLE_FROZEN so it can never write into your checkout, and ${pin.gemfile} no longer ` +
-    `matches ${pin.lockfile}. Run \`cd ${root} && bundle install\` yourself, keep the updated Gemfile.lock, then run again.`
+    `matches ${pin.lockfile}. Run \`cd ${dirname(pin.gemfile)} && bundle install\` yourself, keep the updated Gemfile.lock, then run again.`
   );
 }
 
@@ -580,7 +576,7 @@ function gemInstallRemedy(root: string, pin: { gemfile: string; lockfile: string
     : '';
   return (
     `${ruby}Bundler could not install the gems ${pin.lockfile} pins, so \`bundle exec pod install\` cannot run. ` +
-    `Run \`cd ${root} && bundle install\` and fix what it reports, then run again.`
+    `Run \`cd ${dirname(pin.gemfile)} && bundle install\` and fix what it reports, then run again.`
   );
 }
 
@@ -623,7 +619,7 @@ export async function runPodInstall(
   };
 
   const notes: string[] = [];
-  const pin = bundlerPin(root);
+  const pin = bundlerPin(root, iosDir);
   let bundler = false;
   if (pin) {
     const gems = await ensureBundledGems(root, pin, ctx);
@@ -685,13 +681,13 @@ function podFailureRemedy(
   transcript: string,
 ): string | undefined {
   if (pin) {
-    const frozen = frozenRemedy(root, pin, transcript);
+    const frozen = frozenRemedy(pin, transcript);
     if (frozen) return frozen;
     if (BUNDLER_NO_COCOAPODS.test(transcript)) {
       return (
         `${pin.lockfile} resolves cocoapods, but bundler found no \`pod\` executable in the bundle it loaded: ` +
         `the installed gems belong to a different Gemfile than ${pin.gemfile}, or that Gemfile's bundle was never ` +
-        `installed. Run \`cd ${root} && bundle install && bundle exec pod --version\` and make that work, then run again.`
+        `installed. Run \`cd ${dirname(pin.gemfile)} && bundle install && bundle exec pod --version\` and make that work, then run again.`
       );
     }
   }
