@@ -18,6 +18,7 @@ import {
   bootIosSim,
   createOwnedIosSim,
   iosSimulatorFailureAdvice,
+  readSpringBoardPid,
   waitForSpringBoard,
   listAllIosSims,
   listAllIosSimsAsync,
@@ -231,7 +232,13 @@ export async function ensureOwnedIosDevice({
             ...facts,
           };
         }
-        return { ...(await configure()), ...facts, booted: sim.udid };
+        const slimConfigured = Boolean(simslimProfile) || simslimDefault || Boolean(record.simslimManaged);
+        const springBoardBefore = slimConfigured ? await readSpringBoardPid(sim.udid) : null;
+        const configured = await configure();
+        if (slimConfigured && (await readSpringBoardPid(sim.udid)) !== springBoardBefore) {
+          await muteBootedSimulator(sim.udid, out);
+        }
+        return { ...configured, ...facts, booted: sim.udid };
       }
     } else {
       const sim = (await listAllIosSimsAsync()).find((s) => s.udid === record.deviceUdid);

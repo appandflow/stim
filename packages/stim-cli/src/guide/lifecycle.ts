@@ -104,10 +104,11 @@ simulators to volume zero through Xcode's devicectl, and Android 15 and later
 emulators to media volume zero. The iOS mute runs after SimSlim has applied its
 profile and once SpringBoard has finished starting, because both a SimSlim
 reboot and SpringBoard's startup reset the volume. A device that is already
-running keeps its volume, except that SimSlim reboots a running simulator whose
-profile changed. Turn sound on for one device with Sound (iOS) or
-Media sound (Android) in its Stim Desktop options; the choice lasts until that
-device next boots. Android 14 and older images have no shell command that can
+running keeps its volume, except that a running simulator SimSlim reboots (a
+first slim, a profile change, or restoring stock services) is muted again once
+SpringBoard is back; an already slim simulator is not touched. Turn sound on
+for one device with Sound (iOS) or Media sound (Android) in its Stim Desktop
+options; the choice lasts until that device next boots. Android 14 and older images have no shell command that can
 set media volume, so startup warns, as it does whenever a mute is not
 confirmed. Host volume, Android alarm and ringtone volumes, hosted devices and
 physical devices are unchanged.
@@ -2827,9 +2828,10 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   \`ios.simslim off\` opts that app out and restores stock services on its
   simulator. The defaults disable push, StoreKit, iCloud, Safari sync, Mail,
   Calendar and Contacts services, among others; move an app that needs them
-  to a profile that keeps those categories, or to \`off\`. A running or
-  parked simulator is slimmed the next time Stim boots or adopts it, and an
-  already slim simulator is left alone, so only the first slim reboots it.
+  to a profile that keeps those categories, or to \`off\`. A running
+  simulator is slimmed on the next \`stim ios\`, without a boot first, and a
+  parked simulator when Stim adopts it. An already slim simulator is left
+  alone, so only the first slim reboots it.
   Without the \`simslim\` command, doctor reports it and \`stim ios\` boots
   the simulator unslimmed with a one-line note. Hosted simulators on a named
   Mac are never slimmed, whatever either Mac's setting says.

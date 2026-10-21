@@ -2061,6 +2061,47 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
+  test.each([
+    { name: 'mutes a running simulator that the SimSlim reconcile rebooted', pids: [4242, 4300], muted: true },
+    { name: 'leaves the volume of a running simulator SimSlim did not reboot', pids: [4242, 4242], muted: false },
+  ])('$name', async ({ pids, muted }) => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      const events: string[] = [];
+      let reconciled = false;
+      setExecutor({
+        ...exec,
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            events.push('mute');
+            return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+          }
+          if (file === 'xcrun' && args.includes('notifyutil')) {
+            return `com.apple.springboard.finishedstartup ${pids[reconciled ? 1 : 0]}`;
+          }
+          return exec.runFile(file, args);
+        },
+      });
+      await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslim: 'on' } },
+        reconcileIosSimulator: async () => {
+          events.push('reconcile');
+          reconciled = true;
+          return { managed: true, profile: null };
+        },
+      });
+      expect(events).toEqual(muted ? ['reconcile', 'mute'] : ['reconcile']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test.each([false, true])('prepares and joins a boot with the requested viewer (reused=%s)', async (reused) => {
     const root = projectDir();
     try {
