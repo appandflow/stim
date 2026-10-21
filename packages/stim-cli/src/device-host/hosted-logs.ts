@@ -36,7 +36,7 @@ function readCursor(root: string, session: string, target: LogTarget): HostedLog
 const sameCursor = (a: HostedLogsCursor | undefined, b: HostedLogsCursor | undefined): boolean =>
   JSON.stringify(Object.entries(a ?? {}).toSorted()) === JSON.stringify(Object.entries(b ?? {}).toSorted());
 
-/** Records of the logcat runs a local Android launch would report as a native crash; a run split across pages is not joined. */
+// A crash run split across two pulled pages keeps native_crash only on the page with its header.
 function androidCrashRecords(records: Record<string, unknown>[]): Set<object> {
   return new Set(
     androidLogGroups(records as NdjsonRecord[])
