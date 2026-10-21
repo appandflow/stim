@@ -53,8 +53,8 @@ export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
  * `react-native bundle` output, ignored only while an ignore pattern matches it: a committed copy can be a native
  * resource, while a Debug build loads JS from Metro and a release cache hit injects the current JS. The match skips
  * the index, so a force-added copy counts the same on a build worker, whose mirror index is empty. A build worker
- * has only the synced .gitignore files, so a committed copy matched only by .git/info/exclude or a global excludes
- * file still fingerprints differently there.
+ * has only the synced .gitignore files, so the client sends the paths it ignored (`ignoredFingerprintPaths`) for
+ * those it ignores through .git/info/exclude or a global excludes file.
  */
 const BUNDLE_OUTPUT_IGNORES: Record<string, string> = {
   'ios/main.jsbundle': 'ios/main.jsbundle',
@@ -62,6 +62,9 @@ const BUNDLE_OUTPUT_IGNORES: Record<string, string> = {
 };
 
 const APP_ROOT_IOS_SKIPPED = new Set(['node_modules', 'Pods', 'build', 'android', '.git', '.DS_Store', '.stim.json']);
+
+const appRootNames = (entries: readonly string[]) =>
+  entries.filter((name) => !APP_ROOT_IOS_SKIPPED.has(name) && !name.startsWith('.watchman-cookie-'));
 
 function gitIgnoredNames(projectRoot: string, names: readonly string[], noIndex = false): Set<string> {
   if (names.length === 0) return new Set();
@@ -102,9 +105,7 @@ export function iosProjectFingerprintOptions(
     { type: 'dir', filePath: iosProjectPath, reasons },
   ];
   if (appRoot) {
-    const names = list(projectRoot).filter(
-      (name) => !APP_ROOT_IOS_SKIPPED.has(name) && !name.startsWith('.watchman-cookie-'),
-    );
+    const names = appRootNames(list(projectRoot));
     const skip = ignored(projectRoot, names);
     extraSources = names
       .filter((name) => !skip.has(name))
@@ -172,19 +173,36 @@ interface FingerprintTarget {
   platform?: string;
   iosProjectPath?: string;
   androidLayout?: AndroidLayout | null;
+  ignoredPaths?: readonly string[];
+}
+
+/**
+ * The bundle output and, with `ios.projectPath` '.', the top-level entries that git ignores here for an iOS
+ * fingerprint, as the paths a build worker needs to ignore the same ones: it has no .git/info/exclude or global
+ * excludes file.
+ */
+export function ignoredFingerprintPaths(
+  projectRoot: string,
+  { platform, iosProjectPath = DEFAULT_IOS_PROJECT_PATH }: FingerprintTarget,
+): string[] {
+  if (platform !== 'ios') return [];
+  const appRoot = iosProjectPath === '.' ? gitIgnoredNames(projectRoot, appRootNames(readdirSync(projectRoot))) : [];
+  return [...gitIgnoredNames(projectRoot, Object.keys(BUNDLE_OUTPUT_IGNORES), true), ...appRoot].toSorted();
 }
 
 async function fingerprintOptions(
   projectRoot: string,
-  { platform, iosProjectPath = DEFAULT_IOS_PROJECT_PATH, androidLayout = null }: FingerprintTarget,
+  { platform, iosProjectPath = DEFAULT_IOS_PROJECT_PATH, androidLayout = null, ignoredPaths = [] }: FingerprintTarget,
 ): Promise<FingerprintOptions> {
+  const ignoredHere = (names: readonly string[], noIndex = false) =>
+    new Set([...gitIgnoredNames(projectRoot, names, noIndex), ...ignoredPaths.filter((path) => names.includes(path))]);
   const platforms =
     platform && FINGERPRINT_PLATFORMS.has(platform)
       ? { platforms: [platform] as FingerprintOptions['platforms'] }
       : undefined;
   const ios: Pick<FingerprintOptions, 'extraSources' | 'ignorePaths'> =
     platform === 'ios'
-      ? iosProjectFingerprintOptions(projectRoot, iosProjectPath)
+      ? iosProjectFingerprintOptions(projectRoot, iosProjectPath, { ignored: (_, names) => ignoredHere(names) })
       : androidLayout?.custom
         ? androidProjectFingerprintOptions(projectRoot, androidLayout)
         : {};
@@ -196,9 +214,7 @@ async function fingerprintOptions(
   const bundleOutput =
     platform === 'android'
       ? []
-      : [...gitIgnoredNames(projectRoot, Object.keys(BUNDLE_OUTPUT_IGNORES), true)].map(
-          (path) => BUNDLE_OUTPUT_IGNORES[path]!,
-        );
+      : [...ignoredHere(Object.keys(BUNDLE_OUTPUT_IGNORES), true)].map((path) => BUNDLE_OUTPUT_IGNORES[path]!);
   // With DEBUG set, @expo/fingerprint profiles sourcers on stdout unless silent.
   return {
     ...platforms,
@@ -248,8 +264,6 @@ export async function gitignoredFingerprintInputs(
   { env, signal }: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
 ): Promise<string[]> {
   const found = new Set<string>();
-  // With ios.projectPath '.', an env file ignored only by .git/info/exclude or a global excludes file becomes an iOS
-  // source on a build worker, which has only the synced .gitignore files.
   if (sources.some((source) => source.type === 'contents' && source.id === 'expoConfig'))
     for (const name of expoEnvFiles(env))
       if (lstatSync(join(projectRoot, name), { throwIfNoEntry: false })?.isFile()) found.add(name);
@@ -589,6 +603,7 @@ export async function refingerprintAfterMutation({
   previousHash,
   iosProjectPath,
   androidLayout,
+  ignoredPaths,
   fingerprint = fingerprintProject,
 }: {
   projectRoot: string;
@@ -596,6 +611,7 @@ export async function refingerprintAfterMutation({
   previousHash: string;
   iosProjectPath?: string;
   androidLayout?: AndroidLayout;
+  ignoredPaths?: readonly string[];
   fingerprint?: typeof fingerprintProject;
 }): Promise<(ProjectFingerprint & { moved: boolean }) | null> {
   let computed: ProjectFingerprint | null = null;
@@ -604,6 +620,7 @@ export async function refingerprintAfterMutation({
       platform,
       ...(iosProjectPath ? { iosProjectPath } : {}),
       ...(androidLayout ? { androidLayout } : {}),
+      ...(ignoredPaths ? { ignoredPaths } : {}),
     });
   } catch {
     return null;

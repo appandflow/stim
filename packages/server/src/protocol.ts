@@ -1997,6 +1997,13 @@ export function protocolJsonSchema(): JsonSchema {
                   },
                 },
               },
+              fingerprintIgnored: {
+                type: 'array',
+                maxItems: 20000,
+                description:
+                  'Paths relative to project that git ignores for fingerprint on the caller, such as through .git/info/exclude.',
+                items: { type: 'string', minLength: 1, maxLength: 1024 },
+              },
               native: {
                 oneOf: [
                   {

@@ -32,6 +32,7 @@ import {
   DEFAULT_FINGERPRINT_IGNORES,
   fingerprintProject,
   gitignoredFingerprintInputs,
+  ignoredFingerprintPaths,
   prepareProviderDownloadDir,
   providerDownloadPath,
   refingerprintAfterMutation,
@@ -705,6 +706,75 @@ describe('gitignored fingerprint inputs', () => {
   }, 30_000);
 });
 
+describe('fingerprints that depend on a local git exclude', () => {
+  const git = (dir: string, ...args: string[]) =>
+    getExecutor().runFile('git', ['-C', dir, ...args], { timeoutMs: 10_000 });
+  const files: Record<string, string> = {
+    'package.json': '{"name":"app"}',
+    '.gitignore': 'node_modules/\n',
+    'ios/Podfile': 'platform :ios',
+    'ios/main.jsbundle': 'bundle',
+    '.env.local': 'KEY=1',
+  };
+  let worker: string;
+  const checkout = (dir: string) => {
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(join(dir, path, '..'), { recursive: true });
+      writeFileSync(join(dir, path), content);
+    }
+    getExecutor().runFile('git', ['init', '--quiet', dir], { timeoutMs: 10_000 });
+    git(dir, 'config', 'core.excludesFile', '/dev/null');
+  };
+  beforeEach(() => {
+    resetExecutor();
+    worker = mkdtempSync(join(tmpdir(), 'stim-bc-worker-'));
+    checkout(root);
+    checkout(worker);
+    git(root, 'add', 'package.json', '.gitignore', 'ios');
+  });
+  afterEach(() => rmSync(worker, { recursive: true, force: true }));
+
+  const excludeLocally = (where: 'info/exclude' | 'core.excludesFile', ...patterns: string[]) => {
+    const file = where === 'info/exclude' ? join(root, '.git/info/exclude') : join(root, '.git/global-excludes');
+    mkdirSync(join(file, '..'), { recursive: true });
+    writeFileSync(file, `${patterns.join('\n')}\n`);
+    if (where === 'core.excludesFile') git(root, 'config', 'core.excludesFile', file);
+  };
+
+  test.each(['info/exclude', 'core.excludesFile'] as const)(
+    'a build worker ignores the committed bundle output the client ignores through %s',
+    async (where) => {
+      excludeLocally(where, 'ios/main.jsbundle');
+      const target = { platform: 'ios' };
+      const ignoredPaths = ignoredFingerprintPaths(root, target);
+      expect(ignoredPaths).toEqual(['ios/main.jsbundle']);
+      const client = (await fingerprintProject(root, target))?.hash;
+      expect((await fingerprintProject(worker, target))?.hash).not.toBe(client);
+      expect((await fingerprintProject(worker, { ...target, ignoredPaths }))?.hash).toBe(client);
+    },
+    30_000,
+  );
+
+  test.each(['info/exclude', 'core.excludesFile'] as const)(
+    'a build worker skips the top-level file the client ignores through %s with ios.projectPath .',
+    async (where) => {
+      excludeLocally(where, '.env.local');
+      const target = { platform: 'ios', iosProjectPath: '.' };
+      const ignoredPaths = ignoredFingerprintPaths(root, target);
+      expect(ignoredPaths).toEqual(['.env.local']);
+      const client = (await fingerprintProject(root, target))?.hash;
+      expect((await fingerprintProject(worker, target))?.hash).not.toBe(client);
+      expect((await fingerprintProject(worker, { ...target, ignoredPaths }))?.hash).toBe(client);
+    },
+    30_000,
+  );
+
+  test('names nothing for Android or when nothing is ignored', () => {
+    expect(ignoredFingerprintPaths(root, { platform: 'android' })).toEqual([]);
+    expect(ignoredFingerprintPaths(root, { platform: 'ios', iosProjectPath: '.' })).toEqual([]);
+  });
+});
+
 test('fingerprintDiffRecord caps the logged list at 20 names and carries the total count', () => {
   const changed = Array.from({ length: 25 }, (_, i) => `src/file-${i}`);
   const record = fingerprintDiffRecord({ changed, previousHash: 'aaa', hash: 'bbb' });
@@ -727,6 +797,21 @@ describe('refingerprintAfterMutation', () => {
       fingerprint: async () => ({ hash: '7ea8b7c', sources: [fpDir('android', 'dd')] }),
     });
     expect(shifted).toEqual({ hash: '7ea8b7c', sources: [fpDir('android', 'dd')], moved: true });
+  });
+
+  test('recomputes with the ignore decisions the caller was given', async () => {
+    let target: { ignoredPaths?: readonly string[] } = {};
+    await refingerprintAfterMutation({
+      projectRoot: root,
+      platform: 'ios',
+      previousHash: 'abc123',
+      ignoredPaths: ['.env.local'],
+      fingerprint: async (_, given) => {
+        target = given ?? {};
+        return { hash: 'abc123', sources: [] };
+      },
+    });
+    expect(target.ignoredPaths).toEqual(['.env.local']);
   });
 
   test('a hash that did not move is reported as not moved, so nothing is re-keyed', async () => {

@@ -168,6 +168,17 @@ function fingerprintSources(value: unknown): BuildFingerprintSource[] | null | u
   return valid ? (value as BuildFingerprintSource[]) : null;
 }
 
+function fingerprintIgnored(value: unknown): string[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_FINGERPRINT_SOURCES) return null;
+  const paths: string[] = [];
+  for (const path of value) {
+    if (typeof path !== 'string' || path.length === 0 || path.length > MAX_PATH_CHARS) return null;
+    paths.push(path);
+  }
+  return paths;
+}
+
 const GRADLE_NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const GRADLE_ROOT = /^[A-Za-z0-9._/ -]{1,200}$/;
 const GRADLE_MODULE = /^(:(?!\.\.?(?::|$))[A-Za-z0-9._-]+){1,20}$/;
@@ -1555,6 +1566,12 @@ export class BuildSession {
       );
     if (!native && [...this.files.values()].some((file) => file.kind === 'directory'))
       return refusal('bad-request', 'Directory entries require a native build request.');
+    const expectedIgnored = fingerprintIgnored(params.fingerprintIgnored);
+    if (expectedIgnored === null)
+      return refusal(
+        'bad-request',
+        `params.fingerprintIgnored must be at most ${MAX_FINGERPRINT_SOURCES} paths of at most ${MAX_PATH_CHARS} characters.`,
+      );
     const android = platform === 'android' ? androidOptions(params.android) : null;
     if (platform === 'android' && !android) {
       return refusal(
@@ -1608,6 +1625,7 @@ export class BuildSession {
         runtime: optional(params.runtime),
         expectedFingerprint: params.fingerprint as string | null,
         ...(expectedSources ? { expectedSources } : {}),
+        ...(expectedIgnored ? { expectedIgnored } : {}),
         optimizations: isJsonObject(params.optimizations) ? params.optimizations : null,
       },
     });

@@ -1216,6 +1216,7 @@ describe('pairing', () => {
           'native-gradle-peer-cache',
           'react-native-peer-cache',
           'fingerprint-sources',
+          'fingerprint-ignored',
           'swiftpm-peer-cache',
           'build-dependency-cache',
           'hosted-android-data',
@@ -2230,7 +2231,11 @@ describe('offloaded builds', () => {
       expect(
         await client.request('build.start', { ...START, fingerprintSources: [{ id: 'ios', hash: '../x' }] }),
       ).toMatchObject({ error: { code: 'bad-request' } });
-      const started = await client.request('build.start', { ...START, fingerprintSources });
+      expect(await client.request('build.start', { ...START, fingerprintIgnored: [3] })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      const fingerprintIgnored = ['.env.local', 'ios/main.jsbundle'];
+      const started = await client.request('build.start', { ...START, fingerprintSources, fingerprintIgnored });
       expect(started).toMatchObject({ result: { job: expect.any(String) } });
       const job = (started as { result: { job: string } }).result.job;
       const events = await progress(client);
@@ -2255,6 +2260,7 @@ describe('offloaded builds', () => {
         project: 'apps/mobile',
         expectedFingerprint: 'f00d',
         expectedSources: fingerprintSources,
+        expectedIgnored: fingerprintIgnored,
         runtime: 'iOS-27-0',
       });
       expect(ran.job.manifest.map((entry: { path: string }) => entry.path).toSorted()).toEqual([

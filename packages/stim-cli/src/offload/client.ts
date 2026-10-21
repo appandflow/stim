@@ -1397,6 +1397,8 @@ async function fetchArtifact({
 interface FingerprintInputs {
   sources: readonly FingerprintSource[];
   ignored: readonly string[];
+  /** The paths, relative to the project, that this Mac's git ignores for the fingerprint. */
+  ignoredPaths?: readonly string[];
 }
 
 function fingerprintSourcesParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
@@ -1407,6 +1409,11 @@ function fingerprintSourcesParam(inputs: FingerprintInputs | null, connection: B
       hash: source.hash,
     })),
   };
+}
+
+function fingerprintIgnoredParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
+  if (!inputs?.ignoredPaths?.length || !connection.supports('fingerprint-ignored')) return {};
+  return { fingerprintIgnored: [...inputs.ignoredPaths] };
 }
 
 function keepCorruptCacheMessage(
@@ -1609,6 +1616,7 @@ export async function offloadBuild(
         platform: request.platform,
         fingerprint: request.platform === 'macos' ? synced.digest : expectedFingerprint,
         ...fingerprintSourcesParam(inputs, choice.connection),
+        ...fingerprintIgnoredParam(inputs, choice.connection),
         ...(native
           ? {
               native: {
