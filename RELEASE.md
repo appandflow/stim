@@ -421,7 +421,8 @@ repeat the affected gate rather than waiving it.
 
    Send the `url` (the run page has Review deployments -> `release` ->
    Approve and deploy). The workflow packs the package tarballs with pnpm, checks
-   that no `workspace:` range survived the pack, skips an exact package version
+   that every packed `stim` and `@stim-cli/*` dependency is exactly the tag
+   version (no `workspace:`, `^` or `~`), skips an exact package version
    that already exists, computes the dist-tag (section 1) and publishes every
    package to it. Its `smoke` job then waits, up to 15 minutes per check, for
    the registry to serve each version, its tarball and the dist-tag, and runs
