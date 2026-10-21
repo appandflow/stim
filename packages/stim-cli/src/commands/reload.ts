@@ -314,8 +314,8 @@ function unlaunchedRefusal(
     const run = `stim ${platform ?? remote.platform ?? 'ios'} --remote eas`;
     return failure(
       'STIM_RELOAD_STOPPED',
-      `This workspace's remote device is EAS Simulator session ${remote.sessionId}${metroPort ? `, but no app is connected to this workspace's Metro on port ${metroPort}` : ''}.`,
-      `Run \`${run}\` to launch the app there.`,
+      `This workspace's remote device is EAS Simulator session ${remote.sessionId}, and no app is connected to this workspace's Metro${metroPort ? ` on port ${metroPort}` : ''}. An app in an EAS session may not open Metro's websocket through the tunnel, so Stim cannot reload it.`,
+      `Run \`${run}\` to relaunch the app on the session; that restarts the app and loses in-memory state.`,
     );
   }
   const run = platform ? `Run \`stim ${platform}\` first.` : 'Run `stim ios` or `stim android` first.';
@@ -783,7 +783,7 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
           const reached =
             facts.strategy === 'metro-broadcast'
               ? 'This Metro cannot name its connected apps, so the request was broadcast to all of them.'
-              : `The request addressed ${facts.targets} connected ${facts.platform} app${facts.targets === 1 ? '' : 's'}.`;
+              : `The request addressed ${facts.targets} connected ${facts.platform} Metro client${facts.targets === 1 ? '' : 's'}.`;
           console.log(
             `Reload requested through this workspace's Metro on port ${facts.metroPort}, for apps Stim did not launch (a physical device or ${facts.deviceName}). ${reached} Completion is not observed; verify the expected UI and run stim logs --errors.`,
           );

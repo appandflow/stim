@@ -185,7 +185,7 @@ RULES DURING THE LOOP
   apps' caches. See guide lifecycle for reset scope.
 - Reload is not part of the normal workflow. Use stim reload when an error
   screen remains after the fix on an owned local simulator or emulator, a
-  physical device or an EAS Simulator session, and on
+  physical device (an EAS Simulator session when its app connects to Metro), and on
   Android after a failed first bundle load. It reloads JavaScript and never
   restarts the app. An iOS app whose first bundle failed never connects to
   Metro, so reload cannot reach it and says to use the device's own Reload

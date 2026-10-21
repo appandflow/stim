@@ -1159,7 +1159,7 @@ describe('a workspace with no launch on an owned local simulator or emulator', (
     expect(remedy).toContain('adb reverse tcp:8082 tcp:8082');
   });
 
-  test('a recorded EAS session with no connected app says to launch there', async () => {
+  test('a recorded EAS session with no connected app says to relaunch and why reload cannot reach it', async () => {
     const result = await runReload({
       root: '/project',
       deps: unrecorded({

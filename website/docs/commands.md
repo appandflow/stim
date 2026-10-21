@@ -832,7 +832,10 @@ Stim changes nothing on it. An Android phone needs its `adb reverse` for the
 Metro port, which `android --device` adds; reload does not restore it. When no
 app is connected, it refuses with `STIM_RELOAD_STOPPED`. A launch error that
 leaves an app without a Metro connection (an iOS first-bundle failure) is not
-reached; use the device's own Reload control.
+reached; use the device's own Reload control. An app in an EAS Simulator
+session may not open Metro's websocket through the tunnel; `reload` then finds
+no app there and refuses, and `stim ios --remote eas` relaunches it on the
+session.
 
 Every native reload goes over the workspace Metro websocket, on both platforms. It never
 reopens a development-client URL, because that restarts the app rather than

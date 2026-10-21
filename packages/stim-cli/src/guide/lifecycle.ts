@@ -117,8 +117,10 @@ Refresh cannot clear the current screen, and on Android after a failed first
 bundle load. It reloads JavaScript and never restarts the app. Use \`stim
 reload ios\` or \`stim reload android\` to select a platform when both owned
 apps are live. With no owned launch recorded, it reloads the apps connected to
-this workspace's Metro, such as one on a physical device (--device) or an EAS
-Simulator session (--remote eas); an Android phone needs its adb reverse.
+this workspace's Metro, such as one on a physical device (--device); an
+Android phone needs its adb reverse. An app in an EAS Simulator session may not
+connect to Metro through the tunnel; then reload finds no app and the way to
+restart it is stim ios|android --remote eas.
 The detected iOS Local Network
 first-load remedy uses agent-device UI automation because no Metro peer exists
 yet. It never builds, installs, boots, or cold-launches. It acts on a live app
