@@ -390,6 +390,10 @@ larger. `stim gc` reports each workspace's log size, and `stim gc --delete` trim
 a file over 16 MiB to its newest 8 MiB in workspaces that are not in use. See
 [`gc`](./commands.md#gc).
 
+A run that builds or reuses an app and then fails at the device, install or launch
+step adds one `build` error record with event `run_failed`, the error code and
+the phase, so `stim logs --errors` lists the failure that `stim status` shows.
+
 Exit code 0 means the query succeeded, including when it prints errors. A clean
 `stim logs --errors` check requires exit code 0 and no matching errors in the
 captured logs. Human mode prints `No matching log records` on stderr for zero

@@ -111,7 +111,9 @@ serve bounded log queries.
   event native_crash (app/device/time-correlated OS reports or fatal app console output)
   and device records with platform web (the owned page's failed requests and
   browser errors, from stim web), timestamped after the
-  marker that closes their window. Three rules, and a field test
+  marker that closes their window. A run that builds or reuses an app and then
+  fails at the device, install or launch step adds one build record with event
+  run_failed, its code and its phase. Three rules, and a field test
   caught all three wrong at once -- it returned 3,004 iOS syslog lines on a
   healthy app while hiding a real startup crash.
 
