@@ -66,7 +66,6 @@ export function memoryCulpritsUnder(
 const CULPRIT_REUSE_MS = 30_000;
 const recentCulprits = new WeakMap<Executor, { at: number; read: Promise<MemoryCulprit[] | null> }>();
 
-/** Shares one `top` read among the calls of a run: concurrent and later calls within 30 seconds reuse it. */
 export function memoryCulpritsUnderAsync(
   pressure: HostMemoryPressure | null,
   exec: Executor = getExecutor(),
@@ -79,7 +78,6 @@ export function memoryCulpritsUnderAsync(
   return read;
 }
 
-/** Starts the culprit read without waiting for it and calls `emit` with the advice if it names a process. */
 export function reportMemoryCulprits(
   pressure: HostMemoryPressure | null,
   emit: (advice: string) => void,
@@ -88,7 +86,7 @@ export function reportMemoryCulprits(
   void (async () => {
     const named = memoryCulpritAdvice(await memoryCulpritsUnderAsync(pressure, exec));
     if (named) emit(named);
-  })();
+  })().catch(() => {});
 }
 
 export function hostMemoryPressureAdvice(
