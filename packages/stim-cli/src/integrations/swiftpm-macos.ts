@@ -7,6 +7,7 @@ import { swiftpmArtifactCache } from '../macos/artifact-cache.ts';
 import { resolveBundleExtras, setBundleName, stageBundle, validateInfoPlist } from '../macos/stage.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { macosToolchainAsync } from '../offload/toolchain.ts';
+import { withScratchTmpdir } from '../temporary.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
 import type { MacosArtifactRecipe, MacosProject } from './macos-project.ts';
 import { type StimContext } from '@stim-cli/core';
@@ -33,23 +34,26 @@ export function swiftpmMacosProject(root: string): MacosProject {
         product,
         arguments: macos.arguments ?? [],
         bundleId,
-        async compile({ scratch, writer, note }) {
-          await tool(
-            context,
-            root,
-            ['build', '-c', 'debug', '--product', product, '--scratch-path', scratch, '--jobs', '2'],
-            writer,
-            note,
-          );
-          return tool(
-            context,
-            root,
-            ['build', '-c', 'debug', '--scratch-path', scratch, '--show-bin-path'],
-            writer,
-            () => {},
-            true,
-          );
-        },
+        compile: ({ scratch, temporary, writer, note }) =>
+          withScratchTmpdir(temporary, async () => {
+            await tool(
+              context,
+              root,
+              temporary,
+              ['build', '-c', 'debug', '--product', product, '--scratch-path', scratch, '--jobs', '2'],
+              writer,
+              note,
+            );
+            return tool(
+              context,
+              root,
+              temporary,
+              ['build', '-c', 'debug', '--scratch-path', scratch, '--show-bin-path'],
+              writer,
+              () => {},
+              true,
+            );
+          }),
         stage: (bin, bundle, id, displayName) =>
           stageBundle(context, root, product, infoPlist, bin, bundle, id, extras, displayName),
         async validateFetched(bundle, id, displayName) {
@@ -122,13 +126,19 @@ export function swiftpmMacosProject(root: string): MacosProject {
 async function tool(
   context: StimContext,
   root: string,
+  temporary: string,
   args: string[],
   writer: NdjsonWriter,
   note: (line: string) => void,
   capture = false,
 ): Promise<string> {
   const child = spawnDeclared(context, () =>
-    getExecutor().spawn('swift', args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }),
+    getExecutor().spawn('swift', args, {
+      cwd: root,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...context.env, TMPDIR: temporary },
+    }),
   );
   let stdout = '';
   child.stdout?.on('data', (chunk: Buffer) => {

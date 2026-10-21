@@ -10,7 +10,7 @@ import {
   rmSync,
   statSync,
 } from 'node:fs';
-import { chmod, lstat, readdir, rm } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ambientEnv, buildCacheRoot } from '@stim-cli/core';
@@ -106,6 +106,16 @@ export function removeTemporaryEntry(path: string): void {
     }
   }
   rmSync(path, { recursive: true, force: true });
+}
+
+/** Runs `work` with a fresh directory at `path` to use as the child's TMPDIR, and removes it afterwards. */
+export async function withScratchTmpdir<T>(path: string, work: () => Promise<T>): Promise<T> {
+  await mkdir(path, { recursive: true, mode: 0o700 });
+  try {
+    return await work();
+  } finally {
+    await removeTemporaryEntryAsync(path).catch(() => {});
+  }
 }
 
 export async function removeTemporaryEntryAsync(path: string, signal?: AbortSignal): Promise<void> {

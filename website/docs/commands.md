@@ -1755,13 +1755,16 @@ volume is not mounted, is kept and counted under "Skipped".
 `gc` also lists recognized leftovers directly in the user's `TMPDIR` under
 "TMPDIR leftovers", with their count, size and a remedy: Stim temp directories
 (`stim-claim-*`, `stim-host-*`, `stim-fakehome-*`, `stim-hosted-macos-*`,
-`stim-server-*`, `stim-ws-*`), xctrace recordings (`instruments*.ktrace`) and
-Jest's cache (`jest_<uid in base 36>`). `--delete` removes a Stim temp directory or recording only when
-nothing in it changed for 24 hours. It keeps a directory that contains or sits
+`stim-server-*`, `stim-ws-*`), xctrace recordings (`instruments*.ktrace`),
+SwiftPM temp directories (`TemporaryDirectory.*`, left by `swift` and `xcodebuild`) and
+Jest's cache (`jest_<uid in base 36>`). `--delete` removes a Stim temp directory, recording or SwiftPM
+temp directory only when nothing in it changed for 24 hours. It keeps a directory that contains or sits
 inside a registered project, holds a live or unverifiable ownership claim or
 a `.lock` directory with no claim set, or cannot be listed, and keeps a recording that
-cannot be read, and every recording while `xctrace` or Instruments runs or the
-process list cannot be read. Jest's cache is never deleted. gc never
+cannot be read, and keeps every recording while `xctrace` or Instruments runs and every
+SwiftPM temp directory while a `swift` or `xcodebuild` process runs, or when the
+process list cannot be read. Stim's own SwiftPM macOS builds run `swift` with a
+`TMPDIR` inside the workspace and remove it afterwards. Jest's cache is never deleted. gc never
 follows a symlink or acts outside `TMPDIR`, and with `STIM_HOME` set it skips
 them. Automatic maintenance runs the same deletion at disk pressure level 2.
 
