@@ -14,7 +14,12 @@ import {
 } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { pidExists } from '../metro.ts';
-import { memoryCulpritsUnder, readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
+import {
+  memoryCulpritsUnderAsync,
+  readHostMemoryPressure,
+  reportMemoryCulprits,
+  type HostMemoryPressure,
+} from '../host-memory.ts';
 import { memoryCulpritAdvice } from '../memory-culprits.ts';
 import { listAllIosSims } from '../devices/ios.ts';
 import { adoptParked, isLegacyDeletionClaim, parkedMaxSetting, readParked } from '../devices/sim-pool.ts';
@@ -495,19 +500,19 @@ async function muteBootedEmulator(serial: string, avdName: string, out: Notify):
 function reportAndroidMemoryPressure(out: Notify): void {
   const pressure = readHostMemoryPressure();
   if (pressure === 'warning' || pressure === 'critical') {
-    const named = memoryCulpritAdvice(memoryCulpritsUnder(pressure));
     out(
       chalk.dim(
         phaseLine(
           'memory',
-          `macOS reports ${pressure} host memory pressure; emulator boot may be slow.${named ? ` ${named}` : ''} Free memory with \`stim stop\` only in workspaces you own; ask before closing other apps or devices.`,
+          `macOS reports ${pressure} host memory pressure; emulator boot may be slow. Free memory with \`stim stop\` only in workspaces you own; ask before closing other apps or devices.`,
         ),
       ),
     );
+    reportMemoryCulprits(pressure, (named) => out(chalk.dim(phaseLine('memory', named))));
   }
 }
 
-function androidBootRemedy(pressure: HostMemoryPressure | null): string {
+async function androidBootRemedy(pressure: HostMemoryPressure | null): Promise<string> {
   let count: number | null = null;
   try {
     const live = countLiveOwnedDevices({
@@ -517,7 +522,7 @@ function androidBootRemedy(pressure: HostMemoryPressure | null): string {
     });
     count = typeof live === 'number' ? live : null;
   } catch {}
-  const named = memoryCulpritAdvice(memoryCulpritsUnder(pressure));
+  const named = memoryCulpritAdvice(await memoryCulpritsUnderAsync(pressure));
   const observation =
     pressure === 'warning' || pressure === 'critical'
       ? `macOS reports ${pressure} host memory pressure. ${named ? `${named} ` : ''}`
@@ -572,7 +577,7 @@ async function waitForAndroidBoot({
     reason: `${reason} Diagnostic: ${JSON.stringify(result.diagnostic)}`,
     remedy: exited
       ? 'Inspect the emulator log for the process exit, fix what it reports, then run `stim android` again.'
-      : androidBootRemedy(pressure),
+      : await androidBootRemedy(pressure),
   };
 }
 
