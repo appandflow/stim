@@ -1223,7 +1223,15 @@ describe('Metro prefetch', () => {
           resolveSettings: () =>
             bundleUrl ? { metro: { warmupUrl: { ios: bundleUrl, android: '/other.bundle?platform=android' } } } : {},
           warmMetro: (args) => {
-            expect(args).toEqual({ port: 8082, platform: 'ios', isExpo: false, appId: 'com.example.app', bundleUrl });
+            expect(args).toMatchObject({
+              port: 8082,
+              platform: 'ios',
+              isExpo: false,
+              appId: 'com.example.app',
+              bundleUrl,
+              logsDir: expect.stringMatching(/logs$/),
+              root: expect.any(String),
+            });
             warming = true;
             return new Promise(() => {});
           },

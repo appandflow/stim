@@ -428,7 +428,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
   metro.warmupUrl.android
                         an HTTP(S) URL or a /path ending in .bundle, with the
                         full query the app uses, including a matching platform.
-                        Unset uses Expo's manifest or bare React Native defaults.
+                        Unset uses the app's most recent bundle request from
+                        the workspace's metro log, then Expo's manifest or the
+                        bare React Native defaults.
                         Stim preserves the path and query but always requests
                         this workspace's verified local Metro port; a supplied
                         host and port are ignored. No defaults are added to an
