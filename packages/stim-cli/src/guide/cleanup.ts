@@ -77,7 +77,8 @@ In on mode a pass runs, cheapest to rebuild first:
 The age sweep (every maintenance.sweepHours, 24) covers Stim Desktop's nightly
 cleanup, run in the background of commands instead of at an hour.
 maintenance.olderThanDays (7) is its age for steps 2, 3, 5 and 6; with 0 the
-sweep removes none of those, while step 1 and step 7 still run.
+sweep removes nothing in them by age, while step 1, step 7, finished
+worktrees and the cap and disk-driven parts of steps 2 and 3 still run.
 Disk-driven steps stop once free space is back above the floor. Kept for
 every pass: a workspace that is in use, holds a lock, was used within
 maintenance.protectRecentHours, is pinned with maintenance.keep, or is the

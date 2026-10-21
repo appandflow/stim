@@ -467,8 +467,13 @@ export async function runMaintenance(trigger: string): Promise<void> {
         );
     } else {
       const blocked = [...result.blocked, ...failures];
-      const current = new Set(result.actions.map(actionKey));
-      const planned = [...result.actions, ...retained.filter((action) => !current.has(actionKey(action)))];
+      const keys = new Set<string>();
+      const planned = [...result.actions, ...retained].filter((action) => {
+        const key = actionKey(action);
+        if (keys.has(key)) return false;
+        keys.add(key);
+        return true;
+      });
       const nextActions = new Set(planned.map(actionKey));
       const changed =
         !state.lastPass ||
