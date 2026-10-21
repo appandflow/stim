@@ -1754,72 +1754,83 @@ function worktreeWithIgnoredTrees(base: string) {
   return { ...made, outside };
 }
 
-test('against a real repo: removal moves the ignored directories into the Stim trash and git removes the rest', async () => {
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-trash-')));
-  const errs: string[] = [];
-  const outs: string[] = [];
-  const originalError = console.error;
-  const originalLog = console.log;
-  try {
-    const { wt, outside, git } = worktreeWithIgnoredTrees(base);
-    realGitFakeSimctl('{"devices":{}}');
+test.skipIf(process.platform === 'win32')(
+  'against a real repo: removal moves the ignored directories into the Stim trash, git removes the rest and a background rm empties the trash',
+  async () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-trash-')));
+    const errs: string[] = [];
+    const outs: string[] = [];
+    const originalError = console.error;
+    const originalLog = console.log;
+    try {
+      const { wt, outside, git } = worktreeWithIgnoredTrees(base);
+      realGitFakeSimctl('{"devices":{}}');
+      const exec = getExecutor();
+      resetExecutor();
+      const real = getExecutor();
+      setExecutor({ ...exec, spawn: real.spawn.bind(real) });
 
-    console.error = (m) => errs.push(String(m));
-    console.log = (m) => outs.push(String(m));
-    await captureAction(registerRemove)(wt, {});
-    console.error = originalError;
-    console.log = originalLog;
+      console.error = (m) => errs.push(String(m));
+      console.log = (m) => outs.push(String(m));
+      await captureAction(registerRemove)(wt, {});
+      console.error = originalError;
+      console.log = originalLog;
 
-    expect(process.exitCode).not.toBe(1);
-    expect(outs).toEqual([]);
-    expect(existsSync(wt)).toBe(false);
-    expect(git('git worktree list --porcelain')).not.toContain(wt);
-    expect(git('git status --porcelain')).toBe('');
-    expect(readFileSync(join(outside, 'keep.txt'), 'utf-8')).toBe('outside the worktree');
-    const [entry, ...others] = readdirSync(join(tmpHome, 'trash'));
-    expect(others).toEqual([]);
-    const dir = join(tmpHome, 'trash', entry ?? '');
-    expect(JSON.parse(readFileSync(join(dir, 'trash.json'), 'utf-8'))).toMatchObject({ worktree: wt });
-    const moved = readdirSync(join(dir, 'entries')).flatMap((name) => readdirSync(join(dir, 'entries', name)));
-    expect(moved.toSorted()).toEqual(['Foo', 'pkg']);
-    expect(errs.join('\n')).toMatch(/left 2 ignored directories in .*stim gc --delete deletes them/);
-  } finally {
-    console.error = originalError;
-    console.log = originalLog;
-    rmSync(base, { recursive: true, force: true });
-  }
-}, 30_000);
+      expect(process.exitCode).not.toBe(1);
+      expect(outs).toEqual([]);
+      expect(existsSync(wt)).toBe(false);
+      expect(git('git worktree list --porcelain')).not.toContain(wt);
+      expect(git('git status --porcelain')).toBe('');
+      expect(readFileSync(join(outside, 'keep.txt'), 'utf-8')).toBe('outside the worktree');
+      expect(errs.join('\n')).toMatch(/deleting 2 ignored directories in the background/);
+      const deadline = Date.now() + 20_000;
+      while (readdirSync(join(tmpHome, 'trash')).length && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 100));
+      expect(readdirSync(join(tmpHome, 'trash'))).toEqual([]);
+    } finally {
+      console.error = originalError;
+      console.log = originalLog;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
 
-test('against a real repo: when git worktree remove fails, the ignored directories move back into the worktree', async () => {
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-trash-back-')));
-  const errs: string[] = [];
-  const originalError = console.error;
-  try {
-    const { wt } = worktreeWithIgnoredTrees(base);
-    realGitFakeSimctl('{"devices":{}}');
-    const exec = getExecutor();
-    setExecutor({
-      ...exec,
-      runFile(file: string, args: string[] = [], opts?: Parameters<typeof exec.runFile>[2]) {
-        if (file === 'git' && args.includes('worktree') && args.includes('remove')) throw new Error('fatal: simulated');
-        return exec.runFile(file, args, opts as Parameters<typeof exec.runFile>[2]);
-      },
-    });
+test.skipIf(process.platform === 'win32')(
+  'against a real repo: when git worktree remove fails, the ignored directories move back into the worktree',
+  async () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-trash-back-')));
+    const errs: string[] = [];
+    const originalError = console.error;
+    try {
+      const { wt } = worktreeWithIgnoredTrees(base);
+      realGitFakeSimctl('{"devices":{}}');
+      const exec = getExecutor();
+      setExecutor({
+        ...exec,
+        runFile(file: string, args: string[] = [], opts?: Parameters<typeof exec.runFile>[2]) {
+          if (file === 'git' && args.includes('worktree') && args.includes('remove'))
+            throw new Error('fatal: simulated');
+          return exec.runFile(file, args, opts as Parameters<typeof exec.runFile>[2]);
+        },
+      });
 
-    console.error = (m) => errs.push(String(m));
-    await captureAction(registerRemove)(wt, {});
-    console.error = originalError;
+      console.error = (m) => errs.push(String(m));
+      await captureAction(registerRemove)(wt, {});
+      console.error = originalError;
 
-    expect(process.exitCode).toBe(1);
-    expect(errs.join('\n')).toMatch(/git worktree remove failed: fatal: simulated/);
-    expect(readFileSync(join(wt, 'node_modules', 'pkg', 'index.js'), 'utf-8')).toBe('module.exports = 1;');
-    expect(readFileSync(join(wt, 'ios', 'Pods', 'Foo', 'a.h'), 'utf-8')).toBe('#pragma once');
-    expect(readdirSync(join(tmpHome, 'trash'))).toEqual([]);
-  } finally {
-    console.error = originalError;
-    rmSync(base, { recursive: true, force: true });
-  }
-}, 30_000);
+      expect(process.exitCode).toBe(1);
+      expect(errs.join('\n')).toMatch(/git worktree remove failed: fatal: simulated/);
+      expect(readFileSync(join(wt, 'node_modules', 'pkg', 'index.js'), 'utf-8')).toBe('module.exports = 1;');
+      expect(readFileSync(join(wt, 'ios', 'Pods', 'Foo', 'a.h'), 'utf-8')).toBe('#pragma once');
+      expect(readdirSync(join(tmpHome, 'trash'))).toEqual([]);
+    } finally {
+      console.error = originalError;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
 
 const launchAgentPlist = (label: string, script: string, marked: boolean) => `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

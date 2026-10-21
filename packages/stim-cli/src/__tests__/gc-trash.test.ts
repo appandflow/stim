@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { collectTrash, deleteTrash } from '../commands/gc/trash.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
 import { resetExecutor } from '../exec.ts';
-import { deleteTrashInBackground, moveIgnoredTreesToTrash } from '../workspace/worktree-trash.ts';
+import { disposeTrash, moveIgnoredTreesToTrash } from '../workspace/worktree-trash.ts';
 import { goneClaimOwner, plantClaim } from './_factories.ts';
 
 const POSIX = process.platform !== 'win32';
@@ -76,7 +76,7 @@ test.skipIf(!POSIX)(
     if (!moved) throw new Error('nothing was moved to the trash');
     expect(existsSync(join(repo, 'node_modules'))).toBe(false);
 
-    expect(deleteTrashInBackground(moved)).toBe(true);
+    expect(await disposeTrash(moved)).toBe('background');
 
     const deadline = Date.now() + 20_000;
     while (readdirSync(trash).length && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));

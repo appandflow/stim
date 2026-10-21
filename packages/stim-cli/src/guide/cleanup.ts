@@ -414,7 +414,8 @@ LINKED WORKTREES
   directories (node_modules, ios/Pods, build outputs) into
   $STIM_HOME/trash/<entry>, so git removes a light tree, and a detached,
   low-priority rm deletes the entry after the command returns. Disk is freed
-  when that rm finishes. A directory that does not rename stays for git to
+  when that rm finishes. Through the programmatic API (createStim), the entry
+  is deleted before the call resolves. A directory that does not rename stays for git to
   delete as before; on Windows, or when $STIM_HOME is on another volume,
   nothing is renamed. When git refuses the removal, the directories are moved
   back. Each entry holds an ownership claim while the command or its rm uses

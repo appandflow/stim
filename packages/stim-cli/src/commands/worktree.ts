@@ -32,7 +32,7 @@ import { isMobileProject, findProjectRoot } from '../workspace/project.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
-import { claimFailure, releaseClaim } from '../ownership-claim.ts';
+import { claimFailure } from '../ownership-claim.ts';
 import { SERVICE_IN_USE, serviceRunningFrom } from '../workspace/service-guard.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { currentDiskLevel, measureDiskAsync } from '../maintenance/measure.ts';
@@ -66,7 +66,7 @@ import {
   warmWorktreePaths,
 } from '../workspace/worktree.ts';
 import type { WorktreeEntry } from '../workspace/worktree.ts';
-import { deleteTrashInBackground, moveIgnoredTreesToTrash, restoreTrashedTrees } from '../workspace/worktree-trash.ts';
+import { disposeTrash, moveIgnoredTreesToTrash, restoreTrashedTrees } from '../workspace/worktree-trash.ts';
 import { endedPullRequest, pullRequestLookupAsync } from '../workspace/pull-request.ts';
 import { discoverXcodeProject } from '../integrations/react-native-build.ts';
 
@@ -1371,12 +1371,6 @@ async function removeOrRefuse(
               declareFor: opts.operation,
             });
           } catch (error) {
-            if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error)) {
-              if (trash) releaseClaim(trash.claim);
-              throw error;
-            }
-            const message = String((error as Error)?.message || error);
-            output.error(chalk.red(`git worktree remove failed: ${message}`));
             const unrestored = trash ? await restoreTrashedTrees(trash) : [];
             if (trash && unrestored.length) {
               output.error(
@@ -1385,6 +1379,10 @@ async function removeOrRefuse(
                 ),
               );
             }
+            if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+              throw error;
+            const message = String((error as Error)?.message || error);
+            output.error(chalk.red(`git worktree remove failed: ${message}`));
             if (process.platform === 'win32' && /Permission denied/i.test(message)) {
               output.error(
                 chalk.dim(
@@ -1399,14 +1397,17 @@ async function removeOrRefuse(
           }
           onRemoved();
           if (trash) {
-            const deleting = deleteTrashInBackground(trash);
+            const moved = plural(trash.moved.length, 'ignored directory', 'ignored directories');
+            const disposed = await disposeTrash(trash, opts.operation);
             output.error(
               chalk.dim(
                 phaseLine(
                   'trash',
-                  deleting
-                    ? `deleting ${plural(trash.moved.length, 'ignored directory', 'ignored directories')} in the background from ${trash.dir}`
-                    : `left ${plural(trash.moved.length, 'ignored directory', 'ignored directories')} in ${trash.dir}; stim gc --delete deletes them`,
+                  disposed === 'background'
+                    ? `deleting ${moved} in the background from ${trash.dir}`
+                    : disposed === 'deleted'
+                      ? `deleted ${moved}`
+                      : `left ${moved} in ${trash.dir}; stim gc --delete deletes them`,
                 ),
               ),
             );

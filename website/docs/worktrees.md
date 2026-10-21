@@ -269,7 +269,8 @@ Deleting `node_modules`, `ios/Pods` and build outputs can take most of a
 removal. Before git removes the worktree, Stim renames its ignored directories
 into `$STIM_HOME/trash`, which takes no time on the same volume, and a
 detached, low-priority `rm` deletes them after the command returns, so disk is
-freed a little later. When git refuses the removal, the directories are moved
+freed a little later. Through the [programmatic API](./programmatic-api.md),
+the trash is deleted before `removeWorktree` resolves. When git refuses the removal, the directories are moved
 back. On Windows, or when `$STIM_HOME` is on another volume than the worktree,
 git deletes them as before. `stim gc` reports what is left in the trash, and
 `stim gc --delete` deletes it, including the trash of an interrupted removal.

@@ -11,13 +11,10 @@ import {
   releaseClaim,
   tryAcquireClaim,
 } from '@stim-cli/core/ownership-claim';
-import { getExecutor } from '../../exec.ts';
 import { directorySizeAsync, formatBytes } from '../../fs-util.ts';
 import { plural } from '../../command-output.ts';
-import { removeTemporaryEntryAsync } from '../../temporary.ts';
-import { runOperationFile } from '../../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
-import { TRASH_CLAIMS, TRASH_ENTRIES, TRASH_MANIFEST, type TrashManifest } from '../../workspace/worktree-trash.ts';
+import { deleteTrashEntry, TRASH_CLAIMS, TRASH_MANIFEST, type TrashManifest } from '../../workspace/worktree-trash.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 
 interface TrashEntry {
@@ -97,21 +94,6 @@ export function trashLines(report: TrashReport | null | undefined): string[] {
   return lines;
 }
 
-async function deleteEntry(dir: string, operation?: StimContext): Promise<void> {
-  if (process.platform !== 'win32') {
-    try {
-      await runOperationFile(operation, getExecutor(), 'rm', ['-rf', '--', join(dir, TRASH_ENTRIES)], {
-        timeoutMs: 'unbounded',
-        signal: operation?.signal,
-      });
-    } catch (error) {
-      if (error instanceof WorkspaceProcessCleanupError) throw error;
-      operation?.signal.throwIfAborted();
-    }
-  }
-  await removeTemporaryEntryAsync(dir, operation?.signal);
-}
-
 /** Deletes what a fresh `collectTrash` marks deletable, each entry under its own exclusive claim. */
 export async function deleteTrash(
   operation: StimContext | undefined,
@@ -138,7 +120,7 @@ export async function deleteTrash(
       continue;
     }
     try {
-      await deleteEntry(entry.path, operation);
+      await deleteTrashEntry(entry.path, operation);
       done.count++;
       done.bytes += entry.bytes;
     } catch (error) {

@@ -12,13 +12,14 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '../ownership-claim.ts';
-import { filesystemDevice } from '../temporary.ts';
+import { filesystemDevice, removeTemporaryEntryAsync } from '../temporary.ts';
+import { runOperationFile } from '../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { gitAsync } from './git.ts';
 import { childEnvironment } from './git-read.ts';
 
 export const TRASH_MANIFEST = 'trash.json';
-export const TRASH_ENTRIES = 'entries';
+const TRASH_ENTRIES = 'entries';
 export const TRASH_CLAIMS = 'claims';
 const LIST_TIMEOUT_MS = 30_000;
 const DELETE_NICENESS = '10';
@@ -158,18 +159,28 @@ export async function restoreTrashedTrees(trash: WorktreeTrash): Promise<string[
   return kept;
 }
 
-/**
- * Deletes the trash entry in a detached, low-priority `rm` recorded as the claim's child, so gc reports the entry as
- * in use until `rm` exits and then deletes whatever it left. False when `rm` cannot start or be recorded: the claim
- * is then released and the entry waits for gc.
- */
-export function deleteTrashInBackground(trash: WorktreeTrash): boolean {
+/** Deletes one trash entry: `rm -rf` for the bulk, then a walk that also clears read-only directories. */
+export async function deleteTrashEntry(dir: string, operation?: StimContext): Promise<void> {
+  if (process.platform !== 'win32') {
+    try {
+      await runOperationFile(operation, getExecutor(), 'rm', ['-rf', '--', join(dir, TRASH_ENTRIES)], {
+        timeoutMs: 'unbounded',
+        signal: operation?.signal,
+      });
+    } catch (error) {
+      rethrowCancellation(error, operation?.signal);
+    }
+  }
+  await removeTemporaryEntryAsync(dir, operation?.signal);
+}
+
+function deleteInBackground(trash: WorktreeTrash): boolean {
   try {
     markClaimChildPending(trash.claim);
     const child = getExecutor().spawn(
       'nice',
       ['-n', DELETE_NICENESS, 'rm', '-rf', '--', join(trash.dir, TRASH_ENTRIES), trash.dir],
-      { detached: true, stdio: 'ignore' },
+      { cwd: dirname(trash.dir), detached: true, stdio: 'ignore' },
     );
     child.on?.('error', () => {});
     child.unref?.();
@@ -183,5 +194,27 @@ export function deleteTrashInBackground(trash: WorktreeTrash): boolean {
     } catch {}
     releaseClaim(trash.claim);
     return false;
+  }
+}
+
+/**
+ * Deletes the trash entry once git removed the worktree. A CLI command starts a detached, low-priority `rm` recorded
+ * as the claim's child, so gc reports the entry as in use until `rm` exits. Inside a bounded report, such as the
+ * programmatic API, every child is stopped when the report settles, so the entry is deleted before returning.
+ * `left` means the entry waits for gc with its claim released.
+ */
+export async function disposeTrash(
+  trash: WorktreeTrash,
+  operation?: StimContext,
+): Promise<'background' | 'deleted' | 'left'> {
+  if (!getExecutor().reportSignal?.()) return deleteInBackground(trash) ? 'background' : 'left';
+  try {
+    await deleteTrashEntry(trash.dir, operation);
+    return 'deleted';
+  } catch (error) {
+    rethrowCancellation(error, operation?.signal);
+    return 'left';
+  } finally {
+    releaseClaim(trash.claim);
   }
 }
