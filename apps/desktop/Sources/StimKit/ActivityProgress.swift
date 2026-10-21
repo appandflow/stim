@@ -41,7 +41,7 @@ public struct ProgressStep: Hashable, Sendable, Identifiable {
 public enum ActivityProgress {
   private static let phaseLine = try! NSRegularExpression(pattern: "^  (\\S+)\\s+(\\S.*)$")
 
-  /// The CLI's closed set of progress labels (`OUTPUT_LABELS` in packages/stim-cli/src/command-output.ts).
+  /// The CLI's closed set of progress labels, as documented in `stim guide lifecycle`.
   /// Other indented lines, such as the rows of a `gc` report, are not progress.
   public static let labels: Set<String> = [
     "app", "branch", "budget", "build", "cache", "caches", "carry", "checkout", "daemons", "deps", "device", "devices",

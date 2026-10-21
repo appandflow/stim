@@ -2,7 +2,7 @@ import Foundation
 import StimKit
 import Testing
 
-/// Replays the cases `apps/mobile/src/lib/needs-attention.test.ts` also replays, so both apps list the same items.
+/// Replays the cases `packages/server/__tests__/oversight-agreement.test.ts` also replays, so Desktop and the server list the same items.
 struct NeedsAttentionTests {
   struct Vectors: Decodable {
     struct Input: Decodable {
