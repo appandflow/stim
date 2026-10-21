@@ -167,10 +167,12 @@ console.log(facts.strategy, facts.targets);
 ```
 
 `reload({ platform?, signal?, beforeReload? })` requests a JavaScript reload in
-the live iOS/Android app or reloads the owned Chrome page. Select `ios`, `android`
+the live iOS/Android app (owned, on a physical device or in an EAS Simulator
+session) or reloads the owned Chrome page. Select `ios`, `android`
 or `web` when more than one platform is live. The result is the flat
-`stim reload --json` payload: `platform`, `deviceId`, `deviceName`, `appId`,
-`metroPort`, `strategy`, `targets` and `reverseRestored`.
+`stim reload --json` payload: `platform`, `deviceId`, `deviceName`, `appId`
+(`null` for an app Stim did not launch), `metroPort`, `strategy`, `targets` and
+`reverseRestored`.
 
 A dispatched request does not prove completion. Verify the expected UI and
 inspect logs; a Metro broadcast can reach other connected clients.

@@ -5897,7 +5897,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     );
     const text = errs.join('\n');
     expect(text).toMatch(/native app is still running/);
-    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toContain('run `stim reload ios`');
     expect(text).not.toContain("press Reload on the app's own error screen");
   });
 

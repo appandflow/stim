@@ -361,10 +361,9 @@ async function verifyIosMetroRun({
     );
     const hasAppErrors = reportLaunchErrors(verification.errors ?? [], note, root);
     if (hasAppErrors && verification.processAlive === true && metroPort !== null) {
-      const reloadRemedy =
-        physical || remoteDevice
-          ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
-          : 'run `stim reload ios`.';
+      const reloadRemedy = remoteDevice
+        ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
+        : 'run `stim reload ios`.';
       note(
         chalk.yellow(
           phaseLine(
