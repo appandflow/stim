@@ -207,7 +207,7 @@ type SpringBoardStartup = { state: 'started' } | { state: 'timed-out' } | { stat
 // `simctl bootstatus -b` returns before SpringBoard has started. Until it has,
 // `simctl launch` blocks and SpringBoard resets the volume (#4075). It sets the
 // `com.apple.springboard.finishedstartup` notify state to its pid once started.
-async function waitForSpringBoard(udid: string, deadline: number): Promise<SpringBoardStartup> {
+export async function waitForSpringBoard(udid: string, deadline: number): Promise<SpringBoardStartup> {
   for (;;) {
     let output: string | null = null;
     try {
@@ -322,7 +322,7 @@ export async function bootIosSim(
     label?: string;
     out?: (message: string) => void;
   } = {},
-): Promise<{ springBoardUnreadable: string | null }> {
+): Promise<void> {
   const exec = getExecutor();
   const viewer = configuredIosSimulatorViewer(simulatorApp, env);
   const started = Date.now();
@@ -332,7 +332,6 @@ export async function bootIosSim(
   let sampledAt = started;
   let longestGapMs = 0;
   let phase = 'requesting boot';
-  let springBoardUnreadable: string | null = null;
   const ranks = { normal: 0, warning: 1, critical: 2 };
   const sample = () => {
     const now = Date.now();
@@ -409,7 +408,6 @@ export async function bootIosSim(
     if (springBoard.state === 'timed-out') {
       throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
     }
-    if (springBoard.state === 'unreadable') springBoardUnreadable = springBoard.reason;
   } catch (error) {
     const named = memoryCulpritAdvice(await memoryCulpritsUnderAsync(sample(), exec));
     throw new Error(
@@ -420,7 +418,6 @@ export async function bootIosSim(
     clearInterval(monitor);
   }
   if (openViewer) await viewer.open(udid);
-  return { springBoardUnreadable };
 }
 
 export async function shutdownIosSim(udid: string, operation?: StimContext): Promise<void> {

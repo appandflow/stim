@@ -249,7 +249,7 @@ describe('ensureBooted: ios', () => {
       const mute = 'xcrun devicectl device settings audio --device U1 --volume 0 --json-output -';
       const springBoardQuery = 'xcrun simctl spawn U1 notifyutil -g com.apple.springboard.finishedstartup';
       const started = springBoard.at(-1) === springBoardStarted;
-      expect(commands.filter((c) => c === springBoardQuery).length).toBe(springBoard.length);
+      expect(commands.filter((c) => c === springBoardQuery).length).toBe(springBoard.length + 1);
       expect(commands.indexOf('xcrun simctl bootstatus U1 -b')).toBeLessThan(commands.indexOf(springBoardQuery));
       expect(commands.filter((c) => c === mute).length).toBe(started ? 1 : 0);
       expect(commands.indexOf(mute) > commands.lastIndexOf(springBoardQuery)).toBe(started);
@@ -1948,6 +1948,54 @@ describe('ensureOwnedDevice: ios', () => {
       await result.booting?.done;
       expect(calls).toMatchObject([{ udid: 'NEW-UDID', profile, previouslyManaged: false }]);
       expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('mutes a created simulator after the SimSlim reconcile has rebooted it', async () => {
+    const root = projectDir();
+    try {
+      const profilePath = join(root, 'simslim.json');
+      writeFileSync(profilePath, '{}\n');
+      const profile = realpathSync(profilePath);
+      const { exec } = iosExecutor([]);
+      const events: string[] = [];
+      setExecutor({
+        ...exec,
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            events.push('mute');
+            return JSON.stringify({
+              info: { outcome: 'success' },
+              result: { deviceIdentifier: 'NEW-UDID', volume: 0 },
+            });
+          }
+          if (file === 'xcrun' && args.includes('notifyutil')) {
+            events.push('springboard');
+            return 'com.apple.springboard.finishedstartup 4242';
+          }
+          return exec.runFile(file, args);
+        },
+      });
+      const notes: string[] = [];
+      const result = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslimProfile: 'simslim.json' } },
+        out: (line) => notes.push(line),
+        reconcileIosSimulator: async () => {
+          events.push('reconcile');
+          return { managed: true, profile };
+        },
+      });
+      await result.booting?.done;
+      expect(events.at(-1)).toBe('mute');
+      expect(events.slice(events.indexOf('reconcile'))).toEqual(['reconcile', 'springboard', 'mute']);
+      expect(events.filter((event) => event === 'mute')).toHaveLength(1);
+      expect(notes.some((line) => line.includes('simulator muted'))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

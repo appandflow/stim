@@ -102,6 +102,7 @@ Metro while other work happens.
 Each time Stim boots an owned local simulator or emulator, it mutes it: iOS
 simulators to volume zero through Xcode's devicectl once SpringBoard has
 finished starting, because SpringBoard resets the volume while it starts, and
+after any SimSlim reconcile, because SimSlim reboots the simulator, and
 Android 15 and later emulators to media volume zero. A device that is already
 running keeps its volume. Turn sound on for one device with Sound (iOS) or
 Media sound (Android) in its Stim Desktop options; the choice lasts until that
