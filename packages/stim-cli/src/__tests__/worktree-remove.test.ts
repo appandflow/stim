@@ -1833,6 +1833,47 @@ test.skipIf(process.platform === 'win32')(
   30_000,
 );
 
+test.skipIf(process.platform === 'win32')(
+  'against a real repo: when git worktree remove fails and a directory cannot move back, the command names it and the trash entry',
+  async () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-trash-stuck-')));
+    const errs: string[] = [];
+    const originalError = console.error;
+    try {
+      const { wt } = worktreeWithIgnoredTrees(base);
+      realGitFakeSimctl('{"devices":{}}');
+      const exec = getExecutor();
+      setExecutor({
+        ...exec,
+        runFile(...params: Parameters<typeof exec.runFile>) {
+          const [file, args = []] = params;
+          if (file === 'git' && args.includes('worktree') && args.includes('remove')) {
+            mkdirSync(join(wt, 'node_modules'));
+            throw new Error('fatal: simulated');
+          }
+          return exec.runFile(...params);
+        },
+      });
+
+      console.error = (m) => errs.push(String(m));
+      await captureAction(registerRemove)(wt, {});
+      console.error = originalError;
+
+      const [entry] = readdirSync(join(tmpHome, 'trash'));
+      expect(process.exitCode).toBe(1);
+      expect(errs.join('\n')).toContain(
+        `Could not move node_modules back into ${wt}; it stays in ${join(tmpHome, 'trash', entry ?? '')}, which stim gc keeps while ${wt} exists.`,
+      );
+      expect(readFileSync(join(wt, 'ios', 'Pods', 'Foo', 'a.h'), 'utf-8')).toBe('#pragma once');
+      expect(readdirSync(join(tmpHome, 'trash', entry ?? '', 'entries'))).toHaveLength(1);
+    } finally {
+      console.error = originalError;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
 const launchAgentPlist = (label: string, script: string, marked: boolean) => `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

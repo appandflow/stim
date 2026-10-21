@@ -1044,8 +1044,9 @@ RULES
                               worktree into $STIM_HOME/trash before git
                               removed it. bytes is null while a removal is
                               deleting the entry. kept names the live or
-                              unresolved ownership claim, or the missing or
-                              invalid trash.json, that keeps a directory;
+                              unresolved ownership claim, the missing or
+                              invalid trash.json, or the worktree that
+                              still exists, that keeps a directory;
                               --delete deletes the rest, only remove-*
                               entries with a valid trash.json. null when the
                               trash is empty or under any --cache scope
