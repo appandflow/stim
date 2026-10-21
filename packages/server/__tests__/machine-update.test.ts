@@ -34,7 +34,7 @@ describe('client build packing', () => {
   });
 
   describe.skipIf(process.platform !== 'darwin')('with tar', () => {
-    it('packs the stim build a remote machine must match, with published ranges', async () => {
+    it('packs the stim build a remote machine must match, with exact internal pins', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'stim-pack-test-'));
       try {
         const packed = await packWorkspace(workspacePackages(SERVER)!);
@@ -42,7 +42,8 @@ describe('client build packing', () => {
         writeFileSync(join(dir, stim.name), stim.bytes);
         execFileSync('/usr/bin/tar', ['-xzf', join(dir, stim.name), '-C', dir]);
         const manifest = JSON.parse(readFileSync(join(dir, 'package', 'package.json'), 'utf8'));
-        expect(manifest.dependencies['@stim-cli/core']).toMatch(/^\^\d/);
+        const core = JSON.parse(readFileSync(join(SERVER, '..', 'core', 'package.json'), 'utf8'));
+        expect(manifest.dependencies['@stim-cli/core']).toBe(core.version);
         expect(manifest.devDependencies).toBeUndefined();
         expect(stimBuildDigest(join(dir, 'package', 'dist'))).toBe(
           stimBuildDigest(join(SERVER, '..', 'stim-cli', 'dist')),
