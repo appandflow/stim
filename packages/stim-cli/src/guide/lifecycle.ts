@@ -1022,12 +1022,18 @@ Metro verification enabled, not release builds or --no-metro-check.
    a missing ready message, and a startup error. Retain the relevant output.
 
 Without an observed pending, Stim keeps its default 3-second stability window
-after bundle delivery. Managed Metro servers report the native bundle response
+after bundle delivery. The window ends early, half a second after the app's
+React Native runtime logs \`Running "<name>"\` for this launch on either
+platform. A fatal record or an exited process before the window ends still
+fails the launch. An error after it, such as a first render that takes longer
+than that half second to throw, appears in \`stim logs --errors\`.
+Managed Metro servers report the native bundle response
 finishing; build-complete output alone does not close an observed request.
 Without response capture, Stim falls back to the build-complete marker.
 When Android reports queued JavaScript loading, Stim waits for a device
 JavaScript log before starting stability, bounded by the bundle timeout.
-Pending must be observed before the stability window closes. It opts into
+Pending must be observed before the stability window closes, early end
+included, so log it before the root component renders. It opts into
 waiting for ready until 30 seconds after the same completion signal.
 Repeated pending messages never extend the deadline. Ready can end the wait
 early; an app error or process exit interrupts it. No ready means readiness

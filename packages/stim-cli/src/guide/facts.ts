@@ -308,8 +308,10 @@ leased until <time>" for each one.`,
                     true         Metro finished the bundle response, or an app
                                  without Metro (a release build, or a native
                                  Xcode or Gradle app) has a live process; then
-                                 the app stayed alive through a three-second
-                                 stability window.
+                                 the app stayed alive until its JavaScript
+                                 reported \`Running "<name>"\` (plus half a
+                                 second), or through a three-second stability
+                                 window when it did not.
                                  The command checks process liveness when the
                                  platform exposes it. Errors from that window
                                  are printed even when the app stays alive,
@@ -321,12 +323,14 @@ leased until <time>" for each one.`,
                                  bundle and the process, never a frame, and a
                                  cold app can keep rendering for a minute or
                                  more after this, which is why the stderr line
-                                 reads \`bundle loaded, process alive, stable
-                                 for 3s -- the first screen may still be
-                                 rendering\`. Poll the UI before you trust a
-                                 screenshot. Optional app-declared readiness
-                                 adds a separate stderr readiness phase; it
-                                 does not change this field. See
+                                 reads \`bundle loaded, process alive, app
+                                 JavaScript running -- the first screen may
+                                 still be rendering\` (\`stable for 3s\` when
+                                 no \`Running\` log arrived). Poll the UI
+                                 before you trust a screenshot. Optional
+                                 app-declared readiness adds a separate
+                                 stderr readiness phase; it does not change
+                                 this field. See
                                  \`guide lifecycle readiness\`
                     "bundling"   the request DID arrive and Metro was still
                                  building or delivering when the bundle timeout closed.
