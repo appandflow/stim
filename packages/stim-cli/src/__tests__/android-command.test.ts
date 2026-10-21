@@ -566,7 +566,11 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
                     inspect: (path) => {
                       const match = integration.inspect(path);
                       return match
-                        ? { ...match, android: async (resolved) => reactNativeAndroidProject(path, resolved, options) }
+                        ? {
+                            ...match,
+                            android: async (resolved) =>
+                              reactNativeAndroidProject(path, resolved, { platform: 'linux', ...options }),
+                          }
                         : null;
                     },
                   },
@@ -641,6 +645,34 @@ test('an invalid Android pool bound refuses before device creation and emits one
   } finally {
     delete process.env.STIM_POOL_ANDROID_PARKED_MAX;
   }
+});
+
+test('a Windows project root with no room for the NDK object paths refuses before any emulator is prepared', async () => {
+  const longRoot = join(root, 'p'.repeat(60));
+  mkdirSync(join(longRoot, 'android', 'app'), { recursive: true });
+  writeFileSync(
+    join(longRoot, 'package.json'),
+    JSON.stringify({ name: 'app', dependencies: { 'react-native': '0.81.0' } }),
+  );
+  writeFileSync(join(longRoot, 'android', 'app', 'build.gradle'), 'android {\n  namespace "com.example.app"\n}\n');
+  upsertProject(longRoot, { metroPort: 8082 });
+  const h = harness({
+    root: longRoot,
+    platform: 'win32',
+    json: true,
+    resolveMetro: async (port: number) => {
+      h.calls.metro.push([port, longRoot]);
+      return { metro: { pid: 41233, leader: 41233, cwd: longRoot } };
+    },
+  });
+  const result = await h.run();
+  expect(result.error).toMatchObject({ code: 'STIM_PATH_TOO_LONG', remedy: expect.stringContaining('C:\\src') });
+  expect(result.error?.message).toContain(longRoot);
+  expect(h.calls.metro).toEqual([]);
+  expect(h.calls.ensureDevice).toEqual([]);
+  expect(h.calls.booted).toEqual([]);
+  expect(h.calls.build).toEqual([]);
+  expect(JSON.parse(h.stdout.at(-1) ?? '')).toMatchObject({ code: 'STIM_PATH_TOO_LONG' });
 });
 
 describe('adopted Android installs', () => {

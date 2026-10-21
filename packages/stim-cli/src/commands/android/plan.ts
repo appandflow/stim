@@ -13,6 +13,8 @@ import { parseDeviceWait } from '../../engine/device-lease-run.ts';
 import { detectIsExpo } from '../../workspace/project.ts';
 import {
   DEFAULT_AVD_DEVICE_PROFILE,
+  androidSystemImageAbi,
+  hostSystemImageArch,
   listAvdDeviceProfilesAsync,
   listInstalledSystemImages,
   ownedAvdDeviceProfile,
@@ -46,6 +48,8 @@ import {
 } from '../../workspace/settings.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
 import type { AndroidRuntimeKind } from './launch.ts';
+import type { AndroidProject } from '../../integrations/android-project.ts';
+import { buildPlacementCandidates } from '../../offload/client.ts';
 import {
   deviceProfileRefusal,
   foldableImageRefusal,
@@ -81,6 +85,7 @@ export interface AndroidPlanInputs extends AndroidBuildPlanInputs {
   readonly wait: string | boolean | undefined;
   readonly waitConflict: boolean;
   readonly remote: string | null;
+  readonly buildMachine?: string;
 }
 
 type AndroidTargetPlan =
@@ -155,6 +160,8 @@ export interface AndroidPlanDependencies extends Omit<AndroidBuildPlanDependenci
   parkedLimit?: typeof parkedMaxSetting;
   supportsFold?: (pkg: string) => boolean;
   ownedAvd?: typeof slotOwnedAvd;
+  preflight?: AndroidProject['preflight'];
+  buildMachines?: (selected: string) => readonly unknown[];
 }
 
 interface SlotAvd {
@@ -170,6 +177,16 @@ function slotOwnedAvd(projectPath: string, slot: string): SlotAvd | null {
   return systemImage
     ? { avdName: android.avdName, systemImage, deviceProfile: ownedAvdDeviceProfile(android.avdName) }
     : null;
+}
+
+function localBuildPreflight(
+  preflight: AndroidProject['preflight'],
+  target: AndroidTargetPlan,
+  { release, targetAbiOnly, variant }: AndroidBuildPlan['build'],
+): ReturnType<NonNullable<AndroidProject['preflight']>> {
+  if (target.kind !== 'emulator' && target.kind !== 'remote') return null;
+  const abi = targetAbiOnly && !release ? (androidSystemImageAbi(target.systemImage) ?? hostSystemImageArch()) : null;
+  return preflight?.({ abi, variant }) ?? null;
 }
 
 function fail(
@@ -307,6 +324,7 @@ export async function resolveAndroidRunPlan(
     waitConflict,
     remote: commandRemoteBackend,
     buildCache: requestedBuildCache,
+    buildMachine,
   }: AndroidPlanInputs,
   {
     warn,
@@ -332,6 +350,8 @@ export async function resolveAndroidRunPlan(
     parkedLimit = parkedMaxSetting,
     supportsFold = systemImageSupportsFold,
     ownedAvd = slotOwnedAvd,
+    preflight,
+    buildMachines = (selected) => buildPlacementCandidates(selected).machines,
   }: AndroidPlanDependencies,
 ): Promise<AndroidPlanResult> {
   const root = settingsContext.projectPath;
@@ -431,6 +451,11 @@ export async function resolveAndroidRunPlan(
       : remoteBackend
         ? { kind: 'remote', backend: remoteBackend, systemImage, deviceProfile }
         : { kind: 'emulator', systemImage, deviceProfile };
+  const preflightRefusal =
+    preflight && easProfile === undefined && buildMachines(buildMachine ?? 'local').length === 0
+      ? localBuildPreflight(preflight, target, plannedBuild.plan.build)
+      : null;
+  if (preflightRefusal) return fail(preflightRefusal.code, preflightRefusal.reason, preflightRefusal.remedy);
   return {
     ok: true,
     plan: {

@@ -113,6 +113,76 @@ test('a plan binds build selectors and cache policy to the selected emulator', a
   });
 });
 
+describe('the local build preflight', () => {
+  const refusal = { code: 'STIM_PATH_TOO_LONG', reason: 'too long', remedy: 'move it' };
+
+  async function plan(overrides: Partial<AndroidPlanInputs>, pairedMachines = 0) {
+    const asked: unknown[] = [];
+    const result = await resolveAndroidRunPlan(inputs(overrides), {
+      ...inspection([]),
+      buildMachines: () => Array.from({ length: pairedMachines }),
+      preflight: (target) => {
+        asked.push(target);
+        return refusal;
+      },
+    });
+    return { result, asked };
+  }
+
+  test('an emulator run is refused with the preflight failure before any device exists, for the host ABI', async () => {
+    const { result, asked } = await plan({ systemImage: 'installed-image', variant: 'productionDebug' });
+    expect(result).toMatchObject({ ok: false, code: 'STIM_PATH_TOO_LONG', message: 'too long', remedy: 'move it' });
+    expect(asked).toEqual([{ abi: hostSystemImageArch(), variant: 'productionDebug' }]);
+  });
+
+  test('the ABI is the one of the explicit system image, and every ABI when narrowing is off', async () => {
+    const x86 = 'system-images;android-35;google_apis;x86';
+    const images = [{ api: 35, tag: 'google_apis', arch: 'x86', pkg: x86 }];
+    const ask = async (overrides: Partial<AndroidPlanInputs>, targetAbiOnly: boolean) => {
+      const asked: unknown[] = [];
+      const base = inspection([]);
+      const compilerCache = base.resolveCompilerCache;
+      assert(compilerCache);
+      await resolveAndroidRunPlan(inputs(overrides), {
+        ...base,
+        listSystemImages: () => images,
+        resolveCompilerCache: (args) => {
+          const resolved = compilerCache(args);
+          return {
+            ...resolved,
+            optimizations: {
+              ...resolved.optimizations,
+              android: { ...resolved.optimizations.android, targetAbiOnly },
+            },
+          };
+        },
+        preflight: (target) => {
+          asked.push(target);
+          return null;
+        },
+      });
+      return asked;
+    };
+    expect(await ask({ systemImage: x86 }, true)).toEqual([{ abi: 'x86', variant: null }]);
+    expect(await ask({ systemImage: x86 }, false)).toEqual([{ abi: null, variant: null }]);
+  });
+
+  test('a release build asks about every ABI', async () => {
+    const { asked } = await plan({ variant: 'productionRelease' });
+    expect(asked).toEqual([{ abi: null, variant: 'productionRelease' }]);
+  });
+
+  test.each([
+    ['a physical device', { device: 'serial-1' }, 0],
+    ['an EAS profile', { easProfile: 'development' }, 0],
+    ['a paired build machine', { buildMachine: 'auto' }, 1],
+  ])('%s is not asked, because no local build follows', async (_name, overrides, paired) => {
+    const { result, asked } = await plan(overrides, paired);
+    expect(result.ok).toBe(true);
+    expect(asked).toEqual([]);
+  });
+});
+
 test('build planning refuses a custom Gradle layout on an Expo app and passes it to the compiler cache', () => {
   mkdirSync(join(root, 'native', 'app'), { recursive: true });
   writeFileSync(join(root, 'native', 'settings.gradle'), '');

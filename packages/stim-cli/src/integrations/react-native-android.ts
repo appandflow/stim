@@ -38,6 +38,7 @@ import {
   type ResolvedProjectSettings,
 } from '../workspace/settings.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { androidPathRoomRefusal } from '../engine/android-path-limit.ts';
 import { buildAndroid, productFlavorRefusal, readProductFlavors } from './react-native-build.ts';
 import {
   AndroidRecipeRefusal,
@@ -63,6 +64,7 @@ export interface ReactNativeAndroidDependencies {
   ccacheFor?: typeof resolveCcache;
   swapApk?: typeof swapApkBundle;
   readState?: typeof readWorkspaceState;
+  platform?: NodeJS.Platform;
 }
 
 const runtimeKind: AndroidProject['runtimeKind'] = ({ release }) => (release ? 'embedded-js' : 'metro');
@@ -93,6 +95,7 @@ export function reactNativeAndroidProject(
     packageRemedy: `Set \`expo.android.package\` in app.json / app.config.js, or \`namespace\` in ${relative(root, layout.moduleDir) || '.'}/build.gradle.`,
     variantProblem,
     targets: ['emulator', 'physical', 'hosted', 'remote'],
+    preflight: (target) => androidPathRoomRefusal(root, { ...target, platform: dependencies.platform }),
     eas: true,
     runtimeKind,
     runtime: ({ build, prepareMetro, phase }) =>
