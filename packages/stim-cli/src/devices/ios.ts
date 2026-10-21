@@ -264,8 +264,7 @@ const SPRINGBOARD_POLL_MS = 250;
 
 type SpringBoardStartup = { state: 'started' } | { state: 'timed-out' } | { state: 'unreadable'; reason: string };
 
-// The pid in `com.apple.springboard.finishedstartup`, or null while SpringBoard is not running.
-// It changes on every simulator reboot.
+// SpringBoard's pid changes on every simulator reboot. Null when it is not running or unreadable.
 export async function readSpringBoardPid(udid: string): Promise<number | null> {
   try {
     const output = await getExecutor().runFileAsync(

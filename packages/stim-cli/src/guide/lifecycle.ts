@@ -106,9 +106,9 @@ profile and once SpringBoard has finished starting, because both a SimSlim
 reboot and SpringBoard's startup reset the volume. A device that is already
 running keeps its volume, except that a running simulator SimSlim reboots (a
 first slim, a profile change, or restoring stock services) is muted again once
-SpringBoard is back; an already slim simulator is not touched. Turn sound on for one device with Sound (iOS) or
-Media sound (Android) in its Stim Desktop options; the choice lasts until that
-device next boots. Android 14 and older images have no shell command that can
+SpringBoard is back; an already slim simulator is not touched. Turn sound on
+for one device with Sound (iOS) or Media sound (Android) in its Stim Desktop
+options; the choice lasts until that device next boots. Android 14 and older images have no shell command that can
 set media volume, so startup warns, as it does whenever a mute is not
 confirmed. Host volume, Android alarm and ringtone volumes, hosted devices and
 physical devices are unchanged.
