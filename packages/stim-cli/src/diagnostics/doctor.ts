@@ -421,7 +421,7 @@ export async function checkMainCheckout(
       }
     }
     if (podsState) {
-      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot)}`;
+      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, iosRoot)}`;
       findings.push(
         finding(
           'cost',
@@ -434,7 +434,7 @@ export async function checkMainCheckout(
 
     const broken = brokenPods === undefined && existsSync(podsRoot) ? await brokenPodLinks(podsRoot) : brokenPods || [];
     if (broken.length) {
-      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, '--clean-install')}`;
+      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, iosRoot, '--clean-install')}`;
       findings.push(
         finding(
           'cost',

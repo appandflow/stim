@@ -771,7 +771,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       );
     }
 
-    const tools = job.cacheArtifact ? await reactNativeArtifactToolchain(platform, realRoot) : null;
+    const tools = job.cacheArtifact ? await reactNativeArtifactToolchain(platform, realRoot, iosProject.dir) : null;
     const query = tools ? reactNativeBuildQuery(job, fingerprint, job.project, tools) : null;
     const receipt = query ? reactNativeArtifactReceipt(query, tools) : null;
     compiled =
@@ -792,7 +792,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     if (!settled || settled.moved) return failed('fingerprint-moved', 'The inputs changed during the build there.');
     const after =
       query && receipt
-        ? reactNativeArtifactReceipt(query, await reactNativeArtifactToolchain(platform, realRoot))
+        ? reactNativeArtifactReceipt(query, await reactNativeArtifactToolchain(platform, realRoot, iosProject.dir))
         : null;
     if (receipt && after && isDeepStrictEqual(receipt, after)) compiled.reactNativeArtifact = receipt;
   }

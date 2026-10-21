@@ -153,7 +153,7 @@ function reportCarriedStateHealth(root: string, target: string, copied: string[]
   }
   for (const p of podsOutOfSync(target, copied)) {
     const where = p.dir === '.' ? 'Podfile.lock' : `${p.dir}/Podfile.lock`;
-    const pod = podInstallCommand(p.dir === '.' ? target : resolve(target, p.dir, '..'));
+    const pod = podInstallCommand(p.dir === '.' ? target : resolve(target, p.dir, '..'), resolve(target, p.dir));
     out(
       chalk.yellow(
         phaseLine(

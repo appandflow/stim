@@ -52,9 +52,10 @@ interface ArtifactReceipt {
 export async function reactNativeArtifactToolchain(
   platform: 'ios' | 'android',
   root: string,
+  iosDirectory: string,
 ): Promise<ArtifactTools | null> {
   if (platform === 'ios') {
-    const tools = await iosToolchainAsync(root);
+    const tools = await iosToolchainAsync(root, iosDirectory);
     return tools.stimBuild && tools.xcode && tools.simulatorSdk && tools.cocoapods
       ? { ...tools, os: process.platform }
       : null;

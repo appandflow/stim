@@ -541,11 +541,11 @@ function reactNativeIosArtifact(
       target: async (runtime) => ({
         platform: 'ios',
         local: {
-          ...(await iosToolchainAsync(root)),
+          ...(await iosToolchainAsync(root, iosProject.dir)),
           ...(target.hostedArchitecture ? { arch: target.hostedArchitecture === 'x86_64' ? 'x64' : 'arm64' } : {}),
         },
         runtime,
-        cocoapodsPinned: bundlerPin(root) !== null,
+        cocoapodsPinned: bundlerPin(root, iosProject.dir) !== null,
       }),
       request: (runtime) => ({
         platform: 'ios',

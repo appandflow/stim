@@ -126,8 +126,9 @@ Branch on the code, never on the message.`,
   \`pod install\` (iOS) or the gradle dependency sync (Android) failed. On iOS
   this runs only when Podfile.lock and Pods/Manifest.lock disagree, or Pods is
   absent -- which is exactly what a carried worktree produces.
-  WHICH POD COMMAND: when the project root has a Gemfile and a Gemfile.lock
-  that resolves cocoapods, pods go through bundler -- \`bundle check --dry-run\`,
+  WHICH POD COMMAND: Stim takes the nearest Gemfile from the directory pod
+  install runs in (ios/) up to the project root, as Bundler finds it. When its
+  Gemfile.lock resolves cocoapods, pods go through bundler -- \`bundle check --dry-run\`,
   then \`bundle install\` only when that reports missing gems, then \`bundle exec
   pod install\` -- so the CocoaPods the lockfile pins is the one that writes
   Podfile.lock. Everything else gets plain \`pod install\`: no Gemfile, a Gemfile

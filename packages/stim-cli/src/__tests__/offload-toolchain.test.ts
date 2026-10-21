@@ -67,7 +67,7 @@ test.skipIf(process.platform !== 'darwin')(
   'the CocoaPods comparison follows the project Ruby while Xcode keeps the machine environment',
   async () => {
     writeFileSync(join(root, '.ruby-version'), 'ruby-3.3.4\n');
-    expect(await iosToolchainAsync(root)).toMatchObject({
+    expect(await iosToolchainAsync(root, root)).toMatchObject({
       cocoapods: '1.16.2',
       xcode: 'Xcode 27.0',
       simulatorSdk: '27.0',
@@ -78,9 +78,9 @@ test.skipIf(process.platform !== 'darwin')(
 test.skipIf(process.platform !== 'darwin')(
   'without a project Ruby the probe and pod install both use the login shell gems',
   async () => {
-    expect((await iosToolchainAsync(root)).cocoapods).toBe('1.17.0');
+    expect((await iosToolchainAsync(root, root)).cocoapods).toBe('1.17.0');
     writeFileSync(join(root, '.ruby-version'), '3.2.0\n');
-    const probed = (await iosToolchainAsync(root)).cocoapods;
+    const probed = (await iosToolchainAsync(root, root)).cocoapods;
     const built = execFileSync(join(root, 'bin', 'pod'), ['--version'], {
       env: await podEnvForRubyAsync(readRubyVersion(root)),
       encoding: 'utf-8',
@@ -92,8 +92,26 @@ test.skipIf(process.platform !== 'darwin')(
 
 test.skipIf(process.platform !== 'darwin')('an unreadable login shell keeps the caller environment', async () => {
   vi.stubEnv('SHELL', join(root, 'missing-shell'));
-  expect((await iosToolchainAsync(root)).cocoapods).toBe('1.16.2');
+  expect((await iosToolchainAsync(root, root)).cocoapods).toBe('1.16.2');
 });
+
+test.skipIf(process.platform !== 'darwin')(
+  'the CocoaPods comparison reads the version pod install runs in the iOS directory',
+  async () => {
+    const ios = join(root, 'ios');
+    mkdirSync(ios);
+    executable(
+      join(root, 'bin'),
+      'pod',
+      `console.log(process.cwd() === require('node:fs').realpathSync(${JSON.stringify(ios)}) ? '1.16.2' : '1.17.0');`,
+    );
+    expect((await iosToolchainAsync(root, ios)).cocoapods).toBe('1.16.2');
+
+    writeFileSync(join(ios, 'Gemfile'), "gem 'cocoapods', '1.15.2'\n");
+    writeFileSync(join(ios, 'Gemfile.lock'), 'GEM\n  specs:\n    cocoapods (1.15.2)\n');
+    expect((await iosToolchainAsync(root, ios)).cocoapods).toBe('1.15.2');
+  },
+);
 
 test('native Xcode discovery preserves required facts without invoking unrelated platform or Ruby tools', async () => {
   const runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0';
@@ -128,7 +146,7 @@ test('native Xcode discovery preserves required facts without invoking unrelated
     throw new Error(`Unexpected probe ${file} ${args.join(' ')}`);
   };
   setExecutor(makeExecutor({ runFileQuiet: probe, runFileAsync: async (file, args) => probe(file, args) }));
-  expect(await iosToolchainAsync(root, 'xcode')).toMatchObject({
+  expect(await iosToolchainAsync(root, null)).toMatchObject({
     xcode: 'Xcode 27.0',
     simulatorSdk: '27.0',
     cocoapods: null,
@@ -161,7 +179,7 @@ test.skipIf(process.platform !== 'darwin')('async native Xcode comparison skips 
   const body = `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'invoked'); process.exit(1);`;
   executable(join(root, 'bin'), 'pod', body);
   executable(root, 'login-shell', body);
-  await expect(iosToolchainAsync(root, 'xcode')).resolves.toMatchObject({
+  await expect(iosToolchainAsync(root, null)).resolves.toMatchObject({
     cocoapods: null,
     xcode: 'Xcode 27.0',
     simulatorSdk: '27.0',

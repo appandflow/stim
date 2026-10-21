@@ -324,8 +324,8 @@ downgrades a newer server.
 For iOS builds, Xcode and the simulator SDK must match, and the worker needs
 an iPhone simulator on the target runtime. The Stim build must match, and so
 must the CPU architecture for iOS and macOS builds. Project-selected CocoaPods versions must match unless the
-project's `Gemfile.lock` pins it; then both machines use Bundler and the pinned
-version. For macOS, Xcode and the macOS SDK must match. For Android, JDK major
+project's `Gemfile.lock`, in `ios/` or the project root, pins it; then both
+machines use Bundler and the pinned version. For macOS, Xcode and the macOS SDK must match. For Android, JDK major
 versions must match, and the worker needs the project's NDK, build-tools and
 compile SDK. An Android worker can have another CPU architecture, and it can
 be an x86_64 Linux or Windows machine; see [Linux worker](#linux-worker) and

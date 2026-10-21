@@ -999,9 +999,10 @@ lookup. Release and physical-device builds keep their existing paths.
 SwiftPM, compiler and dependency caches use their existing paths.
 For iOS the machine's Xcode and simulator SDK must match, and it needs an
 iPhone simulator on the target runtime. Its project-selected CocoaPods must match too, unless
-the app's Gemfile.lock pins CocoaPods: both machines then run that version through
+the app's Gemfile.lock, in ios/ or the project root, pins CocoaPods: both machines then run that version through
 bundler, so the machine needs only Bundler on its stim-server PATH and
-installs the pinned gems itself on the first build. The comparison selects
+installs the pinned gems itself on the first build. This Mac's side of the
+comparison runs \`pod --version\` in the directory pod install runs in. The comparison selects
 the app's .ruby-version when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the GEM_HOME, GEM_PATH and Ruby-related PATH entries of the machine's login shell (read once with $SHELL -lic), unless the caller already sets GEM_HOME, with pod install's UTF-8 locale defaults. pod install, including the Bundler run, uses the same environment.
 For Android its CPU may differ, since the APK's ABIs come from the NDK, so an
 x86_64 Linux or Windows machine running stim-server can build for an Apple silicon Mac. Its JDK major

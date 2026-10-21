@@ -454,9 +454,10 @@ in that order:
 
 - For iOS, its Xcode and simulator SDK must match, and it needs an iPhone
   simulator on the target runtime. Its project-selected CocoaPods must match too, unless the
-  project's `Gemfile.lock` pins CocoaPods: both machines then run that version
+  project's `Gemfile.lock`, in `ios/` or the project root, pins CocoaPods: both machines then run that version
   through Bundler, so the machine needs only Bundler on its stim-server `PATH`
-  and installs the pinned gems itself on the first build. The comparison uses
+  and installs the pinned gems itself on the first build. This machine's side of
+  the comparison runs `pod --version` in the directory `pod install` runs in. The comparison uses
   `.ruby-version` when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.
 - For macOS, its Xcode and macOS SDK must match. The worker needs network
   access to fetch SwiftPM dependencies the first time and keeps a dependency
