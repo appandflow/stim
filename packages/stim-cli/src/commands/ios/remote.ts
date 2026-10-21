@@ -1,5 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import type { IosSimSnapshot } from '../../devices/ios.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { resolveSimulatorAppFlag } from './support.ts';
 import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
 import { devicePlacementLine } from '../../device-host/auto-placement.ts';
@@ -149,11 +150,16 @@ export async function selectIosPlacement(
   const refusal = await args.validateSelectors();
   if (refusal) return { failure: refusal };
   const easFallback = args.supportsRemote && remoteEasFallbackSetting(args.settings);
+  const localSims = await args.simSnapshot
+    .readAsync?.({ signal: args.operation?.signal, operation: args.operation })
+    .then((sims) => sims.filter((sim) => sim.available))
+    .catch((error: unknown) => {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      args.operation?.signal.throwIfAborted();
+      return undefined;
+    });
   try {
-    const localSims = await args.simSnapshot
-      .readAsync?.({ signal: args.operation?.signal, operation: args.operation })
-      .then((sims) => sims.filter((sim) => sim.available))
-      .catch(() => undefined);
     const placed = await d.automaticDevicePlacement({
       root,
       slot,

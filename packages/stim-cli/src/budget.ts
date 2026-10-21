@@ -225,18 +225,11 @@ async function listSims(signal?: AbortSignal, operation?: StimContext): Promise<
   }
 }
 
-async function snapshotSims(
-  snapshot: IosSimSnapshot,
-  signal?: AbortSignal,
-  operation?: StimContext,
-): Promise<IosSimRecord[] | null> {
+async function snapshotSims(snapshot: IosSimSnapshot): Promise<IosSimRecord[] | null> {
   try {
-    const sims = snapshot.readAsync ? await snapshot.readAsync({ signal, operation }) : snapshot.read();
+    const sims = snapshot.readAsync ? await snapshot.readAsync() : snapshot.read();
     return sims.filter((sim) => sim.available);
-  } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-      throw error;
-    signal?.throwIfAborted();
+  } catch {
     return null;
   }
 }
@@ -258,7 +251,7 @@ async function readMemoryUse(
   signal?.throwIfAborted();
   const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal, operation });
   const config = loadConfig();
-  const sims = simSnapshot ? await snapshotSims(simSnapshot, signal, operation) : await listSims(signal, operation);
+  const sims = simSnapshot && !signal ? await snapshotSims(simSnapshot) : await listSims(signal, operation);
   signal?.throwIfAborted();
   const serials = new Map<string, string | null>();
   for (const record of Object.values(config?.projects ?? {})) {
