@@ -366,9 +366,8 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
   const { local } = target;
   const out: OffloadProblem[] = [];
   if (
-    worker.compat !== undefined
-      ? worker.compat !== local.compat
-      : !local.stimBuild || worker.stimBuild !== local.stimBuild
+    !local.stimBuild ||
+    (worker.compat !== undefined ? worker.compat !== local.compat : worker.stimBuild !== local.stimBuild)
   ) {
     out.push({
       code: 'stim-build',

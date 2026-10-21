@@ -715,7 +715,6 @@ describe('macOS artifact transfer', () => {
         },
         fingerprint: manifestDigest(files),
         stimBuild: 'b1',
-        compat: 1,
       });
       expect(outcome.ok).toBe(kind === 'valid');
       const observed = outcome.ok

@@ -1032,6 +1032,10 @@ export type BuildRequest =
       assetCatalog?: string | null;
     };
 
+function startCompat(choice: OffloadChoice): { compat?: number } {
+  return choice.connection.supports('build-compat') ? { compat: choice.target.local.compat } : {};
+}
+
 /** Peer artifact queries carry `compat`, which a stim-server without `build-compat` refuses. */
 function queriesPeerCache(
   connection: BuildConnection,
@@ -1666,7 +1670,7 @@ export async function offloadBuild(
               ...(request.platform === 'android' ? { android: request.android } : {}),
             }),
         stimBuild: choice.target.local.stimBuild,
-        compat: choice.target.local.compat,
+        ...startCompat(choice),
       });
       checkCancelled();
       if ('result' in reply) {

@@ -178,9 +178,10 @@ describe('pickOffer', () => {
         expect(pick([refused], { mode }).order).toEqual([]);
       }
     }
-    expect(
-      pick([offer({ toolchain: { compat: undefined } })], {}, { ...IOS, local: { ...LOCAL, stimBuild: null } }).order,
-    ).toEqual([]);
+    for (const compat of [undefined, 1])
+      expect(
+        pick([offer({ toolchain: { compat } })], {}, { ...IOS, local: { ...LOCAL, stimBuild: null } }).order,
+      ).toEqual([]);
   });
 
   it('compares the build compatibility version with a machine that reports one, else the Stim build', () => {
