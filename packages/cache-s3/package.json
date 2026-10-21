@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1149.0",
-    "@stim-cli/cache": "workspace:^",
+    "@stim-cli/cache": "workspace:*",
     "tar": "^7.5.22"
   },
   "engines": {

@@ -27,8 +27,8 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@stim-cli/core": "workspace:^",
-    "@stim-cli/transport": "workspace:^"
+    "@stim-cli/core": "workspace:*",
+    "@stim-cli/transport": "workspace:*"
   },
   "engines": {
     "node": ">=22.12.0"

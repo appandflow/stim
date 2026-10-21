@@ -148,11 +148,11 @@ preparation, `git status --short` may show only the draft
    uncommitted and untagged. If any of that fails it puts the manifests
    back at the version they had, so a failed run is never half-bumped.
 
-   Nothing else moves. The packages depend on each other through pnpm's
-   `workspace:` protocol, so there is no dependency range to bump: pnpm
-   substitutes the real version when it packs (verified in step 3).
+   Nothing else moves. The packages depend on each other as `workspace:*`, so
+   there is no dependency range to bump: pnpm packs each internal dependency
+   as the exact release version, never a `^` range (verified in step 3).
    `pnpm run release:prep --check` audits that shape -- package versions in
-   lockstep, every internal range a bare `workspace:` range -- without changing
+   lockstep, every internal range exactly `workspace:*` -- without changing
    anything.
 
    Confirm all packages moved:
@@ -188,7 +188,7 @@ preparation, `git status --short` may show only the draft
 
 3. **Verify each npm tarball** ships only what should ship, that each one
    carries its own README, and that every `@stim-cli/*` and `stim` dependency
-   names a real version. Pack with `pnpm`, never `npm`: the release workflow publishes
+   names the exact release version, with no `^` or `~`. Pack with `pnpm`, never `npm`: the release workflow publishes
    pnpm-packed tarballs, and `npm pack` prints the unsubstituted `workspace:`
    ranges rather than what actually publishes.
 

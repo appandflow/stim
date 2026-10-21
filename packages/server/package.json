@@ -31,12 +31,12 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@stim-cli/agent-driver": "workspace:^",
-    "@stim-cli/agent-driver-agent-device": "workspace:^",
-    "@stim-cli/cache": "workspace:^",
-    "@stim-cli/core": "workspace:^",
-    "@stim-cli/transport": "workspace:^",
-    "@stim-cli/transport-tailscale": "workspace:^",
+    "@stim-cli/agent-driver": "workspace:*",
+    "@stim-cli/agent-driver-agent-device": "workspace:*",
+    "@stim-cli/cache": "workspace:*",
+    "@stim-cli/core": "workspace:*",
+    "@stim-cli/transport": "workspace:*",
+    "@stim-cli/transport-tailscale": "workspace:*",
     "stim": "workspace:*",
     "ws": "^8.21.3"
   },
