@@ -143,7 +143,7 @@ export async function finishHostedAndroidRun({
       record: report.record,
       startedAt,
       durationMs: now() - started,
-      status: 'success',
+      status: 'ok',
       out,
     });
     await finishAndroidUpload(artifact.uploadPending, artifact.remote, phase);

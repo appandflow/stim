@@ -142,7 +142,7 @@ export async function buildAndroidOperation(
         let directory: string | undefined;
         let built: AndroidBuildFacts | null = null;
         let failureAfterCleanup: ReturnType<typeof cancelledError> | null = null;
-        const finishRecord = (status: string, errorCode?: string) =>
+        const finishRecord = (status: 'ok' | 'failed', errorCode?: string) =>
           persistLastBuild({
             root,
             record,

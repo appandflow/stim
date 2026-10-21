@@ -159,7 +159,7 @@ export function lastBuildRecord({
   appPath?: string | null;
   bundleId?: string | null;
   startedAt: string;
-  status: string;
+  status: 'ok' | 'failed';
   errorCode?: string | null;
   avdName?: string | null;
   deviceName?: string | null;
@@ -394,7 +394,7 @@ export function persistLastBuild({
   record: AndroidRecord;
   startedAt: string;
   durationMs: number;
-  status: string;
+  status: 'ok' | 'failed';
   errorCode?: string | null;
   diagnostics?: readonly unknown[] | null;
   out: (line: string) => void;
