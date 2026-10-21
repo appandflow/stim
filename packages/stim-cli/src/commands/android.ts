@@ -839,8 +839,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       waitConflict,
       remote: commandRemoteBackend,
       buildCache: requestedBuildCache,
+      buildMachine: placement.selected,
     },
     {
+      preflight: integration.preflight,
       resolveCacheProvider,
       runtimeKind: integration.runtimeKind,
       variantProblem: integration.variantProblem,

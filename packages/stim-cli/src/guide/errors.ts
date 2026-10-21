@@ -228,8 +228,13 @@ Branch on the code, never on the message.`,
   leaves room for. A project with react-native-gesture-handler 3, whose
   shared shadow nodes have the longest known object path, fits a root of at
   most 24 characters for an x86_64 Debug build and 21 for arm64-v8a; other
-  projects fit 51 and 48. Refused BEFORE Gradle
-  runs -- a cache hit still installs -- because the build would otherwise
+  projects fit 51 and 48. \`stim android\` on
+  an emulator, local or --remote <backend>, refuses before it starts Metro
+  or prepares the emulator, even when a cached build would have installed.
+  That early refusal is skipped for a physical or hosted device, an EAS
+  profile and when build machines are paired; a build that still runs here
+  is refused before Gradle runs, so a cache hit there still installs.
+  The build would otherwise
   fail deep inside ninja ("mkdir ... No such file or directory" or
   "Filename longer than 260 characters"). Move or clone the project under a
   short real path such as C:\\src\\<name> and run Stim there. A subst drive
