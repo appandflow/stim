@@ -98,9 +98,16 @@ final class Onboarding: ObservableObject {
     report.flatMap { StimRelease.offer(installed: $0.stim, latest: latestStim, owner: $0.stimOwner) }
   }
 
-  /// Asks the registry when the last answer is a day old; offline leaves the cached answer and tries again later.
-  func refreshLatestStim() {
-    guard !fetchingLatest, StimRelease.isDue(lastChecked: releases.checkedAt, now: Date()) else { return }
+  /// Asks the registry when the last answer is older than `interval` or older than the installed `stim`; offline
+  /// leaves the cached answer and tries again later.
+  func refreshLatestStim(interval: TimeInterval = StimRelease.checkInterval) {
+    var installed: SemanticVersion?
+    if case .compatible(let version)? = report?.stim { installed = version }
+    guard !fetchingLatest,
+      StimRelease.isDue(
+        lastChecked: releases.checkedAt, now: Date(), interval: interval, installed: installed,
+        cachedLatest: latestStim)
+    else { return }
     fetchingLatest = true
     Task {
       defer { fetchingLatest = false }
@@ -166,6 +173,7 @@ final class Onboarding: ObservableObject {
             && server.launcher?.runtime?.isSupported != true)
       }.value
       self.report = report
+      refreshLatestStim()
       setup.stim = report.stim
       setup.node = report.node
       setup.brewPath = report.brewPath

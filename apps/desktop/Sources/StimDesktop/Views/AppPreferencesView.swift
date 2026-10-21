@@ -39,6 +39,7 @@ struct AppPreferencesView: View {
       form
         .background(ResignFirstResponder())
         .onAppear {
+          onboarding.refreshLatestStim(interval: StimRelease.settingsInterval)
           guard !scrolledToTop else { return }
           scrolledToTop = true
           DispatchQueue.main.async { proxy.scrollTo("top", anchor: .top) }
@@ -245,7 +246,7 @@ struct AppPreferencesView: View {
   @ViewBuilder private var stimVersionRow: some View {
     if case .compatible(let installed)? = onboarding.report?.stim {
       LabeledContent("Installed") { Text(installed.description).font(.stim(.body, mono: true)) }
-      if let latest = onboarding.latestStim {
+      if let latest = StimRelease.shownLatest(installed: installed, latest: onboarding.latestStim) {
         LabeledContent("Latest") {
           HStack(spacing: Space.md) {
             Text(latest.description).font(.stim(.body, mono: true))
