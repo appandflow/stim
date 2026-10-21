@@ -728,7 +728,7 @@ export async function enforceBudget(
       ),
     );
   }
-  const gcLog = dryRun ? null : openGcLog({ trigger: 'budget', holdKept: true });
+  const gcLog = dryRun ? null : openGcLog({ trigger: 'budget', holdKept: true, env });
   const gcResults = gcLog && createGcResults(gcLog.record);
   for (const step of plan) {
     signal?.throwIfAborted();

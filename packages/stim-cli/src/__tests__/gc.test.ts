@@ -2889,7 +2889,7 @@ test("Stim Desktop's disk-pressure run (gc --delete --json) deletes this home's 
   try {
     const { stdout } = await captureJson(() => sweepingGc({ delete: true, json: true }));
     const payload = JSON.parse(stdout[0] ?? '');
-    expect(payload.results).toEqual([
+    expect(payload.results.filter((result: { kind: string }) => result.kind === 'device')).toEqual([
       expect.objectContaining({ kind: 'device', status: 'done', label: 'stim-orphan-2', id: 'UDID-2' }),
     ]);
     expect(payload.sections.unverifiedDevices).toEqual([

@@ -67,13 +67,16 @@ export async function forgetStaleEasLedgerEntries(
     try {
       if (await remove(entry.id, root, (claim) => isStaleEasLedgerEntry(claim, mountedVolumes), signal)) {
         output.log(chalk.green(`Forgot the EAS ledger entry ${entry.id} (invalid id, ${entry.workspaceRoot} is gone)`));
+        output.record('easLedgerEntry', 'done', entry.id, { id: entry.id });
       } else {
         output.log(chalk.dim(`Kept the EAS ledger entry ${entry.id}: it changed since the report.`));
+        output.record('easLedgerEntry', 'kept', entry.id, { id: entry.id, detail: 'it changed since the report' });
       }
     } catch (error) {
       signal?.throwIfAborted();
       failures++;
       output.log(chalk.red(`Could not forget the EAS ledger entry ${entry.id}: ${describeError(error)}`));
+      output.record('easLedgerEntry', 'failed', entry.id, { id: entry.id, detail: describeError(error) });
     }
   }
   signal?.throwIfAborted();

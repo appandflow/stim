@@ -23,7 +23,10 @@ type GcResultKind =
   | 'gradleDaemon'
   | 'gradleVersion'
   | 'kotlinDaemon'
-  | 'devServer';
+  | 'devServer'
+  | 'workspaceLogs'
+  | 'ledgerEntry'
+  | 'easLedgerEntry';
 
 type GcResultStatus = 'done' | 'kept' | 'failed';
 

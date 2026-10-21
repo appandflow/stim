@@ -1,6 +1,6 @@
-import { mkdirSync, statSync, unlinkSync } from 'node:fs';
+import { statSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { LOG_ROTATE_BYTES, rotatedLogPath, withDirLock } from '@stim-cli/core';
+import { ensurePrivateDir, LOG_ROTATE_BYTES, rotatedLogPath, withDirLock } from '@stim-cli/core';
 import {
   MAINTENANCE_LOG_NAME,
   maintenanceNdjsonFile,
@@ -24,7 +24,7 @@ export function openRetainedLog(
   file: string,
   settings: Pick<MaintenanceSettings, 'logMaxMb' | 'logRetentionDays'>,
 ): NdjsonWriter {
-  mkdirSync(dirname(file), { recursive: true });
+  ensurePrivateDir(dirname(file));
   const rotated = rotatedLogPath(file);
   withDirLock(`${file}.lock`, () => {
     try {

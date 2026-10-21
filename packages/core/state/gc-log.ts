@@ -53,5 +53,7 @@ export function isGcLogRecord(record: NdjsonRecord): record is GcLogRecord {
 }
 
 export function readGcLog(file: string = gcLogFile()): GcLogRecord[] {
-  return readNdjsonGenerations(file).filter(isGcLogRecord);
+  return readNdjsonGenerations(file)
+    .filter(isGcLogRecord)
+    .toSorted((a, b) => a.ts - b.ts);
 }

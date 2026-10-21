@@ -35,6 +35,20 @@ describe('the gc log writer', () => {
     expect(readGcLog().map((r) => `${r.status}:${r.label}`)).toEqual(['kept:a', 'kept:b', 'done:c', 'kept:d']);
   });
 
+  test('the reader orders by time when a held kept item is flushed after another run wrote', () => {
+    let now = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now++);
+    const item = (status: 'done' | 'kept', label: string) =>
+      ({ kind: 'cache', status, label, id: null, bytes: null, detail: null }) as const;
+    const holding = openGcLog({ trigger: 'manual', holdKept: true });
+    const other = openGcLog({ trigger: 'budget' });
+    holding.record(item('kept', 'first'));
+    other.record(item('done', 'second'));
+    holding.record(item('done', 'third'));
+    expect(readGcLog().map((r) => r.label)).toEqual(['first', 'second', 'third']);
+    vi.restoreAllMocks();
+  });
+
   test('a run that only keeps things leaves no file', () => {
     runOf(true, [
       ['kept', 'a'],
