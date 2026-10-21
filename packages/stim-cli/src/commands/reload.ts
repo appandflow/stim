@@ -9,7 +9,8 @@ import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import type { Command } from 'commander';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
-import { androidAppProcess, ensureMetroReverse, iosAppProcess } from '../engine/app-install.ts';
+import { androidAppProcess, ensureMetroReverse, iosAppProcess, type AppProcessProbe } from '../engine/app-install.ts';
+import { loadScaledBudgetMs } from '../process-group-exit.ts';
 import { reloadThroughMetro } from '../engine/reload.ts';
 import { listeningPidsAsync, processCwds, resolveProjectMetro, type MetroResolution } from '../metro.ts';
 import { isMetroRunning } from '../ports.ts';
@@ -54,6 +55,7 @@ interface LiveTarget {
   deviceName: string;
   hosted?: boolean;
   hostedAndroid?: HostedAndroidPlacement;
+  processUnknown?: boolean;
 }
 
 interface TargetFailure {
@@ -157,16 +159,29 @@ async function reloadBrowser(
   };
 }
 
-async function processFailure(
+const PROCESS_PROBE_BASE_MS = 5_000;
+const PROCESS_PROBE_CAP_MS = 30_000;
+
+async function appProcessState(
   platform: WorkspaceLaunchPlatform,
   record: WorkspaceLaunchRecord,
   d: ReloadDeps,
-  slot = 'default',
-): Promise<ReloadFailure | null> {
+): Promise<AppProcessProbe['state']> {
   const { state } =
     platform === 'ios'
-      ? await d.iosProcess(record.deviceId, record.appId)
+      ? await d.iosProcess(record.deviceId, record.appId, {
+          timeoutMs: loadScaledBudgetMs(PROCESS_PROBE_BASE_MS, PROCESS_PROBE_CAP_MS),
+        })
       : await d.androidProcess(record.deviceId, record.appId);
+  return state;
+}
+
+function processFailure(
+  platform: WorkspaceLaunchPlatform,
+  record: WorkspaceLaunchRecord,
+  state: AppProcessProbe['state'],
+  slot = 'default',
+): ReloadFailure | null {
   if (state === 'unknown') {
     const probe =
       platform === 'ios'
@@ -231,9 +246,10 @@ async function inspectTarget(
         ),
       };
     }
-    const stopped = await processFailure(platform, record, d, slot);
+    const state = await appProcessState(platform, record, d);
+    const stopped = state === 'unknown' ? null : processFailure(platform, record, state, slot);
     if (stopped) return { platform, error: stopped };
-    return { platform, slot, record, deviceName: resolved.sim.name };
+    return { platform, slot, record, deviceName: resolved.sim.name, processUnknown: state === 'unknown' };
   }
 
   const configured = project.platforms?.android;
@@ -270,9 +286,10 @@ async function inspectTarget(
       ),
     };
   }
-  const stopped = await processFailure(platform, record, d, slot);
+  const state = await appProcessState(platform, record, d);
+  const stopped = state === 'unknown' ? null : processFailure(platform, record, state, slot);
   if (stopped) return { platform, error: stopped };
-  return { platform, slot, record, deviceName: configured.avdName };
+  return { platform, slot, record, deviceName: configured.avdName, processUnknown: state === 'unknown' };
 }
 
 function isTargetFailure(value: LiveTarget | TargetFailure): value is TargetFailure {
@@ -502,8 +519,11 @@ export async function runReload({
       ),
     };
   }
-  const stopped = target.hosted ? null : await processFailure(target.platform, target.record, d, target.slot);
+  const rechecked =
+    target.hosted || target.processUnknown ? 'running' : await appProcessState(target.platform, target.record, d);
   throwIfCancelled(signal, 'reload');
+  const stopped =
+    rechecked === 'unknown' ? null : processFailure(target.platform, target.record, rechecked, target.slot);
   if (stopped) return { ok: false, error: stopped };
 
   const reverseRestored: string[] = [];
@@ -565,7 +585,12 @@ export async function runReload({
   if (!reloaded.ok) {
     const stoppedAfterMetro = target.hosted
       ? null
-      : await processFailure(target.platform, target.record, d, target.slot);
+      : processFailure(
+          target.platform,
+          target.record,
+          await appProcessState(target.platform, target.record, d),
+          target.slot,
+        );
     if (stoppedAfterMetro) return { ok: false, error: stoppedAfterMetro };
     if (target.hosted)
       return {

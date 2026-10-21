@@ -555,6 +555,69 @@ test('reload ignores a stopped platform while auto-selecting the live one', asyn
   expect(result.ok && result.facts.platform).toBe('android');
 });
 
+test('reload gives the iOS process probe a budget above the 2 second default', async () => {
+  const options: unknown[] = [];
+  await runReload({
+    root: '/project',
+    platform: 'ios',
+    deps: reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch }),
+      iosProcess: async (_udid, _appId, opts) => {
+        options.push(opts);
+        return { state: 'running', pid: 42 };
+      },
+    }),
+  });
+  expect(options[0]).toEqual({ timeoutMs: expect.toSatisfy((ms: number) => ms >= 5_000 && ms <= 30_000) });
+});
+
+test.each([
+  {
+    platform: 'ios' as const,
+    launches: { ios: iosLaunch } as Record<string, WorkspaceLaunchRecord>,
+    dep: 'iosProcess' as const,
+  },
+  {
+    platform: 'android' as const,
+    launches: { android: androidLaunch } as Record<string, WorkspaceLaunchRecord>,
+    dep: 'androidProcess' as const,
+  },
+])('reload still reaches Metro when the $platform process probe times out', async ({ platform, launches, dep }) => {
+  let probes = 0;
+  const reloads: unknown[] = [];
+  const result = await runReload({
+    root: '/project',
+    platform,
+    deps: reloadDeps({
+      readLaunches: () => launches,
+      [dep]: async () => {
+        probes++;
+        return { state: 'unknown' };
+      },
+      reloadMetro: async (...args) => {
+        reloads.push(args);
+        return { ok: true, peers: 1, targets: 1 };
+      },
+    }),
+  });
+  expect(result).toMatchObject({ ok: true, facts: { platform, strategy: 'metro-websocket', targets: 1 } });
+  expect(reloads).toHaveLength(1);
+  expect(probes).toBe(1);
+});
+
+test('reload keeps refusing when the process probe times out and Metro has no peer for the app', async () => {
+  const result = await runReload({
+    root: '/project',
+    platform: 'ios',
+    deps: reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch }),
+      iosProcess: async () => ({ state: 'unknown' }),
+      reloadMetro: async () => ({ failed: true, noPeer: true, peers: 0, reason: 'No app connected.' }),
+    }),
+  });
+  expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_PROBE_FAILED' } });
+});
+
 test('reload refuses release launches before issuing a reload action', async () => {
   let called = false;
   const result = await runReload({

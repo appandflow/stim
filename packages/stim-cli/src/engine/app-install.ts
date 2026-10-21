@@ -271,14 +271,14 @@ export function appProcessFromPid(pid: number | null): AppProcessProbe {
 export async function iosAppProcess(
   udid: string,
   bundleId: string,
-  { exec = null }: ExecOpt = {},
+  { exec = null, timeoutMs = 2000 }: ExecOpt & { timeoutMs?: number } = {},
 ): Promise<AppProcessProbe> {
   const e = exec || getExecutor();
   const started = performance.now();
   let probe: AppProcessProbe = { state: 'unknown' };
   let failure: { code?: string; exit?: number } = {};
   try {
-    const out = await e.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 2000 });
+    const out = await e.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs });
     const label = `UIKitApplication:${bundleId}[`;
     probe = { state: 'stopped' };
     for (const line of out.split('\n')) {
