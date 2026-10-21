@@ -183,13 +183,15 @@ RULES DURING THE LOOP
 - For stale Metro transforms or file-map state, use stim start --reset-cache.
   It restarts only this app's verified owned Metro, preserving devices and other
   apps' caches. See guide lifecycle for reset scope.
-- Reload is not part of the normal workflow. Use stim reload on an owned local
-  simulator or emulator when an error screen remains after the fix, and on
+- Reload is not part of the normal workflow. Use stim reload when an error
+  screen remains after the fix on an owned local simulator or emulator, a
+  physical device or an EAS Simulator session, and on
   Android after a failed first bundle load. It reloads JavaScript and never
   restarts the app. An iOS app whose first bundle failed never connects to
   Metro, so reload cannot reach it and says to use the device's own Reload
-  control. For a physical device that reached Metro, use agent-device metro
-  reload with the reported port, as for an EAS Simulator session. The detected iOS Local Network first-load
+  control. With no owned launch recorded, reload goes through this workspace's
+  Metro to the apps connected to it, so an app that never connected is not
+  reached. The detected iOS Local Network first-load
   remedy uses UI automation instead because that app never established a Metro
   connection.
 - A successful stim reload confirms that the request was sent, not that new

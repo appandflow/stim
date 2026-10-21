@@ -35,7 +35,8 @@ export interface ReloadFacts {
   platform: ReloadPlatform;
   deviceId: string;
   deviceName: string;
-  appId: string;
+  /** Null when the app was not launched by Stim: a physical device or an EAS Simulator session. */
+  appId: string | null;
   metroPort: number | null;
   strategy: 'metro-websocket' | 'metro-broadcast' | 'cdp';
   targets: number | null;
@@ -308,24 +309,89 @@ function unlaunchedRefusal(
   metroPort: number | null,
   remote: RemoteSessionRecord | null,
 ): ReloadFailure {
-  const metroReload = metroPort ? `agent-device metro reload --metro-port ${metroPort}` : null;
+  const connected = metroPort ? ` and no app is connected to this workspace's Metro on port ${metroPort}` : '';
   if (remote) {
+    const run = `stim ${platform ?? remote.platform ?? 'ios'} --remote eas`;
     return failure(
-      'STIM_RELOAD_UNSUPPORTED',
-      `This workspace's remote device is EAS Simulator session ${remote.sessionId}, which stim reload does not reach.`,
-      metroReload
-        ? `If the app is running there, run \`${metroReload}\`; it asks every app connected to this workspace's Metro to reload. Otherwise run \`stim ${platform ?? remote.platform ?? 'ios'} --remote eas\` to launch it.`
-        : 'Run `stim start`, launch the app on the session, then reload it with `agent-device metro reload --metro-port <port>`.',
+      'STIM_RELOAD_STOPPED',
+      `This workspace's remote device is EAS Simulator session ${remote.sessionId}${metroPort ? `, but no app is connected to this workspace's Metro on port ${metroPort}` : ''}.`,
+      `Run \`${run}\` to launch the app there.`,
     );
   }
   const run = platform ? `Run \`stim ${platform}\` first.` : 'Run `stim ios` or `stim android` first.';
   return failure(
     'STIM_RELOAD_STOPPED',
-    platform ? `No ${platform} app launch is recorded for this workspace.` : 'No live app launch is recorded.',
-    metroReload
-      ? `${run} Stim records launches only on owned local simulators and emulators, so an app running on a physical device (--device) is not recorded; reload it with \`${metroReload}\`.`
+    platform
+      ? `No ${platform} app launch is recorded for this workspace${connected}.`
+      : `No live app launch is recorded${connected}.`,
+    metroPort
+      ? `${run} An app on a physical device (--device) is reloaded through Metro once it is running and connected; an Android phone needs \`adb reverse tcp:${metroPort} tcp:${metroPort}\`.`
       : run,
   );
+}
+
+async function reloadUnrecorded(
+  root: string,
+  platform: WorkspaceLaunchPlatform | null,
+  project: ProjectRecord,
+  d: ReloadDeps,
+  signal?: AbortSignal,
+): Promise<ReloadResult> {
+  const port = project.metroPort ?? null;
+  const remote = remoteSessionFor(d.readRemote(root), platform);
+  const refusal = () => ({ ok: false as const, error: unlaunchedRefusal(platform, port, remote) });
+  if (!port) return refusal();
+  const metro = await d.resolveMetro(port, root, signal);
+  throwIfCancelled(signal, 'reload');
+  if (!metro.metro) return refusal();
+  let target = platform ?? remote?.platform ?? null;
+  if (!target) {
+    const peers = await d.reloadMetro(port, { peersOnly: true, ...(signal ? { signal } : {}) });
+    throwIfCancelled(signal, 'reload');
+    if (!peers.ok) return refusal();
+    const platforms = peers.platforms ?? [];
+    const [only] = platforms;
+    if (only && platforms.length === 1) target = only;
+    else {
+      return {
+        ok: false,
+        error: failure(
+          'STIM_RELOAD_AMBIGUOUS',
+          platforms.length > 1
+            ? `More than one platform is connected to this workspace's Metro: ${platforms.join(', ')}.`
+            : `Apps are connected to this workspace's Metro on port ${port}, but Metro does not say which platform.`,
+          'Choose one with `stim reload ios` or `stim reload android`.',
+        ),
+      };
+    }
+  }
+  const reloaded = await d.reloadMetro(port, { role: target, ...(signal ? { signal } : {}) });
+  throwIfCancelled(signal, 'reload');
+  if (!reloaded.ok) {
+    return reloaded.unreachable
+      ? {
+          ok: false,
+          error: failure(
+            'STIM_RELOAD_FAILED',
+            reloaded.reason,
+            `Metro is registered for this workspace but did not answer on port ${port}. Run \`stim reload ${target}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server.`,
+          ),
+        }
+      : { ok: false, error: unlaunchedRefusal(target, port, remote) };
+  }
+  return {
+    ok: true,
+    facts: {
+      platform: target,
+      deviceId: `metro:${port}`,
+      deviceName: remote ? `EAS Simulator session ${remote.sessionId}` : 'devices connected to Metro',
+      appId: null,
+      metroPort: port,
+      strategy: reloaded.broadcast ? 'metro-broadcast' : 'metro-websocket',
+      targets: reloaded.targets ?? null,
+      reverseRestored: [],
+    },
+  };
 }
 
 function isTargetFailure(value: LiveTarget | TargetFailure): value is TargetFailure {
@@ -498,12 +564,8 @@ export async function runReload({
               `${nativeFailure.remedy ?? ''} To reload the owned Chrome page instead, run \`stim reload web\`.`.trim(),
           }
         : nativeFailure;
-    return {
-      ok: false,
-      error:
-        firstFailure ??
-        unlaunchedRefusal(platform, project.metroPort ?? null, remoteSessionFor(d.readRemote(root), platform)),
-    };
+    if (firstFailure) return { ok: false, error: firstFailure };
+    return reloadUnrecorded(root, platform, project, d, signal);
   }
 
   const target =
@@ -714,6 +776,16 @@ export function registerReload(program: Command, deps: Partial<ReloadDeps> = {})
         if (facts.strategy === 'cdp') {
           console.log(
             `Reload requested for ${facts.appId} in the owned Chrome (DevTools ${facts.deviceId}). Completion is not observed; run stim logs --errors.`,
+          );
+          return;
+        }
+        if (facts.appId === null) {
+          const reached =
+            facts.strategy === 'metro-broadcast'
+              ? 'This Metro cannot name its connected apps, so the request was broadcast to all of them.'
+              : `The request addressed ${facts.targets} connected ${facts.platform} app${facts.targets === 1 ? '' : 's'}.`;
+          console.log(
+            `Reload requested through this workspace's Metro on port ${facts.metroPort}, for apps Stim did not launch (a physical device or ${facts.deviceName}). ${reached} Completion is not observed; verify the expected UI and run stim logs --errors.`,
           );
           return;
         }

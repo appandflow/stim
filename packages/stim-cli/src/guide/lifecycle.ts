@@ -116,14 +116,15 @@ not part of the normal workflow. It is the explicit recovery path when Fast
 Refresh cannot clear the current screen, and on Android after a failed first
 bundle load. It reloads JavaScript and never restarts the app. Use \`stim
 reload ios\` or \`stim reload android\` to select a platform when both owned
-apps are live. For a physical device that reached Metro, use \`agent-device
-metro reload --metro-port <reported-port>\`, as for an EAS Simulator session.
+apps are live. With no owned launch recorded, it reloads the apps connected to
+this workspace's Metro, such as one on a physical device (--device) or an EAS
+Simulator session (--remote eas); an Android phone needs its adb reverse.
 The detected iOS Local Network
 first-load remedy uses agent-device UI automation because no Metro peer exists
-yet. It never builds, installs, boots, or cold-launches. It acts only on a live
-app on this workspace's owned local simulator or emulator, and refuses release
-builds, stopped or unowned devices, a missing or foreign Metro, and an
-ambiguous no-platform request. Every reload goes over this workspace's Metro
+yet. It never builds, installs, boots, or cold-launches. It acts on a live app
+on this workspace's owned local simulator or emulator, or on the apps connected
+to this workspace's Metro, and refuses release builds, stopped or unowned
+devices, a missing or foreign Metro, and an ambiguous no-platform request. Every reload goes over this workspace's Metro
 websocket, on both platforms. It never reopens a development-client URL,
 because that restarts the app rather than reloading its JavaScript.
 

@@ -11,10 +11,10 @@ type Missed = { ok?: undefined; failed: true; reason: string; targets?: undefine
  * and callers cannot branch on one that never happens.
  */
 export type MetroReloadResult =
-  /** Addressed to every peer matching the platform. */
-  | (Sent & { targets: number; peers: number; broadcast?: undefined })
+  /** Addressed to every peer matching the platform; without a platform, `platforms` names the ones the peers reported. */
+  | (Sent & { targets: number; peers: number; platforms?: MetroReloadRole[]; broadcast?: undefined })
   /** Metro could not name its clients, so the reload went to all of them. */
-  | (Sent & { broadcast: true; targets?: undefined; peers?: undefined })
+  | (Sent & { broadcast: true; targets?: undefined; peers?: undefined; platforms?: undefined })
   /**
    * Metro named its clients and none matched. A broadcast went out anyway, so
    * the app may still have reloaded; nothing here proves it did.
@@ -47,14 +47,19 @@ function peerQuery(metadata: unknown): URLSearchParams | null {
 // Only iOS sends `role` (RCTPackagerConnection.mm), and it sends nothing else.
 // Android sends `device`, `app` and `clientid` (JSPackagerClient.kt), so its
 // package name is the only identifier available there.
-function peerMatches(query: URLSearchParams, role: MetroReloadRole, appId: string): boolean {
-  if (role === 'ios') return query.get('role')?.toLowerCase() === 'ios';
-  return query.get('app') === appId;
+function peerPlatform(query: URLSearchParams): MetroReloadRole {
+  return query.get('role')?.toLowerCase() === 'ios' ? 'ios' : 'android';
+}
+
+function peerMatches(query: URLSearchParams, role: MetroReloadRole, appId: string | undefined): boolean {
+  if (role === 'ios') return peerPlatform(query) === 'ios';
+  return appId === undefined ? peerPlatform(query) === 'android' : query.get('app') === appId;
 }
 
 /**
- * Asks Metro for its peers and reloads the ones matching `role` and `appId`. With `peersOnly`, it sends nothing and
- * only reports the outcome a reload would have, so a caller can wait for the app to connect.
+ * Asks Metro for its peers and reloads the ones matching `role` and `appId`. Without `role` every peer matches, and
+ * without `appId` every Android peer does. With `peersOnly`, it sends nothing and only reports the outcome a reload
+ * would have, so a caller can wait for the app to connect.
  */
 export function reloadThroughMetro(
   port: number,
@@ -64,10 +69,10 @@ export function reloadThroughMetro(
     timeoutMs = METRO_TIMEOUT_MS,
     peersOnly = false,
     signal,
-  }: { role: MetroReloadRole; appId: string; timeoutMs?: number; peersOnly?: boolean; signal?: AbortSignal },
+  }: { role?: MetroReloadRole; appId?: string; timeoutMs?: number; peersOnly?: boolean; signal?: AbortSignal },
 ): Promise<MetroReloadResult> {
   if (signal?.aborted) return Promise.reject(cancelledError('reload'));
-  const roleName = ROLE_NAMES[role];
+  const roleName = role ? `${ROLE_NAMES[role]} ` : '';
   return new Promise((resolve, reject) => {
     const requestId = `stim-reload-${process.pid}-${Date.now()}`;
     const socket = new WebSocket(`ws://127.0.0.1:${port}/message`);
@@ -112,6 +117,7 @@ export function reloadThroughMetro(
         const entries = Object.entries(message.result);
         const peers = entries.length;
         const rolePeers = entries.filter(([, metadata]) => {
+          if (!role) return true;
           const query = peerQuery(metadata);
           return query ? peerMatches(query, role, appId) : false;
         });
@@ -120,7 +126,7 @@ export function reloadThroughMetro(
             failed: true,
             noPeer: true,
             peers,
-            reason: `No ${roleName} React Native app is connected to Metro on port ${port}.`,
+            reason: `No ${roleName}React Native app is connected to Metro on port ${port}.`,
           });
           return;
         }
@@ -138,7 +144,7 @@ export function reloadThroughMetro(
             failed: true,
             noPeer: true,
             peers,
-            reason: `No ${roleName} React Native app is connected to Metro on port ${port}.${others}`,
+            reason: `No ${roleName}React Native app is connected to Metro on port ${port}.${others}`,
           });
           return;
         }
@@ -147,7 +153,12 @@ export function reloadThroughMetro(
         // pick one anyway: its peers carry only `role`.
         if (!peersOnly)
           for (const [id] of rolePeers) socket.send(JSON.stringify({ version: 2, method: 'reload', target: id }));
-        finish({ ok: true, peers, targets: rolePeers.length });
+        const platforms = new Set<MetroReloadRole>();
+        for (const [, metadata] of rolePeers) {
+          const query = peerQuery(metadata);
+          if (query) platforms.add(peerPlatform(query));
+        }
+        finish({ ok: true, peers, targets: rolePeers.length, ...(role ? {} : { platforms: [...platforms] }) });
         return;
       }
       // @react-native-community/cli-server-api reads `otherWs.upgradeReq.url` to

@@ -456,10 +456,15 @@ leased until <time>" for each one.`,
 
   platform        "ios" | "android" | "web"
   deviceId        the exact owned simulator UDID or emulator serial targeted;
-                  for web, the owned Chrome's DevTools endpoint
-  deviceName      the owned simulator or AVD name; for web, the Chrome version
+                  for web, the owned Chrome's DevTools endpoint; metro:<port>
+                  when the apps were reached through Metro alone
+  deviceName      the owned simulator or AVD name; for web, the Chrome version;
+                  "EAS Simulator session <id>" or "devices connected to
+                  Metro" when reached through Metro alone
   appId           the live bundle id or Android package; for web, the URL the
-                  owned page was on when Stim sent the reload
+                  owned page was on when Stim sent the reload; null when no
+                  launch is recorded (a physical device or EAS Simulator
+                  session) and Stim reloaded the apps connected to Metro
   metroPort       the workspace's verified Metro port; for web, the reserved
                   Metro port or null
   strategy        how the reload was addressed.
