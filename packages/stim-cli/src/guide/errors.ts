@@ -446,6 +446,11 @@ Rerun with --remote-build auto for normal placement and local fallback, or
   copying for the same reason. A copy without a claim would be invisible to a
   refresh starting after it, allowing the source dependencies to change while
   they are read.
+  A report command such as \`gc\` reports it when it cannot confirm
+  within one second that a child it started has stopped, typically on a machine
+  under heavy load. The child is left untouched. The remedy names the process to
+  check; once it has stopped, run the same command again. When the run held
+  ownership claims, the remedy lists the exact \`rm\` command for each.
   Warm also reports this code for EACCES, EPERM, EROFS and ENOENT while taking a claim.
   The message names the claim path and original filesystem error. Restore write
   access to the existing claim store, checking parent permissions, symlink
