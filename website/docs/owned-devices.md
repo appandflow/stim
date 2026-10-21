@@ -393,6 +393,8 @@ the command itself.
 | Gradle or Kotlin daemon | `stim gc --delete --cache gradle-daemons` | stops idle daemons; the next build starts one  |
 
 Any other abnormal process is named with its size only; ask before quitting it.
+Boot does not wait for the `top` read: the pressure message prints at once and the
+named processes follow on a second memory line when `top` finishes.
 Doctor skips this check when `STIM_HOME` is set, because processes are
 machine-global.
 While pressure stays elevated, the automatic maintenance check also records the

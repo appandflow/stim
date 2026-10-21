@@ -847,6 +847,47 @@ describe('ensureBooted: android', () => {
     expect(probes >= 5).toBeTruthy();
   });
 
+  test.skipIf(process.platform !== 'darwin')(
+    'Android boot completes while the memory-culprit top read is still running, then names the culprit',
+    async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(0);
+      vi.spyOn(hostMemory, 'readHostMemoryPressure').mockReturnValue('warning');
+      let finishTop: (output: string) => void = () => {};
+      const top = vi.fn<() => Promise<string | null>>(() => new Promise((resolve) => (finishTop = resolve)));
+      const run = (cmd: string) => (cmd === 'emulator -list-avds' ? 'stim-app' : 'List of devices attached');
+      const runQuiet = (cmd: string) =>
+        cmd.includes('sys.boot_completed') ? '1' : cmd.includes('pm path android') ? 'package:/x' : '';
+      const runFileQuiet = (file: string, args: string[] = []) =>
+        file === 'adb' || file === 'emulator' ? runQuiet([file, ...args].join(' ')) : null;
+      setExecutor({
+        runFileQuiet,
+        runFileQuietAsync: async (file, args) => (file === '/usr/bin/top' ? top() : runFileQuiet(file, args)),
+        run,
+        runQuiet,
+        runFile: (file, args = []) => (file === 'adb' || file === 'emulator' ? run([file, ...args].join(' ')) : ''),
+        spawn: () => ({ pid: 987654, unref() {} }),
+      });
+      const events: string[] = [];
+      const resultPromise = ensureBooted({
+        platform: 'android',
+        projectPath: tmpHome,
+        device: { avdName: 'stim-app', consolePort: 5556, owned: true },
+        timeoutMs: 20000,
+        alive: () => true,
+        out: (line) => events.push(line),
+      });
+      await vi.runAllTimersAsync();
+      const result = await resultPromise;
+      expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
+      expect(top).toHaveBeenCalledTimes(1);
+      expect(events.filter((line) => line.includes('host memory pressure'))).toHaveLength(1);
+      expect(events.some((line) => line.includes('fseventsd'))).toBe(false);
+      finishTop(['PID    MEM    COMMAND', '76886  63G    fseventsd', ''].join('\n'));
+      await vi.waitFor(() => expect(events.some((line) => line.includes('fseventsd (pid 76886)'))).toBe(true));
+    },
+  );
+
   test.each([
     ['warning', 'late boot', true, 121000, true],
     ['critical', 'timeout', true, Infinity, true],

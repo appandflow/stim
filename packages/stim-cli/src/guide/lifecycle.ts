@@ -2851,6 +2851,8 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
     Watchman                       stim gc --delete --cache watchman
     Gradle or Kotlin daemon        stim gc --delete --cache gradle-daemons
   Any other process is named with its size only; ask before quitting it.
+  Boot does not wait for this read: the pressure message prints at once and the
+  named processes follow on a second memory line when top finishes.
   Doctor skips this check when STIM_HOME is set: processes are machine-global.
 
   If pressure is elevated, free host memory before retrying. Use \`stim stop\`

@@ -13,7 +13,7 @@ import {
 } from '../workspace/config.ts';
 import { configuredIosSimulatorViewer, type IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
 import { getExecutor } from '../exec.ts';
-import { hostMemoryPressureAdvice, memoryCulpritsUnder, readHostMemoryPressure } from '../host-memory.ts';
+import { hostMemoryPressureAdvice, readHostMemoryPressure, reportMemoryCulprits } from '../host-memory.ts';
 import {
   bootIosSim,
   createOwnedIosSim,
@@ -149,8 +149,9 @@ export async function ensureOwnedIosDevice({
   simSnapshot?: IosSimSnapshot;
 }): Promise<OwnedDeviceRecord> {
   const pressure = readHostMemoryPressure();
-  const memoryAdvice = hostMemoryPressureAdvice(pressure, memoryCulpritsUnder(pressure));
+  const memoryAdvice = hostMemoryPressureAdvice(pressure);
   if (memoryAdvice) out(chalk.yellow(phaseLine('memory', memoryAdvice)));
+  reportMemoryCulprits(pressure, (named) => out(chalk.yellow(phaseLine('memory', named))));
   const simslimProfile = iosSimSlimProfileSetting(settings, settingsRoot);
   if (record?.deviceUdid) {
     if (record.owned) {
@@ -537,7 +538,7 @@ export async function ensureIosBooted({
     } catch (error) {
       return {
         failed: true,
-        reason: `Simulator ${udid} failed its process-spawn readiness check: ${(error as Error)?.message || error}. ${iosSimulatorFailureAdvice()}`,
+        reason: `Simulator ${udid} failed its process-spawn readiness check: ${(error as Error)?.message || error}. ${await iosSimulatorFailureAdvice()}`,
       };
     }
   };

@@ -12,7 +12,7 @@ import { cancellableSleep } from '../cancellation.ts';
 import { parseAppContainerPath } from '../engine/installed-artifact.ts';
 import {
   hostMemoryPressureAdvice,
-  memoryCulpritsUnder,
+  memoryCulpritsUnderAsync,
   readHostMemoryPressure,
   type HostMemoryPressure,
 } from '../host-memory.ts';
@@ -239,10 +239,10 @@ async function waitForSpringBoard(udid: string, deadline: number): Promise<Sprin
   }
 }
 
-export function iosSimulatorFailureAdvice(exec: Executor = getExecutor()): string {
+export async function iosSimulatorFailureAdvice(exec: Executor = getExecutor()): Promise<string> {
   const pressure = readHostMemoryPressure(exec);
   return (
-    hostMemoryPressureAdvice(pressure, memoryCulpritsUnder(pressure, exec)) ??
+    hostMemoryPressureAdvice(pressure, await memoryCulpritsUnderAsync(pressure, exec)) ??
     'The simulator may be unresponsive. Check Activity Monitor for memory pressure and free host memory before retrying.'
   );
 }
@@ -411,7 +411,7 @@ export async function bootIosSim(
     }
     if (springBoard.state === 'unreadable') springBoardUnreadable = springBoard.reason;
   } catch (error) {
-    const named = memoryCulpritAdvice(memoryCulpritsUnder(sample(), exec));
+    const named = memoryCulpritAdvice(await memoryCulpritsUnderAsync(sample(), exec));
     throw new Error(
       `${(error as Error)?.message || error} Last boot output: ${phase}. Highest observed memory pressure: ${worst ?? 'unknown'}; unavailable samples: ${unknown}.${coverage()}${named ? ` ${named}` : ''} ${recovery} These observations do not establish an OOM crash.`,
       { cause: error },
