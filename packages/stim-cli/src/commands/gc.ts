@@ -739,6 +739,7 @@ export async function executeGc(
     opts.delete || opts.idle !== undefined
       ? openGcLog({
           trigger: (deps.operation?.env ?? process.env).STIM_DESKTOP_APP ? 'desktop' : 'manual',
+          env: deps.operation?.env,
           options: gcOptionsOf(opts),
           holdKept: true,
         })
@@ -906,7 +907,10 @@ async function pruneDeadProjects(deadProjects: string[], output: GcOutput, opera
       output.log(chalk.green(`Pruned ${path}`));
       output.record('project', 'done', path);
     }
-    for (const dir of result.removedWorkspaceDirs) output.log(chalk.dim(`  removed workspace output ${dir}`));
+    for (const dir of result.removedWorkspaceDirs) {
+      output.log(chalk.dim(`  removed workspace output ${dir}`));
+      output.record('workspaceDirectory', 'done', dir);
+    }
     for (const dir of result.failedWorkspaceDirs) {
       output.log(chalk.red(`  could not remove workspace output ${dir}`));
       output.record('workspaceDirectory', 'failed', dir, { detail: `could not remove it while pruning ${path}` });

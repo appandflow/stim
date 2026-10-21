@@ -178,7 +178,6 @@ export function maintenanceNdjsonFile(): string {
   return join(maintenanceDir(), 'maintenance.ndjson');
 }
 
-/** The directory of the machine-wide gc log; a directory so `stim logs` reads it like a workspace log directory. */
 export function gcLogDir(): string {
   return join(configDir(), 'gc');
 }

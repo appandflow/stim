@@ -81,12 +81,14 @@ export async function readWorkspaceLogs(context: StimContext, options: StimLogsO
   }
 }
 
+const WORKSPACE_SOURCES = SOURCES.filter((source) => source !== 'gc');
+
 function validateLogOptions(options: StimLogsOptions): void {
   const bad =
     options.tail !== undefined && (!Number.isSafeInteger(options.tail) || options.tail < 0)
       ? 'tail must be a non-negative integer.'
-      : options.sources?.some((source) => !SOURCES.includes(source))
-        ? `sources must contain only ${SOURCES.join(', ')}.`
+      : options.sources?.some((source) => !WORKSPACE_SOURCES.includes(source))
+        ? `sources must contain only ${WORKSPACE_SOURCES.join(', ')}.`
         : options.minLevel !== undefined && !LEVELS.includes(options.minLevel)
           ? `minLevel must be one of ${LEVELS.join(', ')}.`
           : undefined;

@@ -655,7 +655,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 1,
     env: 'STIM_MAINTENANCE_LOG_MAX_MB',
-    description: 'Machine maintenance log rotation size in MiB',
+    description: 'Machine maintenance and gc log rotation size in MiB',
   },
   {
     key: 'maintenance.logRetentionDays',
@@ -663,7 +663,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 30,
     env: 'STIM_MAINTENANCE_LOG_RETENTION_DAYS',
-    description: 'Retention of the rotated machine maintenance log in days',
+    description: 'Retention of the rotated machine maintenance and gc logs in days',
   },
   {
     key: 'maintenance.logChecks',

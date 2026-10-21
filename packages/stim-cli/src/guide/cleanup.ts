@@ -162,7 +162,7 @@ pass writes it again at its end.
 WHAT WAS CLEARED
 Every run that deletes or changes something appends one record per item to
 the machine gc log, $STIM_HOME/gc/gc.ndjson: gc --delete with any flags, gc
---idle, gc --cache, each maintenance action taken, and what the budget gate
+--idle, gc --cache --delete, each maintenance action taken, and what the budget gate
 reclaims before stim start, ios or android. A dry run writes nothing, and a
 gc run that only kept items writes nothing. Failed and kept items carry their
 reason. The file rotates at maintenance.logMaxMb and its old generation is

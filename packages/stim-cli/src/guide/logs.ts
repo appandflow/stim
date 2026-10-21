@@ -253,7 +253,7 @@ cleared, kept or failed to clear. It cannot be combined with other sources,
 and --source all does not include it. --errors shows the failed items.
 Each record has src: gc, level (info, or error for a failed item), msg and
   runId    the stim invocation, or the pass id of maintenance.ndjson
-  trigger  manual (stim gc in a terminal), desktop (STIM_DESKTOP_APP is set),
+  trigger  manual (stim gc in a terminal), desktop (STIM_DESKTOP_APP is set, so also a gc run through a stim-server Desktop started),
            maintenance, or budget (the disk, memory or workspace check before
            start, ios and android)
   via      maintenance only: the command whose run started the pass

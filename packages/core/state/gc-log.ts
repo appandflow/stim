@@ -5,7 +5,6 @@ export type GcLogTrigger = 'manual' | 'desktop' | 'maintenance' | 'budget';
 
 export type GcLogStatus = 'done' | 'kept' | 'failed';
 
-/** The command-line options of the `stim gc` run that wrote a record. */
 export interface GcLogOptions {
   delete?: boolean;
   worktrees?: boolean;
@@ -14,7 +13,6 @@ export interface GcLogOptions {
   idleMs?: number;
 }
 
-/** One acted-on item of a run that deleted or changed something, as `gc.ndjson` stores it. */
 export interface GcLogRecord extends NdjsonRecord {
   ts: number;
   src: 'gc';
@@ -54,7 +52,6 @@ export function isGcLogRecord(record: NdjsonRecord): record is GcLogRecord {
   );
 }
 
-/** Every retained record of the gc log, oldest first: the rotated generation, then the current file. */
 export function readGcLog(file: string = gcLogFile()): GcLogRecord[] {
   return readNdjsonGenerations(file).filter(isGcLogRecord);
 }

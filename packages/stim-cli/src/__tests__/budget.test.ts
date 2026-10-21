@@ -289,6 +289,7 @@ describe('reclaiming in a scratch STIM_HOME with a floor above the free disk', (
     expect(outcome.reclaimed.find((entry) => entry.step === 'workspace-outputs')?.targets).toEqual([other]);
     expect(existsSync(join(workspaceDir(other), 'derived-data'))).toBe(false);
     expect(existsSync(join(workspaceDir(current), 'derived-data'))).toBe(true);
+    expect(readGcLog()).toMatchObject([{ trigger: 'budget', kind: 'workspaceOutputs', status: 'done', label: other }]);
   });
 
   test.each(['devices', 'dev servers'] as const)('cancelling idle %s inventory starts no reclamation', async (kind) => {

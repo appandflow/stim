@@ -7,6 +7,7 @@ import {
   type GcLogTrigger,
   type MaintenanceAction,
 } from '@stim-cli/core/state';
+import { loadConfig } from '../../workspace/config.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { openRetainedLog } from '../../maintenance/log.ts';
 import { resolveMaintenanceSettings } from '../../maintenance/settings.ts';
@@ -20,7 +21,7 @@ interface GcLogRun {
   runId?: string;
   via?: string;
   options?: GcLogOptions;
-  /** Hold kept items until the run first clears or fails something, so a run that changed nothing writes nothing. */
+  env?: NodeJS.ProcessEnv;
   holdKept?: boolean;
 }
 
@@ -54,14 +55,13 @@ function gcLogRecord(run: GcLogRun, result: GcLogItem, ts: number): GcLogRecord 
   };
 }
 
-/** Appends the items of one run that deletes or changes something to the machine gc log. */
 export function openGcLog(run: GcLogRun): GcLog {
   let failed = false;
   let acted = run.holdKept !== true;
   const held: GcLogRecord[] = [];
   const append = (record: GcLogRecord) => {
     try {
-      const writer = openRetainedLog(gcLogFile(), resolveMaintenanceSettings());
+      const writer = openRetainedLog(gcLogFile(), resolveMaintenanceSettings(loadConfig(), run.env));
       try {
         if (!writer.write(record)) throw writer.lastError ?? new Error('write failed');
       } finally {
@@ -99,6 +99,7 @@ const MAINTENANCE_KINDS: Record<string, string> = {
   'delete-parked-device': 'parkedDevice',
   'delete-devices': 'device',
   'stop-workspace': 'device',
+  'shutdown-device': 'idleDevice',
   'delete-temp-leftovers': 'tempLeftover',
   'stop-gradle-daemons': 'gradleDaemon',
   'delete-gradle-version': 'gradleVersion',
@@ -106,7 +107,6 @@ const MAINTENANCE_KINDS: Record<string, string> = {
   'delete-dependencies': 'dependencies',
 };
 
-/** One maintenance action and what it did, as a log item with the kinds `stim gc` uses for the same work. */
 export function maintenanceItem(action: MaintenanceAction, outcome: ActionOutcome): GcLogItem {
   const name = action.kind.replace(/^would-/, '');
   const done = outcome.status === 'done';
