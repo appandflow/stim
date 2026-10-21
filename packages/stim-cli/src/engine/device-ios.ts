@@ -35,7 +35,7 @@ import {
   type SimModel,
 } from '../devices/ios.ts';
 import { adoptParked, dropParked, parkedMaxSetting, readParked, selectParked } from '../devices/sim-pool.ts';
-import { iosSimSlimProfileSetting } from '../workspace/settings.ts';
+import { iosSimSlimDefaultSetting, iosSimSlimProfileSetting } from '../workspace/settings.ts';
 import { teardownParkedIosSim } from '../devices/teardown.ts';
 import { reconcileSimSlim } from './simslim.ts';
 import { withWorkspaceProcessLock } from './workspace-process-lock.ts';
@@ -156,6 +156,7 @@ export async function ensureOwnedIosDevice({
   if (memoryAdvice) out(chalk.yellow(phaseLine('memory', memoryAdvice)));
   reportMemoryCulprits(pressure, (named) => out(chalk.yellow(phaseLine('memory', named))));
   const simslimProfile = iosSimSlimProfileSetting(settings, settingsRoot);
+  const simslimDefault = iosSimSlimDefaultSetting(settings);
   if (record?.deviceUdid) {
     if (record.owned) {
       const listed = simSnapshot ? simSnapshot.read() : listAllIosSims({ includeUnavailable: true });
@@ -206,6 +207,7 @@ export async function ensureOwnedIosDevice({
             projectPath,
             slot,
             profile: simslimProfile,
+            slimByDefault: simslimDefault,
             out,
             reconcileIosSimulator,
           });
@@ -278,6 +280,7 @@ export async function ensureOwnedIosDevice({
           projectPath,
           slot,
           profile: simslimProfile,
+          slimByDefault: simslimDefault,
           out,
           reconcileIosSimulator,
         });
@@ -314,6 +317,7 @@ export async function ensureOwnedIosDevice({
         projectPath,
         slot,
         profile: simslimProfile,
+        slimByDefault: simslimDefault,
         out,
         reconcileIosSimulator,
       }),
@@ -480,6 +484,7 @@ async function configureOwnedIosSim({
   projectPath,
   slot,
   profile,
+  slimByDefault,
   out,
   reconcileIosSimulator,
 }: {
@@ -487,15 +492,18 @@ async function configureOwnedIosSim({
   projectPath: string;
   slot?: string;
   profile: string | null;
+  slimByDefault: boolean;
   out: Notify;
   reconcileIosSimulator: typeof reconcileSimSlim;
 }): Promise<OwnedDeviceRecord> {
   if (profile) out(chalk.dim(phaseLine('device', `applying the SimSlim profile to ${record.deviceUdid}`)));
+  else if (slimByDefault)
+    out(chalk.dim(phaseLine('device', `applying SimSlim's default services to ${record.deviceUdid}`)));
   else if (record.simslimManaged)
     out(chalk.dim(phaseLine('device', `restoring stock simulator services on ${record.deviceUdid}`)));
 
   const previouslyManaged = Boolean(record.simslimManaged);
-  if (profile && !record.simslimManaged) {
+  if ((profile || slimByDefault) && !record.simslimManaged) {
     const pending = { ...record, simslimManaged: true };
     await withConfigLockAsync(() => setDevice(projectPath, 'ios', pending, slot));
     record = pending;
@@ -504,6 +512,7 @@ async function configureOwnedIosSim({
     context: ambientContext(),
     udid: record.deviceUdid,
     profile,
+    slimByDefault,
     previouslyManaged,
     out,
   });

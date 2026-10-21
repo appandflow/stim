@@ -106,6 +106,62 @@ test('reports the install command when the SimSlim executable is missing', async
   ).rejects.toThrow('brew install mobai-app/tap/simslim');
 });
 
+test('slims with SimSlim defaults when the machine default is on and no profile is set', async () => {
+  const calls: Array<readonly string[]> = [];
+  const result = await reconcileSimSlim({
+    context: undefined,
+    udid: 'U1',
+    slimByDefault: true,
+    spawn: (_command, args) => {
+      calls.push(args);
+      return exitingChild({ stdout: ['Already slim'] });
+    },
+  });
+
+  expect(calls).toEqual([['on', 'U1']]);
+  expect(result).toEqual({ managed: true, profile: null });
+});
+
+test('a profile is applied instead of the defaults when the machine default is also on', async () => {
+  const calls: Array<readonly string[]> = [];
+  await reconcileSimSlim({
+    context: undefined,
+    udid: 'U1',
+    profile: '/repo/dev.json',
+    slimByDefault: true,
+    spawn: (_command, args) => {
+      calls.push(args);
+      return exitingChild({});
+    },
+  });
+
+  expect(calls).toEqual([['on', 'U1', '--profile', '/repo/dev.json']]);
+});
+
+test('a missing SimSlim executable does not fail a default-on run', async () => {
+  const lines: string[] = [];
+  const missing = () => {
+    const child = makeChildProcess();
+    queueMicrotask(() => child.emit('error', makeError('spawn simslim ENOENT', { code: 'ENOENT' })));
+    return child;
+  };
+
+  await expect(
+    reconcileSimSlim({
+      context: undefined,
+      udid: 'U1',
+      slimByDefault: true,
+      out: (line) => lines.push(line),
+      spawn: missing,
+    }),
+  ).resolves.toEqual({ managed: false, profile: null });
+  expect(lines).toEqual([expect.stringContaining('brew install mobai-app/tap/simslim')]);
+
+  await expect(
+    reconcileSimSlim({ context: undefined, udid: 'U1', slimByDefault: true, previouslyManaged: true, spawn: missing }),
+  ).resolves.toEqual({ managed: true, profile: null });
+});
+
 test('includes recent SimSlim output when the command fails', async () => {
   await expect(
     reconcileSimSlim({

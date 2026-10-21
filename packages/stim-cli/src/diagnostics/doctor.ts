@@ -65,6 +65,7 @@ import {
   resolveAndroidLayout,
   resolveIosProjectDir,
   type AndroidLayout,
+  iosSimSlimDefaultSetting,
   iosSimSlimProfileSetting,
   projectSettingsContext,
   remoteAndroidSetting,
@@ -924,10 +925,12 @@ async function projectEasBuildDownloadFinding(
 
 export function checkSimSlim({
   configured = false,
+  slimByDefault = false,
   profileError = null,
   onPath = false,
 }: {
   configured?: boolean;
+  slimByDefault?: boolean;
   profileError?: string | null;
   onPath?: boolean;
 } = {}): Finding | null {
@@ -937,6 +940,15 @@ export function checkSimSlim({
       'The SimSlim profile is invalid',
       profileError,
       'Set ios.simslimProfile to a readable JSON profile inside the repository.',
+    );
+  }
+  if (!configured && slimByDefault) {
+    if (onPath) return null;
+    return finding(
+      'cost',
+      'ios.simslim is on, but SimSlim is not installed',
+      '`stim ios` boots owned simulators without SimSlim until the `simslim` command is installed.',
+      'brew install mobai-app/tap/simslim',
     );
   }
   if (!configured) {
@@ -1128,13 +1140,15 @@ export async function runDoctor(
       simslimProfileError = String((error as Error)?.message || error);
     }
   }
+  const simslimByDefault = localIos && iosSimSlimDefaultSetting(projectSettings);
   const simslimFinding =
     !localIos || (!simslimProfile && !simslimProfileError && remoteIosSetting(projectSettings))
       ? null
       : checkSimSlim({
           configured: Boolean(simslimProfile),
+          slimByDefault: simslimByDefault,
           profileError: simslimProfileError,
-          onPath: simslimProfile ? (lookupSimSlim ? lookupSimSlim() : simslimIsOnPath()) : false,
+          onPath: simslimProfile || simslimByDefault ? (lookupSimSlim ? lookupSimSlim() : simslimIsOnPath()) : false,
         });
   const memoryAdvice =
     localIos && !remoteIosSetting(projectSettings) ? hostMemoryPressureAdvice(await memoryPressure()) : null;

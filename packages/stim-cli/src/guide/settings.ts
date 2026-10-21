@@ -138,6 +138,13 @@ KEYS STIM READS
                         with STIM_BAD_ARG a path that escapes the app or
                         holds no .xcworkspace or .xcodeproj, and any value
                         on an Expo app, whose prebuild writes ios/.
+  ios.simslim           "on" or "off"; default "off", machine or project
+                        layers. "on" slims every Stim-owned iOS simulator
+                        with SimSlim's default categories when no
+                        ios.simslimProfile is set; a profile always wins. A
+                        workspace, repo or committed "off" opts that app out
+                        of a machine "on" and restores stock services. See
+                        \`stim guide lifecycle simslim\`.
   ios.simslimProfile    a SimSlim JSON profile under the app directory,
                         at most 64 KiB. Install the
                         external tool once with

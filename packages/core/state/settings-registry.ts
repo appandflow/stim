@@ -181,6 +181,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: "Directory under the app that holds a bare React Native app's Xcode project and Podfile",
   },
   {
+    key: 'ios.simslim',
+    type: { kind: 'choice', choices: ['on', 'off'] },
+    scopes: EVERY,
+    default: 'off',
+    description:
+      "Slim every Stim-owned iOS simulator with SimSlim's default categories when no ios.simslimProfile is set; off in a project opts that app out",
+  },
+  {
     key: 'ios.simslimProfile',
     type: RELATIVE_PATH,
     scopes: PROJECT,

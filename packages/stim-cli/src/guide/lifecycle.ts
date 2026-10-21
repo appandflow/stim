@@ -2816,6 +2816,24 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
 
     { "ios": { "simslimProfile": ".simslim/dev.json" } }
 
+  To slim every Stim-owned iOS simulator on a Mac without a profile per app,
+  set it on the machine layer:
+
+    stim settings set ios.simslim on --scope machine
+
+  With \`ios.simslim\` on and no \`ios.simslimProfile\`, Stim runs
+  \`simslim on <udid>\` with SimSlim's default categories. A project profile
+  always applies in place of the defaults. A workspace, repo or committed
+  \`ios.simslim off\` opts that app out and restores stock services on its
+  simulator. The defaults disable push, StoreKit, iCloud, Safari sync, Mail,
+  Calendar and Contacts services, among others; move an app that needs them
+  to a profile that keeps those categories, or to \`off\`. A running or
+  parked simulator is slimmed the next time Stim boots or adopts it, and an
+  already slim simulator is left alone, so only the first slim reboots it.
+  Without the \`simslim\` command, doctor reports it and \`stim ios\` boots
+  the simulator unslimmed with a one-line note. Hosted simulators on a named
+  Mac are never slimmed, whatever either Mac's setting says.
+
   SimSlim 0.8 requires iOS 18.5 or newer. On each local \`stim ios\`,
   Stim reconciles that profile on the owned simulator before the app build.
   The first change can update services and reboot the simulator. A matching

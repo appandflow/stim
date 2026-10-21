@@ -23,9 +23,24 @@ export interface SimSlimResult {
   profile: string | null;
 }
 
-export async function reconcileSimSlim({
+export async function reconcileSimSlim(options: Parameters<typeof applySimSlim>[0]): Promise<SimSlimResult> {
+  try {
+    return await applySimSlim(options);
+  } catch (error) {
+    const cause = error instanceof Error ? error.cause : undefined;
+    const missing = cause instanceof Error && 'code' in cause && cause.code === 'ENOENT';
+    if (options.profile || !options.slimByDefault || !missing) throw error;
+    options.out?.(
+      'SimSlim: ios.simslim is on but the `simslim` command is not installed; continuing without it. Run `brew install mobai-app/tap/simslim`.',
+    );
+    return { managed: Boolean(options.previouslyManaged), profile: null };
+  }
+}
+
+async function applySimSlim({
   udid,
   profile,
+  slimByDefault = false,
   previouslyManaged = false,
   out = () => {},
   spawn,
@@ -36,16 +51,18 @@ export async function reconcileSimSlim({
   context: StimContext | undefined;
   udid: string;
   profile?: string | null;
+  slimByDefault?: boolean;
   previouslyManaged?: boolean;
   out?: (line: string) => void;
   spawn?: SpawnFn;
   timeoutMs?: number;
   cleanupMs?: number;
 }): Promise<SimSlimResult> {
-  if (!profile && !previouslyManaged) return { managed: false, profile: null };
+  if (!profile && !slimByDefault && !previouslyManaged) return { managed: false, profile: null };
 
-  const action = profile ? 'on' : 'off';
-  const args = profile ? ['on', udid, '--profile', profile] : ['off', udid];
+  const slim = Boolean(profile) || slimByDefault;
+  const action = slim ? 'on' : 'off';
+  const args = profile ? ['on', udid, '--profile', profile] : slim ? ['on', udid] : ['off', udid];
   const lines: string[] = [];
   const onLine = (raw: string) => {
     const line = stripAnsi(raw).trim();
@@ -163,7 +180,7 @@ export async function reconcileSimSlim({
     const detail = lines.length ? ` ${lines.join(' | ')}` : '';
     throw new Error(`SimSlim ${action} failed with exit code ${result?.code ?? 'unknown'}.${detail}`);
   }
-  return { managed: Boolean(profile), profile: profile ?? null };
+  return { managed: slim, profile: profile ?? null };
 }
 
 function simslimLaunchError(error: unknown): Error {
