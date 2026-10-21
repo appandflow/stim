@@ -109,6 +109,7 @@ import { readCreatedDevices } from '../devices/created-devices.ts';
 import { collectWorkspaceLogs, trimWorkspaceLogs } from './gc/logs.ts';
 import { collectRecordings, deleteRecordings } from './gc/recordings.ts';
 import { collectTempLeftovers, deleteTempLeftovers } from './gc/temp-leftovers.ts';
+import { collectTrash, deleteTrash } from './gc/trash.ts';
 import {
   collectIdleDevices,
   collectIdleDevicesAsync,
@@ -343,6 +344,7 @@ export async function collectGcReport(
       swiftpmCacheUsage: null,
       machineCaches: null,
       tempLeftovers: null,
+      trash: null,
       gradleVersions: includesGradleVersions(scope)
         ? await collectGradleVersions({ olderThanDays: olderThan, now, operation })
         : null,
@@ -360,6 +362,8 @@ export async function collectGcReport(
   const machineCaches = await getMachineCacheReport(agentDeviceUsage, { operation });
   if (!deviceSweepIsScoped(env)) phase('TMPDIR', 'checking recognized leftovers', operation);
   const tempLeftovers = await collectTempLeftovers({ now, env, signal: operation?.signal, operation });
+  phase('trash', 'measuring worktree trash', operation);
+  const trash = await collectTrash({ signal: operation?.signal, operation });
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();
   let easSessionSweep = deps.precollectedEasSessionSweep;
@@ -622,6 +626,7 @@ export async function collectGcReport(
     swiftpmCacheUsage,
     machineCaches,
     tempLeftovers,
+    trash,
     cacheScope: null,
     olderThan,
     all,
@@ -988,6 +993,7 @@ function reportActionable(report: GcReport): boolean {
       report.workspaceLogs.some((entry) => entry.willTrim) ||
       report.recordings.some((entry) => entry.willDelete && !entry.withWorkspace) ||
       Boolean(report.tempLeftovers?.entries.some((entry) => entry.willDelete)) ||
+      Boolean(report.trash?.entries.some((entry) => entry.willDelete)) ||
       Boolean(report.worktreeSweep?.worktrees.some((entry) => !entry.skipped)) ||
       report.parkedSims.length > 0 ||
       report.parkedAvds.length + report.parkedHostedDevices.filter((device) => device.listed !== false).length > 0 ||
@@ -1193,6 +1199,7 @@ async function runGcCore(
         output,
       )
     ).failures;
+  if (report.trash) deleteFailures += (await deleteTrash(deps.operation, output)).failures;
 
   for (const lock of buildLocks.stale) {
     throwIfCancelled(signal, 'GC');

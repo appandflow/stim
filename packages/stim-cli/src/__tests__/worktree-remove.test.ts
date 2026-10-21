@@ -9,6 +9,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1727,6 +1728,93 @@ test('against a real repo: a locked worktree is refused before its owned sim is 
     expect(getProject(wt)?.platforms?.ios).toMatchObject({ deviceUdid: 'U1', owned: true });
     expect(errs.join('\n')).toMatch(/locked/);
     expect(errs.join('\n')).toContain(`git -C ${repo} worktree unlock ${wt}`);
+  } finally {
+    console.error = originalError;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
+
+function worktreeWithIgnoredTrees(base: string) {
+  const made = realRepoWithWorktree(base);
+  const { wt, git } = made;
+  writeFileSync(join(wt, '.gitignore'), 'node_modules/\nios/Pods/\nlinked\n');
+  mkdirSync(join(wt, 'ios'));
+  writeFileSync(join(wt, 'ios', 'Podfile'), "platform :ios, '15.1'");
+  git('git add .gitignore ios/Podfile', wt);
+  git('git commit -q -m ignore', wt);
+  git('git push -q -u origin feat-x', wt);
+  mkdirSync(join(wt, 'node_modules', 'pkg'), { recursive: true });
+  writeFileSync(join(wt, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1;');
+  mkdirSync(join(wt, 'ios', 'Pods', 'Foo'), { recursive: true });
+  writeFileSync(join(wt, 'ios', 'Pods', 'Foo', 'a.h'), '#pragma once');
+  const outside = join(base, 'outside');
+  mkdirSync(outside);
+  writeFileSync(join(outside, 'keep.txt'), 'outside the worktree');
+  symlinkSync(outside, join(wt, 'linked'));
+  return { ...made, outside };
+}
+
+test('against a real repo: removal moves the ignored directories into the Stim trash and git removes the rest', async () => {
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-trash-')));
+  const errs: string[] = [];
+  const outs: string[] = [];
+  const originalError = console.error;
+  const originalLog = console.log;
+  try {
+    const { wt, outside, git } = worktreeWithIgnoredTrees(base);
+    realGitFakeSimctl('{"devices":{}}');
+
+    console.error = (m) => errs.push(String(m));
+    console.log = (m) => outs.push(String(m));
+    await captureAction(registerRemove)(wt, {});
+    console.error = originalError;
+    console.log = originalLog;
+
+    expect(process.exitCode).not.toBe(1);
+    expect(outs).toEqual([]);
+    expect(existsSync(wt)).toBe(false);
+    expect(git('git worktree list --porcelain')).not.toContain(wt);
+    expect(git('git status --porcelain')).toBe('');
+    expect(readFileSync(join(outside, 'keep.txt'), 'utf-8')).toBe('outside the worktree');
+    const [entry, ...others] = readdirSync(join(tmpHome, 'trash'));
+    expect(others).toEqual([]);
+    const dir = join(tmpHome, 'trash', entry ?? '');
+    expect(JSON.parse(readFileSync(join(dir, 'trash.json'), 'utf-8'))).toMatchObject({ worktree: wt });
+    const moved = readdirSync(join(dir, 'entries')).flatMap((name) => readdirSync(join(dir, 'entries', name)));
+    expect(moved.toSorted()).toEqual(['Foo', 'pkg']);
+    expect(errs.join('\n')).toMatch(/left 2 ignored directories in .*stim gc --delete deletes them/);
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test('against a real repo: when git worktree remove fails, the ignored directories move back into the worktree', async () => {
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-trash-back-')));
+  const errs: string[] = [];
+  const originalError = console.error;
+  try {
+    const { wt } = worktreeWithIgnoredTrees(base);
+    realGitFakeSimctl('{"devices":{}}');
+    const exec = getExecutor();
+    setExecutor({
+      ...exec,
+      runFile(file: string, args: string[] = [], opts?: Parameters<typeof exec.runFile>[2]) {
+        if (file === 'git' && args.includes('worktree') && args.includes('remove')) throw new Error('fatal: simulated');
+        return exec.runFile(file, args, opts as Parameters<typeof exec.runFile>[2]);
+      },
+    });
+
+    console.error = (m) => errs.push(String(m));
+    await captureAction(registerRemove)(wt, {});
+    console.error = originalError;
+
+    expect(process.exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/git worktree remove failed: fatal: simulated/);
+    expect(readFileSync(join(wt, 'node_modules', 'pkg', 'index.js'), 'utf-8')).toBe('module.exports = 1;');
+    expect(readFileSync(join(wt, 'ios', 'Pods', 'Foo', 'a.h'), 'utf-8')).toBe('#pragma once');
+    expect(readdirSync(join(tmpHome, 'trash'))).toEqual([]);
   } finally {
     console.error = originalError;
     rmSync(base, { recursive: true, force: true });

@@ -410,6 +410,17 @@ LINKED WORKTREES
   has locked (unlock it first; --force does not override) and, without
   --force, uncommitted or unpushed work and initialized submodules. It then
   reclaims any owned resources it finds and removes the linked checkout.
+  Before git removes it, the command renames the worktree's ignored
+  directories (node_modules, ios/Pods, build outputs) into
+  $STIM_HOME/trash/<entry>, so git removes a light tree, and a detached,
+  low-priority rm deletes the entry after the command returns. Disk is freed
+  when that rm finishes. A directory that does not rename stays for git to
+  delete as before; on Windows, or when $STIM_HOME is on another volume,
+  nothing is renamed. When git refuses the removal, the directories are moved
+  back. Each entry holds an ownership claim while the command or its rm uses
+  it; gc reports every entry under trash with its size and source worktree,
+  and gc --delete deletes those whose claim is free, which finishes a removal
+  that was interrupted.
   When git still refuses the removal, the kept ownership record no longer
   names the devices that were parked or deleted. A workspace that is in use
   (see IN USE below) keeps its directory, devices and registry entry, and the

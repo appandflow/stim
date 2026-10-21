@@ -1778,6 +1778,12 @@ process list cannot be read. Stim's own SwiftPM macOS builds run `swift` with a
 follows a symlink or acts outside `TMPDIR`, and with `STIM_HOME` set it skips
 them. Automatic maintenance runs the same deletion at disk pressure level 2.
 
+`gc` lists each entry of `$STIM_HOME/trash` under "Worktree trash" with its
+size and the worktree it came from: the ignored directories `worktree remove`
+moved out of a worktree before git removed it. `--delete` deletes every entry
+whose ownership claim is free, and keeps one a removal or its background `rm`
+still holds. See [remove a worktree](./worktrees.md#remove-a-worktree).
+
 `--delete` also clears the build outputs (`derived-data/`, `gradle-build/`,
 `android-cas/`, `cache-provider/`, `macos/build`, staged `macos/<Product>.app`
 and interrupted-build `macos/staging-*` directories) of every workspace that

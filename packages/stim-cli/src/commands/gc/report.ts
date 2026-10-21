@@ -54,6 +54,7 @@ import {
 import { idleDeviceLines, type IdleDevice } from './idle.ts';
 import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from './recordings.ts';
 import { tempLeftoverLines, tempLeftoverSection, type TempLeftoverReport } from './temp-leftovers.ts';
+import { trashLines, type TrashReport } from './trash.ts';
 import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, type WatchmanRoot } from './memory.ts';
 
 export interface GcReport {
@@ -86,6 +87,7 @@ export interface GcReport {
   swiftpmCacheUsage?: SwiftpmCacheUsage | null;
   machineCaches?: MachineCacheReport | null;
   tempLeftovers?: TempLeftoverReport | null;
+  trash?: TrashReport | null;
   gradleVersions?: GradleVersionSweep | null;
   caches: GcCache[];
   workspaceOutputs: WorkspaceOutputsReport | null;
@@ -247,6 +249,7 @@ export function formatGcReport(
     swiftpmCacheUsage,
     machineCaches,
     tempLeftovers,
+    trash,
     gradleVersions,
     caches = [],
     workspaceOutputs = null,
@@ -437,6 +440,7 @@ export function formatGcReport(
   lines.push(...swiftpmCacheLines(swiftpmCacheUsage, now));
   lines.push(...machineCacheLines(machineCaches, now));
   lines.push(...tempLeftoverLines(tempLeftovers));
+  lines.push(...trashLines(trash));
   lines.push(...gradleVersionLines(gradleVersions));
   lines.push(...memoryLines(memory, memoryCacheKind(cacheScope), now));
   lines.push(...maintenanceReportLines(maintenance));
@@ -773,6 +777,7 @@ export interface GcJsonSections {
   swiftpmCache: SwiftpmCacheUsage | null;
   machineCaches: MachineCacheReport | null;
   tempLeftovers: ReturnType<typeof tempLeftoverSection>;
+  trash: TrashReport | null;
   gradleVersions: GradleVersionSweep | null;
   caches: {
     name: string;
@@ -822,6 +827,7 @@ export function gcReportSections({
   swiftpmCacheUsage = null,
   machineCaches = null,
   tempLeftovers = null,
+  trash = null,
   gradleVersions = null,
   caches = [],
   memory = null,
@@ -987,6 +993,7 @@ export function gcReportSections({
     swiftpmCache: swiftpmCacheUsage,
     machineCaches,
     tempLeftovers: tempLeftoverSection(tempLeftovers),
+    trash,
     gradleVersions,
     memory: memory?.processes ?? [],
     watchmanRoots: memory?.watchmanRoots ?? [],

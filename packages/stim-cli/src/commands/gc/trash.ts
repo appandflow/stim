@@ -1,0 +1,168 @@
+import { lstat, readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import chalk from 'chalk';
+import type { StimContext } from '@stim-cli/core';
+import { trashRoot } from '@stim-cli/core/state';
+import {
+  claimRemoveCommand,
+  isClaimRefusal,
+  isClaimUnavailable,
+  readClaimSet,
+  releaseClaim,
+  tryAcquireClaim,
+} from '@stim-cli/core/ownership-claim';
+import { getExecutor } from '../../exec.ts';
+import { directorySizeAsync, formatBytes } from '../../fs-util.ts';
+import { plural } from '../../command-output.ts';
+import { removeTemporaryEntryAsync } from '../../temporary.ts';
+import { runOperationFile } from '../../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
+import { TRASH_CLAIMS, TRASH_ENTRIES, TRASH_MANIFEST, type TrashManifest } from '../../workspace/worktree-trash.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
+
+interface TrashEntry {
+  path: string;
+  worktree: string | null;
+  removedAt: string | null;
+  bytes: number;
+  willDelete: boolean;
+  kept: string | null;
+}
+
+export interface TrashReport {
+  root: string;
+  entries: TrashEntry[];
+}
+
+const CLAIM_LABEL = 'worktree trash';
+
+function claimKept(dir: string): string | null {
+  const survey = readClaimSet(join(dir, TRASH_CLAIMS));
+  if (survey.live.length) return 'a worktree removal is still moving or deleting it';
+  const problem = survey.unresolved[0];
+  if (problem)
+    return `its ownership claim cannot be verified (${problem.reason}); run \`${claimRemoveCommand(problem.path)}\``;
+  return null;
+}
+
+async function readManifest(dir: string): Promise<Partial<TrashManifest>> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(join(dir, TRASH_MANIFEST), 'utf8'));
+    return parsed && typeof parsed === 'object' ? (parsed as Partial<TrashManifest>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The entries under `$STIM_HOME/trash`, each deletable unless its ownership claim is live or unresolved. */
+export async function collectTrash({
+  signal,
+  operation,
+}: { signal?: AbortSignal; operation?: StimContext } = {}): Promise<TrashReport | null> {
+  const root = trashRoot();
+  let names: string[];
+  try {
+    names = await readdir(root);
+  } catch {
+    return null;
+  }
+  const entries: TrashEntry[] = [];
+  for (const name of names.toSorted()) {
+    const path = join(root, name);
+    const stat = await lstat(path).catch(() => null);
+    if (!stat?.isDirectory()) continue;
+    const manifest = await readManifest(path);
+    const kept = claimKept(path);
+    entries.push({
+      path,
+      worktree: typeof manifest.worktree === 'string' ? manifest.worktree : null,
+      removedAt: typeof manifest.createdAt === 'string' ? manifest.createdAt : null,
+      bytes: await directorySizeAsync(path, { timeoutMs: 'unbounded', signal, operation }),
+      willDelete: kept === null,
+      kept,
+    });
+  }
+  return entries.length ? { root, entries } : null;
+}
+
+export function trashLines(report: TrashReport | null | undefined): string[] {
+  if (!report) return [];
+  const total = report.entries.reduce((sum, entry) => sum + entry.bytes, 0);
+  const lines = [`Worktree trash (${formatBytes(total)} in ${report.entries.length}) - ${report.root}:`];
+  for (const entry of report.entries) {
+    const from = entry.worktree ? ` from ${entry.worktree}` : '';
+    lines.push(`  ${formatBytes(entry.bytes).padStart(10)}  ${entry.path}${from}`);
+    lines.push(entry.kept ? `              kept: ${entry.kept}` : '              --delete would DELETE it');
+  }
+  return lines;
+}
+
+async function deleteEntry(dir: string, operation?: StimContext): Promise<void> {
+  if (process.platform !== 'win32') {
+    try {
+      await runOperationFile(operation, getExecutor(), 'rm', ['-rf', '--', join(dir, TRASH_ENTRIES)], {
+        timeoutMs: 'unbounded',
+        signal: operation?.signal,
+      });
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      operation?.signal.throwIfAborted();
+    }
+  }
+  await removeTemporaryEntryAsync(dir, operation?.signal);
+}
+
+/** Deletes what a fresh `collectTrash` marks deletable, each entry under its own exclusive claim. */
+export async function deleteTrash(
+  operation: StimContext | undefined,
+  output: GcOutput = GC_OUTPUT,
+): Promise<{ count: number; bytes: number; failures: number }> {
+  const report = await collectTrash({ signal: operation?.signal, operation });
+  const done = { count: 0, bytes: 0, failures: 0 };
+  for (const entry of report?.entries ?? []) {
+    if (!entry.willDelete) continue;
+    let claim;
+    try {
+      claim = tryAcquireClaim({ root: join(entry.path, TRASH_CLAIMS), mode: 'exclusive', label: CLAIM_LABEL });
+    } catch (error) {
+      if (!isClaimRefusal(error) && !isClaimUnavailable(error)) throw error;
+      output.record('trash', 'kept', entry.path, { bytes: entry.bytes, detail: error.reason });
+      continue;
+    }
+    if (!claim.acquired) {
+      if (claim.pending) releaseClaim(claim.pending);
+      output.record('trash', 'kept', entry.path, {
+        bytes: entry.bytes,
+        detail: 'a worktree removal is still moving or deleting it',
+      });
+      continue;
+    }
+    try {
+      await deleteEntry(entry.path, operation);
+      done.count++;
+      done.bytes += entry.bytes;
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
+      done.failures++;
+      const detail = error instanceof Error ? error.message : String(error);
+      output.log(chalk.red(`Could not delete ${entry.path}: ${detail}`));
+      output.record('trash', 'failed', entry.path, { bytes: entry.bytes, detail });
+    } finally {
+      releaseClaim(claim.acquired);
+    }
+  }
+  if (done.count) {
+    output.log(
+      chalk.green(
+        `Deleted ${plural(done.count, 'worktree trash entry', 'worktree trash entries')} (${formatBytes(done.bytes)})`,
+      ),
+    );
+    output.record('trash', 'done', report?.root ?? trashRoot(), {
+      bytes: done.bytes,
+      detail: `${plural(done.count, 'entry', 'entries')} deleted`,
+    });
+  }
+  return done;
+}
