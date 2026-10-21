@@ -1026,6 +1026,12 @@ async function shutDownDevices(
   },
 ): Promise<DeviceOutcome> {
   const device: DeviceOutcome = { ios: null, android: null };
+  const entries: Array<{
+    key: string;
+    kind: 'ios' | 'android';
+    label: string;
+    result: Promise<TeardownResult> | null;
+  }> = [];
 
   for (const { slot, platforms } of projectDeviceSlots(project)) {
     const iosKey = slot === 'default' ? 'ios' : `ios:${slot}`;
@@ -1034,45 +1040,49 @@ async function shutDownDevices(
     const iosUdid = ios?.deviceUdid as string | undefined;
     const iosName = ios?.deviceName as string | undefined;
     if (iosUdid) {
-      if (!ios?.owned) {
-        device[iosKey] = {
-          status: 'skipped',
-          kind: 'not-owned',
-          label: iosUdid,
-          reason: 'Stim does not own this device',
-        };
-        report(chalk.dim(phaseLine('device', `${iosUdid} is not Stim-owned, leaving it running`)));
-      } else {
+      let result: Promise<TeardownResult> | null = null;
+      if (ios?.owned) {
         debugLog.log('stop.device.start', { platform: 'ios', slot, deviceId: iosUdid });
-        const result = await teardownIos(iosUdid, { del: false, label: iosName, workspace });
-        debugLog.log('stop.device.end', { platform: 'ios', slot, deviceId: iosUdid, status: result.status });
-        device[iosKey] = reportDevice(iosUdid, result, report, 'ios');
+        result = teardownIos(iosUdid, { del: false, label: iosName, workspace }).then((outcome) => {
+          debugLog.log('stop.device.end', { platform: 'ios', slot, deviceId: iosUdid, status: outcome.status });
+          return outcome;
+        });
       }
+      entries.push({ key: iosKey, kind: 'ios', label: iosUdid, result });
     }
 
     const android = platforms.android;
     if (android?.avdName) {
-      if (!android.owned) {
-        device[androidKey] = {
-          status: 'skipped',
-          kind: 'not-owned',
-          label: android.avdName,
-          reason: 'Stim does not own this device',
-        };
-        report(chalk.dim(phaseLine('device', `${android.avdName} is not Stim-owned, leaving it running`)));
-      } else {
-        debugLog.log('stop.device.start', { platform: 'android', slot, deviceId: android.avdName });
-        const result = await teardownAvd(android.avdName, { del: false, workspace });
-        debugLog.log('stop.device.end', {
-          platform: 'android',
-          slot,
-          deviceId: android.avdName,
-          status: result.status,
+      const avdName = android.avdName;
+      let result: Promise<TeardownResult> | null = null;
+      if (android.owned) {
+        debugLog.log('stop.device.start', { platform: 'android', slot, deviceId: avdName });
+        result = teardownAvd(avdName, { del: false, workspace }).then((outcome) => {
+          debugLog.log('stop.device.end', { platform: 'android', slot, deviceId: avdName, status: outcome.status });
+          return outcome;
         });
-        device[androidKey] = reportDevice(android.avdName, result, report, 'android');
       }
+      entries.push({ key: androidKey, kind: 'android', label: avdName, result });
     }
   }
+
+  const settled = await Promise.allSettled(entries.map((entry) => entry.result));
+  entries.forEach(({ key, kind, label }, index) => {
+    const outcome = settled[index];
+    if (outcome?.status === 'rejected') return;
+    if (!outcome?.value) {
+      device[key] = {
+        status: 'skipped',
+        kind: 'not-owned',
+        label,
+        reason: 'Stim does not own this device',
+      };
+      report(chalk.dim(phaseLine('device', `${label} is not Stim-owned, leaving it running`)));
+      return;
+    }
+    device[key] = reportDevice(label, outcome.value, report, kind);
+  });
+  for (const outcome of settled) if (outcome.status === 'rejected') throw outcome.reason;
   return device;
 }
 
