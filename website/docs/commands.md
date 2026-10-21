@@ -1779,6 +1779,13 @@ their temp directories land here too. Jest's cache is never deleted. gc never
 follows a symlink or acts outside `TMPDIR`, and with `STIM_HOME` set it skips
 them. Automatic maintenance runs the same deletion at disk pressure level 2.
 
+`gc` lists each entry of `$STIM_HOME/trash` under "Worktree trash" with its
+size and the worktree it came from: the ignored directories `worktree remove`
+moved out of a worktree before git removed it. `--delete` deletes an entry
+only when it is a `remove-*` directory with a valid `trash.json` written by
+`worktree remove` and its ownership claim is free. It keeps one a removal or its
+background `rm` still holds, and any other directory under `trash`. See [remove a worktree](./worktrees.md#remove-a-worktree).
+
 `--delete` also clears the build outputs (`derived-data/`, `gradle-build/`,
 `android-cas/`, `cache-provider/`, `macos/build`, staged `macos/<Product>.app`
 and interrupted-build `macos/staging-*` directories) of every workspace that

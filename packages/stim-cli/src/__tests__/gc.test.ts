@@ -3925,6 +3925,7 @@ describe('gc --json', () => {
       'swiftpmCache',
       'machineCaches',
       'tempLeftovers',
+      'trash',
       'gradleVersions',
       'memory',
       'watchmanRoots',

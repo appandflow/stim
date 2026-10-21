@@ -807,7 +807,8 @@ RULES
                   buildLock, buildSlot, deviceLease, easSession, worktree,
                   cache, gradleVersion, tempLeftover (one "done" labelled
                   with the TMPDIR it cleared, plus a "kept" or "failed" per
-                  entry gc checked again or could not delete).
+                  entry gc checked again or could not delete), trash (the
+                  same, labelled with $STIM_HOME/trash).
                   label is a device, path or cache name; id is the UDID,
                   AVD name or path behind it, or null. Under --cache
                   parked, a "done" parkedDevice was erased and stays
@@ -1037,6 +1038,17 @@ RULES
                               jest_<uid in base 36> cache, never deleted). deleteCount
                               is what --delete removes. null with STIM_HOME
                               set or any --cache scope
+    trash                   { root, entries: [{ path, worktree, removedAt,
+                              bytes, willDelete, kept }] } | null  ignored
+                              directories worktree remove moved out of a
+                              worktree into $STIM_HOME/trash before git
+                              removed it. bytes is null while a removal is
+                              deleting the entry. kept names the live or
+                              unresolved ownership claim, or the missing or
+                              invalid trash.json, that keeps a directory;
+                              --delete deletes the rest, only remove-*
+                              entries with a valid trash.json. null when the
+                              trash is empty or under any --cache scope
     caches                  { name, dir, source, bytes, note, willEmpty,
                               emptySkipped, scopedEmpty }  alive, not
                               garbage; willEmpty marks the ones --delete

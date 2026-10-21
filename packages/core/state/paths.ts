@@ -185,6 +185,11 @@ export function maintenanceRunClaims(): string {
   return join(maintenanceDir(), 'run.claims');
 }
 
+/** Dependency trees `worktree remove` moved out of a worktree before git removed it; gc deletes what is left. */
+export function trashRoot(): string {
+  return join(configDir(), 'trash');
+}
+
 export function archiveRoot(): string {
   return join(configDir(), 'archive');
 }
