@@ -121,11 +121,11 @@
   },
   "packages/stim-cli": {
     "src": {
-      "as": 839,
+      "as": 840,
       "nonNull": 342
     },
     "test": {
-      "as": 536,
+      "as": 537,
       "nonNull": 810
     }
   },
