@@ -30,6 +30,8 @@ struct BuildMachinesView: View {
       entries: model.entries, statuses: statuses, hosts: model.check(in: checkout)?.hosts, updates: model.updates,
       working: model.working, progress: model.progress, refreshing: model.isBusy, failure: failure,
       tailscaleRunning: model.tailscaleRunning,
+      settingsReadFailure: model.settingsReadFailure,
+      retry: { Task { await model.load(checkout: checkout) } },
       canAsk: checkout != nil,
       addDisabled: model.working != nil,
       updatesAutomatically: $updatesAutomatically,
@@ -181,6 +183,8 @@ struct BuildMachinesContent<ThisMac: View>: View {
   var refreshing: Bool
   var failure: String?
   var tailscaleRunning: Bool?
+  var settingsReadFailure: String? = nil
+  var retry: () -> Void = {}
   var canAsk: Bool
   var addDisabled: Bool
   @Binding var updatesAutomatically: Bool
@@ -224,11 +228,19 @@ struct BuildMachinesContent<ThisMac: View>: View {
       }
     } else if showsThisMac {
       Form {
-        Section { ProgressView().frame(maxWidth: .infinity) }
+        Section { waiting }
         thisMac
       }
       .formStyle(.grouped)
       .scrollContentBackground(.hidden)
+    } else {
+      waiting
+    }
+  }
+
+  @ViewBuilder private var waiting: some View {
+    if let settingsReadFailure {
+      EmptyState(title: "Settings Unavailable", message: settingsReadFailure, actionTitle: "Try Again", action: retry)
     } else {
       ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
     }
