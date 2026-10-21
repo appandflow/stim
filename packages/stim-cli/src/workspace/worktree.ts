@@ -31,6 +31,8 @@ interface ReadOptions {
 }
 
 interface AsyncReadOptions extends ReadOptions {
+  /** A timeout throws its `ETIMEDOUT` error instead of reading as null; `removal` implies it. */
+  timeoutThrows?: boolean;
   declareFor?: StimContext;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
@@ -40,7 +42,7 @@ interface AsyncReadOptions extends ReadOptions {
 async function gitReadAsync(
   dir: string,
   args: string[],
-  { removal, env, signal, declareFor, untrimmed }: AsyncReadOptions,
+  { removal, timeoutThrows, env, signal, declareFor, untrimmed }: AsyncReadOptions,
 ): Promise<string | null> {
   signal ??= getExecutor().reportSignal?.();
   try {
@@ -56,7 +58,7 @@ async function gitReadAsync(
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;
     signal?.throwIfAborted();
-    if (removal && isTimeoutError(error)) throw error;
+    if ((removal || timeoutThrows) && isTimeoutError(error)) throw error;
     return null;
   }
 }
@@ -127,7 +129,7 @@ export async function warmWorktreePaths(
   cwd: string,
   operation?: StimContext,
 ): Promise<{ root: string; target: string; common: string }> {
-  const options = { env: operation?.env, signal: operation?.signal, declareFor: operation };
+  const options = { env: operation?.env, signal: operation?.signal, declareFor: operation, timeoutThrows: true };
   const currentRoot = await repoRootAsync(cwd, options);
   if (!currentRoot) throw new Error('Not a git repository.');
   const target = realpathSync(currentRoot);

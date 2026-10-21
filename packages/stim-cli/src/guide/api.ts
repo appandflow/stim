@@ -71,6 +71,7 @@ removal; unfinished cleanup returns STIM_CLAIM_UNAVAILABLE and leaves unresolved
 resources in place. Credential refresh waits asynchronously and checks
 cancellation before writing.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
+A probe's time limit counts only the probe itself; PowerShell's startup and exit each have their own 30 second limit.
 
 requestMachineAccess({ ticket?, signal? }) requests build and device-host access
 from configured remote machines without granting capabilities or repairing project

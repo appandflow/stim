@@ -169,6 +169,19 @@ test('file commands can reject stderr on a successful exit without changing the 
   });
 });
 
+test.skipIf(process.platform !== 'win32')(
+  'a contained Windows child gets its whole budget after the report job starts',
+  async () => {
+    resetExecutor();
+    const out = await getExecutor().runFileAsync(process.execPath, ['-e', 'process.stdout.write("ran")'], {
+      timeoutMs: 1000,
+      signal: new AbortController().signal,
+    });
+    expect(out).toBe('ran');
+  },
+  60_000,
+);
+
 test.skipIf(process.platform !== 'win32')('runFile launches a .cmd shim on Windows', () => {
   resetExecutor();
   expect(getExecutor().findExecutable('npm')).toMatch(/\.cmd$/i);
