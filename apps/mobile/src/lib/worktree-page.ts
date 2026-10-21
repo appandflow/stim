@@ -106,6 +106,10 @@ export function buildEntries(apps: EnvironmentState[], tabs = false) {
     .sort((a, b) => PLATFORMS.indexOf(a.platform) - PLATFORMS.indexOf(b.platform));
 }
 
+export function hasBuildTabs(apps: EnvironmentState[]) {
+  return apps.length > 1 || (apps.some((env) => env.macos) && buildEntries(apps, true).length > 1);
+}
+
 export function worktreeDevices(apps: EnvironmentState[], now: number) {
   const owners = new Map<DeviceRef, EnvironmentState>();
   for (const env of apps) {

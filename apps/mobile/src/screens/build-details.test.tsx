@@ -93,6 +93,16 @@ it('switches among the native and macOS builds and opens the selected macOS app 
   });
 });
 
+it('offers the macOS build of a single app that also has a macOS app', async () => {
+  mockEnvironments = [
+    { ...app('mobile', 'ios'), platforms: ['ios', 'android', 'macos'], macos: app('mobile', 'macos').macos },
+  ];
+  const screen = await render(body('/w/apps/mobile', 'ios'));
+  expect(screen.getAllByRole('tab').map((tab) => tab.props.accessibilityLabel)).toEqual(['iOS', 'Android', 'macOS']);
+  await fireEvent.press(screen.getByRole('tab', { name: 'macOS' }));
+  expect(screen.getByText('desktop error')).toBeTruthy();
+});
+
 it('opens the build logs of the last native build, limited to the time it ran', async () => {
   mockEnvironments = [app('a', 'ios'), app('b', 'ios')];
   const screen = await render(body('/w/apps/b', 'ios'));
