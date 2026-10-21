@@ -407,6 +407,7 @@ async function reclaimIdleDevServers({
   root,
   dryRun,
   note,
+  record,
   now,
   env,
   signal,
@@ -475,22 +476,27 @@ async function reclaimIdleDevServers({
       signal?.throwIfAborted();
       failures++;
       note(chalk.red(`Could not stop the dev server of ${path}: ${(error as Error)?.message || error}`));
+      record?.('devServer', 'failed', path, { detail: error instanceof Error ? error.message : String(error) });
       continue;
     }
     if (!run.ran) {
       note(chalk.yellow(`Kept the dev server of ${path}: ${run.reasons.join('; ')}`));
+      record?.('devServer', 'kept', path, { detail: run.reasons.join('; ') });
       continue;
     }
     const stopped = run.value;
     if (stopped === 'busy' || stopped === 'starting') {
       const why = stopped === 'busy' ? 'it is no longer idle' : 'a stim start holds its metro-start lock';
       note(chalk.dim(`Kept the dev server of ${path}: ${why}`));
+      record?.('devServer', 'kept', path, { detail: why });
     } else if (stopped.status === 'stopped') {
       targets.push(path);
       note(chalk.green(`Stopped the idle dev server of ${path}`));
+      record?.('devServer', 'done', path);
     } else if ('reason' in stopped) {
       if (stopped.status === 'stuck') failures++;
       note(chalk.yellow(`Kept the dev server of ${path}: ${stopped.reason}`));
+      record?.('devServer', stopped.status === 'stuck' ? 'failed' : 'kept', path, { detail: stopped.reason });
     }
   }
   return { targets, failures };
@@ -724,43 +730,39 @@ export async function enforceBudget(
   }
   const gcLog = dryRun ? null : openGcLog({ trigger: 'budget', holdKept: true });
   const gcResults = gcLog && createGcResults(gcLog.record);
-  try {
-    for (const step of plan) {
-      signal?.throwIfAborted();
-      if (!dryRun && (!overBudget(short) || (DISK_ONLY.includes(step) && short.disk.length === 0))) break;
-      const freeBefore = measure.volumes.reduce((sum, v) => sum + v.freeMb, 0);
-      const result = await deps.step(step, {
-        root,
-        cwd,
-        env,
-        dryRun,
-        note,
-        record: gcResults?.record,
-        now: deps.now(),
-        diskRecovered: async () =>
-          budgetShortfalls(budget, {
-            volumes: await (deps.volumesAsync?.(paths) ?? deps.volumes(paths)),
-            memory: null,
-          }).disk.length === 0,
-        signal,
-        operation,
-      });
-      signal?.throwIfAborted();
-      if (!dryRun) {
-        simSnapshot?.invalidate();
-        measure = await measureNow();
-        short = budgetShortfalls(budget, measure);
-      }
-      if (result.targets.length === 0 && result.failures === 0) continue;
-      const freedMb = Math.max(0, Math.round(measure.volumes.reduce((sum, v) => sum + v.freeMb, 0) - freeBefore));
-      reclaimed.push({ step, ...result, ...(dryRun ? {} : { freedMb }) });
-      const outcome = dryRun
-        ? result.targets.join(', ')
-        : `${result.targets.length}${result.failures ? `, ${result.failures} failed` : ''} (${formatSpace(freedMb)} freed)`;
-      note(chalk.dim(phaseLine('budget', `${STEP_ACTIONS[step]}: ${outcome}`)));
+  for (const step of plan) {
+    signal?.throwIfAborted();
+    if (!dryRun && (!overBudget(short) || (DISK_ONLY.includes(step) && short.disk.length === 0))) break;
+    const freeBefore = measure.volumes.reduce((sum, v) => sum + v.freeMb, 0);
+    const result = await deps.step(step, {
+      root,
+      cwd,
+      env,
+      dryRun,
+      note,
+      record: gcResults?.record,
+      now: deps.now(),
+      diskRecovered: async () =>
+        budgetShortfalls(budget, {
+          volumes: await (deps.volumesAsync?.(paths) ?? deps.volumes(paths)),
+          memory: null,
+        }).disk.length === 0,
+      signal,
+      operation,
+    });
+    signal?.throwIfAborted();
+    if (!dryRun) {
+      simSnapshot?.invalidate();
+      measure = await measureNow();
+      short = budgetShortfalls(budget, measure);
     }
-  } finally {
-    gcLog?.close();
+    if (result.targets.length === 0 && result.failures === 0) continue;
+    const freedMb = Math.max(0, Math.round(measure.volumes.reduce((sum, v) => sum + v.freeMb, 0) - freeBefore));
+    reclaimed.push({ step, ...result, ...(dryRun ? {} : { freedMb }) });
+    const outcome = dryRun
+      ? result.targets.join(', ')
+      : `${result.targets.length}${result.failures ? `, ${result.failures} failed` : ''} (${formatSpace(freedMb)} freed)`;
+    note(chalk.dim(phaseLine('budget', `${STEP_ACTIONS[step]}: ${outcome}`)));
   }
   if (!dryRun && short.hardFloor.length) {
     const tight = short.hardFloor.map((v) => `${formatSpace(v.freeMb)} on ${v.volume}`).join(' and ');

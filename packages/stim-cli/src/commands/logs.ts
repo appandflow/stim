@@ -20,6 +20,7 @@ import {
   gcLogDir,
   readGcLog,
   compileGrep,
+  fileSizes,
   followLogs,
   logFiles,
   parseSince,
@@ -382,13 +383,14 @@ function printGcLog(opts: LogsOptions, minLevel: string | undefined, tail: numbe
         : formatRecord(record, { paint: record.level ? LEVEL_COLOURS[record.level] : undefined }),
     );
   const query = { sources: ['gc'], minLevel, since: opts.since, grep: opts.grep };
+  const offsets = opts.follow ? fileSizes(gcLogDir()) : null;
   const records = queryLogs({ ...query, records: readGcLog(), tail });
   for (const record of records) emit(record);
   if (!opts.follow) {
     if (records.length === 0 && !opts.json) console.error(chalk.dim(`No matching log records in ${gcLogDir()}`));
     return;
   }
-  const stop = followLogs({ dir: gcLogDir(), criteria: buildCriteria(query), onRecord: emit });
+  const stop = followLogs({ dir: gcLogDir(), offsets, criteria: buildCriteria(query), onRecord: emit });
   const finish = () => {
     stop();
     stopReader();

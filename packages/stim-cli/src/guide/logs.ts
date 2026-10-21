@@ -258,8 +258,9 @@ Each record has src: gc, level (info, or error for a failed item), msg and
            start, ios and android)
   via      maintenance only: the command whose run started the pass
   options  gc only: delete, worktrees, olderThan, cache, idleMs
-  kind     what the item was (the kind of gc --json results; maintenance
-           also writes buildDirectory and dependencies)
+  kind     what the item was (the kind of gc --json results, plus devServer
+           for a dev server the budget gate stops; maintenance also writes
+           buildDirectory and dependencies)
   status   done, kept or failed
   label, id, path, bytes, detail
            name, identifier, absolute path when the item is one, bytes freed,

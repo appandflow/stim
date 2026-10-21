@@ -22,7 +22,6 @@ function runOf(holdKept: boolean, items: ['done' | 'kept' | 'failed', string][])
   const log = openGcLog({ trigger: 'manual', holdKept });
   const results = createGcResults(log.record);
   for (const [status, label] of items) results.record('cache', status, label, { detail: 'why' });
-  log.close();
 }
 
 describe('the gc log writer', () => {
@@ -59,6 +58,16 @@ describe('the gc log writer', () => {
     expect(labels.map((l) => Number(l.slice(5)))).toEqual(
       Array.from({ length: labels.length }, (_, i) => total - labels.length + i),
     );
+  });
+
+  test('two runs writing alternately across rotations lose none of the newest records', () => {
+    vi.stubEnv('STIM_MAINTENANCE_LOG_MAX_MB', String(2048 / 1024 ** 2));
+    const logs = [openGcLog({ trigger: 'budget' }), openGcLog({ trigger: 'maintenance' })];
+    for (let i = 0; i < 40; i++)
+      logs[i % 2]?.record({ kind: 'cache', status: 'done', label: `n-${i}`, id: null, bytes: null, detail: null });
+    const labels = readGcLog().map((r) => Number(r.label.slice(2)));
+    expect(labels.length).toBeGreaterThanOrEqual(4);
+    expect(labels).toEqual(Array.from({ length: labels.length }, (_, i) => 40 - labels.length + i));
   });
 
   test('a rotated generation older than the retention is deleted on the next write', () => {

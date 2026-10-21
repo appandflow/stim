@@ -22,7 +22,8 @@ type GcResultKind =
   | 'watchman'
   | 'gradleDaemon'
   | 'gradleVersion'
-  | 'kotlinDaemon';
+  | 'kotlinDaemon'
+  | 'devServer';
 
 type GcResultStatus = 'done' | 'kept' | 'failed';
 

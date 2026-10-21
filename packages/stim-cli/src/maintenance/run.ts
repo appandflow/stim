@@ -510,7 +510,6 @@ export async function runMaintenance(trigger: string): Promise<void> {
     crashLine(error);
   } finally {
     logger?.close();
-    gcLog?.close();
     keepReserve();
     releaseClaim(claim);
   }

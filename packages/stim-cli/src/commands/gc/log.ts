@@ -10,7 +10,6 @@ import {
 import { formatBytes } from '../../fs-util.ts';
 import { openRetainedLog } from '../../maintenance/log.ts';
 import { resolveMaintenanceSettings } from '../../maintenance/settings.ts';
-import type { NdjsonWriter } from '../../ndjson.ts';
 import type { ActionOutcome } from '../../maintenance/act.ts';
 import type { GcResult } from './results.ts';
 
@@ -27,7 +26,6 @@ interface GcLogRun {
 
 export interface GcLog {
   record(result: GcLogItem): void;
-  close(): void;
 }
 
 const VERBS = { done: 'Cleared', kept: 'Kept', failed: 'Failed to clear' } as const;
@@ -58,14 +56,17 @@ function gcLogRecord(run: GcLogRun, result: GcLogItem, ts: number): GcLogRecord 
 
 /** Appends the items of one run that deletes or changes something to the machine gc log. */
 export function openGcLog(run: GcLogRun): GcLog {
-  let writer: NdjsonWriter | null = null;
   let failed = false;
   let acted = run.holdKept !== true;
   const held: GcLogRecord[] = [];
   const append = (record: GcLogRecord) => {
     try {
-      writer ??= openRetainedLog(gcLogFile(), resolveMaintenanceSettings());
-      if (!writer.write(record)) throw writer.lastError ?? new Error('write failed');
+      const writer = openRetainedLog(gcLogFile(), resolveMaintenanceSettings());
+      try {
+        if (!writer.write(record)) throw writer.lastError ?? new Error('write failed');
+      } finally {
+        writer.close();
+      }
     } catch (error) {
       if (failed) return;
       failed = true;
@@ -84,9 +85,6 @@ export function openGcLog(run: GcLogRun): GcLog {
         for (const earlier of held.splice(0)) append(earlier);
       }
       append(record);
-    },
-    close() {
-      writer?.close();
     },
   };
 }

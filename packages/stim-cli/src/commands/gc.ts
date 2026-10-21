@@ -759,7 +759,6 @@ export async function executeGc(
     return { payload, exitCode: failed ? 1 : 0 };
   } finally {
     stopDeclaringSpawnsOn(deps.operation, claim);
-    log?.close();
   }
 }
 
