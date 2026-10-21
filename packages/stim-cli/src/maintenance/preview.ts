@@ -10,7 +10,7 @@ import {
 import { enforceBudget, resolveBudget } from '../budget.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
+import { collectWorkspaceOutputs, workspaceDirRemoved } from '../commands/gc/workspaces.ts';
 import { cacheBlocked, measurePressure, measurePressureAsync } from './measure.ts';
 import { discoverCaches } from '../cache/caches.ts';
 import { candidateRootsAsync, type WorktreeSweep } from '../commands/gc/worktrees.ts';
@@ -36,7 +36,7 @@ export interface PlannedMaintenance extends MaintenancePlan {
 
 export async function plannedMaintenance(
   pressure: MaintenancePressure | null,
-  sizes: readonly MaintenanceSize[],
+  recordedSizes: readonly MaintenanceSize[],
   settings: MaintenanceSettings,
   {
     devices = true,
@@ -71,6 +71,7 @@ export async function plannedMaintenance(
     signal: operation?.signal,
     operation,
   });
+  const sizes = recordedSizes.filter((size) => size.category !== 'workspace-outputs' || !workspaceDirRemoved(size.dir));
   const currentSizes = sizes.map((size) => {
     if (size.category === 'compilation-cache')
       return { ...size, blocked: cacheBlocked(size, discoverCaches(env, operation?.cwd), env) };
