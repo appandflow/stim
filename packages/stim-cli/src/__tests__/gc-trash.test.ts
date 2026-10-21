@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collectTrash, deleteTrash } from '../commands/gc/trash.ts';
@@ -97,4 +97,72 @@ test.skipIf(!POSIX)('gc --delete keeps a trash directory Stim did not write', as
   expect(existsSync(crashed)).toBe(false);
   for (const dir of [noManifest, malformed, incomplete, foreign])
     expect(existsSync(join(dir, 'entries', '0', 'file'))).toBe(true);
+});
+
+function plantEntry(name: string, worktree: string): string {
+  const dir = join(trash, name);
+  mkdirSync(join(dir, 'entries', '0'), { recursive: true });
+  writeFileSync(join(dir, 'entries', '0', 'file'), 'w');
+  writeFileSync(join(dir, 'trash.json'), JSON.stringify({ worktree, createdAt: 'T' }));
+  return dir;
+}
+
+test.skipIf(!POSIX)('gc keeps the trash of a worktree that still exists until the worktree is gone', async () => {
+  const worktree = join(base, 'survivor');
+  mkdirSync(worktree);
+  const interrupted = plantEntry('remove-interrupted', worktree);
+  plantClaim(join(interrupted, 'claims'), 'exclusive', goneClaimOwner());
+
+  const report = await collectTrash();
+  const entry = report?.entries.find((item) => item.path === interrupted);
+  expect(entry?.willDelete).toBe(false);
+  expect(entry?.kept).toContain(worktree);
+  expect(entry?.bytes).toBeGreaterThan(0);
+
+  expect(await deleteTrash(undefined)).toMatchObject({
+    count: 0,
+    failures: 0,
+  });
+  expect(existsSync(join(interrupted, 'entries', '0', 'file'))).toBe(true);
+
+  rmSync(worktree, { recursive: true });
+  expect(await deleteTrash(undefined)).toMatchObject({
+    count: 1,
+    failures: 0,
+  });
+  expect(existsSync(interrupted)).toBe(false);
+});
+
+test.skipIf(!POSIX || process.getuid?.() === 0)('gc keeps the trash of a worktree it cannot prove gone', async () => {
+  const parent = join(base, 'unreadable');
+  mkdirSync(join(parent, 'worktree'), { recursive: true });
+  const entry = plantEntry('remove-unprovable', join(parent, 'worktree'));
+  chmodSync(parent, 0o000);
+  try {
+    const report = await collectTrash();
+    const found = report?.entries.find((item) => item.path === entry);
+    expect(found?.willDelete).toBe(false);
+    expect(found?.kept).toMatch(/cannot be checked \(EACCES\)/);
+  } finally {
+    chmodSync(parent, 0o755);
+  }
+});
+
+test.skipIf(!POSIX)('gc keeps a trash entry whose ownership claim cannot be verified', async () => {
+  const entry = plantEntry('remove-unresolved', join(base, 'gone'));
+  const claim = plantClaim(join(entry, 'claims'), 'exclusive', {
+    pid: process.pid,
+    processToken: 'bad',
+  });
+
+  const report = await collectTrash();
+  const found = report?.entries.find((item) => item.path === entry);
+  expect(found?.willDelete).toBe(false);
+  expect(found?.kept).toContain(claim);
+
+  expect(await deleteTrash(undefined)).toMatchObject({
+    count: 0,
+    failures: 0,
+  });
+  expect(existsSync(join(entry, 'entries', '0', 'file'))).toBe(true);
 });

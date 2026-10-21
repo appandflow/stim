@@ -51,6 +51,17 @@ function claimKept(dir: string): { kept: string | null; live: boolean } {
   return { kept: null, live: false };
 }
 
+async function worktreeKept(worktree: string): Promise<string | null> {
+  try {
+    await lstat(worktree);
+  } catch (error) {
+    const code = error instanceof Error && 'code' in error ? error.code : undefined;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    return `its worktree ${worktree} cannot be checked (${String(code ?? 'unknown error')})`;
+  }
+  return `its worktree ${worktree} still exists; if it is the one this entry came from, run \`stim worktree remove\` on it to finish the removal, then gc deletes this entry`;
+}
+
 async function readManifest(dir: string): Promise<TrashManifest | null> {
   try {
     const parsed: unknown = JSON.parse(await readFile(join(dir, TRASH_MANIFEST), 'utf8'));
@@ -62,7 +73,7 @@ async function readManifest(dir: string): Promise<TrashManifest | null> {
   }
 }
 
-/** The entries under `$STIM_HOME/trash`, each deletable only with a valid manifest and no live or unresolved ownership claim. */
+/** The entries under `$STIM_HOME/trash`, each deletable only with a valid manifest, no live or unresolved ownership claim, and a worktree that is gone. */
 export async function collectTrash({
   signal,
   operation,
@@ -80,9 +91,11 @@ export async function collectTrash({
     const stat = await lstat(path).catch(() => null);
     if (!stat?.isDirectory()) continue;
     const manifest = name.startsWith(TRASH_ENTRY_PREFIX) ? await readManifest(path) : null;
-    const { kept, live } = manifest
+    const claim = manifest
       ? claimKept(path)
       : { kept: 'it has no valid trash.json, so Stim did not create it', live: false };
+    const live = claim.live;
+    const kept = claim.kept ?? (manifest ? await worktreeKept(manifest.worktree) : null);
     entries.push({
       path,
       worktree: manifest?.worktree ?? null,

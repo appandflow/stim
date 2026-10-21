@@ -1375,7 +1375,7 @@ async function removeOrRefuse(
             if (trash && unrestored.length) {
               output.error(
                 chalk.yellow(
-                  `Could not move ${unrestored.join(', ')} back into ${path}; ${unrestored.length === 1 ? 'it stays' : 'they stay'} in ${trash.dir}, which stim gc --delete deletes.`,
+                  `Could not move ${unrestored.join(', ')} back into ${path}; ${unrestored.length === 1 ? 'it stays' : 'they stay'} in ${trash.dir}, which stim gc keeps while ${path} exists.`,
                 ),
               );
             }
