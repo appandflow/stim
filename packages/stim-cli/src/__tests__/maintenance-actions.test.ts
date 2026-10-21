@@ -14,7 +14,9 @@ import { basename, join } from 'node:path';
 import { buildCacheRoot, metroCacheRoot } from '@stim-cli/core';
 import {
   gcLogFile,
+  maintenanceDir,
   maintenanceNdjsonFile,
+  maintenanceStateFile,
   readGcLog,
   readMaintenanceState,
   sharedCompilationCache,
@@ -603,3 +605,50 @@ test('the age sweep deletes a parked simulator unused for olderThanDays through 
   expect(readParked('ios').map((record) => record.udid)).toEqual(['NEW-PARKED']);
   expect(actionKinds()).toContain('delete-parked-device');
 });
+
+test('report mode lists a worktree once when the worktree check plans one the last sweep already planned', async () => {
+  process.env.STIM_MAINTENANCE = 'report';
+  const { repo, worktrees, heads } = gitRepoWithWorktrees(['shipped']);
+  const shipped = worktrees.shipped ?? '';
+  const merged = {
+    number: 1,
+    url: 'https://github.com/o/r/pull/1',
+    state: 'MERGED',
+    headRefOid: heads.shipped,
+    mergedAt: '2026-09-01T00:00:00Z',
+  };
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : real.findExecutable(name)),
+    runFileAsync: async (file, args: string[], opts) => {
+      if (file !== 'gh') return real.runFileAsync(file, args, opts);
+      const fields = args.flatMap((arg) => {
+        const variable = /^(b\d+)=(.*)$/s.exec(arg);
+        return variable ? [[variable[1], { nodes: variable[2] === 'shipped' ? [merged] : [] }]] : [];
+      });
+      return JSON.stringify({ data: { repository: Object.fromEntries(fields) } });
+    },
+  });
+  process.env.STIM_MAINTENANCE_PROTECT_RECENT_HOURS = '0';
+  const now = Date.now();
+  mkdirSync(maintenanceDir(), { recursive: true });
+  writeFileSync(
+    maintenanceStateFile(),
+    JSON.stringify({
+      version: 1,
+      lastAt: { pressure: now, size: now, sweep: now },
+      pressure: null,
+      sizes: [],
+      lastPass: null,
+      recent: [],
+      plan: [{ kind: 'would-remove-worktree', target: shipped, bytes: 0, reason: 'idle 9d', check: 'sweep' }],
+    }),
+  );
+  vi.spyOn(process, 'cwd').mockReturnValue(repo);
+
+  await runMaintenance('test');
+
+  expect(readMaintenanceState()?.plan.filter((action) => action.target === shipped)).toHaveLength(1);
+  expect(existsSync(shipped)).toBe(true);
+}, 60_000);
