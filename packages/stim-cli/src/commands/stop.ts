@@ -1067,13 +1067,10 @@ async function shutDownDevices(
   }
 
   const settled = await Promise.allSettled(entries.map((entry) => entry.result));
-  const outcomes = settled.map((outcome) => {
-    if (outcome.status === 'rejected') throw outcome.reason;
-    return outcome.value;
-  });
   entries.forEach(({ key, kind, label }, index) => {
-    const outcome = outcomes[index];
-    if (!outcome) {
+    const outcome = settled[index];
+    if (outcome?.status === 'rejected') return;
+    if (!outcome?.value) {
       device[key] = {
         status: 'skipped',
         kind: 'not-owned',
@@ -1083,8 +1080,9 @@ async function shutDownDevices(
       report(chalk.dim(phaseLine('device', `${label} is not Stim-owned, leaving it running`)));
       return;
     }
-    device[key] = reportDevice(label, outcome, report, kind);
+    device[key] = reportDevice(label, outcome.value, report, kind);
   });
+  for (const outcome of settled) if (outcome.status === 'rejected') throw outcome.reason;
   return device;
 }
 

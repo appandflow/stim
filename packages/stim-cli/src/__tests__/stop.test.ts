@@ -632,7 +632,7 @@ describe('devices shut down concurrently', () => {
       report: (line: string) => lines.push(line),
     });
     const r = await runStop(opts);
-    expect(Object.keys(r.outcomes.device).slice(0, 2)).toEqual(['ios', 'android']);
+    expect(r.ok).toBe(true);
     const shutDown = lines.filter((line) => line.includes('shut down'));
     expect(shutDown).toHaveLength(2);
     expect(shutDown[0]).toContain('sim');
@@ -657,7 +657,9 @@ describe('devices shut down concurrently', () => {
 
   test('a teardown that throws does not cut the other short', async () => {
     const events: string[] = [];
+    const lines: string[] = [];
     const { opts } = seams({
+      report: (line: string) => lines.push(line),
       project: bothDevices,
       teardownIos: async () => {
         throw new Error('claims retained');
@@ -670,6 +672,7 @@ describe('devices shut down concurrently', () => {
     });
     await expect(runStop(opts)).rejects.toThrow('claims retained');
     expect(events).toEqual(['android:end']);
+    expect(lines.some((line) => line.includes('shut down stim-app'))).toBe(true);
   });
 });
 
