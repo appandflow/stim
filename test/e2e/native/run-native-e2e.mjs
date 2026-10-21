@@ -19,6 +19,7 @@ import {
   preflight,
   prepareIosDevices,
   quote,
+  teardownWorkspaces,
   verifyCleanup,
   workspaceLogsDir,
 } from './harness.mjs';
@@ -57,6 +58,19 @@ const cleanup = createCleanupTracker({ h, platform: PLATFORM });
 const { cli, cliJson, sh, log, banner, die } = h;
 
 const created = [];
+
+let failureHandled = false;
+function failureCleanup(err) {
+  if (failureHandled) return;
+  failureHandled = true;
+  try {
+    dumpDiagnostics(h, created);
+  } finally {
+    teardownWorkspaces({ h, created, removeWorktrees: !args.keep });
+    if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR], err);
+  }
+}
+h.onDie(failureCleanup);
 
 async function main() {
   preflight(h, PLATFORM);
@@ -326,8 +340,7 @@ main().then(
   },
   (err) => {
     log(`FAIL ${VARIANT}: ${err?.message || err}`);
-    dumpDiagnostics(h, created);
-    if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR], err);
+    failureCleanup(err);
     process.exit(1);
   },
 );
