@@ -50,9 +50,11 @@ export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
 ];
 
 /**
- * `react-native bundle` output, ignored only while a gitignore pattern matches it: a committed copy can be a native
+ * `react-native bundle` output, ignored only while an ignore pattern matches it: a committed copy can be a native
  * resource, while a Debug build loads JS from Metro and a release cache hit injects the current JS. The match skips
- * the index, so a force-added copy counts the same on a build worker, whose mirror index is empty.
+ * the index, so a force-added copy counts the same on a build worker, whose mirror index is empty. A build worker
+ * has only the synced .gitignore files, so a committed copy matched only by .git/info/exclude or a global excludes
+ * file still fingerprints differently there.
  */
 const BUNDLE_OUTPUT_IGNORES: Record<string, string> = {
   'ios/main.jsbundle': 'ios/main.jsbundle',
@@ -246,6 +248,8 @@ export async function gitignoredFingerprintInputs(
   { env, signal }: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
 ): Promise<string[]> {
   const found = new Set<string>();
+  // With ios.projectPath '.', an env file ignored only by .git/info/exclude or a global excludes file becomes an iOS
+  // source on a build worker, which has only the synced .gitignore files.
   if (sources.some((source) => source.type === 'contents' && source.id === 'expoConfig'))
     for (const name of expoEnvFiles(env))
       if (lstatSync(join(projectRoot, name), { throwIfNoEntry: false })?.isFile()) found.add(name);

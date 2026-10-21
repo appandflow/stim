@@ -21,7 +21,7 @@ export class OffloadRefusal extends Error {
   constructor(
     machine: string,
     reason: string,
-    remedy: string = 'Run stim doctor --fix to ask for build access if not paired; it prints the stim-server setup command a person runs on the worker to approve this machine. Check stim settings get remote.machines, or rerun with --remote-build auto or --remote-build local.',
+    remedy = 'Run stim doctor --fix to ask for build access if not paired; it prints the stim-server setup command a person runs on the worker to approve this machine. Check stim settings get remote.machines, or rerun with --remote-build auto or --remote-build local.',
   ) {
     super(reason.startsWith(`${machine}: `) ? reason : `${machine}: ${reason}`);
     this.remedy = remedy;
