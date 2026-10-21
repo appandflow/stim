@@ -741,12 +741,24 @@ With a `stim` that reports no inventory, the device and runtime sections say to
 update `stim`, each workspace's simulators read a dash, and the headline shows
 those categories as unknown.
 
+## Cleanup History
+
+The **Cleanup History** section of the App preferences lists every run that deleted or changed
+something, newest first: `stim gc`, Stim's automatic maintenance and the budget check before a
+build, whoever started them (this app, an agent or a terminal). It runs
+`stim logs --source gc --json` from the home directory every 30 seconds while the window is open
+and never reads `$STIM_HOME`. A row shows what started the run, when, how many items it cleared,
+kept and failed, and the bytes freed; expanding it lists each item with its path and the reason a
+kept or failed item was left. This app's nightly, idle and disk-pressure runs all appear as
+Cleanup from Stim Desktop, with the `stim gc` options that ran. An older `stim` without the gc log
+shows its error instead.
+
 ## Autopilot
 
 The **Autopilot** section of the App preferences is on by default. It checks
-every minute while the app runs, uses the same action slot as the cleanup the
-user starts, so the two never overlap, and records every run with its exit
-status under **Autopilot Activity**.
+every minute while the app runs and uses the same action slot as the cleanup the
+user starts, so the two never overlap. What each run cleared is shown under
+**Cleanup History**.
 
 - **Shut down idle devices** after 30 minutes to 4 hours (1 hour by default)
   runs `stim gc --idle <minutes>m --json` when `stim status` shows a booted device idle
@@ -797,8 +809,7 @@ autopilot reclaiming, the app posts a
 notification after each run that says what the run did, built from the `gc`
 JSON result, such as "Freed 3.8 GB. Archived 2 removed worktrees: fix-login,
 add-dark-mode. Deleted 1 device." It names worktrees by branch or folder, lists
-at most three and ends with "+N more". The autopilot log entry has the same
-text, and a notification that archived worktrees opens the Archived filter
+at most three and ends with "+N more". A notification that archived worktrees opens the Archived filter
 when clicked. Without it, the app posts the plan once per
 episode with a **Do it** button. The **Free disk falls under the Stim budget**
 notification is on by default and needs the bundled app.
