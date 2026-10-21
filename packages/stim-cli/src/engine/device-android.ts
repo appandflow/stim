@@ -146,7 +146,9 @@ export async function ensureOwnedAndroidDevice({
   );
   if (record?.avdName) {
     if (record.owned) {
-      const resolved = await resolveOwnedAvdSerialAsync(record.avdName);
+      const resolved = await resolveOwnedAvdSerialAsync(record.avdName, {
+        preferredSerial: record.consolePort ? `emulator-${record.consolePort}` : undefined,
+      });
       const currentProfile = resolved.notOwned || resolved.missing ? null : ownedAvdDeviceProfile(record.avdName);
       if (requestedProfile && currentProfile && currentProfile !== requestedProfile) {
         throw new AvdRecoveryError(
@@ -599,7 +601,9 @@ export async function ensureAndroidBooted({
 
   let resolved;
   try {
-    resolved = await resolveOwnedAvdSerialAsync(device.avdName);
+    resolved = await resolveOwnedAvdSerialAsync(device.avdName, {
+      preferredSerial: device.consolePort ? `emulator-${device.consolePort}` : undefined,
+    });
   } catch (e) {
     return { failed: true, reason: `Could not list AVDs: ${(e as Error)?.message || e}` };
   }

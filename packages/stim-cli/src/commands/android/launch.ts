@@ -536,7 +536,7 @@ async function wipeAdoptedAvd(room: AdoptedRoom, free: number | null): Promise<s
   if (!rebooted.ok || !rebooted.serial) {
     throw new Error(`it did not boot after its user data was wiped: ${rebooted.reason ?? 'no serial'}`);
   }
-  if ((await room.resolveAvdSerial(room.avdName)).serial !== rebooted.serial) {
+  if ((await room.resolveAvdSerial(room.avdName, { preferredSerial: rebooted.serial })).serial !== rebooted.serial) {
     throw new Error(`${rebooted.serial} is not running ${room.avdName} after the wipe`);
   }
   room.phase('device', `${room.avdName} (${rebooted.serial}) booted with wiped user data`);
@@ -587,7 +587,7 @@ async function resolveInstallSerial({
   'root' | 'slot' | 'device' | 'physical' | 'remoteDevice' | 'resolveAvdSerial' | 'waitForDeviceBoot' | 'phase'
 > & { serial: string }): Promise<string> {
   if (physical || remoteDevice || !device.owned || !device.avdName) return serial;
-  const resolved = await resolveAvdSerial(device.avdName, { timeoutMs: 5000 });
+  const resolved = await resolveAvdSerial(device.avdName, { timeoutMs: 5000, preferredSerial: serial });
   if (!resolved.serial) throw new Error(`Could not verify a running owned AVD ${device.avdName} before installation.`);
   if (resolved.serial !== serial) {
     phase(
@@ -599,7 +599,10 @@ async function resolveInstallSerial({
       throw new Error(
         `Emulator ${resolved.serial} never reported boot completion. Diagnostic: ${JSON.stringify(ready.diagnostic)}`,
       );
-    if ((await resolveAvdSerial(device.avdName, { timeoutMs: 5000 })).serial !== resolved.serial)
+    if (
+      (await resolveAvdSerial(device.avdName, { timeoutMs: 5000, preferredSerial: resolved.serial })).serial !==
+      resolved.serial
+    )
       throw new Error(
         `Could not verify AVD ${device.avdName} still runs on ${resolved.serial} after checking readiness.`,
       );
