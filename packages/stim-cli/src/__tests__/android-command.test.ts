@@ -5689,7 +5689,7 @@ describe('--device (a physical Android device)', () => {
     expect(h.calls.resolveCached[0]).toEqual(['android', `${FINGERPRINT}-release-sim`]);
   });
 
-  test('a live physical-device error recommends Metro reload', async () => {
+  test('a live physical-device error recommends stim reload', async () => {
     const h = physicalHarness({
       verifyLaunched: async () => ({
         verified: true,
@@ -5699,7 +5699,7 @@ describe('--device (a physical Android device)', () => {
     });
     await h.run();
     const text = h.stderr.join('\n');
-    expect(text).toContain('agent-device metro reload --metro-port 8082');
+    expect(text).toContain('run `stim reload android`');
     expect(text).not.toContain('agent-device snapshot');
   });
 

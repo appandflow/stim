@@ -1090,8 +1090,9 @@ describe('a workspace with no launch on an owned local simulator or emulator', (
         reverseRestored: [],
       },
     });
-    expect(reloadMetro).toHaveBeenCalledTimes(1);
-    expect(reloadMetro).toHaveBeenCalledWith(8082, { role: 'android' });
+    expect(reloadMetro).toHaveBeenCalledTimes(2);
+    expect(reloadMetro).toHaveBeenNthCalledWith(1, 8082, { peersOnly: true, role: 'android' });
+    expect(reloadMetro).toHaveBeenNthCalledWith(2, 8082, { role: 'android' });
   });
 
   test('an EAS Simulator session reloads through Metro with the session platform', async () => {
@@ -1101,7 +1102,21 @@ describe('a workspace with no launch on an owned local simulator or emulator', (
       ok: true,
       facts: { platform: 'ios', deviceName: 'EAS Simulator session 01a15cf7-0000', appId: null, targets: 1 },
     });
-    expect(reloadMetro).toHaveBeenCalledWith(8082, { role: 'ios' });
+    expect(reloadMetro).toHaveBeenLastCalledWith(8082, { role: 'ios' });
+  });
+
+  test('a recorded EAS session does not outrank the platform the connected apps report', async () => {
+    const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async (_port, options) =>
+      options.peersOnly
+        ? { ok: true, peers: 1, targets: 1, platforms: ['android'] }
+        : { ok: true, peers: 1, targets: 1 },
+    );
+    const result = await runReload({ root: '/project', deps: unrecorded({ reloadMetro, readRemote: () => session }) });
+    expect(result).toMatchObject({
+      ok: true,
+      facts: { platform: 'android', deviceName: 'devices connected to Metro' },
+    });
+    expect(reloadMetro).toHaveBeenLastCalledWith(8082, { role: 'android' });
   });
 
   test('a bare reload takes the platform of the only apps connected to Metro', async () => {
@@ -1129,11 +1144,25 @@ describe('a workspace with no launch on an owned local simulator or emulator', (
     expect(reloadMetro).toHaveBeenCalledWith(8082, { peersOnly: true });
   });
 
+  test('a platform with no connected app sends nothing, so apps on the other platform are left alone', async () => {
+    const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async () => ({
+      failed: true,
+      noPeer: true,
+      peers: 1,
+      reason: 'No iOS React Native app.',
+    }));
+    const result = await runReload({ root: '/project', platform: 'ios', deps: unrecorded({ reloadMetro }) });
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_STOPPED' } });
+    expect(reloadMetro).toHaveBeenCalledTimes(1);
+    expect(reloadMetro).toHaveBeenCalledWith(8082, { peersOnly: true, role: 'ios' });
+  });
+
   test('a Metro that cannot name its clients gets a broadcast once the platform is named', async () => {
     const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async () => ({ ok: true, broadcast: true }));
     const bare = await runReload({ root: '/project', deps: unrecorded({ reloadMetro }) });
     expect(bare).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_AMBIGUOUS' } });
     expect(reloadMetro).toHaveBeenCalledTimes(1);
+    expect(reloadMetro).toHaveBeenCalledWith(8082, { peersOnly: true });
     const named = await runReload({ root: '/project', platform: 'ios', deps: unrecorded({ reloadMetro }) });
     expect(named).toMatchObject({ ok: true, facts: { strategy: 'metro-broadcast', targets: null } });
   });
@@ -1186,7 +1215,7 @@ describe('a workspace with no launch on an owned local simulator or emulator', (
     });
     expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_STOPPED' } });
     expect(!result.ok ? result.error.message : '').not.toContain('01a15cf7-0000');
-    expect(reloadMetro).toHaveBeenCalledWith(8082, { role: 'android' });
+    expect(reloadMetro).toHaveBeenCalledWith(8082, { peersOnly: true, role: 'android' });
   });
 
   test('a Metro that is not this workspace is never asked to reload', async () => {
@@ -1211,19 +1240,13 @@ describe('a workspace with no launch on an owned local simulator or emulator', (
     expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_FAILED' } });
   });
 
-  test('plain output says the app was not launched by Stim', async () => {
-    const program = new Command();
-    registerReload(program, unrecorded());
-    const lines: string[] = [];
-    const originalLog = console.log;
-    console.log = (line) => lines.push(String(line));
-    try {
-      await program.parseAsync(['node', 'stim', 'reload', 'android']);
-    } finally {
-      console.log = originalLog;
-    }
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain('for apps Stim did not launch');
-    expect(lines[0]).toContain('port 8082');
+  test('a bare reload against a Metro that does not answer reports failure, not a missing launch', async () => {
+    const result = await runReload({
+      root: '/project',
+      deps: unrecorded({
+        reloadMetro: async () => ({ failed: true, unreachable: true, reason: 'Metro did not answer on port 8082.' }),
+      }),
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_FAILED' } });
   });
 });

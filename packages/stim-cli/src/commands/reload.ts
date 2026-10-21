@@ -325,7 +325,7 @@ function unlaunchedRefusal(
       ? `No ${platform} app launch is recorded for this workspace${connected}.`
       : `No live app launch is recorded${connected}.`,
     metroPort
-      ? `${run} An app on a physical device (--device) is reloaded through Metro once it is running and connected; an Android phone needs \`adb reverse tcp:${metroPort} tcp:${metroPort}\`.`
+      ? `${run} An app on a physical device (--device) is reloaded through Metro once it is running and connected${platform === 'ios' ? '' : `; an Android phone needs \`adb reverse tcp:${metroPort} tcp:${metroPort}\``}.`
       : run,
   );
 }
@@ -344,14 +344,31 @@ async function reloadUnrecorded(
   const metro = await d.resolveMetro(port, root, signal);
   throwIfCancelled(signal, 'reload');
   if (!metro.metro) return refusal();
-  let target = platform ?? remote?.platform ?? null;
+  const probe = await d.reloadMetro(port, {
+    peersOnly: true,
+    ...(platform ? { role: platform } : {}),
+    ...(signal ? { signal } : {}),
+  });
+  throwIfCancelled(signal, 'reload');
+  if (!probe.ok) {
+    return probe.unreachable
+      ? {
+          ok: false,
+          error: failure(
+            'STIM_RELOAD_FAILED',
+            probe.reason,
+            `Metro is registered for this workspace but did not answer on port ${port}. Run \`stim reload${platform ? ` ${platform}` : ''}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server.`,
+          ),
+        }
+      : refusal();
+  }
+  let target = platform;
   if (!target) {
-    const peers = await d.reloadMetro(port, { peersOnly: true, ...(signal ? { signal } : {}) });
-    throwIfCancelled(signal, 'reload');
-    if (!peers.ok) return refusal();
-    const platforms = peers.platforms ?? [];
+    const platforms = probe.platforms ?? [];
     const [only] = platforms;
+    const recorded = remote?.platform ?? null;
     if (only && platforms.length === 1) target = only;
+    else if (recorded && (platforms.length === 0 || platforms.includes(recorded))) target = recorded;
     else {
       return {
         ok: false,
@@ -365,6 +382,7 @@ async function reloadUnrecorded(
       };
     }
   }
+  const session = remoteSessionFor(remote, target);
   const reloaded = await d.reloadMetro(port, { role: target, ...(signal ? { signal } : {}) });
   throwIfCancelled(signal, 'reload');
   if (!reloaded.ok) {
@@ -377,14 +395,14 @@ async function reloadUnrecorded(
             `Metro is registered for this workspace but did not answer on port ${port}. Run \`stim reload ${target}\` again. If it keeps timing out, run \`stim doctor\` to check the dev server.`,
           ),
         }
-      : { ok: false, error: unlaunchedRefusal(target, port, remote) };
+      : { ok: false, error: unlaunchedRefusal(target, port, session) };
   }
   return {
     ok: true,
     facts: {
       platform: target,
       deviceId: `metro:${port}`,
-      deviceName: remote ? `EAS Simulator session ${remote.sessionId}` : 'devices connected to Metro',
+      deviceName: session ? `EAS Simulator session ${session.sessionId}` : 'devices connected to Metro',
       appId: null,
       metroPort: port,
       strategy: reloaded.broadcast ? 'metro-broadcast' : 'metro-websocket',

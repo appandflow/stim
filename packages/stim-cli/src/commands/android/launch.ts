@@ -340,9 +340,7 @@ async function verifyAndroidMetroRun({
         ),
       );
     } else if (verification.processAlive === true && metroPort !== null) {
-      const reloadRemedy = physical
-        ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
-        : 'run `stim reload android`.';
+      const reloadRemedy = 'run `stim reload android`.';
       phase(
         'remedy',
         chalk.yellow(
@@ -364,9 +362,7 @@ async function verifyAndroidMetroRun({
     if (report.summary) phase('launch', chalk.dim(report.summary));
     for (const line of report.lines) phase('launch', chalk.yellow(line));
     if (report.lines.length > 0 && verification.processAlive === true && metroPort !== null) {
-      const reloadRemedy = physical
-        ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
-        : 'run `stim reload android`.';
+      const reloadRemedy = 'run `stim reload android`.';
       phase(
         'remedy',
         chalk.yellow(

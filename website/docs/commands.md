@@ -826,7 +826,7 @@ Stim does not record launches on a physical device (`--device`) or an EAS
 Simulator session (`--remote eas`). When no owned launch is live, `reload` asks
 this workspace's Metro for its connected apps and reloads them, so it reaches an
 app on a phone or in an EAS session that is running and connected to that Metro.
-Name the platform when Metro reports apps on both. The facts have `appId: null`
+Without a recorded package name, every connected client that is not an iOS client counts as Android. Name the platform when Metro reports apps on both, and a platform with no connected client is never sent a request. The facts have `appId: null`
 and `deviceId: "metro:<port>"` because Stim does not know the device, and
 Stim changes nothing on it. An Android phone needs its `adb reverse` for the
 Metro port, which `android --device` adds; reload does not restore it. When no
