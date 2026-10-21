@@ -505,9 +505,12 @@ async function reclaimIdleProject(
       : null;
   if (supervisor.status === 'ours') {
     const processToken = supervisor.processToken;
-    await withWorkspaceStateLockAsync(path, () => requestDevServerStop(path, processToken, stopRequester));
+    await withWorkspaceStateLockAsync(path, () => requestDevServerStop(path, processToken, stopRequester)).catch(
+      () => {},
+    );
     const signalled = await killMetroTreeAsync(supervisor.pid, supervisor.processToken, operation);
-    if (!signalled) await withWorkspaceStateLockAsync(path, () => withdrawDevServerStopRequest(path, processToken));
+    if (!signalled)
+      await withWorkspaceStateLockAsync(path, () => withdrawDevServerStopRequest(path, processToken)).catch(() => {});
     if (signalled && (await waitForProcessExit(supervisor, 10_000, signal))) {
       killedPid = supervisor.pid!;
     } else {

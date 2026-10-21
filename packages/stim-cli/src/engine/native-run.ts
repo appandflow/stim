@@ -221,7 +221,7 @@ function cancelOnAbort({
     requestListeners.delete(claim.claimId);
     context.signal.removeEventListener('abort', onAbort);
     allowDeclaredSpawns(context);
-    await withWorkspaceStateLockAsync(root, () => clearNativeRunCancel(root, claim.claimId));
+    await withWorkspaceStateLockAsync(root, () => clearNativeRunCancel(root, claim.claimId)).catch(() => {});
   };
 }
 
