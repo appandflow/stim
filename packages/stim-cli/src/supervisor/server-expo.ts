@@ -160,7 +160,9 @@ export function recordFromLine(
       const record = JSON.parse(msg.slice('stim-bundle-response: '.length));
       if (
         record.src === 'metro' &&
-        /^bundle_(response|prefetch)_(started|progress|finished|failed)$/.test(record.event) &&
+        /^(?:bundle_(?:response|prefetch)_(?:started|progress|finished|failed)|manifest_request_(?:started|finished|failed))$/.test(
+          record.event,
+        ) &&
         ['ios', 'android'].includes(record.platform) &&
         typeof record.requestId === 'string' &&
         Number.isFinite(record.ts)
@@ -213,7 +215,7 @@ export function parseExpoWaitingOnUrl(line: unknown): string | null {
 
 function resolveMetroStoreInjection(
   root: string,
-  { log, env, settings }: { log: NdjsonWriter; env: NodeJS.ProcessEnv; settings: SettingsObject },
+  { log, env, settings, port }: { log: NdjsonWriter; env: NodeJS.ProcessEnv; settings: SettingsObject; port: number },
 ): Record<string, string> | null {
   const sharedCache = resolveMetroSharedCache(settings);
   if (!sharedCache) {
@@ -250,6 +252,7 @@ function resolveMetroStoreInjection(
   const storeRoot = sharedCache ? metroStoreRoot(root) : '';
   const additions = expoMetroStoreEnv({
     root,
+    port,
     storeRoot,
     adapterPath,
     existingOverride: env.EXPO_OVERRIDE_METRO_CONFIG,
@@ -307,6 +310,7 @@ export async function startExpoServer({
     log,
     env: process.env,
     settings: settings ?? resolveProjectSettings(root).settings,
+    port,
   });
 
   // On Windows the package bin's shebang resolves `node` through PATH, where pnpm

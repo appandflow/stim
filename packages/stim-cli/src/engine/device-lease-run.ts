@@ -2,7 +2,7 @@ import type { StimContext } from '@stim-cli/core';
 import { operationState } from './operation-state.ts';
 import { deviceSlotKey } from '../devices/device-slots.ts';
 import { clockTime, formatElapsed } from '../command-output.ts';
-import { VERIFY_TIMEOUT_MS } from './launch-verify.ts';
+import { MANIFEST_VERIFY_TIMEOUT_MS } from './launch-verify.ts';
 import { APP_READINESS_TIMEOUT_MS } from './app-readiness.ts';
 import {
   deviceLeasePath,
@@ -19,7 +19,7 @@ import {
 } from './device-lease.ts';
 
 export const LEASE_STEP_FLOOR_MS = 60_000;
-export const DEBUG_VERIFY_STEP_MS: number = VERIFY_TIMEOUT_MS + APP_READINESS_TIMEOUT_MS;
+export const DEBUG_VERIFY_STEP_MS: number = MANIFEST_VERIFY_TIMEOUT_MS + APP_READINESS_TIMEOUT_MS;
 export const DEFAULT_DEVICE_WAIT_SECONDS = 60;
 export const DEVICE_WAIT_POLL_MS = 2_000;
 export const DEVICE_WAIT_LINE_MS = 30_000;

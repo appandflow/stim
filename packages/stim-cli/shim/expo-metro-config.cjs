@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
+const http = require('node:http');
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const { bundleResponseMiddleware } = require('./bundle-response.cjs');
@@ -17,6 +18,7 @@ const OK_PREFIX = 'stim-metro-store: sharing Metro transforms through ';
 
 let announced = false;
 let warned = false;
+let armed = false;
 
 function warn(reason) {
   if (warned) return;
@@ -125,6 +127,27 @@ function runLsof(args) {
   );
 }
 
+// The manifest observer installs itself on the first request that reaches Stim's middleware, and the dev client's
+// manifest request can come first, so the dev server asks itself for the warmup endpoint as soon as it listens.
+function armManifestObserver() {
+  const port = Number(process.env.STIM_METRO_PORT);
+  if (armed || !Number.isInteger(port) || port <= 0) return;
+  armed = true;
+  let attempts = 0;
+  const probe = () => {
+    const retry = () => {
+      if (++attempts < 240) setTimeout(probe, 250).unref();
+    };
+    const request = http.get({ host: '127.0.0.1', port, path: '/_stim/metro-warmup', timeout: 2000 }, (response) => {
+      response.resume();
+      if (response.statusCode !== 200) retry();
+    });
+    request.on('timeout', () => request.destroy());
+    request.on('error', retry);
+  };
+  setTimeout(probe, 0).unref();
+}
+
 function appendStore(config, defaultConfig) {
   const output = config && typeof config === 'object' ? config : {};
   const configuredStores = output.cacheStores != null ? output.cacheStores : defaultConfig.cacheStores;
@@ -139,8 +162,9 @@ function appendStore(config, defaultConfig) {
         const enhanced = enhanceMiddleware ? enhanceMiddleware(middleware, metroServer) : middleware;
         const observe = bundleResponseMiddleware(
           (record) => process.stderr.write(`stim-bundle-response: ${JSON.stringify(record)}\n`),
-          { runLsof: process.platform === 'darwin' ? runLsof : undefined },
+          { runLsof: process.platform === 'darwin' ? runLsof : undefined, manifests: true },
         );
+        armManifestObserver();
         return (req, res, next) => observe(req, res, (error) => (error ? next(error) : enhanced(req, res, next)));
       },
     },

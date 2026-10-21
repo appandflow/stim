@@ -7,6 +7,8 @@ const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 // https://github.com/facebook/metro/blob/main/packages/metro/src/Server.js (`writeChunk` with done, total, percent).
 const PROGRESS_PART = /^\{"done":(\d+),"total":(\d+),"percent":(\d+)\}$/;
 const PROGRESS_INTERVAL_MS = 1000;
+const MANIFEST_PATHS = new Set(['/', '/manifest', '/index.exp']);
+const observedServers = new WeakSet();
 
 function clientPidFromLsof(output, clientPort, serverPort) {
   const connection = new RegExp(`:${clientPort}->\\S*:${serverPort}$`);
@@ -28,9 +30,58 @@ function lookupClientPid(req, runLsof) {
     .catch(() => null);
 }
 
-function bundleResponseMiddleware(write, { runLsof } = {}) {
+function manifestPlatform(req) {
+  if (req.method !== 'GET') return null;
+  let url;
+  try {
+    url = new URL(req.url, 'http://localhost');
+  } catch {
+    return null;
+  }
+  if (!MANIFEST_PATHS.has(url.pathname)) return null;
+  const platform = req.headers['expo-platform'] ?? url.searchParams.get('platform');
+  return platform === 'ios' || platform === 'android' ? platform : null;
+}
+
+// @expo/cli mounts ManifestMiddleware ahead of Metro's middleware and answers without calling next(),
+// so only a listener on the HTTP server itself sees a manifest request.
+function observeManifestRequests(server, write) {
+  if (!server || observedServers.has(server)) return;
+  observedServers.add(server);
+  server.prependListener('request', (req, res) => {
+    const platform = manifestPlatform(req);
+    if (!platform || req.headers['x-stim-metro-warmup'] === '1') return;
+    const requestId = randomUUID();
+    const emit = (stage, statusCode) => {
+      try {
+        write({
+          ts: Date.now(),
+          src: 'metro',
+          level: 'debug',
+          event: `manifest_request_${stage}`,
+          platform,
+          requestId,
+          ...(statusCode ? { statusCode } : {}),
+          msg: `${platform} manifest request ${stage}`,
+        });
+      } catch {}
+    };
+    emit('started');
+    let ended = false;
+    const finish = (complete) => {
+      if (ended) return;
+      ended = true;
+      emit(complete && res.statusCode === 200 ? 'finished' : 'failed', res.statusCode);
+    };
+    res.once('finish', () => finish(true));
+    res.once('close', () => finish(false));
+  });
+}
+
+function bundleResponseMiddleware(write, { runLsof, manifests = false } = {}) {
   return (req, res, next) => {
     if (req.method === 'GET' && req.url === '/_stim/metro-warmup') {
+      if (manifests) observeManifestRequests(req.socket.server, write);
       res.end('ready');
       return;
     }

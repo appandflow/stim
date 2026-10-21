@@ -4,7 +4,7 @@ import assert from 'node:assert';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { VERIFY_TIMEOUT_MS } from '../engine/launch-verify.ts';
+import { MANIFEST_VERIFY_TIMEOUT_MS, VERIFY_TIMEOUT_MS } from '../engine/launch-verify.ts';
 import { APP_READINESS_TIMEOUT_MS } from '../engine/app-readiness.ts';
 import { deviceLeasePath, parseLease, takeLease, type LeaseIo, type WorkspaceLeases } from '../engine/device-lease.ts';
 import {
@@ -121,7 +121,9 @@ describe('the flags that steer the wait', () => {
     expect(leaseStepMs(0)).toBe(LEASE_STEP_FLOOR_MS);
     expect(leaseStepMs(1000)).toBe(LEASE_STEP_FLOOR_MS);
     expect(leaseStepMs(INSTALL_MS)).toBe(INSTALL_MS);
-    expect(leaseStepMs(DEBUG_VERIFY_STEP_MS)).toBeGreaterThanOrEqual(VERIFY_TIMEOUT_MS + APP_READINESS_TIMEOUT_MS);
+    expect(leaseStepMs(DEBUG_VERIFY_STEP_MS)).toBeGreaterThanOrEqual(
+      MANIFEST_VERIFY_TIMEOUT_MS + APP_READINESS_TIMEOUT_MS,
+    );
   });
 });
 

@@ -338,6 +338,14 @@ leased until <time>" for each one.`,
                                  finishing
                     "unverified" nothing was observed at all: usually a
                                  dev-client server picker awaiting a tap
+                  The wait for the app's bundle request is 20 seconds. On
+                  Expo, the dev client's manifest request (recorded in the
+                  metro log as manifest_request_started, _finished or _failed)
+                  counts as progress: the wait stays open while one is in
+                  flight and for 15 seconds after one was served, up to 60
+                  seconds after the launch. A manifest is never launch
+                  evidence, so a launch that makes no bundle request is still
+                  "unverified". Bare React Native makes no manifest request.
                   Neither "bundling" nor "unverified" is reported for an app
                   whose process is gone when the bundle timeout closes: the
                   run fails as FATAL, "the app process exited", with the

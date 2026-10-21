@@ -179,6 +179,19 @@ window closes and the app process is gone, the run fails with `the app process
 exited` and the device log's errors instead. Release runs check process
 liveness without Metro.
 
+The wait for the app's bundle request is 20 seconds. An Expo development
+client asks the dev server for its manifest before it asks for the bundle, and
+Expo recomputes the project fingerprint for every manifest request, so a loaded
+machine can spend most of the window there. Stim records each manifest request
+from the launched platform in the metro log, as `manifest_request_started`,
+`manifest_request_finished` or `manifest_request_failed` at `debug` level, and
+counts it as progress: the wait stays open while a manifest request is in
+flight and for 15 seconds after one was served, up to 60 seconds after the
+launch. A manifest is not launch evidence. `launched` is `true` or `"bundling"`
+only after the app's bundle request, and a launch that never makes one still
+ends `unverified`. Bare React Native has no manifest request and keeps the
+20-second window.
+
 When the app is already running, from an earlier run or because the install
 was skipped, Stim restarts it the way Xcode's Run does: `simctl terminate` on
 a simulator, `am force-stop` on an emulator or an Android phone, then a fresh
