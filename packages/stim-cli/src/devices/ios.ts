@@ -264,6 +264,22 @@ const SPRINGBOARD_POLL_MS = 250;
 
 type SpringBoardStartup = { state: 'started' } | { state: 'timed-out' } | { state: 'unreadable'; reason: string };
 
+// The pid in `com.apple.springboard.finishedstartup`, or null while SpringBoard is not running.
+// It changes on every simulator reboot.
+export async function readSpringBoardPid(udid: string): Promise<number | null> {
+  try {
+    const output = await getExecutor().runFileAsync(
+      'xcrun',
+      ['simctl', 'spawn', udid, 'notifyutil', '-g', 'com.apple.springboard.finishedstartup'],
+      { timeoutMs: SPRINGBOARD_QUERY_TIMEOUT_MS },
+    );
+    const pid = Number(/^com\.apple\.springboard\.finishedstartup (\d+)$/m.exec(output)?.[1] ?? 0);
+    return pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
 // `simctl bootstatus -b` returns before SpringBoard has started. Until it has,
 // `simctl launch` blocks and SpringBoard resets the volume (#4075). It sets the
 // `com.apple.springboard.finishedstartup` notify state to its pid once started.

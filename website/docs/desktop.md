@@ -263,8 +263,9 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   animation speed and reads the setting back; Shake sends a shake event to the
   foreground app. Android animation settings are unchanged.
 - **Device sound.** Stim mutes each owned local simulator and emulator when it
-  boots it. While **Control** is on, a simulator's options have **Sound** and an
-  Android emulator's have **Media sound**, which turn that device's audio on
+  boots it, and a running simulator that SimSlim reboots. While **Control** is
+  on, a simulator's options have **Sound** and an Android emulator's have
+  **Media sound**, which turn that device's audio on
   until it next boots. Media sound changes music and video volume only; alarms
   and ringtones keep their Android settings. It needs Android 15 or later; on
   older images startup warns that it could not mute the emulator. Your Mac's
