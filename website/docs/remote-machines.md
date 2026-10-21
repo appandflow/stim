@@ -353,8 +353,11 @@ When the app pins Node in `.nvmrc`, `.node-version`, `.tool-versions` or
 `package.json`'s `volta.node`, in its own directory or the nearest one above it
 in the repository, the worker installs dependencies, runs prebuild and pods, and
 runs xcodebuild with an installed Node that satisfies the pin: an nvm, fnm,
-Volta, asdf, mise or linked Homebrew `node`/`node@NN` install. It also writes
-that Node to the iOS project's `.xcode.env.local`. A warm Gradle daemon keeps
+Volta, asdf, mise or linked Homebrew `node`/`node@NN` install. On every
+offloaded iOS build, pinned or not, the worker also writes the first `node` on
+its `PATH` (the pinned Node when it put one first) as `NODE_BINARY` in the iOS
+project's `.xcode.env.local`, replacing any `export NODE_BINARY=` line already
+there. A warm Gradle daemon keeps
 running React Native's Node steps on the Node it started with
 ([#4081](https://github.com/appandflow/stim/issues/4081)). A pin naming a version the
 worker does not have, such as `22.22.0`, uses the newest installed Node of that

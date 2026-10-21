@@ -951,8 +951,10 @@ depend on.
 
 The worker runs the dependency install, prebuild, pods and xcodebuild with the
 Node the app pins, in its directory or the nearest one above it in the
-checkout, first on PATH, chosen as for Metro (see \`stim guide metro\`), and
-names that Node as NODE_BINARY in the iOS project's .xcode.env.local. A warm
+checkout, first on PATH, chosen as for Metro (see \`stim guide metro\`). On
+every offloaded iOS build, pinned or not, it writes the first node on its PATH
+(the pinned Node when it put one first) as NODE_BINARY in the iOS project's
+.xcode.env.local, replacing any export NODE_BINARY= line already there. A warm
 Gradle daemon keeps running React Native's node steps on the Node it started
 with. When no installed Node fits the pin, the steps run on the worker's node
 and a deps-failed or prebuild-failed reason names the pin and that Node's
