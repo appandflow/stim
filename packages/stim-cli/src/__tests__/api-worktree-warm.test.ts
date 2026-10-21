@@ -52,7 +52,6 @@ async function fixture(name: string) {
   return { root, linked, home, env, carried, output };
 }
 
-// A carried directory is cloned by the compiled stim-clonefile helper on macOS and by cp elsewhere.
 const isCarriedCopy = (file: string) => file === 'cp' || file.includes('stim-clonefile-');
 
 test('concurrent warm clients copy real ignored files with isolated homes and progress', async () => {
