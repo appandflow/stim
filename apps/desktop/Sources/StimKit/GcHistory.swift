@@ -43,7 +43,8 @@ public struct GcHistoryItem: Decodable, Hashable, Sendable {
     "easSession": "EAS session", "worktree": "Worktree", "cache": "Cache", "statusCache": "Status cache",
     "tempLeftover": "Temp leftover", "trash": "Trash", "watchmanRoot": "Watchman root", "watchman": "Watchman",
     "gradleDaemon": "Gradle daemon", "gradleVersion": "Gradle version", "kotlinDaemon": "Kotlin daemon",
-    "devServer": "Dev server", "buildDirectory": "Build folder", "dependencies": "Dependencies",
+    "devServer": "Dev server", "workspaceLogs": "Workspace logs", "ledgerEntry": "Ledger entry",
+    "easLedgerEntry": "EAS ledger entry", "buildDirectory": "Build folder", "dependencies": "Dependencies",
   ]
 }
 

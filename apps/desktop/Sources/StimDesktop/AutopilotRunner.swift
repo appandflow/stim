@@ -97,7 +97,7 @@ final class AutopilotRunner: ObservableObject {
         id: "\(archived ? Notifier.archivedPressurePrefix : Notifier.ranPressurePrefix)\(run.id)",
         title: "Free disk is under the Stim budget",
         body: summary
-          ?? "Stim Desktop ran stim gc --delete. \(run.exitStatus == 0 ? "It finished" : "It exited with an error"); see the autopilot log.",
+          ?? "Stim Desktop ran stim gc --delete. \(run.exitStatus == 0 ? "It finished" : "It exited with an error"); see Settings > App > Cleanup History.",
         offersPlan: false)
     }
   }
