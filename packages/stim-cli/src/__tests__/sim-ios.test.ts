@@ -817,7 +817,7 @@ test('bootIosSim finishes only once SpringBoard has started, after bootstatus', 
   try {
     const { settledEarly, result, messages } = await bootWaitingForSpringBoard(45000);
     expect(settledEarly).toBe(false);
-    expect(result).toEqual({ springBoardUnreadable: null });
+    expect(result).toBeUndefined();
     expect(messages[0]).toContain('Last boot output: waiting for SpringBoard');
   } finally {
     vi.useRealTimers();
@@ -837,7 +837,7 @@ test('bootIosSim fails at the boot deadline when SpringBoard never starts', asyn
   }
 });
 
-test('bootIosSim reports an unreadable SpringBoard state without failing the boot', async () => {
+test('bootIosSim does not fail the boot when the SpringBoard state is unreadable', async () => {
   setExecutor({
     runFile: (_file, args = []) => {
       if (args.includes('notifyutil')) throw new Error('notifyutil: No such file or directory');
@@ -846,9 +846,7 @@ test('bootIosSim reports an unreadable SpringBoard state without failing the boo
     runFileQuiet: () => '',
     spawn: () => makeExitingChild(),
   });
-  expect(await bootIosSim('UDID-A', { openViewer: false })).toEqual({
-    springBoardUnreadable: 'notifyutil: No such file or directory',
-  });
+  await expect(bootIosSim('UDID-A', { openViewer: false })).resolves.toBeUndefined();
 });
 
 test('bootIosSim reports a sim that vanished from the device list', async () => {
@@ -972,7 +970,7 @@ test('opening the Simulator app is bounded and best-effort after successful boot
       return null;
     },
   });
-  await expect(bootIosSim('UDID-A')).resolves.toBeDefined();
+  await expect(bootIosSim('UDID-A')).resolves.toBeUndefined();
 });
 
 test('opening a simulator on Xcode 27 focuses its UDID in the selected Device Hub', async () => {
@@ -993,7 +991,7 @@ test('opening a simulator on Xcode 27 focuses its UDID in the selected Device Hu
       return null;
     },
   });
-  await expect(bootIosSim('UDID-A')).resolves.toBeDefined();
+  await expect(bootIosSim('UDID-A')).resolves.toBeUndefined();
 });
 
 test.each([

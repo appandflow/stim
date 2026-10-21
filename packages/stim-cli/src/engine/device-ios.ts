@@ -18,6 +18,7 @@ import {
   bootIosSim,
   createOwnedIosSim,
   iosSimulatorFailureAdvice,
+  waitForSpringBoard,
   listAllIosSims,
   listAllIosSimsAsync,
   type IosSimSnapshot,
@@ -70,12 +71,9 @@ function startIosBoot(
     { platform: 'ios', key: udid },
     async () => {
       out(chalk.dim(phaseLine('device', `booting ${label} (${udid})`)));
-      await muteBootedSimulator(
-        udid,
-        await bootIosSim(udid, { label, out, simulatorApp, env: ambientContext()?.env }),
-        out,
-      );
+      await bootIosSim(udid, { label, out, simulatorApp, env: ambientContext()?.env });
       await configure();
+      await muteBootedSimulator(udid, out);
     },
     { ...deviceSlotWait, root, out },
   );
@@ -83,13 +81,18 @@ function startIosBoot(
   return { udid, done };
 }
 
-async function muteBootedSimulator(
-  udid: string,
-  { springBoardUnreadable }: { springBoardUnreadable: string | null },
-  out: Notify,
-): Promise<void> {
+const SPRINGBOARD_MUTE_WAIT_MS = 60000;
+
+// SpringBoard publishes the default volume, 60, every time it starts, and SimSlim
+// reboots the simulator when it applies or removes a profile (#4229). Mute last,
+// once SpringBoard is running again.
+async function muteBootedSimulator(udid: string, out: Notify): Promise<void> {
   try {
-    if (springBoardUnreadable) throw new Error(springBoardUnreadable);
+    const springBoard = await waitForSpringBoard(udid, Date.now() + SPRINGBOARD_MUTE_WAIT_MS);
+    if (springBoard.state === 'unreadable') throw new Error(springBoard.reason);
+    if (springBoard.state === 'timed-out') {
+      throw new Error(`SpringBoard did not finish starting within ${SPRINGBOARD_MUTE_WAIT_MS / 1000}s.`);
+    }
     const response: unknown = JSON.parse(
       await getExecutor().runFileAsync(
         'xcrun',
@@ -589,11 +592,8 @@ export async function ensureIosBooted({
       { platform: 'ios', key: udid },
       async () => {
         out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
-        await muteBootedSimulator(
-          udid,
-          await bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp, env: ambientContext()?.env }),
-          out,
-        );
+        await bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp, env: ambientContext()?.env });
+        await muteBootedSimulator(udid, out);
       },
       { ...deviceSlotWait, root: projectPath, out },
     );
