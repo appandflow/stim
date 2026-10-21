@@ -1,5 +1,6 @@
 import { request } from 'node:http';
 import { join } from 'node:path';
+import { rotatedLogPath } from '@stim-cli/core';
 import { acceptsShape, settingDefinition } from '@stim-cli/core/state';
 import { tailLines } from '../devices/activity.ts';
 
@@ -38,16 +39,19 @@ async function requestLocal(url: URL, platform: string, prefetch: boolean): Prom
 function recordedBundleUrl(logsDir: string | null | undefined, platform: 'ios' | 'android'): string | null {
   const setting = settingDefinition(`metro.warmupUrl.${platform}`);
   if (!logsDir || !setting) return null;
-  for (const line of (tailLines(join(logsDir, 'metro.ndjson')) ?? []).toReversed()) {
-    try {
-      const record = JSON.parse(line);
-      if (
-        record?.event === 'bundle_response_started' &&
-        record.platform === platform &&
-        acceptsShape(setting, record.url)
-      )
-        return record.url;
-    } catch {}
+  const log = join(logsDir, 'metro.ndjson');
+  for (const file of [log, rotatedLogPath(log)]) {
+    for (const line of (tailLines(file) ?? []).toReversed()) {
+      try {
+        const record = JSON.parse(line);
+        if (
+          record?.event === 'bundle_response_started' &&
+          record.platform === platform &&
+          acceptsShape(setting, record.url)
+        )
+          return record.url;
+      } catch {}
+    }
   }
   return null;
 }

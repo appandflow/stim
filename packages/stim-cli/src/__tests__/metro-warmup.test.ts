@@ -224,6 +224,12 @@ describe('the bundle URL an app requested earlier', () => {
     expect(await warm()).toEqual([newer]);
   });
 
+  test('a record that rotated into the previous log generation is still used', async () => {
+    writeFileSync(`${join(logsDir, 'metro.ndjson')}.1`, `${started('ios', APP_URL)}\n`);
+    metroLog(started('android', '/other.bundle?platform=android'));
+    expect(await warm()).toEqual([APP_URL]);
+  });
+
   test('metro.warmupUrl overrides the recorded URL', async () => {
     metroLog(started('ios', APP_URL));
     const override = '/custom.bundle?platform=ios&dev=true';

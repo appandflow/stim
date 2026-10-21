@@ -308,7 +308,8 @@ WHAT WRITES WHAT
                        middleware adds one record per bundle request
                        (bundle_response_started, _progress, _finished,
                        _failed; _started carries the request's path and
-                       query as url, which the next warmup prefetches) and, on Expo, one per dev-client manifest
+                       query as url, which the next warmup prefetches)
+                       and, on Expo, one per dev-client manifest
                        request (manifest_request_started, _finished,
                        _failed: debug level, with platform and requestId;
                        launch verification reads them as progress)

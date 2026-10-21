@@ -1229,6 +1229,7 @@ describe('Metro prefetch', () => {
               isExpo: false,
               appId: 'com.example.app',
               bundleUrl,
+              logsDir: expect.stringMatching(/logs$/),
             });
             warming = true;
             return new Promise(() => {});
