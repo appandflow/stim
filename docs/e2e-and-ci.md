@@ -125,10 +125,13 @@ Generated iOS fixtures use the committed
 [`simslim-profile.json`](../test/e2e/native/simslim-profile.json) to reduce
 background services while running several simulators. Install the prerequisite
 with `brew install mobai-app/tap/simslim`; CI does this automatically. The profile
-keeps App Store/push/media, web/universal links, connectivity, diagnostics, and
-miscellaneous system services. It disables widgets, Siri, search, account sync,
-PIM, family, health, photos, bundled apps, and messaging, which these blank-app
-scenarios do not exercise. Review the profile when adding feature-specific QA.
+keeps only SimSlim's ads, diagnostics and telemetry category enabled. SpringBoard,
+app installation and launch, and networking belong to no SimSlim category, so
+SimSlim never disables them. It disables every other category: widgets, Siri, search, account
+sync, App Store/push/media, PIM, web/universal links, family, health, photos,
+bundled apps, messaging, connectivity and miscellaneous services, which these
+blank-app scenarios do not exercise. Review the profile when adding
+feature-specific QA.
 Supplied `--app-dir` projects retain their own settings. Stock simulator boot
 and memory behavior require a separate run against a project without a profile.
 
@@ -416,7 +419,13 @@ and profile reconciliation, then shuts it down through Stim. It does not start
 Metro, build the app, or populate the native artifact cache. Stock fixtures
 and Android do not take this preparation path.
 
-The loop still asserts three distinct simulators are booted simultaneously. The
+The iOS loop asserts that two distinct simulators, the default slot and the
+`second` slot, are booted simultaneously, and that stopping `second` leaves the
+default slot booted. The Linux Android loop adds a `third` slot and asserts three
+distinct emulators. The 3-vCPU, 7 GB `xcode-27` runner spends most of the job in
+each new simulator's first boot, so the iOS loop does not run a third simulator
+or a per-slot `--device-type` override. The CI job also turns off Spotlight
+indexing before it installs anything. The
 Windows Android loop runs one emulator at a time and skips the named-slot proof, because
 the 4-vCPU runner starves the adb server and the package verifier with two (#3086).
 Cache suites still require a cold artifact miss and race two commands against

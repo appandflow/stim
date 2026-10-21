@@ -345,8 +345,11 @@ output, current memory pressure, and highest observed pressure roughly every
 15 seconds. Recovery advice appears when pressure first reaches warning or
 critical, and again only when the level changes. Boot failures retain the highest pressure and the number of
 unavailable readings. Unknown readings are not treated as normal, and pressure
-does not prove the cause of a timeout. The boot deadline remains ten minutes,
-but synchronous CLI work can delay observations, progress, and timeout handling.
+does not prove the cause of a timeout. The boot deadline remains ten minutes
+and also covers SpringBoard finishing its startup after `simctl bootstatus`
+returns, so a slow host spends that time in the boot step, where the last boot
+output reads `waiting for SpringBoard`, rather than in the app launch.
+Synchronous CLI work can delay observations, progress, and timeout handling.
 Diagnostics report observation gaps over 30 seconds; pressure during those gaps
 is unobserved, even when surrounding readings are normal.
 
@@ -390,6 +393,8 @@ the command itself.
 | Gradle or Kotlin daemon | `stim gc --delete --cache gradle-daemons` | stops idle daemons; the next build starts one  |
 
 Any other abnormal process is named with its size only; ask before quitting it.
+Boot does not wait for the `top` read: the pressure message prints at once and the
+named processes follow on a second memory line when `top` finishes.
 Doctor skips this check when `STIM_HOME` is set, because processes are
 machine-global.
 While pressure stays elevated, the automatic maintenance check also records the
@@ -480,7 +485,10 @@ names refuse at setup before checking the cache. See [machine settings](./settin
 The app builds locally by default; `--eas-profile` can instead download an
 [EAS development build](./eas-builds.md). `stim start --remote` creates the
 Metro route required by the remote device. Remote EAS sessions can incur cost
-independently of the build source. Stim prepares the app before it creates or
+independently of the build source. Stim has EAS stop every session it creates
+after `remote.easMaxDurationMinutes` (machine setting, default 30), which ends a
+session whose workspace was deleted by hand; the next run replaces an expired
+session. EAS rejects a value above the account plan's session limit. Stim prepares the app before it creates or
 reconnects the session, so a failed build starts no session and the install
 follows the connection directly.
 
@@ -746,7 +754,14 @@ Debug build worker. A named host never falls back: `STIM_HOSTING_REFUSED` names
 unreachable, declined or uncertain placement and its reason.
 
 Metro stays on this machine. Its supervisor runs a private tailnet gateway to the
-host's loopback bridge; no `stim start --remote` is needed. `metro.tunnel` and
+host's loopback bridge; no `stim start --remote` is needed. For an Expo dev
+client the bridge listens on this machine's Metro port, because the dev server
+writes that port into the manifest's bundle URL. When the iOS run starts Metro,
+it asks the host first and picks a port free on both Macs, moving the workspace's
+recorded port if the host uses it. A Metro that is already running on a port the
+host uses, or a `metro.port` pin the host uses, refuses before the build: run
+`stim stop`, then `stim ios --remote <mac>` without `stim start`, or pin a port
+free on both Macs. `metro.tunnel` and
 `metro.publicUrl` are ignored, and non-Debug runs skip Metro. Hosted Debug runs
 require a running supervisor with private gateway support before reserving a
 simulator; `--no-metro-check` refuses with `STIM_BAD_ARG`. If Metro is missing or

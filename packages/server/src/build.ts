@@ -49,7 +49,7 @@ import {
   swiftpmArtifactQuery,
   validMacosResourceDestination,
 } from '@stim-cli/core';
-import type { BuildOfferParams, BuildStartParams } from '@stim-cli/core/protocol';
+import type { BuildFingerprintSource, BuildOfferParams, BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
 import { listCommandLines } from './processes.ts';
 import { BuildArtifactCache, validArtifactIdentity } from './build-artifact-cache.ts';
@@ -150,6 +150,52 @@ const validRepo = (repo: unknown): repo is string =>
 const gb = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
 
 const optional = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+
+const MAX_FINGERPRINT_SOURCES = 20_000;
+
+function fingerprintSources(value: unknown): BuildFingerprintSource[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_FINGERPRINT_SOURCES) return null;
+  const valid = value.every(
+    (source) =>
+      isJsonObject(source) &&
+      Object.keys(source).every((key) => key === 'id' || key === 'hash') &&
+      typeof source.id === 'string' &&
+      source.id.length > 0 &&
+      source.id.length <= MAX_PATH_CHARS &&
+      (source.hash === null || (typeof source.hash === 'string' && /^[0-9a-f]{1,128}$/.test(source.hash))),
+  );
+  return valid ? (value as BuildFingerprintSource[]) : null;
+}
+
+function fingerprintIgnored(value: unknown): string[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_FINGERPRINT_SOURCES) return null;
+  const paths: string[] = [];
+  for (const path of value) {
+    if (typeof path !== 'string' || path.length === 0 || path.length > MAX_PATH_CHARS) return null;
+    paths.push(path);
+  }
+  return paths;
+}
+
+function fingerprintTracked(value: unknown): string[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_FINGERPRINT_SOURCES) return null;
+  const names: string[] = [];
+  for (const name of value) {
+    const valid =
+      typeof name === 'string' &&
+      name.length > 0 &&
+      name.length <= 255 &&
+      name !== '.' &&
+      name !== '..' &&
+      !/[/\0]/.test(name);
+    if (!valid) return null;
+    names.push(name);
+  }
+  return names;
+}
 
 const GRADLE_NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const GRADLE_ROOT = /^[A-Za-z0-9._/ -]{1,200}$/;
@@ -585,7 +631,7 @@ export class BuildHost {
           dependencies:
             typeof params.lockfile === 'string' &&
             dependencies !== undefined &&
-            reusableDependencies(area, dependencies.project, dependencies.packageName, params.lockfile),
+            reusableDependencies(area, dependencies.project, params.lockfile, this.options.env),
           build: false,
         },
         ...(artifact !== undefined ? { artifact } : {}),
@@ -1530,8 +1576,26 @@ export class BuildSession {
     }
     if (native?.provider !== 'gradle' && (typeof params.fingerprint !== 'string' || !params.fingerprint))
       return refusal('bad-request', 'build.start needs params.fingerprint.');
+    const expectedSources = fingerprintSources(params.fingerprintSources);
+    if (expectedSources === null)
+      return refusal(
+        'bad-request',
+        `params.fingerprintSources must be at most ${MAX_FINGERPRINT_SOURCES} sources, each an id and a hex hash or null.`,
+      );
     if (!native && [...this.files.values()].some((file) => file.kind === 'directory'))
       return refusal('bad-request', 'Directory entries require a native build request.');
+    const expectedIgnored = fingerprintIgnored(params.fingerprintIgnored);
+    if (expectedIgnored === null)
+      return refusal(
+        'bad-request',
+        `params.fingerprintIgnored must be at most ${MAX_FINGERPRINT_SOURCES} paths of at most ${MAX_PATH_CHARS} characters.`,
+      );
+    const expectedTracked = fingerprintTracked(params.fingerprintTracked);
+    if (expectedTracked === null)
+      return refusal(
+        'bad-request',
+        `params.fingerprintTracked must be at most ${MAX_FINGERPRINT_SOURCES} top-level entry names.`,
+      );
     const android = platform === 'android' ? androidOptions(params.android) : null;
     if (platform === 'android' && !android) {
       return refusal(
@@ -1576,7 +1640,6 @@ export class BuildSession {
         android,
         macos,
         project: params.project,
-        packageName: optional(params.packageName),
         isExpo: params.isExpo === true,
         cacheArtifact: params.cacheArtifact === true,
         stimBuild: params.stimBuild,
@@ -1585,6 +1648,9 @@ export class BuildSession {
         iosProjectPath: optional(params.iosProjectPath),
         runtime: optional(params.runtime),
         expectedFingerprint: params.fingerprint as string | null,
+        ...(expectedSources ? { expectedSources } : {}),
+        ...(expectedIgnored ? { expectedIgnored } : {}),
+        ...(expectedTracked ? { expectedTracked } : {}),
         optimizations: isJsonObject(params.optimizations) ? params.optimizations : null,
       },
     });

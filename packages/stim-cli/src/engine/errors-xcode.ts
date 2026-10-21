@@ -53,12 +53,14 @@ const DEVICE_SIGNING_REMEDY =
 const SIMULATOR_SIGNING_REMEDY =
   "Stim builds for the simulator here, which needs no signing. Check CODE_SIGNING_REQUIRED / DEVELOPMENT_TEAM in the target's configuration, or build for a phone with `stim ios --device`.";
 
-function remedyFor(message: string, root: string | null, sdk: string): string | null {
+type PodsLocation = { root: string; directory: string } | null;
+
+function remedyFor(message: string, pods: PodsLocation, sdk: string): string | null {
   if (CAS_CORRUPT.test(message)) {
     return 'The compilation cache holds a damaged object. Run `stim gc --delete --cache "compilation cache"` to empty that cache, then build again. The next build is a cold one.';
   }
   if (PODS_OUT_OF_SYNC.test(message)) {
-    const pod = root ? podInstallCommand(root) : 'pod install';
+    const pod = pods ? podInstallCommand(pods.root, pods.directory) : 'pod install';
     return `Run \`${pod}\` in ios/ (stim ios does this when Podfile.lock and Pods/Manifest.lock disagree), then build again.`;
   }
   if (NO_SUCH_SCHEME.test(message)) {
@@ -95,7 +97,7 @@ function makeDiagnostic(
     column?: number | null;
     message: string;
   },
-  root: string | null,
+  pods: PodsLocation,
   sdk: string,
 ): Diagnostic {
   const text = String(message).trim();
@@ -104,7 +106,7 @@ function makeDiagnostic(
   if (line !== null && line !== undefined) out.line = line;
   if (column !== null && column !== undefined) out.column = column;
   out.message = text;
-  const remedy = remedyFor(text, root, sdk);
+  const remedy = remedyFor(text, pods, sdk);
   if (remedy) out.remedy = remedy;
   return out;
 }
@@ -116,7 +118,9 @@ function dedupeKey(d: Diagnostic): string {
 export function createXcodeDiagnosticCollector(
   root: string | null = null,
   sdk: string = 'iphonesimulator',
+  podDirectory: string | null = root,
 ): { push(line: string): void; readonly diagnostics: Diagnostic[] } {
+  const pods = root ? { root, directory: podDirectory ?? root } : null;
   const out: Diagnostic[] = [];
   const seen = new Set<string>();
   let finished = false;
@@ -137,7 +141,7 @@ export function createXcodeDiagnosticCollector(
       const sym = UNDEFINED_SYMBOL.exec(raw);
       if (sym) {
         const symbol = sym[1];
-        if (symbol !== undefined) add(makeDiagnostic({ message: undefinedSymbolMessage(symbol) }, root, sdk));
+        if (symbol !== undefined) add(makeDiagnostic({ message: undefinedSymbolMessage(symbol) }, pods, sdk));
         return;
       }
       if (/^\s+\S/.test(line) && !/^\S/.test(line)) return;
@@ -156,7 +160,7 @@ export function createXcodeDiagnosticCollector(
 
     const ld = LD_ERROR.exec(raw);
     if (ld) {
-      add(makeDiagnostic({ message: `ld: ${ld[1]}` }, root, sdk));
+      add(makeDiagnostic({ message: `ld: ${ld[1]}` }, pods, sdk));
       return;
     }
 
@@ -172,7 +176,7 @@ export function createXcodeDiagnosticCollector(
             column: positioned[3] === undefined ? null : Number(positioned[3]),
             message: posMsg,
           },
-          root,
+          pods,
           sdk,
         ),
       );
@@ -183,7 +187,7 @@ export function createXcodeDiagnosticCollector(
     if (plain) {
       const plainMsg = plain[2];
       if (plainMsg === undefined) return;
-      add(makeDiagnostic({ file: fileFromPrefix(plain[1] || ''), message: plainMsg }, root, sdk));
+      add(makeDiagnostic({ file: fileFromPrefix(plain[1] || ''), message: plainMsg }, pods, sdk));
     }
   };
 

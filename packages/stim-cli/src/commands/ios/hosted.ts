@@ -76,6 +76,7 @@ export async function finishHostedIosRun({
       ...(appMode === 'development' && isExpo
         ? { devClientScheme: d.devClientScheme(root, artifact.path) ?? undefined }
         : {}),
+      metroPort,
       reserved: (placement) => d.writeHostedIos(root, slot, placement),
       note,
       enterPhase,
@@ -90,8 +91,8 @@ export async function finishHostedIosRun({
           : `Retry stim ios --remote ${target.host.machine}, or run stim stop to reconcile any recorded placement.`,
     });
   }
-  d.writeHostedIos(root, slot, run.placement);
-  d.writeWorkspaceLaunch(
+  await d.writeHostedIos(root, slot, run.placement);
+  await d.writeWorkspaceLaunch(
     root,
     'ios',
     {

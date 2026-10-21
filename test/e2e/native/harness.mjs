@@ -25,8 +25,17 @@ const require = createRequire(import.meta.url);
 export function createHarness({ env, cliPath, label }) {
   const log = (msg) => process.stderr.write(`[${label}] ${msg}\n`);
   const banner = (msg) => log('='.repeat(4) + ` ${msg} ` + '='.repeat(4));
+  const dieHooks = [];
+  const onDie = (hook) => dieHooks.push(hook);
   const die = (msg, code = 1) => {
     log(`ERROR: ${msg}`);
+    while (dieHooks.length > 0) {
+      try {
+        dieHooks.pop()(new Error(msg));
+      } catch (error) {
+        log(`exit cleanup failed: ${error?.message || error}`);
+      }
+    }
     process.exit(code);
   };
 
@@ -71,7 +80,7 @@ export function createHarness({ env, cliPath, label }) {
     }
   };
 
-  return { env, cliPath, label, log, banner, die, sh, cli, cliJson, requireTool };
+  return { env, cliPath, label, log, banner, die, onDie, sh, cli, cliJson, requireTool };
 }
 
 export function assertVerifiedLaunch({ h, facts, cwd, label, expectUnattributedAndroidSlot = false }) {
@@ -263,24 +272,31 @@ export function createWarmWorktree({ h, sourceDir, workDir, name, created }) {
   return path;
 }
 
+export function teardownWorkspaces({ h, created, removeWorktrees = true, timeout = 3 * 60 * 1000 }) {
+  for (const path of created.toReversed()) {
+    if (!existsSync(path)) continue;
+    h.cli(['stop'], { cwd: path, allowFail: true, timeout });
+    if (!removeWorktrees) continue;
+    h.sh('git', ['-C', path, 'checkout', '--', '.'], { allowFail: true, timeout });
+    h.sh('git', ['-C', path, 'clean', '-fdq', 'ios', 'android'], { allowFail: true, timeout });
+    h.cli(['worktree', 'remove', path, '--force'], { allowFail: true, timeout });
+  }
+}
+
 export function prepareIosDevices({ h, platform, targets, cleanup }) {
   if (platform !== 'ios') return;
   const script = fileURLToPath(new URL('./prepare-ios-device.mjs', import.meta.url));
   try {
-    for (const { cwd, slot = 'default', deviceType } of targets) {
+    for (const { cwd, slot = 'default' } of targets) {
       const settingsPath = join(cwd, '.stim.json');
       const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf-8')) : {};
       if (!settings.ios?.simslimProfile) continue;
       h.log(`preparing simulator ${slot} in ${cwd} before the multi-device workload`);
-      const result = h.sh(
-        process.execPath,
-        ['--experimental-strip-types', script, cwd, slot, ...(deviceType ? [deviceType] : [])],
-        {
-          cwd,
-          timeout: 25 * 60 * 1000,
-          allowFail: true,
-        },
-      );
+      const result = h.sh(process.execPath, ['--experimental-strip-types', script, cwd, slot], {
+        cwd,
+        timeout: 25 * 60 * 1000,
+        allowFail: true,
+      });
       cleanup.recordWorkspace(cwd);
       const stopped = h.cli(['stop', '--slot', slot, '--json'], { cwd, allowFail: true });
       assert(stopped.code === 0, `could not stop prepared simulator ${slot}: ${stopped.stderr}`);
@@ -294,9 +310,7 @@ export function prepareIosDevices({ h, platform, targets, cleanup }) {
     }
   } catch (error) {
     error.preserveNativeState = true;
-    h.log(
-      `Simulator preparation failed. Keeping ownership state at ${h.env?.STIM_HOME ?? 'STIM_HOME'} and its worktrees for recovery.`,
-    );
+    h.log(`Simulator preparation failed. Keeping ${h.env?.STIM_HOME ?? 'STIM_HOME'} for recovery.`);
     throw error;
   }
 }

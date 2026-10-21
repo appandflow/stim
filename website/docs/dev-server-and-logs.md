@@ -73,6 +73,11 @@ suits a single checkout. Give each worktree its own, in the workspace layer or
 the environment: `stim start` refuses with `STIM_BAD_ARG` when another
 workspace reserves the port or another process holds it.
 
+Another process, such as a second Stim home, can take the port between
+Stim's check and the dev server's bind. Without a pin, `stim start` then
+releases the reservation, reserves another free port and starts again, up to
+three attempts. A pinned port and `--remote` starts are not retried.
+
 <StimTabs code={`stim settings set metro.port 25062 --scope workspace`} />
 
 Changing the pin while this workspace's dev server runs is refused until
@@ -201,6 +206,10 @@ tree. They are labeled separately. Every `stim logs` command, including
 limits. The separate default limit of 20 error records never shortens a stack.
 Use `--source all` for all log sources, or `--json` for raw records. Text
 truncated by the runtime before capture cannot be restored.
+
+A run that builds or reuses an app and then fails before the app is running adds one
+`build` error record with event `run_failed`, the error code and the phase it failed
+in, so `stim logs --errors` lists the failure that `stim status` shows.
 
 Symbolication is best effort. In development, Stim asks the verified workspace's
 Metro `/symbolicate` endpoint to resolve captured JavaScript coordinates, with a

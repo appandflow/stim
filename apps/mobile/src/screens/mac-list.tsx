@@ -58,7 +58,7 @@ export function MacList() {
               >
                 <StatusDot color={connectionColor(state, missing, theme.colors)} />
                 <View style={styles.rowText}>
-                  <View style={styles.nameRow}>
+                  <View style={[styles.nameRow, large && styles.nameRowStacked]}>
                     <Text variant="headline" style={styles.shrink} numberOfLines={large ? 3 : 1}>
                       {item.name}
                     </Text>
@@ -111,5 +111,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowText: { flex: 1, gap: theme.space.xs },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.md },
+  nameRowStacked: { flexDirection: 'column', alignItems: 'flex-start', gap: theme.space.xs },
   shrink: { flexShrink: 1 },
 }));

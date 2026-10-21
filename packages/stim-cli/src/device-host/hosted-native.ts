@@ -202,6 +202,61 @@ async function reserveHostedNative(
   }
 }
 
+const HOST_PORT_WINDOW = 64;
+
+const devClientPortRemedy = (machine: string): string =>
+  `Run stim stop, then stim ios --remote ${machine} without stim start, so Stim starts Metro on a port free on both Macs. If metro.port or STIM_METRO_PORT pins the port, pin one free on both Macs instead.`;
+
+export const devClientPortBusy = (
+  machine: string,
+  port: number,
+): { code: 'STIM_HOSTING_REFUSED'; message: string; remedy: string } => ({
+  code: 'STIM_HOSTING_REFUSED',
+  message: `${machine}: Port ${port} is in use on ${machine}, and an Expo dev client loads its bundle from this workspace's Metro port.`,
+  remedy: devClientPortRemedy(machine),
+});
+
+/**
+ * Answers whether a port is free for an Expo dev-client bridge on `machine`, asking the host for a window of ports at
+ * a time. A host without `hosted-metro-ports`, or one that cannot answer, counts every port as free; the bridge's own
+ * bind check still refuses an occupied one.
+ */
+export function hostedMetroPortProbe(
+  machine: string,
+  note: (line: string) => void,
+): (port: number) => Promise<boolean> {
+  let window: { from: number; busy: ReadonlySet<number> } | null = null;
+  let unknown = false;
+  return async (port) => {
+    if (unknown) return true;
+    if (!window || port < window.from || port >= window.from + HOST_PORT_WINDOW) {
+      const ports = Array.from({ length: Math.min(HOST_PORT_WINDOW, 65536 - port) }, (_, index) => port + index);
+      let host: HostConnection | undefined;
+      try {
+        host = await connectHost(machine, undefined, false, runCancellationSignal(ambientContext()));
+        if (!host.connection.supports('hosted-metro-ports')) {
+          unknown = true;
+          return true;
+        }
+        const { busy } = await call(host, 'device-host.metro.ports', { ports });
+        if (!Array.isArray(busy) || busy.some((each) => !Number.isInteger(each)))
+          throw new Error(`${machine} answered device-host.metro.ports without its busy ports.`);
+        window = { from: port, busy: new Set(busy as number[]) };
+      } catch (error) {
+        runCancellationSignal(ambientContext())?.throwIfAborted();
+        unknown = true;
+        note(
+          `Could not check which Metro ports are free on ${machine} (${error instanceof Error ? error.message : String(error)}); choosing one free here`,
+        );
+        return true;
+      } finally {
+        host?.connection.close();
+      }
+    }
+    return !window.busy.has(port);
+  };
+}
+
 export async function placeHostedNative(
   target: HostedNativeTarget,
   {
@@ -232,7 +287,7 @@ export async function placeHostedNative(
     release: boolean;
     mode?: HostedAppOffer['mode'];
     devClientScheme?: string;
-    reserved: (placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>) => void;
+    reserved: (placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>) => unknown;
     note: (line: string) => void;
     enterPhase?: (phase: 'device' | 'install' | 'launch') => void;
     metro?: typeof requestHostedMetro;
@@ -271,7 +326,7 @@ export async function placeHostedNative(
       device: platform === 'ios' ? parseHostedDevice(session.device) : parseHostedAndroidDevice(session.device),
       agent: { driver: 'none', setting: 'hosting.agentDriver' },
     };
-    reserved(placement);
+    await reserved(placement);
     session = await settle(
       host,
       session,
@@ -296,13 +351,17 @@ export async function placeHostedNative(
           : 'The reserved emulator does not match the offered architecture or selectors.',
       );
     placement = { ...placement, device };
-    reserved(placement);
+    await reserved(placement);
     if (mode === 'development') {
       const gateway = await metro(root, session.id, host.credential);
       await call(host, 'device-host.metro.open', {
         session: session.id,
         ...gateway,
-        ...(platform === 'android' ? { clientMetroPort: metroPort } : {}),
+        ...(platform === 'android' || devClientScheme ? { clientMetroPort: metroPort } : {}),
+      }).catch((error: unknown) => {
+        if (platform === 'ios' && devClientScheme && (error as { code?: unknown }).code === 'device-busy')
+          throw Object.assign(error as Error, { remedy: devClientPortRemedy(host.machine) });
+        throw error;
       });
     } else {
       await call(host, 'device-host.metro.close', { session: session.id });

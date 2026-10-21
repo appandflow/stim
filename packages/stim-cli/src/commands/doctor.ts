@@ -122,7 +122,13 @@ const OVERRIDES: Record<string, string> = {
  */
 export interface ToolchainReport {
   entries: ToolchainEntry[];
-  projectNode: { pin: string; spec: string; bin: string | null; version: string | null } | null;
+  projectNode: {
+    pin: string;
+    spec: string;
+    bin: string | null;
+    version: string | null;
+    match: 'exact' | 'major' | null;
+  } | null;
 }
 
 export function toolchainReport(root: string, env: NodeJS.ProcessEnv = process.env): ToolchainReport {
@@ -132,7 +138,13 @@ export function toolchainReport(root: string, env: NodeJS.ProcessEnv = process.e
   return {
     entries,
     projectNode: pin
-      ? { pin: pin.file, spec: pin.spec, bin: pinned?.bin ?? null, version: pinned?.version ?? null }
+      ? {
+          pin: pin.file,
+          spec: pin.spec,
+          bin: pinned?.bin ?? null,
+          version: pinned?.version ?? null,
+          match: pinned?.match ?? null,
+        }
       : null,
   };
 }
@@ -156,9 +168,11 @@ function toolchainLines(report: ToolchainReport): string[] {
       ? [
           phaseLine(
             'project node',
-            project.bin
-              ? `${project.version} at ${project.bin}, which ${project.pin} pins (${project.spec}); Metro runs on it when the node on PATH does not satisfy the pin`
-              : `${project.pin} pins ${project.spec}, which no nvm, fnm, Volta, asdf or mise install provides; Metro runs on the node on PATH`,
+            !project.bin
+              ? `${project.pin} pins ${project.spec}, which no nvm, fnm, Volta, asdf, mise or Homebrew install provides; Metro runs on the node on PATH`
+              : project.match === 'major'
+                ? `${project.version} at ${project.bin}, the newest installed Node of the major ${project.pin} pins and not older than ${project.spec}, since no install has ${project.spec}; Metro runs on it when the node on PATH does not fit the pin`
+                : `${project.version} at ${project.bin}, which ${project.pin} pins (${project.spec}); Metro runs on it when the node on PATH does not satisfy the pin`,
           ),
         ]
       : []),

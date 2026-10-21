@@ -7,6 +7,7 @@ import { git, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
 import { removeTemporaryEntryAsync } from '../temporary.ts';
 import { childEnvironment } from './git-read.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { clonefileHelper } from '../clonefile.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj', '.pnpm-store']);
 
@@ -30,6 +31,8 @@ interface ReadOptions {
 }
 
 interface AsyncReadOptions extends ReadOptions {
+  /** A timeout throws its `ETIMEDOUT` error instead of reading as null; `removal` implies it. */
+  timeoutThrows?: boolean;
   declareFor?: StimContext;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
@@ -39,7 +42,7 @@ interface AsyncReadOptions extends ReadOptions {
 async function gitReadAsync(
   dir: string,
   args: string[],
-  { removal, env, signal, declareFor, untrimmed }: AsyncReadOptions,
+  { removal, timeoutThrows, env, signal, declareFor, untrimmed }: AsyncReadOptions,
 ): Promise<string | null> {
   signal ??= getExecutor().reportSignal?.();
   try {
@@ -55,7 +58,7 @@ async function gitReadAsync(
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
       throw error;
     signal?.throwIfAborted();
-    if (removal && isTimeoutError(error)) throw error;
+    if ((removal || timeoutThrows) && isTimeoutError(error)) throw error;
     return null;
   }
 }
@@ -126,7 +129,7 @@ export async function warmWorktreePaths(
   cwd: string,
   operation?: StimContext,
 ): Promise<{ root: string; target: string; common: string }> {
-  const options = { env: operation?.env, signal: operation?.signal, declareFor: operation };
+  const options = { env: operation?.env, signal: operation?.signal, declareFor: operation, timeoutThrows: true };
   const currentRoot = await repoRootAsync(cwd, options);
   if (!currentRoot) throw new Error('Not a git repository.');
   const target = realpathSync(currentRoot);
@@ -301,7 +304,14 @@ function missingDestinationReason(target: string, rel: string): string | null {
   return lstatSync(join(target, rel), { throwIfNoEntry: false }) ? 'exists' : null;
 }
 
-async function removeCopiedExclusionsAsync(path: string, rel: string, signal: AbortSignal): Promise<void> {
+const SWEEP_CONCURRENCY = 32;
+
+interface SweptDirectory {
+  path: string;
+  rel: string;
+}
+
+async function removeExclusionsIn({ path, rel }: SweptDirectory, signal: AbortSignal): Promise<SweptDirectory[]> {
   signal.throwIfAborted();
   const entries = await readdir(path, { withFileTypes: true });
   const excluded = entries.filter((entry) => isCarrySkipped(`${rel}/${entry.name}`));
@@ -318,11 +328,43 @@ async function removeCopiedExclusionsAsync(path: string, rel: string, signal: Ab
       await chmod(path, stat.mode);
     }
   }
+  const children: SweptDirectory[] = [];
   for (const entry of entries) {
     const child = `${rel}/${entry.name}`;
-    if (entry.isDirectory() && !isCarrySkipped(child))
-      await removeCopiedExclusionsAsync(join(path, entry.name), child, signal);
+    if (entry.isDirectory() && !isCarrySkipped(child)) children.push({ path: join(path, entry.name), rel: child });
   }
+  return children;
+}
+
+async function removeCopiedExclusionsAsync(path: string, rel: string, signal: AbortSignal): Promise<void> {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  const acquire = async (): Promise<void> => {
+    if (active < SWEEP_CONCURRENCY) active += 1;
+    else await new Promise<void>((wake) => waiting.push(wake));
+  };
+  const release = (): void => {
+    const next = waiting.shift();
+    if (next) next();
+    else active -= 1;
+  };
+  let failure: { error: unknown } | undefined;
+  const visit = async (directory: SweptDirectory): Promise<void> => {
+    await acquire();
+    let children: SweptDirectory[];
+    try {
+      if (failure) return;
+      children = await removeExclusionsIn(directory, signal);
+    } catch (error) {
+      failure ??= { error };
+      return;
+    } finally {
+      release();
+    }
+    await Promise.all(children.map(visit));
+  };
+  await visit({ path, rel });
+  if (failure) throw failure.error;
 }
 
 export async function cloneIgnoredEntries({
@@ -352,6 +394,8 @@ export async function cloneIgnoredEntries({
   const skipped: SkippedEntry[] = [];
   const failed: FailedEntry[] = [];
   let cloned = true;
+  let helper: Promise<string | null> | undefined;
+  const clonefile = () => (helper ??= clonefileHelper(operation));
   for (const rel of entries) {
     operation.signal.throwIfAborted();
     const from = join(root, rel);
@@ -369,13 +413,23 @@ export async function cloneIgnoredEntries({
       }
       await mkdir(dirname(to), { recursive: true });
       copying = true;
-      try {
-        await getExecutor().runFileAsync('cp', ['-Rc', from, to], options);
-      } catch (cause) {
-        if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
-          throw cause;
-        operation.signal.throwIfAborted();
-        await removeTemporaryEntryAsync(to);
+      const copiedWith = async (file: string, args: string[]): Promise<boolean> => {
+        try {
+          await getExecutor().runFileAsync(file, args, options);
+          return true;
+        } catch (cause) {
+          if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
+            throw cause;
+          operation.signal.throwIfAborted();
+          await removeTemporaryEntryAsync(to);
+          return false;
+        }
+      };
+      const directoryClone = (await lstat(from)).isDirectory() ? await clonefile() : null;
+      if (
+        !(directoryClone && (await copiedWith(directoryClone, [from, to]))) &&
+        !(await copiedWith('cp', ['-Rc', from, to]))
+      ) {
         await getExecutor().runFileAsync('cp', ['-R', from, to], options);
         cloned = false;
       }

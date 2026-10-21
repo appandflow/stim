@@ -12,7 +12,7 @@ import {
   type HostedIosDevice,
   type HostedAndroidDevice,
 } from '@stim-cli/core/state';
-import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, updateWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 
 export function readHostedNative(
   root: string,
@@ -37,7 +37,7 @@ export function readHostedNative(
   return slot === undefined ? placements : placements[slot] ? { [slot]: placements[slot] } : {};
 }
 
-export function writeDevicePlacement(
+function writeDevicePlacement(
   root: string,
   slot: string,
   platform: 'ios' | 'android',
@@ -55,6 +55,16 @@ export function writeDevicePlacement(
       deviceSlots: { ...slots, [slot]: { ...saved, [platform]: record } },
     };
   });
+}
+
+/** Records the device placement after asynchronously acquiring the workspace state lock; no placement takes no lock. */
+export async function writeDevicePlacementAsync(
+  root: string,
+  slot: string,
+  platform: 'ios' | 'android',
+  placement: DevicePlacement | undefined,
+): Promise<void> {
+  if (placement) await withWorkspaceStateLockAsync(root, () => writeDevicePlacement(root, slot, platform, placement));
 }
 
 export function writeHostedNative(
@@ -88,12 +98,28 @@ export function writeHostedNative(
 export function readHostedIos(root: string, slot?: string): Record<string, HostedIosPlacement> {
   return readHostedNative(root, 'ios', slot) as Record<string, HostedIosPlacement>;
 }
-export function writeHostedIos(root: string, slot: string, host: HostedIosPlacement | null): void {
-  writeHostedNative(root, slot, host, 'ios');
+/** Records a hosted placement after asynchronously acquiring the workspace state lock. */
+export function writeHostedNativeAsync(
+  root: string,
+  slot: string,
+  host: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice> | null,
+  platform: 'ios' | 'android',
+): Promise<void> {
+  return withWorkspaceStateLockAsync(root, () => writeHostedNative(root, slot, host, platform));
 }
+
+export function writeHostedIosAsync(root: string, slot: string, host: HostedIosPlacement | null): Promise<void> {
+  return writeHostedNativeAsync(root, slot, host, 'ios');
+}
+
+export function writeHostedAndroidAsync(
+  root: string,
+  slot: string,
+  host: HostedAndroidPlacement | null,
+): Promise<void> {
+  return writeHostedNativeAsync(root, slot, host, 'android');
+}
+
 export function readHostedAndroid(root: string, slot?: string): Record<string, HostedAndroidPlacement> {
   return readHostedNative(root, 'android', slot) as Record<string, HostedAndroidPlacement>;
-}
-export function writeHostedAndroid(root: string, slot: string, host: HostedAndroidPlacement | null): void {
-  writeHostedNative(root, slot, host, 'android');
 }

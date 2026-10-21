@@ -8,7 +8,7 @@ import { METRO_COMMAND_PORT } from '../workspace/settings.ts';
 import { type ChildServerHandle, superviseChildServer } from './child-server.ts';
 import { recordFromLine } from './server-expo.ts';
 import { MODE_COMMAND } from './state.ts';
-import { withProjectNode } from './project-node.ts';
+import { projectNodeLine, withProjectNode } from './project-node.ts';
 
 function processGroupAlive(pgid: number): boolean {
   try {
@@ -63,7 +63,7 @@ export async function startCommandServer({
       src: 'metro',
       level: 'info',
       event: 'project_node',
-      msg: `Metro runs on Node ${node.pinned.version} from ${node.pinned.bin}, which ${node.pinned.pin} pins`,
+      msg: `Metro runs on ${projectNodeLine(node.pinned)}`,
     });
   }
   const child = spawn(program as string, args, {

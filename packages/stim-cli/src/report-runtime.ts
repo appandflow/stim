@@ -104,6 +104,7 @@ export async function runReport<T>(
         Object.assign(new Error('Report cleanup did not finish within 35 seconds.'), {
           code: 'STIM_CLAIM_UNAVAILABLE',
           reportCleanup: true,
+          remedy: 'Check that the child processes the report started and their descendants have stopped',
         });
     };
     let cleanupTimer: ReturnType<typeof setTimeout> | undefined;

@@ -1,43 +1,42 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { chmodSync, copyFileSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 
+const compile = (source, output) =>
+  execFileSync('/usr/bin/clang', ['-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', source, '-o', output], {
+    timeout: 30_000,
+  });
+
 it.skipIf(process.platform !== 'darwin')(
-  'retains a live executable path with spaces under the benchmark sandbox',
+  'retains the path of a live process with spaces or an unlinked executable under the benchmark sandbox',
   async () => {
-    const root = mkdtempSync(join(tmpdir(), 'native-bench-process-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-bench-process-')));
     const executable = join(root, 'benchmark executable with spaces');
     const adapter = join(root, 'ps');
     let child;
     try {
-      execFileSync(
-        '/usr/bin/clang',
-        [
-          '-std=c11',
-          '-O2',
-          '-Wall',
-          '-Wextra',
-          '-Werror',
-          fileURLToPath(new URL('./compat/macos-processes.c', import.meta.url)),
-          '-o',
-          adapter,
-        ],
-        { timeout: 30_000 },
-      );
-      copyFileSync('/bin/sleep', executable);
-      chmodSync(executable, 0o755);
-      child = spawn(executable, ['60'], { stdio: 'ignore' });
+      compile(fileURLToPath(new URL('./compat/macos-processes.c', import.meta.url)), adapter);
+      const sleeper = join(root, 'sleeper.c');
+      writeFileSync(sleeper, '#include <unistd.h>\nint main(void) { sleep(60); return 0; }\n');
+      compile(sleeper, executable);
+      child = spawn(executable, [], { stdio: 'ignore' });
       await once(child, 'spawn');
-      const output = execFileSync(
-        '/usr/bin/sandbox-exec',
-        ['-p', '(version 1)(allow default)', adapter, '-axww', '-o', 'pid=,comm='],
-        { encoding: 'utf8', timeout: 10_000 },
-      );
-      expect(output.split('\n')).toContain(`${child.pid} ${realpathSync(executable)}`);
+      const listing = () =>
+        execFileSync(
+          '/usr/bin/sandbox-exec',
+          ['-p', '(version 1)(allow default)', adapter, '-axww', '-o', 'pid=,comm='],
+          {
+            encoding: 'utf8',
+            timeout: 10_000,
+          },
+        ).split('\n');
+      expect(listing()).toContain(`${child.pid} ${executable}`);
+      rmSync(executable);
+      expect(listing()).toContain(`${child.pid} ${executable}`);
       expect(spawnSync(adapter, ['-axww', '-o', 'pid=,command='], { timeout: 10_000 }).status).toBe(2);
     } finally {
       if (child && child.exitCode == null) {

@@ -17,7 +17,7 @@ import {
   registerMetroStore,
 } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
-import { withProjectNode } from './project-node.ts';
+import { projectNodeLine, withProjectNode } from './project-node.ts';
 
 function resolveExpoBin(root: string): { path: string; source: 'package' | 'shim' } | null {
   const fromPackage = expoBinFromPackage(resolvePackageJson(root, 'expo'));
@@ -195,6 +195,10 @@ export function expoProxyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return publicUrl ? { EXPO_PACKAGER_PROXY_URL: publicUrl.replace(/\/+$/, '') } : {};
 }
 
+export function expoTelemetryEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  return env.EXPO_NO_TELEMETRY === undefined ? { EXPO_NO_TELEMETRY: '1' } : {};
+}
+
 const WAITING_ON_RE = /^Waiting on (\S+)/;
 const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const HTTP_SCHEME_RE = /^https?:\/\//i;
@@ -317,7 +321,7 @@ export async function startExpoServer({
       src: 'metro',
       level: 'info',
       event: 'project_node',
-      msg: `Metro runs on Node ${node.pinned.version} from ${node.pinned.bin}, which ${node.pinned.pin} pins`,
+      msg: `Metro runs on ${projectNodeLine(node.pinned)}`,
     });
   }
   const child = spawn(command, commandArgs, {
@@ -328,6 +332,7 @@ export async function startExpoServer({
       ...node.env,
       FORCE_COLOR: '0',
       ...expoProxyEnv(process.env),
+      ...expoTelemetryEnv(process.env),
       ...storeEnv,
       // Expo's legacy tunnel uses port 8081; v2 uses this workspace's reserved port.
       ...(tunnel ? { EXPO_UNSTABLE_TUNNEL_V2: '1' } : {}),

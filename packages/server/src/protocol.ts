@@ -1451,6 +1451,14 @@ export function protocolJsonSchema(): JsonSchema {
               ['gatewayPort', 'secret'],
             ),
           ),
+          request('device-host.metro.ports', {
+            type: 'object',
+            required: ['ports'],
+            additionalProperties: false,
+            properties: {
+              ports: { type: 'array', maxItems: 256, items: { type: 'integer', minimum: 1, maximum: 65535 } },
+            },
+          }),
           request('device-host.metro.close', session({})),
           request(
             'device-host.frames.subscribe',
@@ -1996,6 +2004,34 @@ export function protocolJsonSchema(): JsonSchema {
               scheme: { type: ['string', 'null'] },
               runtime: { type: ['string', 'null'], minLength: 1 },
               fingerprint: { type: ['string', 'null'], minLength: 1 },
+              fingerprintSources: {
+                type: 'array',
+                maxItems: 20000,
+                description: 'The id and hash of each source of fingerprint, to name the sources that differ.',
+                items: {
+                  type: 'object',
+                  required: ['id', 'hash'],
+                  additionalProperties: false,
+                  properties: {
+                    id: { type: 'string', minLength: 1, maxLength: 1024 },
+                    hash: { type: ['string', 'null'], pattern: '^[0-9a-f]{1,128}$' },
+                  },
+                },
+              },
+              fingerprintIgnored: {
+                type: 'array',
+                maxItems: 20000,
+                description:
+                  'Paths relative to project that git ignores for fingerprint on the caller, such as through .git/info/exclude.',
+                items: { type: 'string', minLength: 1, maxLength: 1024 },
+              },
+              fingerprintTracked: {
+                type: 'array',
+                maxItems: 20000,
+                description:
+                  'Top-level entries of project that the caller git tracks for fingerprint although an ignore pattern matches them.',
+                items: { type: 'string', minLength: 1, maxLength: 255, pattern: '^[^/\\u0000]+$' },
+              },
               native: {
                 oneOf: [
                   {

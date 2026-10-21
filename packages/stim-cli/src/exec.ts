@@ -1,14 +1,17 @@
 import { type ChildProcess, type SpawnOptions, execSync } from 'child_process';
 import spawn from 'cross-spawn';
 import which from 'which';
-import { basename, delimiter, resolve as resolvePath } from 'path';
+import { basename, delimiter, join, resolve as resolvePath } from 'path';
+import { randomUUID } from 'node:crypto';
+import { existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { ambientEnv, ambientContext, type StimContext } from '@stim-cli/core';
 import { spawnDeclared } from './engine/spawn-claims.ts';
 import { operationState } from './engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
-import { processGroupAlive } from './ownership-claim.ts';
+import { groupExitBudgetMs, waitForGroupExit } from './process-group-exit.ts';
 import { debugLog } from './debug-log.ts';
 import { reportSignal, trackReportResource } from './report-runtime.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from './process-identity.ts';
@@ -64,6 +67,24 @@ export interface Executor {
 }
 
 const MAX_BUFFER = 64 * 1024 * 1024;
+const REPORT_CHILD_EXIT_CAP_MS = 15_000;
+
+// Windows PowerShell 5.1 took up to 9.5 s to start on a fresh GitHub-hosted runner and 2.2 s to exit after
+// its child closed (#4102), so a contained child's budget covers only the child, between these markers.
+const REPORT_JOB_PHASE_MS = 30_000;
+
+interface ReportJobMarkers {
+  started: string;
+  closed: string;
+}
+
+function startsInReportJob(file: string, opts: SpawnOptions, containProcessTree: boolean): boolean {
+  return (
+    process.platform === 'win32' &&
+    (containProcessTree || Boolean(reportSignal(ambientContext()))) &&
+    Boolean(executableIn(file, opts.env ?? ambientEnv(), opts.cwd ?? process.cwd()))
+  );
+}
 
 function spawnReportProbe(
   file: string,
@@ -71,12 +92,15 @@ function spawnReportProbe(
   opts: SpawnOptions,
   containProcessTree = false,
 ): ChildProcess {
-  if (
-    process.platform !== 'win32' ||
-    (!containProcessTree && !reportSignal(ambientContext())) ||
-    !executableIn(file, opts.env ?? ambientEnv(), opts.cwd ?? process.cwd())
-  )
-    return spawn(file, args, opts);
+  return startsInReportJob(file, opts, containProcessTree) ? spawnReportJob(file, args, opts) : spawn(file, args, opts);
+}
+
+function spawnReportJob(
+  file: string,
+  args: readonly string[],
+  opts: SpawnOptions,
+  markers?: ReportJobMarkers,
+): ChildProcess {
   const env = opts.env ?? ambientEnv();
   const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
   if (!systemRoot) throw new Error('SystemRoot is required to contain Windows report probes.');
@@ -101,6 +125,7 @@ function spawnReportProbe(
           args,
           node: process.execPath,
           entry: fileURLToPath(new URL('../dist/windows-report.mjs', import.meta.url)),
+          ...markers,
         }),
       },
     },
@@ -144,7 +169,11 @@ function reportChild(
     return 'unknown';
   };
   const refuse = (message: string): never => {
-    const failure = Object.assign(new Error(message), { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+    const failure = Object.assign(new Error(message), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+      remedy: `Check whether the report child${pid === undefined ? '' : ` ${pid}${process.platform === 'win32' ? '' : ` (\`ps -p ${pid}\`)`}`} and its descendants are still running and stop them if they are`,
+    });
     const error = failed?.(failure) ?? failure;
     child.stdin?.destroy();
     child.stdout?.destroy();
@@ -204,17 +233,19 @@ function reportChild(
         await Promise.race([
           nativeClosed,
           new Promise<void>((resolve) => {
-            timer = setTimeout(resolve, 1000);
+            timer = setTimeout(resolve, groupExitBudgetMs(REPORT_CHILD_EXIT_CAP_MS));
           }),
         ]);
         clearTimeout(timer);
+        if (!ended) await new Promise<void>((resolve) => setImmediate(resolve));
         if (!ended) refuse(`Report child ${pid} did not close within the cleanup budget.`);
       }
-      if (pid !== undefined && process.platform !== 'win32') {
-        const deadline = performance.now() + 1000;
-        while (processGroupAlive(pid) && performance.now() < deadline) await delay(25);
-        if (processGroupAlive(pid)) refuse(`Report child ${pid} still has descendants after cleanup.`);
-      }
+      if (
+        pid !== undefined &&
+        process.platform !== 'win32' &&
+        !(await waitForGroupExit(pid, groupExitBudgetMs(REPORT_CHILD_EXIT_CAP_MS)))
+      )
+        refuse(`Report child ${pid} still has descendants after cleanup.`);
     })());
   if (report) trackReportResource(context, closed, cancel, signal);
   else {
@@ -420,11 +451,26 @@ const defaultExecutor: Executor = {
               retainDeclaration = rejectDeclaration;
             })
           : undefined;
-      const start = () => spawnReportProbe(file, args, opts, containProcessTree || Boolean(report));
+      const contained = startsInReportJob(file, opts, containProcessTree || Boolean(report));
+      const base =
+        contained && timeout !== undefined ? join(tmpdir(), `stim-report-${process.pid}-${randomUUID()}`) : null;
+      const markers = base ? { started: `${base}.started`, closed: `${base}.closed` } : undefined;
+      const start = () => (contained ? spawnReportJob(file, args, opts, markers) : spawn(file, args, opts));
       const child = declareFor ? spawnDeclared(declareFor, start, declaration ? { until: declaration } : {}) : start();
       let lifetime: ReturnType<typeof reportChild>;
       let cancel: (() => Promise<void>) | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let poll: ReturnType<typeof setInterval> | undefined;
+      let phase: 'starting' | 'running' | 'closing' = markers ? 'starting' : 'running';
+      const stopTimers = () => {
+        clearTimeout(timer);
+        clearInterval(poll);
+        for (const marker of Object.values(markers ?? {})) {
+          try {
+            rmSync(marker, { force: true });
+          } catch {}
+        }
+      };
       try {
         lifetime = reportChild(child, report, (error) => {
           const failure = claims.length
@@ -437,19 +483,20 @@ const defaultExecutor: Executor = {
                 { reportCleanup: true },
               )
             : error;
-          clearTimeout(timer);
+          stopTimers();
           return failure;
         });
         cancel = lifetime?.cancel;
         if (cleanupOnExit && cancel)
           child.once('exit', () => {
-            clearTimeout(timer);
+            stopTimers();
             void cancel?.().catch(reject);
           });
         void lifetime?.closed.catch(reject);
         if (declaration) void lifetime?.closed.then(clearDeclaration, retainDeclaration);
         onSpawn?.(child);
       } catch (error) {
+        stopTimers();
         if (cancel)
           void cancel()
             .then(() => lifetime?.closed)
@@ -488,34 +535,52 @@ const defaultExecutor: Executor = {
           }
         }
       };
-      timer =
-        timeout === undefined
-          ? undefined
-          : setTimeout(() => {
-              timedOut = true;
-              if (cancel) void cancel().catch(reject);
-              else {
-                child.kill(killSignal ?? 'SIGTERM');
-                child.stdin?.destroy();
-                child.stdout?.destroy();
-                child.stderr?.destroy();
-              }
-            }, timeout);
+      const arm = (ms: number) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          timedOut = true;
+          clearInterval(poll);
+          if (cancel) void cancel().catch(reject);
+          else {
+            child.kill(killSignal ?? 'SIGTERM');
+            child.stdin?.destroy();
+            child.stdout?.destroy();
+            child.stderr?.destroy();
+          }
+        }, ms);
+      };
+      if (timeout !== undefined && markers) {
+        arm(REPORT_JOB_PHASE_MS);
+        poll = setInterval(() => {
+          if (phase === 'starting' && existsSync(markers.started)) {
+            phase = 'running';
+            arm(timeout);
+          }
+          if (phase === 'running' && existsSync(markers.closed)) {
+            phase = 'closing';
+            arm(REPORT_JOB_PHASE_MS);
+            clearInterval(poll);
+          }
+        }, 50);
+      } else if (timeout !== undefined) arm(timeout);
       child.stdout?.on('data', (chunk: Buffer) => capture(stdout, chunk));
       child.stderr?.on('data', (chunk: Buffer) => capture(stderr, chunk));
       child.on('error', (error) => {
-        clearTimeout(timer);
+        stopTimers();
         reject(redactError(error, redact));
       });
       const finish = async (status: number | null, signal: NodeJS.Signals | null): Promise<void> => {
-        clearTimeout(timer);
+        stopTimers();
         await lifetime?.closed;
         const discardOutput = (timedOut || overflowed || report?.aborted) && redact?.some(Boolean);
         const out = discardOutput ? '' : Buffer.concat(stdout).toString('utf-8');
         const err = discardOutput ? '' : Buffer.concat(stderr).toString('utf-8');
         const result = { status, signal, stdout: out, stderr: err };
         if (report?.aborted) reject(report.reason);
-        else if (timedOut) {
+        else if (timedOut && phase !== 'running') {
+          const message = `The Windows report job did not ${phase === 'starting' ? 'start' : 'exit'} within ${REPORT_JOB_PHASE_MS}ms: ${command}`;
+          reject(redactError(Object.assign(new Error(message), result, { code: 'ETIMEDOUT' }), redact));
+        } else if (timedOut) {
           reject(
             redactError(
               nameTimeout(Object.assign(new Error(command), result, { code: 'ETIMEDOUT' }), command, timeoutMs),

@@ -9,7 +9,7 @@ import { formatLongDuration } from '../command-output.ts';
 import { collectOwnedDeviceActivity, workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { workspaceDeviceLastUseAt } from './activity.ts';
 import { deviceSlotKey } from './device-slots.ts';
 import { listAllIosSims, type IosSimRecord } from './ios.ts';
@@ -120,7 +120,7 @@ export async function shutDownIdleDevices(
       shutDown++;
       const idleMinutes = Math.floor(idleForMs / MINUTE_MS);
       try {
-        updateWorkspaceState(root, (state) => ({
+        await updateWorkspaceStateAsync(root, (state) => ({
           ...state,
           [DEVICE_IDLE_SHUTDOWN_KEY]: {
             ...readDeviceIdleShutdowns(state),
@@ -155,10 +155,10 @@ export async function shutDownIdleDevices(
 }
 
 /** Forgets the slot's idle shutdown once a run boots its device again. */
-export function clearDeviceIdleShutdown(root: string, platform: string, slot: string = 'default'): void {
+export async function clearDeviceIdleShutdown(root: string, platform: string, slot: string = 'default'): Promise<void> {
   const key = deviceSlotKey(platform, slot);
   if (!(key in readDeviceIdleShutdowns(readWorkspaceState(root)))) return;
-  updateWorkspaceState(root, (state) => {
+  await updateWorkspaceStateAsync(root, (state) => {
     const { [key]: _cleared, ...rest } = readDeviceIdleShutdowns(state);
     const { [DEVICE_IDLE_SHUTDOWN_KEY]: _all, ...others } = state;
     return Object.keys(rest).length ? { ...others, [DEVICE_IDLE_SHUTDOWN_KEY]: rest } : others;

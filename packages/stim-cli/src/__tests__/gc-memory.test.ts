@@ -636,3 +636,52 @@ test
     for (const handle of handles) releaseClaim(handle);
   }
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a dry run whose report child cannot be verified names the child and retries the command it ran',
+  async () => {
+    resetExecutor();
+    const real = getExecutor().runFileAsync.bind(getExecutor());
+    vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
+    fakeWatchman({ clients: [], subscribers: { [tmpHome]: [] } });
+    const executor = getExecutor();
+    const operation = testContext({ home: tmpHome, cwd: tmpHome, projectRoot: tmpHome });
+    let owned: { pid: number; processToken: string } | undefined;
+    const inspect = vi
+      .spyOn(identities, 'inspectProcessIdentity')
+      .mockImplementation((record) =>
+        owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record),
+      );
+    const run = executor.runFileAsync;
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+      if (file !== 'watchman' || args[1] !== 'get-pid' || owned) return run(file, args, options);
+      return real(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+        ...options,
+        timeoutMs: 25,
+        onSpawn: (child) => {
+          options.onSpawn?.(child);
+          const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+          if (child.pid === undefined || !birth?.ok) throw new Error('The Watchman fixture child has no identity');
+          owned = { pid: child.pid, processToken: birth.token };
+        },
+      });
+    });
+    try {
+      await withAmbientContext(operation, () => runGc({ cache: 'watchman', json: true }, { operation }));
+      if (!owned) throw new Error('The Watchman operation did not start');
+      const lines = error.mock.calls.map((call) => String(call[0]));
+      expect(lines[0]).toContain('STIM_CLAIM_UNAVAILABLE');
+      expect(lines[1]).not.toContain('undefined');
+      expect(lines[1]).toContain(`ps -p ${owned.pid}`);
+      expect(lines[1]).toContain('`stim gc --cache watchman --json`');
+      expect(lines[1]).not.toContain('--idle');
+      expect(process.exitCode).toBe(1);
+    } finally {
+      inspect.mockRestore();
+      if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+      expect(owned ? await waitForProcessExit(owned, 5000) : true).toBe(true);
+    }
+  },
+);

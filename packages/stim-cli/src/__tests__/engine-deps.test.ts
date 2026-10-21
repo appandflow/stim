@@ -165,6 +165,7 @@ describe('podEnvForRuby (#43, #44)', () => {
     });
     expect(env.PATH).toBe(`${rvmBin}${delimiter}/usr/bin`);
     expect(env.GEM_HOME).toBe(rvmGems);
+    expect(env.GEM_PATH).toBe([rvmGems, `${rvmGems}@global`].join(delimiter));
     const none = podEnvForRuby('3.3.10', {
       env: { PATH: '/usr/bin' },
       home: '/home/u',
@@ -173,6 +174,23 @@ describe('podEnvForRuby (#43, #44)', () => {
     });
     expect(none.PATH).toBe('/usr/bin');
     expect(none.GEM_HOME).toBeUndefined();
+  });
+
+  test("gives a pinned rvm Ruby the gemset and @global bins and GEM_PATH that 'rvm use' sets", () => {
+    const rvm = join('/home/u', '.rvm');
+    const gems = join(rvm, 'gems', 'ruby-3.4.8');
+    const global = `${gems}@global`;
+    const ruby = join(rvm, 'rubies', 'ruby-3.4.8', 'bin');
+    const present = new Set([ruby, gems, join(gems, 'bin'), join(global, 'bin')]);
+    const env = podEnvForRuby('3.4.8', {
+      env: { PATH: '/usr/bin' },
+      home: '/home/u',
+      exists: (p) => present.has(p),
+      loginEnv: () => null,
+    });
+    expect(env.PATH).toBe([join(gems, 'bin'), join(global, 'bin'), ruby, '/usr/bin'].join(delimiter));
+    expect(env.GEM_HOME).toBe(gems);
+    expect(env.GEM_PATH).toBe([gems, global].join(delimiter));
   });
 
   test("uses rvm's default Ruby without reading the login shell when the project pins none", () => {
@@ -470,10 +488,10 @@ describe('runPodInstall through bundler (#137)', () => {
     '',
   ].join('\n');
 
-  function pinnedProject({ lock = COCOAPODS_LOCK }: { lock?: string | null } = {}) {
+  function pinnedProject({ lock = COCOAPODS_LOCK, at = '.' }: { lock?: string | null; at?: string } = {}) {
     mkdirSync(join(root, 'ios'), { recursive: true });
-    writeFileSync(join(root, 'Gemfile'), "source 'https://rubygems.org'\ngem 'cocoapods'\n");
-    if (lock !== null) writeFileSync(join(root, 'Gemfile.lock'), lock);
+    writeFileSync(join(root, at, 'Gemfile'), "source 'https://rubygems.org'\ngem 'cocoapods'\n");
+    if (lock !== null) writeFileSync(join(root, at, 'Gemfile.lock'), lock);
   }
 
   function router(
@@ -491,24 +509,29 @@ describe('runPodInstall through bundler (#137)', () => {
 
   const ok = () => fakePodChild({ lines: ['Pod installation complete!'] });
 
-  test('a Gemfile with a Gemfile.lock checks the bundle, then pods through bundler', async () => {
-    pinnedProject();
-    const calls: SpawnCall[] = [];
-    const result = await runPodInstall(root, collectingWriter(), {
-      spawnFn: router(calls, {
-        'bundle check --dry-run': () => fakePodChild({ lines: ['The Gemfile dependencies are satisfied'] }),
-        'bundle exec pod install': ok,
-      }),
-    });
-    expect(result.ok).toBe(true);
-    expect(result.command).toBe('bundle exec pod install');
-    expect(calls.map((c) => [c.cmd, ...c.args].join(' '))).toEqual([
-      'bundle check --dry-run',
-      'bundle exec pod install',
-    ]);
-    expect(calls[0]?.opts.cwd).toBe(root);
-    expect(calls[1]?.opts.cwd).toBe(join(root, 'ios'));
-  });
+  test.each(['.', 'ios'])(
+    'a Gemfile with a Gemfile.lock in %s checks the bundle, then pods through bundler',
+    async (at) => {
+      pinnedProject({ at });
+      const calls: SpawnCall[] = [];
+      const result = await runPodInstall(root, collectingWriter(), {
+        spawnFn: router(calls, {
+          'bundle check --dry-run': () => fakePodChild({ lines: ['The Gemfile dependencies are satisfied'] }),
+          'bundle exec pod install': ok,
+        }),
+      });
+      expect(result.ok).toBe(true);
+      expect(result.command).toBe('bundle exec pod install');
+      expect(calls.map((c) => [c.cmd, ...c.args].join(' '))).toEqual([
+        'bundle check --dry-run',
+        'bundle exec pod install',
+      ]);
+      expect(calls[0]?.opts.cwd).toBe(join(root, at));
+      expect(calls[1]?.opts.cwd).toBe(join(root, 'ios'));
+      for (const call of calls)
+        expect((call.opts.env as NodeJS.ProcessEnv).BUNDLE_GEMFILE).toBe(join(root, at, 'Gemfile'));
+    },
+  );
 
   test('bundler never gets to write the lockfile: --dry-run on check, BUNDLE_FROZEN on every spawn', async () => {
     pinnedProject();
@@ -662,8 +685,8 @@ describe('runPodInstall through bundler (#137)', () => {
     expect(calls.map((c) => c.cmd)).toEqual(['bundle', 'bundle']);
   });
 
-  test('a lockfile bundler refuses to rewrite is reported as frozen mode, not as a missing gem', async () => {
-    pinnedProject();
+  test.each(['.', 'ios'])('a lockfile in %s that bundler refuses to rewrite is reported as frozen mode', async (at) => {
+    pinnedProject({ at });
     const result = await runPodInstall(root, collectingWriter(), {
       spawnFn: router([], {
         'bundle check --dry-run': () => fakePodChild({ code: 1 }),
@@ -680,7 +703,7 @@ describe('runPodInstall through bundler (#137)', () => {
     });
     expect(result.failed).toBe(true);
     expect(result.remedy).toMatch(/BUNDLE_FROZEN/);
-    expect(result.remedy).toMatch(new RegExp(`cd ${root} && bundle install`.replace(/[$^*+?.()|[\]{}\\]/g, '\\$&')));
+    expect(result.remedy).toContain(`cd ${join(root, at)} && bundle install`);
   });
 
   test('a frozen-mode refusal from `bundle exec pod install` gets the same remedy', async () => {

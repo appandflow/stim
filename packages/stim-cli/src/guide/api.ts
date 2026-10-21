@@ -64,12 +64,14 @@ refuses with STIM_CLAIM_UNAVAILABLE instead of cancellation or timeout. The
 child cleanup error names the launcher PID; unverifiable processes and descendants are left
 untouched. On POSIX, a launcher that exited before identity capture can only finish
 successfully once its process group is proven gone.
-After a termination request, cleanup waits at most one second for a child to
-close. Overall cleanup has a 35 second budget, including temporary-worktree
+After a termination request, cleanup waits for a child to close, then for its
+process group to exit: each wait is 5 seconds times the host's load per CPU,
+from 5 to 15 seconds. Overall cleanup has a 35 second budget, including temporary-worktree
 removal; unfinished cleanup returns STIM_CLAIM_UNAVAILABLE and leaves unresolved
 resources in place. Credential refresh waits asynchronously and checks
 cancellation before writing.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
+A probe's time limit counts only the probe itself; PowerShell's startup and exit each have their own 30 second limit.
 
 repairDoctor({ platform?, signal?, beforeRepair? }) applies the repairs offered by doctor --fix,
 then returns { report, exitCode }. A refused project repair sets exitCode to 1
@@ -236,9 +238,10 @@ STIM_CLAIM_UNAVAILABLE, taking precedence over cancellation or callback failure;
 follow its remedy before retrying. Startup never retries automatically.
 
 reload({ platform?, signal?, beforeReload? }) requests a JavaScript reload in
-the live iOS/Android app or reloads the owned Chrome page. It returns the flat
-stim reload --json facts: platform, deviceId, deviceName, appId, metroPort,
-strategy, targets and reverseRestored. Choose ios, android or web when more
+the live iOS/Android app (owned, on a physical device or in an EAS Simulator
+session) or reloads the owned Chrome page. It returns the flat
+stim reload --json facts: platform, deviceId, deviceName, appId (null for an
+app Stim did not launch), metroPort, strategy, targets and reverseRestored. Choose ios, android or web when more
 than one platform is live. A request does not prove completion; verify the UI
 and inspect logs. A Metro broadcast can reach other connected clients.
 beforeReload(workspace) runs once after resolving the workspace and before

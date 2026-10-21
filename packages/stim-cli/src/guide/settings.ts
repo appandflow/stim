@@ -358,6 +358,17 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         project scope; a committed value opts in everyone who
                         runs the app. Only the user enables it. See lifecycle
                         hosted-ios.
+  remote.easMaxDurationMinutes
+                        Minutes after which EAS stops each EAS Simulator session
+                        Stim creates (--remote eas or the easFallback), so a
+                        session nobody ended stops billing. A positive integer;
+                        default 30. Machine scope only. stop and gc --delete
+                        still end a session sooner; a run after the cap expires
+                        replaces the stopped session. Stim passes it to eas sim
+                        as --max-duration-minutes. EAS rejects a value above the
+                        account plan's session limit, so raise it only as far
+                        as the plan allows. A run reuses a live session without
+                        checking its remaining time.
   metro.tunnel          selects how a remote device reaches this workspace's
                         Metro after remote intent exists. Plain \`start\` stays
                         local. For Expo and bare React Native, "auto" (default)
@@ -905,6 +916,11 @@ and records buildMachine with builtOn absent. Build failures retain the selected
 value; builtOn is here or the configured machine entry when compilation ran.
 Prebuild and pod install still run on this machine before a named offload. A refusal
 starts no local xcodebuild, Gradle or SwiftPM compile.
+A React Native offload sends the tracked and untracked files, and the gitignored
+files the native fingerprint hashes or the Expo config reads, such as .env.local
+and other Expo .env files, secrets included. Nothing under node_modules and no
+build output the fingerprint ignores is sent. A fingerprint-mismatch refusal
+names the sources that differ and the files pod install or prebuild rewrote there.
 Run stim doctor --fix to ask for build access if not paired. A person on the
 worker approves it by running the stim-server setup command doctor printed, with
 its ticket and expiry. Check stim settings get remote.machines,
@@ -930,10 +946,30 @@ emulator debug build or a stim macos SwiftPM Debug build compiles:
   off    here when local remains enabled in the automatic build pool
 
 For React Native and Expo, among machines that can take a new build, a matching dependency installation
-ranks before load. The worker checks the requested project, lockfile and install
-arguments, and verifies that its modules and install marker remain present.
+ranks before load. The worker checks the requested project, lockfile, install
+arguments and the major of the Node the app pins, and verifies that its modules
+and install marker remain present.
 Older workers' dependency hints and mere checkout or build-folder presence do
 not influence this ranking. Exact completed-artifact hits still come first.
+
+The worker installs dependencies with the lockfile nearest the app: the first
+pnpm-lock.yaml, yarn.lock or package-lock.json in its directory or above it in
+the checkout, in the directory that holds it. An app with its own lockfile
+inside a larger repository installs its own dependencies there. In a pnpm
+workspace the worker installs every workspace package, as \`pnpm install\` does
+locally, because a native build can run a script of a package the app does not
+depend on.
+
+The worker runs the dependency install, prebuild, pods and xcodebuild with the
+Node the app pins, in its directory or the nearest one above it in the
+checkout, first on PATH, chosen as for Metro (see \`stim guide metro\`). On
+every offloaded iOS build, pinned or not, it writes the first node on its PATH
+(the pinned Node when it put one first) as NODE_BINARY in the iOS project's
+.xcode.env.local, replacing any export NODE_BINARY= line already there. A warm
+Gradle daemon keeps running React Native's node steps on the Node it started
+with. When no installed Node fits the pin, the steps run on the worker's node
+and a deps-failed or prebuild-failed reason names the pin and that Node's
+version. A change of the pinned Node's major reinstalls the dependencies.
 
 Load per core is the 5-minute load average divided by the CPU count; a machine's
 native builds are its Stim runs in prebuild, pods or compile on that machine, not
@@ -947,7 +983,8 @@ STIM_REMOTE_BUILD_MODE overrides it for one command. Device, Release and
 and iOS/Android runs with the build cache off, always build here. Hosted iOS
 Debug builds can use a separate --remote-build, targeting the hosting Mac's
 architecture and runtime.
-macOS uses matching Xcode and macOS SDK, with a per-client SwiftPM dependency
+macOS uses matching Xcode and macOS SDK (not when --remote-build and --remote name the
+same Mac; see stim guide macos), with a per-client SwiftPM dependency
 cache on the worker. It skips JavaScript dependencies, prebuild and pods; see
 stim guide macos. Completed caching requires macos.artifactInputs and a locally
 verified compile; remote output is not published under an unverified client key.
@@ -976,9 +1013,10 @@ lookup. Release and physical-device builds keep their existing paths.
 SwiftPM, compiler and dependency caches use their existing paths.
 For iOS the machine's Xcode and simulator SDK must match, and it needs an
 iPhone simulator on the target runtime. Its project-selected CocoaPods must match too, unless
-the app's Gemfile.lock pins CocoaPods: both machines then run that version through
+the app's Gemfile.lock, in ios/ or the project root, pins CocoaPods: both machines then run that version through
 bundler, so the machine needs only Bundler on its stim-server PATH and
-installs the pinned gems itself on the first build. The comparison selects
+installs the pinned gems itself on the first build. This Mac's side of the
+comparison runs \`pod --version\` in the directory pod install runs in. The comparison selects
 the app's .ruby-version when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the GEM_HOME, GEM_PATH and Ruby-related PATH entries of the machine's login shell (read once with $SHELL -lic), unless the caller already sets GEM_HOME, with pod install's UTF-8 locale defaults. pod install, including the Bundler run, uses the same environment.
 For Android its CPU may differ, since the APK's ABIs come from the NDK, so an
 x86_64 Linux or Windows machine running stim-server can build for an Apple silicon Mac. Its JDK major

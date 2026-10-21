@@ -61,12 +61,17 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
  * `hosted-android-data` is Android APK build handoff and native log queries, persisted before device deletion.
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
+ * `hosted-metro-ports` is `device-host.metro.ports`, which names the listed ports that already accept loopback
+ * connections on the host, apart from the requesting client's own dev-client bridges.
  * `native-xcode-build` accepts native Xcode provider requests with a separate source-transfer identity.
  * `native-xcode-toolchain` accepts native Xcode discovery without unrelated platform or Ruby probes.
  * `build-artifact-cache` offers and fetches exact completed native Xcode archives without a build job.
  * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
  * `native-gradle-artifact-cache` applies caller cache policy to verified worker-scoped APK reuse.
  * `react-native-peer-cache` offers development archives with build-proven fingerprints, options and toolchains.
+ * `fingerprint-sources` accepts `fingerprintSources` on `build.start`, so a fingerprint mismatch names the differing sources.
+ * `fingerprint-ignored` accepts `fingerprintIgnored` on `build.start`, the paths the caller's git ignored that the machine's git cannot.
+ * `fingerprint-tracked` accepts `fingerprintTracked` on `build.start`, the top-level entries the caller's git tracks although an ignore pattern matches them.
  * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
  * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
  * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
@@ -112,10 +117,14 @@ export const FEATURES = [
   'native-gradle-artifact-cache',
   'native-gradle-peer-cache',
   'react-native-peer-cache',
+  'fingerprint-sources',
+  'fingerprint-ignored',
+  'fingerprint-tracked',
   'swiftpm-peer-cache',
   'build-dependency-cache',
   'hosted-android-data',
   'hosted-android-process',
+  'hosted-metro-ports',
   'server-update',
   'status-views',
   'desktop-reports',
@@ -224,6 +233,7 @@ export const METHODS = [
   'device-host.app.attach',
   'device-host.logs.query',
   'device-host.metro.open',
+  'device-host.metro.ports',
   'device-host.metro.close',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
@@ -278,6 +288,7 @@ export const DEVICE_HOST_METHODS = [
   'device-host.app.attach',
   'device-host.logs.query',
   'device-host.metro.open',
+  'device-host.metro.ports',
   'device-host.metro.close',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
@@ -1120,6 +1131,11 @@ export interface BuildAndroidOptions {
   module?: string | null;
 }
 
+export interface BuildFingerprintSource {
+  id: string;
+  hash: string | null;
+}
+
 export interface GradleOffloadInputs {
   complete: true;
   ignored: string[];
@@ -1140,6 +1156,12 @@ export interface BuildStartParams {
   iosProjectPath?: string | null;
   runtime?: string | null;
   fingerprint: string | null;
+  /** The id and hash of each source of `fingerprint`, so the machine can name the sources its fingerprint differs in. */
+  fingerprintSources?: BuildFingerprintSource[];
+  /** Paths relative to `project` that the client's git ignores for `fingerprint`, such as through .git/info/exclude. */
+  fingerprintIgnored?: string[];
+  /** Top-level entries of `project` that the client's git tracks although an ignore pattern matches them. */
+  fingerprintTracked?: string[];
   native?:
     | {
         provider: 'xcode';
@@ -1552,6 +1574,7 @@ export interface Methods {
     params: { session: string; gatewayPort: number; secret: string; clientMetroPort?: number };
     result: { port: number };
   };
+  'device-host.metro.ports': { params: { ports: number[] }; result: { busy: number[] } };
   'device-host.metro.close': { params: { session: string }; result: { port: null } };
   'device-host.frames.subscribe': {
     params: { session: string; fps?: number; maxEdge?: number; video?: string[] };

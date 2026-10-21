@@ -52,6 +52,8 @@ async function fixture(name: string) {
   return { root, linked, home, env, carried, output };
 }
 
+const isCarriedCopy = (file: string) => file === 'cp' || file.includes('stim-clonefile-');
+
 test('concurrent warm clients copy real ignored files with isolated homes and progress', async () => {
   const first = await fixture('first');
   const second = await fixture('second');
@@ -122,7 +124,7 @@ test('a slow warm can outlast the report budget before its copy completes', asyn
     release = resolve;
   });
   const copy = vi.spyOn(executor, 'runFileAsync').mockImplementation(async (file, args, options) => {
-    if (file === 'cp') {
+    if (isCarriedCopy(file)) {
       copied = options.signal;
       started();
       await gate;
@@ -216,12 +218,12 @@ test('cancelling an active copy drains its child, removes partial output and rel
     started = resolve;
   });
   const copy = vi.spyOn(executor, 'runFileAsync').mockImplementation(async (file, args, options) => {
-    if (file !== 'cp') return runFile(file, args, options);
+    if (!isCarriedCopy(file)) return runFile(file, args, options);
     copied++;
     const script =
       'const fs = require("node:fs"); fs.mkdirSync(process.argv[1], {recursive:true}); ' +
       'fs.writeFileSync(process.argv[1] + "/partial", "partial"); console.log("ready"); setInterval(() => {}, 1000);';
-    const destination = args[2];
+    const destination = args.at(-1);
     assert(destination);
     return runFile(process.execPath, ['-e', script, destination], {
       ...options,

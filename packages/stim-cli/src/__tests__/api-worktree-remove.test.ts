@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import { rm, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -98,6 +107,47 @@ test('a refusal preserves dirty files, while explicit force removes the worktree
   expect(await client.removeWorktree({ target: item.linked, force: true })).toEqual({ removed: true, exitCode: 0 });
   expect(existsSync(item.linked)).toBe(false);
 }, 30_000);
+
+test.skipIf(process.platform === 'win32')(
+  'an API removal deletes the ignored directories it moved to the trash before it resolves',
+  async () => {
+    const item = await fixture('trash');
+    writeFileSync(join(item.root, '.git', 'info', 'exclude'), 'node_modules/\n');
+    for (let index = 0; index < 200; index++) {
+      mkdirSync(join(item.linked, 'node_modules', `pkg-${index}`), { recursive: true });
+      writeFileSync(join(item.linked, 'node_modules', `pkg-${index}`, 'index.js'), 'module.exports = 1;');
+    }
+    const client = createStim({ projectRoot: item.root, home: item.home, env: item.env });
+
+    expect(await client.removeWorktree({ target: item.linked })).toEqual({ removed: true, exitCode: 0 });
+
+    expect(existsSync(item.linked)).toBe(false);
+    expect(readdirSync(join(item.home, 'trash'))).toEqual([]);
+  },
+  30_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'an API removal run from the worktree it removes also empties the trash',
+  async () => {
+    const item = await fixture('trash-self');
+    writeFileSync(join(item.root, '.git', 'info', 'exclude'), 'node_modules/\n');
+    mkdirSync(join(item.linked, 'node_modules', 'pkg'), { recursive: true });
+    writeFileSync(join(item.linked, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1;');
+    const execSpy = vi.spyOn(getExecutor(), 'runFileAsync');
+    const client = createStim({ projectRoot: item.linked, home: item.home, env: item.env });
+
+    expect(await client.removeWorktree()).toEqual({ removed: true, exitCode: 0 });
+
+    expect(existsSync(item.linked)).toBe(false);
+    expect(readdirSync(join(item.home, 'trash'))).toEqual([]);
+    expect(execSpy.mock.calls.filter(([file]) => file === 'rm').map(([, , options]) => options?.cwd)).toEqual([
+      join(item.home, 'trash'),
+    ]);
+    execSpy.mockRestore();
+  },
+  30_000,
+);
 
 test('source checkout cleanup succeeds without deleting the checkout or another workspace record', async () => {
   const item = await fixture('source');

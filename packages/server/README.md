@@ -547,8 +547,11 @@ are not carried over: phones pair again, and remote machines are approved
 again with a new setup ticket.
 
 Stim Desktop and other clients of the server's own user on the same machine do
-not pair. They connect to the Unix socket `$STIM_HOME/server/local.sock`, mode
-0600 in a 0700 directory, which serves only this user and needs no handshake.
+not pair. They connect to the Unix socket `$STIM_HOME/server/local.sock`. If
+that path exceeds the platform's limit (103 UTF-8 bytes on macOS, 107 on Linux), the socket instead lives at
+`/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`, so long hosted
+session homes remain usable and distinct homes keep distinct sockets. The
+socket is mode 0600 in a mode 0700 directory owned by this user and needs no handshake.
 That connection gets read and control. The Desktop-only methods (`route.setup`,
 `machines.update.*`, `device-host.sessions` and `device-host.sessions.stop`)
 work only there; on a server Desktop started, only after the private Desktop
@@ -556,8 +559,13 @@ bootstrap proof (see [Private Desktop bootstrap](#private-desktop-bootstrap)).
 Windows has no socket.
 
 The network address, `tailscale whois` and the `X-Forwarded-For` header that
-`tailscale serve` adds never authenticate. They only label a record (`from` in
-`stim-server devices`) and key the rate limits below.
+`tailscale serve` adds never authenticate. They label a record (`from` in
+`stim-server devices`) and key the rate limits below. Tailscale rewrites the
+header to the real tailnet source, so remote clients cannot forge it. A local
+process on the host can connect to the loopback port and forge it to lock one
+named peer, or the shared local bucket, out for the lockout window. It
+authenticates nothing and reads nothing. This is accepted because it needs
+local code execution on the host.
 
 A connection must finish the handshake and send `hello` within 5 seconds of
 each step. Five failed attempts from the same peer address within a minute
@@ -1143,6 +1151,12 @@ stream over WireGuard with socket backpressure; no public tunnel, Funnel or
 Tailscale serve configuration change is needed. The 64 KiB server message
 limit remains unchanged.
 
+An approved client calls `device-host.metro.ports` with `{ports}`, at most 256
+of them, before it starts Metro for an iOS Expo dev client, and the host
+answers `{busy}`: the listed ports that already accept loopback connections,
+apart from the client's own dev-client bridges. The feature
+`hosted-metro-ports` advertises it.
+
 Replaying the same open request keeps the port. Client disconnection leaves
 the bridge available for the same session while its server owner lives. Call
 `device-host.metro.close` to replace a gateway, then reopen on the same port;
@@ -1700,7 +1714,17 @@ connected since stim-server started keeps its directory when revoked.
   `ccache` or `none`) and `stimBuild`, after the whole manifest of `repo` was
   synced on this connection. A peer-cache-capable React Native caller can set
   `cacheArtifact: true` to retain a completed development archive when its cache
-  write and remote policies allow it. It returns `{ "job" }`. It fails with
+  write and remote policies allow it. With the `fingerprint-sources` feature, a
+  caller can send `fingerprintSources`, the `id` and `hash` of each source of
+  `fingerprint`, and a `fingerprint-mismatch` failure names the sources that
+  differ and the synced files prebuild or `pod install` rewrote. With the
+  `fingerprint-ignored` feature, it can send `fingerprintIgnored`, the paths
+  relative to `project` that its git ignores for `fingerprint` through
+  `.git/info/exclude` or a global excludes file, which the machine's synced
+  checkout has no copy of. With the `fingerprint-tracked` feature, it can
+  send `fingerprintTracked`, the top-level entry names of `project` that its
+  git tracks although an ignore pattern matches them, which the machine's
+  empty index would skip. It returns `{ "job" }`. It fails with
   `build-busy` while the offer would be declined, naming the reason, or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with
@@ -2497,7 +2521,6 @@ silent only when every notification it sums up is. An older server ignores
 `levels` and alerts for every event but `started`.
 
 The server and phone import the same pure rules from `@stim-cli/core/oversight`.
-The phone formats home attention messages locally from the facts the shared rule selects.
 `__tests__/oversight-agreement.test.ts` checks their categories, workspace names
 and needs-attention vectors. Notification delivery remains local to each.
 

@@ -193,6 +193,8 @@ final class BuildMachinesModel {
     settings.payload.map { $0.entry("remote.machines")?.value.strings ?? [] }
   }
 
+  var settingsReadFailure: String? { entries == nil ? settings.error : nil }
+
   var poolDisabled: [String: [String]]? {
     guard let build = settings.entry("remote.buildPoolDisabled")?.value.strings,
       let device = settings.entry("remote.devicePoolDisabled")?.value.strings

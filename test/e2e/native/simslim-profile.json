@@ -1,6 +1,6 @@
 {
   "name": "stim-native-qa",
-  "description": "Blank React Native and Expo fixtures: preserve app services, networking, connectivity and diagnostics while reducing unrelated background work.",
-  "except": ["store", "web", "connectivity", "telemetry", "other"],
+  "description": "Blank React Native and Expo fixtures on CI: keep diagnostics and telemetry, disable every other optional category the QA suites do not exercise.",
+  "except": ["telemetry"],
   "keep": []
 }

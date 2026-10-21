@@ -17,6 +17,7 @@ type GcResultKind =
   | 'cache'
   | 'statusCache'
   | 'tempLeftover'
+  | 'trash'
   | 'watchmanRoot'
   | 'watchman'
   | 'gradleDaemon'

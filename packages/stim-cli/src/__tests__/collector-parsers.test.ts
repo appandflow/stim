@@ -7,10 +7,8 @@ import {
   levelForEvent,
   levelFromMessageType,
   logStreamArgs,
-  noiseRuleId,
   parseLogStreamLine,
   procFromImagePath,
-  NOISE_RULES,
 } from '../collector/ios.ts';
 import {
   androidClockOffset,
@@ -413,11 +411,9 @@ describe('ios: demoting device noise', () => {
     );
     assert(simulatorRecord);
     expect(simulatorRecord.level).toBe('info');
-    expect(
-      noiseRuleId(
-        JSON.parse(JSON.stringify(event({ eventMessage: 'The app must migrate to UIScene lifecycle before iOS 27.' }))),
-      ),
-    ).toBe('uiscene-deprecation');
+    expect(levelForEvent(event({ eventMessage: 'The app must migrate to UIScene lifecycle before iOS 27.' }))).toBe(
+      'info',
+    );
   });
 
   test('the rest of the proven offenders are demoted, each by its own rule', () => {
@@ -465,22 +461,13 @@ describe('ios: demoting device noise', () => {
       ],
     ];
     for (const [id, e] of cases) {
-      expect(noiseRuleId(e)).toBe(id);
       const record = parseLogStreamLine(JSON.stringify(e));
       assert(record);
-      expect(record.level).toBe('info');
+      expect([id, record.level]).toEqual([id, 'info']);
       expect(record.msg).toBe(e.eventMessage);
       expect(record.src).toBe('device');
       expect(record.proc).toBe('MyApp');
     }
-    const covered = new Set([
-      ...cases.map(([id]) => id),
-      'network',
-      'network-default-subsystem',
-      'uiscene-deprecation',
-      'cfnetwork-performance-diagnostic',
-    ]);
-    expect(NOISE_RULES.map((r) => r.id).filter((id) => !covered.has(id))).toEqual([]);
   });
 
   test('a main-thread Synchronous URL loading diagnostic is a warning, not an app error', () => {
@@ -514,14 +501,12 @@ describe('ios: demoting device noise', () => {
       event({ subsystem: 'com.apple.UIKit', category: 'UIFocus', eventMessage: `${focusCacheMessage} Extra` }),
     ];
     for (const nearMiss of nearMisses) {
-      expect(noiseRuleId(nearMiss)).toBe(null);
       expect(levelForEvent(nearMiss)).toBe('error');
     }
   });
 
   test("the app's own error is untouched, and so is an unlisted system one", () => {
     const own = event({ eventMessage: '[Error: Exception in HostFunction]' });
-    expect(noiseRuleId(own)).toBe(null);
     const ownRecord = parseLogStreamLine(JSON.stringify(own));
     assert(ownRecord);
     expect(ownRecord.level).toBe('error');
@@ -546,15 +531,15 @@ describe('ios: demoting device noise', () => {
   });
 
   test('a subsystem rule matches dotted children, not lookalike names', () => {
-    expect(noiseRuleId(event({ subsystem: 'com.apple.network.tcp' }))).toBe('network');
+    expect(levelForEvent(event({ subsystem: 'com.apple.network.tcp' }))).toBe('info');
     expect(
-      noiseRuleId(event({ subsystem: 'com.apple.networkextension', eventMessage: 'provider failed to start' })),
-    ).toBe(null);
+      levelForEvent(event({ subsystem: 'com.apple.networkextension', eventMessage: 'provider failed to start' })),
+    ).toBe('error');
   });
 
   test('an event with no subsystem, category or message at all is not noise', () => {
-    expect(noiseRuleId({})).toBe(null);
-    expect(noiseRuleId(null)).toBe(null);
+    expect(levelForEvent({ messageType: 'Error' })).toBe('error');
+    expect(levelForEvent(null)).toBe('info');
   });
 });
 

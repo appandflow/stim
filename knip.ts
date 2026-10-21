@@ -13,16 +13,9 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
     'scripts/agent-benchmark/watch-app.mjs',
     ...(production ? ['**/__tests__/**', 'scripts/**', 'test/**', 'vitest.*.ts', 'apps/mobile/mock-server/**'] : []),
   ],
-  // Test-only exports in apps/mobile, https://github.com/appandflow/stim/issues/3463
   ignoreIssues: {
     // nitrogen reads the view's type from the spec; nothing imports it.
     'apps/mobile/modules/stim-session/src/specs/StimSession.nitro.ts': ['types'],
-    ...(production
-      ? {
-          'apps/mobile/src/lib/needs-attention.ts': ['exports', 'types'],
-          'apps/mobile/src/lib/workspaces.ts': ['exports'],
-        }
-      : {}),
   },
   workspaces: {
     '.': {

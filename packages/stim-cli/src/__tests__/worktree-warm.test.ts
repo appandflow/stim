@@ -115,14 +115,14 @@ test('missing-only copy skips registered nested worktrees and their ignored pare
   expect(git(targetNested, 'branch', '--show-current')).toBe('target-nested');
 }, 30_000);
 
-test('missing-only copy discards partial clone output before byte-copy fallback', async () => {
+test('missing-only copy discards partial clone output before each fallback', async () => {
   write(root, 'node_modules/pkg/index.js', 'source package');
   const real = getExecutor();
   setExecutor({
     ...real,
     async runFileAsync(file, args, opts) {
-      if (file === 'cp' && args[0] === '-Rc') {
-        write(args[2], 'partial', 'failed clone');
+      if (file.includes('stim-clonefile-') || (file === 'cp' && args[0] === '-Rc')) {
+        write(args[args.length - 1], `partial-${args.length}`, 'failed clone');
         throw new Error('clone not supported');
       }
       return real.runFileAsync(file, args, opts);
@@ -142,8 +142,8 @@ test('failed direct copies discard partial output so a retry can complete', asyn
   setExecutor({
     ...real,
     async runFileAsync(file, args, opts) {
-      if (file === 'cp') {
-        write(args[2], 'partial', 'incomplete');
+      if (file === 'cp' || file.includes('stim-clonefile-')) {
+        write(args[args.length - 1], 'partial', 'incomplete');
         throw new Error('copy failed');
       }
       return real.runFileAsync(file, args, opts);
@@ -188,19 +188,36 @@ test.skipIf(process.platform === 'win32')(
   30_000,
 );
 
-test.skipIf(process.platform !== 'darwin')('direct cloning preserves source timestamps', async () => {
-  write(root, '.env', 'source config');
-  const source = join(root, '.env');
-  utimesSync(source, new Date('2020-01-01'), new Date('2021-01-01'));
-  const before = lstatSync(source);
-  const result = await warm();
-  expect(result.failed).toEqual([]);
-  expect(result.cloned).toBe(true);
-  const copied = lstatSync(join(target, '.env'));
-  expect(copied.ino).not.toBe(before.ino);
-  expect(copied.atimeMs).toBe(before.atimeMs);
-  expect(copied.mtimeMs).toBe(before.mtimeMs);
-});
+test.skipIf(process.platform !== 'darwin')(
+  'direct cloning preserves source timestamps and clones a directory without a per-file copy',
+  async () => {
+    write(root, '.env', 'source config');
+    write(root, 'node_modules/pkg/index.js', 'source package');
+    const real = getExecutor();
+    const copiedByCp: string[] = [];
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        if (file === 'cp') copiedByCp.push(args[args.length - 2]);
+        return real.runFileAsync(file, args, opts);
+      },
+    });
+    const files = ['.env', 'node_modules/pkg/index.js'];
+    for (const rel of files) utimesSync(join(root, rel), new Date('2020-01-01'), new Date('2021-01-01'));
+    const before = new Map(files.map((rel) => [rel, lstatSync(join(root, rel))]));
+    const result = await warm();
+    expect(result.failed).toEqual([]);
+    expect(result.cloned).toBe(true);
+    expect(copiedByCp).toEqual([join(root, '.env')]);
+    for (const [rel, source] of before) {
+      const copied = lstatSync(join(target, rel));
+      expect(copied.ino).not.toBe(source.ino);
+      expect(copied.atimeMs).toBe(source.atimeMs);
+      expect(copied.mtimeMs).toBe(source.mtimeMs);
+    }
+  },
+  30_000,
+);
 
 async function runWarm(cwd: string) {
   const stdout: string[] = [];
@@ -242,6 +259,19 @@ test('warm rejects the source checkout and non-repositories without changing the
   const outside = await runWarm(base);
   expect(outside.code).toBe(1);
   expect(outside.stderr).toMatch(/Not a git repository/);
+}, 30_000);
+
+test('warm reports a timed-out Git probe instead of calling the worktree a non-repository', async () => {
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    async runFileAsync(file, args, opts) {
+      if (args.includes('--show-toplevel'))
+        throw Object.assign(new Error(`Command timed out after 10000ms: git ${args.join(' ')}`), { code: 'ETIMEDOUT' });
+      return real.runFileAsync(file, args, opts);
+    },
+  });
+  await expect(warmWorktreePaths(target)).rejects.toThrow(/timed out after 10000ms: git .*rev-parse --show-toplevel/);
 }, 30_000);
 
 test('warm refuses an unregistered target, missing source checkout, or mismatched Git common directory', async () => {
@@ -419,6 +449,24 @@ test('warm copies literal ignored filenames and skips Finder, IDE, jj, and deriv
   expect(readFileSync(join(target, 'node_modules/pkg/.idea/workspace.xml'), 'utf-8')).toBe(
     'destination nested IDE state',
   );
+}, 30_000);
+
+test('warm removes every nested exclusion from a wide, deep carried tree', async () => {
+  const dirs: string[] = [];
+  for (let a = 0; a < 6; a++)
+    for (let b = 0; b < 6; b++) for (let c = 0; c < 6; c++) dirs.push(`node_modules/p${a}/d${b}/e${c}`);
+  for (const dir of dirs) {
+    write(root, `${dir}/index.js`, dir);
+    write(root, `${dir}/.DS_Store`, 'Finder metadata');
+    write(root, `${dir}/.idea/workspace.xml`, 'IDE state');
+  }
+  const result = await warm();
+  expect(result.failed).toEqual([]);
+  const left = dirs.filter(
+    (dir) => existsSync(join(target, dir, '.DS_Store')) || existsSync(join(target, dir, '.idea')),
+  );
+  expect(left).toEqual([]);
+  expect(dirs.filter((dir) => readFileSync(join(target, dir, 'index.js'), 'utf-8') !== dir)).toEqual([]);
 }, 30_000);
 
 test.each(['android/build/', 'apps/mobile/'])(

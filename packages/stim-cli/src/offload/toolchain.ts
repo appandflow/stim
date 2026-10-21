@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { stimBuildDigest } from '@stim-cli/core/state';
 import { androidHome } from '../devices/android.ts';
 import { getExecutor } from '../exec.ts';
+import { bundlerPin } from '../engine/bundler.ts';
 import { podEnvForRuby, podEnvForRubyAsync, readRubyVersion } from '../engine/deps.ts';
 
 /** What must be identical on this Mac and a remote Mac for an iOS simulator build to come out the same. */
@@ -53,7 +54,7 @@ export type BuildTarget =
       cocoapodsPinned: boolean;
     }
   | { platform: 'android'; native?: 'gradle'; local: AndroidToolchain; requires: AndroidRequirements }
-  | { platform: 'macos'; local: MacosToolchain };
+  | { platform: 'macos'; local: MacosToolchain; runsOnWorker?: true };
 
 const distDir = dirname(fileURLToPath(import.meta.url));
 
@@ -69,12 +70,12 @@ async function quietAsync(file: string, args: string[]): Promise<string | null> 
   }
 }
 
-export async function iosToolchainAsync(root: string, native?: 'xcode'): Promise<IosToolchain> {
-  const rubyVersion = native ? null : readRubyVersion(root);
+/** This Mac's iOS toolchain, with the CocoaPods that `pod install` in `podDirectory` runs; null skips CocoaPods. */
+export async function iosToolchainAsync(root: string, podDirectory: string | null): Promise<IosToolchain> {
   const [xcode, simulatorSdk, cocoapods] = await Promise.all([
     quietAsync('xcodebuild', ['-version']),
     quietAsync('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version']),
-    native ? null : cocoapodsVersionAsync(rubyVersion),
+    podDirectory === null ? null : projectCocoapodsVersion(root, podDirectory),
   ]);
   return assembleIosToolchain(xcode, simulatorSdk, cocoapods);
 }
@@ -118,12 +119,15 @@ function cocoapodsVersion(rubyVersion: string | null): string | null {
   );
 }
 
-async function cocoapodsVersionAsync(rubyVersion: string | null): Promise<string | null> {
+async function projectCocoapodsVersion(root: string, podDirectory: string): Promise<string | null> {
+  const pin = bundlerPin(root, podDirectory);
+  if (pin) return pin.cocoapods;
   try {
     return podVersionLine(
       await getExecutor().runFileAsync('pod', ['--version'], {
         timeoutMs: 20_000,
-        env: podProbeEnv(await podEnvForRubyAsync(rubyVersion)),
+        cwd: podDirectory,
+        env: podProbeEnv(await podEnvForRubyAsync(readRubyVersion(root))),
       }),
     );
   } catch {
@@ -363,6 +367,11 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
   if (worker.os !== undefined && worker.os !== 'darwin') {
     const name = target.platform === 'ios' ? 'iOS' : 'macOS';
     return [...out, { code: 'platform', reason: `${worker.os} there, and ${name} builds need a Mac` }];
+  }
+  if (target.platform === 'macos' && target.runsOnWorker) {
+    if (!worker.xcode) out.push({ code: 'xcode', reason: 'no Xcode there' });
+    if (!worker.macosSdk) out.push({ code: 'macos-sdk', reason: 'no macOS SDK there' });
+    return out;
   }
   if (worker.arch !== local.arch) out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
   if (target.platform === 'macos') {

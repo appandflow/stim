@@ -1,3 +1,4 @@
+import { withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { getExecutor } from '../exec.ts';
@@ -7,7 +8,7 @@ import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { operationState } from './operation-state.ts';
 import { formatElapsed } from '../command-output.ts';
 import type { ClaimHolder } from '../ownership-claim.ts';
-import { readJsonObject, type RemoteDeviceBackend } from '@stim-cli/core/state';
+import { readJsonObject, settingDefinition, settingValueError, type RemoteDeviceBackend } from '@stim-cli/core/state';
 import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
 import { workspaceDir, workspaceId, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -55,7 +56,7 @@ import {
   removeEasSessionClaim,
   removeEasSessionClaimAsync,
 } from './eas-session-ledger.ts';
-import { getConfigDir } from '../workspace/config.ts';
+import { getConfigDir, loadConfig } from '../workspace/config.ts';
 
 export type { RemoteDeviceBackend } from '@stim-cli/core/state';
 
@@ -129,6 +130,8 @@ interface LaunchResult {
   code?: string;
   reason?: string;
 }
+
+const EAS_PROJECT_NOT_CONFIGURED = /EAS project not configured/i;
 
 function describe(err: unknown): string {
   const e = err as { stderr?: unknown; message?: unknown };
@@ -253,7 +256,8 @@ function remoteDeviceDeps(ctx: RemoteContext) {
                 remedy: 'Inspect the recorded session, then run `stim stop` again.',
               };
             }
-            clearRemoteSession(ctx.root, recorded.sessionId);
+            const sessionId = recorded.sessionId;
+            await withWorkspaceStateLockAsync(ctx.root, () => clearRemoteSession(ctx.root, sessionId));
           }
         }
       }
@@ -290,7 +294,16 @@ function remoteDeviceDeps(ctx: RemoteContext) {
               remedy: `Run \`eas simulator:list --name ${name}\` and stop any running session with \`eas simulator:stop --id <id>\`, then retry.`,
             };
           }
-          return { failed: true, reason: `eas sim failed: ${describe(err)}` };
+          const failure = describe(err);
+          if (EAS_PROJECT_NOT_CONFIGURED.test(failure)) {
+            return {
+              failed: true,
+              code: 'STIM_REMOTE_EAS_UNAVAILABLE',
+              reason: 'The Expo app is not linked to an EAS project, so no EAS Simulator session was created.',
+              remedy: `Link it with \`eas init --id <project-id> --non-interactive\` (existing project) or \`eas init --account <account-name> --non-interactive\` (new project), then run \`stim ${ctx.platform ?? 'ios'} --remote eas\` again.`,
+            };
+          }
+          return { failed: true, reason: `eas sim failed: ${failure}` };
         }
         const created = parseCreatedSession(stdout);
         if (!created) {
@@ -547,6 +560,21 @@ export async function resolveRemoteContext({
     }
   }
 
+  let sessionMaxMinutes = maxDurationMinutes;
+  if (backend === 'eas' && sessionMaxMinutes === null) {
+    const setting = settingDefinition('remote.easMaxDurationMinutes');
+    const configured = loadConfig()?.remote?.easMaxDurationMinutes;
+    const problem = setting && configured !== undefined ? settingValueError(setting, configured) : null;
+    if (problem) {
+      return {
+        failed: `Invalid remote.easMaxDurationMinutes value ${JSON.stringify(configured)}. Expected ${problem}.`,
+        remedy: 'Run `stim settings set remote.easMaxDurationMinutes <minutes> --scope machine`, then retry.',
+        code: 'STIM_BAD_ARG',
+      };
+    }
+    sessionMaxMinutes = typeof configured === 'number' ? configured : Number(setting?.default);
+  }
+
   return {
     ctx: {
       root,
@@ -557,7 +585,7 @@ export async function resolveRemoteContext({
       easBin: easBin ?? '',
       agentDeviceBin,
       operation,
-      maxDurationMinutes,
+      maxDurationMinutes: sessionMaxMinutes,
       deviceType: backend === 'eas' ? deviceType : null,
       publicMetroUrl: null,
       existingDaemon,
@@ -737,7 +765,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
             const sessionId = createdSessionId();
             if (!sessionId) return booted;
             try {
-              recordEasSessionClaim(
+              await recordEasSessionClaim(
                 {
                   sessionId,
                   name: sessionName,
@@ -749,7 +777,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
                 ledgerRoot,
               );
               const preview = webPreviewUrl();
-              writeState(root, {
+              await writeState(root, {
                 remoteDevice: {
                   platform,
                   sessionId,

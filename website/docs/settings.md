@@ -333,6 +333,14 @@ last configured, approved member of either pool. A remote that Tailscale reports
 running an OS other than macOS never counts for the device pool. Excluding local
 prevents local fallback. See [automatic machine pools](./remote-machines.md#automatic-machine-pools).
 
+`remote.easMaxDurationMinutes` (default 30) is the number of minutes after which EAS
+stops each EAS Simulator session Stim creates, for `--remote eas` and
+`remote.easFallback`. It bounds the cost of a session that nobody ended, such as one
+whose workspace was deleted by hand. `stim stop` and `stim gc --delete` still end a
+session sooner, and a later run replaces an expired one. EAS rejects a value above
+the account plan's session limit. A run reuses a live session without checking how
+much of the cap is left.
+
 `remote.machines` names the remote machines this machine may build on and host owned
 simulator sessions on, by MagicDNS name and optional serve port (default 7443).
 Name each node and port once. Set it with
@@ -454,11 +462,12 @@ in that order:
 
 - For iOS, its Xcode and simulator SDK must match, and it needs an iPhone
   simulator on the target runtime. Its project-selected CocoaPods must match too, unless the
-  project's `Gemfile.lock` pins CocoaPods: both machines then run that version
+  project's `Gemfile.lock`, in `ios/` or the project root, pins CocoaPods: both machines then run that version
   through Bundler, so the machine needs only Bundler on its stim-server `PATH`
-  and installs the pinned gems itself on the first build. The comparison uses
+  and installs the pinned gems itself on the first build. This machine's side of
+  the comparison runs `pod --version` in the directory `pod install` runs in. The comparison uses
   `.ruby-version` when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.
-- For macOS, its Xcode and macOS SDK must match. The worker needs network
+- For macOS, its Xcode and macOS SDK must match, unless `--remote-build` and `--remote` name the same Mac, which builds and runs the app and then needs only the same Stim build (see [macOS development](./macos.md#run-it-on-another-mac)). The worker needs network
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally. Completed
   caching requires `macos.artifactInputs` and a locally verified compile; remote

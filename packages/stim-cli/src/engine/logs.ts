@@ -129,6 +129,7 @@ export async function followWorkspaceLogs(
   const stopLog = followLogs({
     dir: workspaceLogsDir(context.projectRoot),
     offsets: view.sizes,
+    identities: view.identities,
     criteria,
     onRecord,
     errorContext: options.errorsOnly ? 'field' : undefined,

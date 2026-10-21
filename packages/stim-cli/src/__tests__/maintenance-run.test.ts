@@ -453,6 +453,32 @@ test('cached Swift CAS observations refresh build protection before each plan', 
   }
 });
 
+test('a removed workspace leaves no kept entry and no cap total once its directory is gone', async () => {
+  const gone = join(home, 'workspaces', 'gone--0123456789abcdef');
+  const sizes = [
+    {
+      name: 'workspace build outputs',
+      category: 'workspace-outputs' as const,
+      dir: gone,
+      bytes: 5 * 1024 ** 3,
+      measuredAt: 1,
+      workspace: '/projects/gone',
+      idleDays: 3,
+    },
+  ];
+  const settings = { ...resolveMaintenanceSettings(), workspaceOutputsMaxGb: 1 };
+  mkdirSync(join(home, 'workspaces'));
+  expect(await preview.plannedMaintenance(null, sizes, settings)).toMatchObject({
+    actions: [],
+    blocked: [],
+    skips: [],
+  });
+  rmSync(join(home, 'workspaces'), { recursive: true });
+  expect((await preview.plannedMaintenance(null, sizes, settings)).skips).toContainEqual(
+    expect.objectContaining({ target: gone, reason: 'workspace outputs cannot be resolved' }),
+  );
+});
+
 test('invalid maintenance settings are explained in status and gc rather than silently reported as off', async () => {
   process.env.STIM_MAINTENANCE_SIZE_CHECK_MINUTES = 'bad';
   try {

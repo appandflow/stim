@@ -421,7 +421,7 @@ export async function checkMainCheckout(
       }
     }
     if (podsState) {
-      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot)}`;
+      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, iosRoot)}`;
       findings.push(
         finding(
           'cost',
@@ -434,7 +434,7 @@ export async function checkMainCheckout(
 
     const broken = brokenPods === undefined && existsSync(podsRoot) ? await brokenPodLinks(podsRoot) : brokenPods || [];
     if (broken.length) {
-      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, '--clean-install')}`;
+      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, iosRoot, '--clean-install')}`;
       findings.push(
         finding(
           'cost',
@@ -1319,7 +1319,7 @@ export function checkAndroidPathRoom(
     ...finding(
       'cost',
       'The project path leaves no room for Android native object paths',
-      `${androidPathRoomMessage(room)} \`stim android\` refuses to build here with STIM_PATH_TOO_LONG, because Gradle would fail deep inside ninja instead.`,
+      `${androidPathRoomMessage(room)} \`stim android\` refuses to run an emulator here with STIM_PATH_TOO_LONG, before it prepares the device, because Gradle would fail deep inside ninja instead.`,
       androidPathRoomRemedy(room),
     ),
   };
@@ -1433,7 +1433,7 @@ export function checkFingerprintParity({
     'note',
     'This checkout does not fingerprint like a fresh worktree of HEAD',
     `A clean detached worktree of HEAD computes a different @expo/fingerprint hash than this checkout, so worktrees will MISS the cache entries this checkout fills (and vice versa) until the two agree.${differing} ${cause} (To measure this, doctor ran a real fingerprint twice and briefly created a temporary git worktree -- .git/worktrees metadata was touched and cleaned up.)`,
-    'Commit the dirty fingerprint inputs, or list the build-irrelevant ones in .fingerprintignore (same syntax as .gitignore, at the project root; Stim already ignores android/local.properties and android/.idea). Only the ones that genuinely cannot change the native build belong there -- generated reports, local env files, a lockfile whose checksums embed absolute machine paths. Never ignore a real native input (a Podfile, a gradle file, the app config) to force a hit: that trades a slow build for a wrong one.',
+    'Commit the dirty fingerprint inputs, or list the build-irrelevant ones in .fingerprintignore (same syntax as .gitignore, at the project root; Stim already ignores android/local.properties, android/.idea, *.xcodeproj/xcuserdata, and ios/main.jsbundle and ios/assets while a .gitignore pattern matches them). Only the ones that genuinely cannot change the native build belong there -- generated reports, local env files, a lockfile whose checksums embed absolute machine paths. Never ignore a real native input (a Podfile, a gradle file, the app config) to force a hit: that trades a slow build for a wrong one.',
   );
 }
 

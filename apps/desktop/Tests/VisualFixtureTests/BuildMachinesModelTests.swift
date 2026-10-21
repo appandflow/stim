@@ -69,6 +69,22 @@ final class BuildMachinesModelTests: XCTestCase {
     XCTAssertNil(model.approvedHostingMachines(in: "/w"))
   }
 
+  @MainActor func testSettingsReadFailureShowsUntilTheListLoads() async {
+    let harness = Harness()
+    let model = harness.make()
+    XCTAssertNil(model.settingsReadFailure)
+    await model.settings.refresh()
+    XCTAssertNil(model.entries)
+    XCTAssertNotNil(model.settingsReadFailure)
+    harness.machines = "[\"mini\"]"
+    await model.settings.refresh()
+    XCTAssertNil(model.settingsReadFailure)
+    harness.machines = nil
+    await model.settings.refresh()
+    XCTAssertEqual(model.entries, ["mini"])
+    XCTAssertNil(model.settingsReadFailure)
+  }
+
   @MainActor func testAutomaticCheckSkipsDoctorWithoutMachinesOrSettingAndFollowsBuildAndListChanges() async {
     let harness = Harness()
     harness.machines = "[]"

@@ -15,7 +15,7 @@ const { workspaceStateFile } = await import(process.argv[2]);
 const root = process.argv[3];
 const workspaceRoot = process.argv[4];
 const workspaceHome = process.argv[5];
-recordEasSessionClaim(
+await recordEasSessionClaim(
   {
     sessionId: 'drs_child',
     name: 'stim-child',
@@ -45,7 +45,7 @@ afterEach(() => {
   rmSync(guardedRoot, { recursive: true, force: true });
 });
 
-test('recordEasSessionClaim refuses to write the guarded root from the test process', () => {
+test('recordEasSessionClaim refuses to write the guarded root from the test process', async () => {
   const claim = {
     sessionId: 'drs_guard',
     name: 'stim-guard',
@@ -54,7 +54,9 @@ test('recordEasSessionClaim refuses to write the guarded root from the test proc
     workspaceHome: '/tmp/stim-guard-home',
     stateFile: '/tmp/stim-guard-home/workspaces/root/state.json',
   };
-  expect(() => recordEasSessionClaim(claim, guardedRoot)).toThrow(/Refusing to write the real EAS machine root/);
+  await expect(recordEasSessionClaim(claim, guardedRoot)).rejects.toThrow(
+    /Refusing to write the real EAS machine root/,
+  );
   expect(existsSync(join(guardedRoot, 'sessions.json'))).toBe(false);
 });
 

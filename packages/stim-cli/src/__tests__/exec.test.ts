@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,6 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { withAmbientContext } from '@stim-cli/core';
 import { runId } from '@stim-cli/core/state';
 import { getExecutor, isUnsafeBatchSpawn, resetExecutor } from '../exec.ts';
+
+vi.mock('../process-group-exit.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../process-group-exit.ts')>()),
+  groupExitBudgetMs: () => 1000,
+}));
 
 test('default executor runs commands and returns stdout trimmed', () => {
   resetExecutor();
@@ -162,6 +168,19 @@ test('file commands can reject stderr on a successful exit without changing the 
     stderr: 'inspection failed',
   });
 });
+
+test.skipIf(process.platform !== 'win32')(
+  'a contained Windows child gets its whole budget after the report job starts',
+  async () => {
+    resetExecutor();
+    const out = await getExecutor().runFileAsync(process.execPath, ['-e', 'process.stdout.write("ran")'], {
+      timeoutMs: 1000,
+      signal: new AbortController().signal,
+    });
+    expect(out).toBe('ran');
+  },
+  60_000,
+);
 
 test.skipIf(process.platform !== 'win32')('runFile launches a .cmd shim on Windows', () => {
   resetExecutor();
@@ -339,3 +358,24 @@ test('a timed-out child cannot expose an incomplete redacted secret', async () =
   expect(failure.stdout).toBe('');
   expect(failure.stderr).toBe('');
 });
+
+test('a cancelled child whose exit is seen only after a stalled event loop is not a cleanup failure', async () => {
+  const controller = new AbortController();
+  const reason = new Error('cancelled');
+  let pid: number | undefined;
+  const call = getExecutor()
+    .runFileAsync(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      timeoutMs: 60_000,
+      signal: controller.signal,
+      onSpawn: (child) => {
+        pid = child.pid;
+      },
+    })
+    .catch((error: unknown) => error);
+  controller.abort(reason);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
+  expect(await call).toBe(reason);
+  const startedPid = pid;
+  assert(startedPid);
+  expect(() => process.kill(startedPid, 0)).toThrow(/ESRCH/);
+}, 30_000);

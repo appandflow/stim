@@ -40,7 +40,8 @@ import {
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
-import { writeWorkspaceLaunch, workspaceDevServerMode } from '../../supervisor/state.ts';
+import { workspaceDevServerMode, writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
+import { recordPhoneReverse } from '../../devices/phone-reverses.ts';
 import type {
   VerifyLaunchResultLike,
   RemoteUploadLike,
@@ -339,9 +340,7 @@ async function verifyAndroidMetroRun({
         ),
       );
     } else if (verification.processAlive === true && metroPort !== null) {
-      const reloadRemedy = physical
-        ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
-        : 'run `stim reload android`.';
+      const reloadRemedy = 'run `stim reload android`.';
       phase(
         'remedy',
         chalk.yellow(
@@ -363,9 +362,7 @@ async function verifyAndroidMetroRun({
     if (report.summary) phase('launch', chalk.dim(report.summary));
     for (const line of report.lines) phase('launch', chalk.yellow(line));
     if (report.lines.length > 0 && verification.processAlive === true && metroPort !== null) {
-      const reloadRemedy = physical
-        ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
-        : 'run `stim reload android`.';
+      const reloadRemedy = 'run `stim reload android`.';
       phase(
         'remedy',
         chalk.yellow(
@@ -483,7 +480,7 @@ interface FinishAndroidRunArgs {
   kill: (pid: number, signal: NodeJS.Signals) => boolean;
   pidAlive: typeof pidExists;
   verifyCollector: typeof verifyCollectorOwnership;
-  writeLaunch: typeof writeWorkspaceLaunch;
+  writeLaunch: typeof writeWorkspaceLaunchAsync;
   recordBuild?: typeof recordFinishedBuild;
   now: () => number;
   out: (line: string) => void;
@@ -536,7 +533,7 @@ async function wipeAdoptedAvd(room: AdoptedRoom, free: number | null): Promise<s
   if (!rebooted.ok || !rebooted.serial) {
     throw new Error(`it did not boot after its user data was wiped: ${rebooted.reason ?? 'no serial'}`);
   }
-  if ((await room.resolveAvdSerial(room.avdName)).serial !== rebooted.serial) {
+  if ((await room.resolveAvdSerial(room.avdName, { preferredSerial: rebooted.serial })).serial !== rebooted.serial) {
     throw new Error(`${rebooted.serial} is not running ${room.avdName} after the wipe`);
   }
   room.phase('device', `${room.avdName} (${rebooted.serial}) booted with wiped user data`);
@@ -587,7 +584,7 @@ async function resolveInstallSerial({
   'root' | 'slot' | 'device' | 'physical' | 'remoteDevice' | 'resolveAvdSerial' | 'waitForDeviceBoot' | 'phase'
 > & { serial: string }): Promise<string> {
   if (physical || remoteDevice || !device.owned || !device.avdName) return serial;
-  const resolved = await resolveAvdSerial(device.avdName, { timeoutMs: 5000 });
+  const resolved = await resolveAvdSerial(device.avdName, { timeoutMs: 5000, preferredSerial: serial });
   if (!resolved.serial) throw new Error(`Could not verify a running owned AVD ${device.avdName} before installation.`);
   if (resolved.serial !== serial) {
     phase(
@@ -599,7 +596,10 @@ async function resolveInstallSerial({
       throw new Error(
         `Emulator ${resolved.serial} never reported boot completion. Diagnostic: ${JSON.stringify(ready.diagnostic)}`,
       );
-    if ((await resolveAvdSerial(device.avdName, { timeoutMs: 5000 })).serial !== resolved.serial)
+    if (
+      (await resolveAvdSerial(device.avdName, { timeoutMs: 5000, preferredSerial: resolved.serial })).serial !==
+      resolved.serial
+    )
       throw new Error(
         `Could not verify AVD ${device.avdName} still runs on ${resolved.serial} after checking readiness.`,
       );
@@ -841,7 +841,7 @@ export async function finishAndroidRun({
     writer.write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
   }
 
-  if (androidPackage) upsertProject(root, { androidPackage });
+  if (androidPackage) await withConfigLockAsync(() => upsertProject(root, { androidPackage }));
   record.bundleId = androidPackage;
   if (!androidPackage) {
     return fail(
@@ -870,6 +870,7 @@ export async function finishAndroidRun({
     physical,
     msg: `launching ${androidPackage} on ${serial}`,
   });
+  await notePhoneReverse({ root, slot, serial, metroPort, physical, remoteDevice, runtimeKind: runtime.kind }, out);
   const launched = await runtime.launch(runtimePreparation, {
     serial,
     androidPackage,
@@ -908,7 +909,7 @@ export async function finishAndroidRun({
 
   if (!physical && !remoteDevice) {
     try {
-      writeLaunch(root, 'android', {
+      await writeLaunch(root, 'android', {
         appId: androidPackage,
         deviceId: serial,
         metroPort,
@@ -1082,6 +1083,34 @@ function launchRemedy(
     remoteDevice?.failureRemedy() ??
     `Check the app installed correctly (\`adb -s ${serial} shell pm list packages ${packageName}\`).`
   );
+}
+
+async function notePhoneReverse(
+  args: {
+    root: string;
+    slot?: string;
+    serial: string;
+    metroPort: number | null;
+    physical: boolean;
+    remoteDevice: unknown;
+    runtimeKind: string;
+  },
+  out: (line: string) => void,
+): Promise<void> {
+  const { root, slot = 'default', serial, metroPort } = args;
+  if (!args.physical || args.remoteDevice || args.runtimeKind !== 'metro' || typeof metroPort !== 'number') return;
+  try {
+    await recordPhoneReverse(root, slot, serial, metroPort);
+  } catch (error) {
+    out(
+      phaseLine(
+        'state',
+        chalk.yellow(
+          `could not record the adb reverse on ${serial}: ${error instanceof Error ? error.message : error}`,
+        ),
+      ),
+    );
+  }
 }
 
 function reportMetroRoute({

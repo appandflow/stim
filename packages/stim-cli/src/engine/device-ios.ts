@@ -9,12 +9,11 @@ import {
   loadConfig,
   saveConfig,
   setDevice,
-  withConfigLock,
   withConfigLockAsync,
 } from '../workspace/config.ts';
 import { configuredIosSimulatorViewer, type IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
 import { getExecutor } from '../exec.ts';
-import { hostMemoryPressureAdvice, memoryCulpritsUnder, readHostMemoryPressure } from '../host-memory.ts';
+import { hostMemoryPressureAdvice, readHostMemoryPressure, reportMemoryCulprits } from '../host-memory.ts';
 import {
   bootIosSim,
   createOwnedIosSim,
@@ -71,8 +70,11 @@ function startIosBoot(
     { platform: 'ios', key: udid },
     async () => {
       out(chalk.dim(phaseLine('device', `booting ${label} (${udid})`)));
-      await bootIosSim(udid, { label, out, simulatorApp, env: ambientContext()?.env });
-      await muteBootedSimulator(udid, out);
+      await muteBootedSimulator(
+        udid,
+        await bootIosSim(udid, { label, out, simulatorApp, env: ambientContext()?.env }),
+        out,
+      );
       await configure();
     },
     { ...deviceSlotWait, root, out },
@@ -81,8 +83,13 @@ function startIosBoot(
   return { udid, done };
 }
 
-async function muteBootedSimulator(udid: string, out: Notify): Promise<void> {
+async function muteBootedSimulator(
+  udid: string,
+  { springBoardUnreadable }: { springBoardUnreadable: string | null },
+  out: Notify,
+): Promise<void> {
   try {
+    if (springBoardUnreadable) throw new Error(springBoardUnreadable);
     const response: unknown = JSON.parse(
       await getExecutor().runFileAsync(
         'xcrun',
@@ -142,8 +149,9 @@ export async function ensureOwnedIosDevice({
   simSnapshot?: IosSimSnapshot;
 }): Promise<OwnedDeviceRecord> {
   const pressure = readHostMemoryPressure();
-  const memoryAdvice = hostMemoryPressureAdvice(pressure, memoryCulpritsUnder(pressure));
+  const memoryAdvice = hostMemoryPressureAdvice(pressure);
   if (memoryAdvice) out(chalk.yellow(phaseLine('memory', memoryAdvice)));
+  reportMemoryCulprits(pressure, (named) => out(chalk.yellow(phaseLine('memory', named))));
   const simslimProfile = iosSimSlimProfileSetting(settings, settingsRoot);
   if (record?.deviceUdid) {
     if (record.owned) {
@@ -289,7 +297,9 @@ export async function ensureOwnedIosDevice({
       await listAllIosSimsAsync({ includeUnavailable: true }),
     );
     const result = await createOwnedIosSim(label, { suffix }, choice);
-    setDevice(projectPath, 'ios', { deviceUdid: result.udid, owned: true, deviceName: result.name }, slot);
+    await withConfigLockAsync(() =>
+      setDevice(projectPath, 'ios', { deviceUdid: result.udid, owned: true, deviceName: result.name }, slot),
+    );
     return result;
   });
   const newRecord = { deviceUdid: created.udid, owned: true, deviceName: created.name };
@@ -438,7 +448,7 @@ async function takeParkedIosSim({
       ...(parked.simslimManaged ? { simslimManaged: true } : {}),
       ...(parked.cacheKey ? { parkedCacheKey: parked.cacheKey } : {}),
     };
-    const adopted = adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device });
+    const adopted = await adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device });
     if (!adopted) continue;
     try {
       await renameIosSim(parked.udid, name);
@@ -450,8 +460,8 @@ async function takeParkedIosSim({
   return null;
 }
 
-export function clearIosAdoptionPending(projectPath: string, slot = 'default'): void {
-  withConfigLock(() => {
+export function clearIosAdoptionPending(projectPath: string, slot = 'default'): Promise<void> {
+  return withConfigLockAsync(() => {
     const cfg = loadConfig();
     const ios = deviceSlotPlatforms(cfg?.projects?.[projectPath], slot)?.ios;
     if (!cfg || !ios?.adoptionPending) return;
@@ -484,7 +494,7 @@ async function configureOwnedIosSim({
   const previouslyManaged = Boolean(record.simslimManaged);
   if (profile && !record.simslimManaged) {
     const pending = { ...record, simslimManaged: true };
-    setDevice(projectPath, 'ios', pending, slot);
+    await withConfigLockAsync(() => setDevice(projectPath, 'ios', pending, slot));
     record = pending;
   }
   const result = await reconcileIosSimulator({
@@ -497,7 +507,7 @@ async function configureOwnedIosSim({
   const updated = { ...record };
   if (result.managed) updated.simslimManaged = true;
   else delete updated.simslimManaged;
-  setDevice(projectPath, 'ios', updated, slot);
+  await withConfigLockAsync(() => setDevice(projectPath, 'ios', updated, slot));
   return updated;
 }
 
@@ -528,7 +538,7 @@ export async function ensureIosBooted({
     } catch (error) {
       return {
         failed: true,
-        reason: `Simulator ${udid} failed its process-spawn readiness check: ${(error as Error)?.message || error}. ${iosSimulatorFailureAdvice()}`,
+        reason: `Simulator ${udid} failed its process-spawn readiness check: ${(error as Error)?.message || error}. ${await iosSimulatorFailureAdvice()}`,
       };
     }
   };
@@ -579,8 +589,11 @@ export async function ensureIosBooted({
       { platform: 'ios', key: udid },
       async () => {
         out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
-        await bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp, env: ambientContext()?.env });
-        await muteBootedSimulator(udid, out);
+        await muteBootedSimulator(
+          udid,
+          await bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp, env: ambientContext()?.env }),
+          out,
+        );
       },
       { ...deviceSlotWait, root: projectPath, out },
     );

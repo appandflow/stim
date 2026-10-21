@@ -22,20 +22,22 @@
     }
 
     @MainActor private func content(
-      entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool?, updates: [String: MachineUpdatePhase] = [:],
+      entries: [String]?, statuses: [BuildMachineStatus]?, tailscale: Bool?, updates: [String: MachineUpdatePhase] = [:],
       poolDisabled: [String: [String]]? = nil, failure: String? = nil, hosted: [HostedOnMachine] = [],
-      linux: Set<String> = []
+      linux: Set<String> = [],
+      settingsReadFailure: String? = nil, showsThisMac: Bool = false
     ) -> some View {
       BuildMachinesContent(
         entries: entries, statuses: statuses,
         hosts: [
           BuildMachineStatus(machine: "mini", state: .approved), BuildMachineStatus(machine: "janics-mac-mini", state: .approved),
         ], updates: updates,
-        working: nil, progress: nil, refreshing: false, failure: failure, tailscaleRunning: tailscale, canAsk: true,
+        working: nil, progress: nil, refreshing: false, failure: failure, tailscaleRunning: tailscale,
+        settingsReadFailure: settingsReadFailure, canAsk: true,
         addDisabled: false,
         updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in },
         remove: { _ in }, poolDisabled: poolDisabled, hostsSimulators: { !linux.contains($0) }, hosted: { _ in hosted },
-        thisMacName: "MacBook Pro",
+        showsThisMac: showsThisMac, thisMacName: "MacBook Pro",
         thisMac: EmptyView()
       )
       .font(.stim(.body))
@@ -164,6 +166,21 @@
               failure: "Keep at least one approved member enabled in the build pool."))
         ),
         ("empty", AnyView(content(entries: [], statuses: [], tailscale: true))),
+        (
+          "settings-unreadable-this-mac",
+          AnyView(
+            content(
+              entries: nil, statuses: nil, tailscale: true,
+              settingsReadFailure: "The local stim-server is not ready to read settings for this Stim home.",
+              showsThisMac: true))
+        ),
+        (
+          "settings-unreadable",
+          AnyView(
+            content(
+              entries: nil, statuses: nil, tailscale: true,
+              settingsReadFailure: "The local stim-server is not ready to read settings for this Stim home."))
+        ),
         (
           "list", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: true))
         ),

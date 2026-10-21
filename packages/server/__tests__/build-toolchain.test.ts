@@ -86,11 +86,12 @@ test('dependency warmth requires the requested install; directories and pruned s
   const area = join(host.clientDir('client'), 'repos', 'app');
   const checkout = join(area, 'src');
   const project = 'apps/mobile';
-  const modules = join(checkout, project, 'node_modules');
+  const modules = join(checkout, 'node_modules');
   const lockfile = 'lockfile fixture';
   const sha = (text: string) => createHash('sha256').update(text).digest('hex');
-  const marker = sha(lockfile + JSON.stringify(['install', '--frozen-lockfile', '--filter', 'mobile...']));
+  const marker = sha(lockfile + JSON.stringify(['install', '--frozen-lockfile']) + 'node path');
   mkdirSync(modules, { recursive: true });
+  mkdirSync(join(checkout, project), { recursive: true });
   mkdirSync(join(area, 'macos'), { recursive: true });
   writeFileSync(join(area, 'macos', 'unrelated'), 'not a compiler cache');
   writeFileSync(join(checkout, 'pnpm-lock.yaml'), lockfile);
@@ -115,9 +116,10 @@ test('dependency warmth requires the requested install; directories and pruned s
     return reply.result.warm;
   };
   expect(await warmth()).toEqual({ checkout: true, dependencies: true, build: false });
-  expect(await warmth({ ...params, dependencies: { project, packageName: 'other' } })).toHaveProperty(
+  mkdirSync(join(checkout, 'apps', 'other'), { recursive: true });
+  expect(await warmth({ ...params, dependencies: { project: 'apps/other', packageName: 'other' } })).toHaveProperty(
     'dependencies',
-    false,
+    true,
   );
   expect(await host.offer('client', { repo: 'app', lockfile: sha(lockfile) })).toHaveProperty(
     'result.warm.dependencies',
@@ -139,6 +141,19 @@ test('dependency warmth requires the requested install; directories and pruned s
     'dependencies',
     false,
   );
+  const standalone = { project: 'standalone', packageName: 'standalone' };
+  mkdirSync(join(checkout, 'standalone', 'node_modules'), { recursive: true });
+  writeFileSync(join(checkout, 'standalone', 'package-lock.json'), 'standalone lockfile');
+  writeFileSync(
+    join(area, `dependencies-${sha('standalone').slice(0, 16)}`),
+    sha('standalone lockfile' + JSON.stringify(['ci']) + 'node path'),
+  );
+  expect(await warmth({ repo: 'app', lockfile: sha('standalone lockfile'), dependencies: standalone })).toHaveProperty(
+    'dependencies',
+    true,
+  );
+  expect(await warmth({ ...params, dependencies: standalone })).toHaveProperty('dependencies', false);
+  expect(await warmth()).toHaveProperty('dependencies', true);
   rmSync(checkout, { recursive: true });
   expect(await warmth()).toEqual({ checkout: false, dependencies: false, build: false });
 });

@@ -48,6 +48,7 @@ export interface IosArtifactRecipe {
       runtime: string,
     ): Parameters<typeof chooseBuildMachine>[0]['target'] | Promise<Parameters<typeof chooseBuildMachine>[0]['target']>;
     request(runtime: string): Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'ios' }>;
+    fingerprintInputs?: Parameters<typeof offloadBuild>[0]['fingerprintInputs'];
     unchanged(): Promise<boolean>;
   } | null;
 }

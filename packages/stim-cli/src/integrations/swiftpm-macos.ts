@@ -86,7 +86,11 @@ export function swiftpmMacosProject(root: string): MacosProject {
           });
         },
         offload: {
-          target: async () => ({ platform: 'macos', local: await macosToolchainAsync() }),
+          target: async (runsOnWorker) => ({
+            platform: 'macos',
+            local: await macosToolchainAsync(),
+            ...(runsOnWorker ? { runsOnWorker: true as const } : {}),
+          }),
           request: (id) => ({
             platform: 'macos',
             product,

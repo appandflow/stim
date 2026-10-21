@@ -181,14 +181,18 @@ describe('ensureBooted: ios', () => {
     expect(result.reason).not.toMatch(/out of memory|OOM/i);
   });
 
+  const springBoardStarting = 'com.apple.springboard.finishedstartup 0';
+  const springBoardStarted = 'com.apple.springboard.finishedstartup 4242';
   test.each([
-    ['U1', 0, false],
-    ['OTHER', 0, true],
-    ['U1', 60, true],
+    ['U1', 0, [springBoardStarting, springBoardStarting, springBoardStarted], false],
+    ['OTHER', 0, [springBoardStarted], true],
+    ['U1', 60, [springBoardStarted], true],
+    ['U1', 0, [new Error('notifyutil: No such file or directory')], true],
   ] as const)(
-    'boots a shut-down owned sim, waits for the Booted state, and mutes it (%s at %s)',
-    async (reportedUdid, reportedVolume, warns) => {
+    'boots a shut-down owned sim, waits for the Booted state and SpringBoard, and mutes it (%s at %s, case %#)',
+    async (reportedUdid, reportedVolume, springBoard, warns) => {
       let listCalls = 0;
+      let springBoardCalls = 0;
       const commands: string[] = [];
       const notes: string[] = [];
       setExecutor({
@@ -214,6 +218,12 @@ describe('ensureBooted: ios', () => {
               result: { deviceIdentifier: reportedUdid, volume: reportedVolume },
             });
           }
+          if (file === 'xcrun' && args[1] === 'spawn' && args[3] === 'notifyutil') {
+            commands.push([file, ...args].join(' '));
+            const reply = springBoard[Math.min(springBoardCalls++, springBoard.length - 1)];
+            if (reply instanceof Error) throw reply;
+            return reply;
+          }
           return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
             ? this.run!([file, ...args].join(' '))
             : '';
@@ -237,9 +247,14 @@ describe('ensureBooted: ios', () => {
       expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
       expect(commands.indexOf('xcrun simctl boot U1')).toBeLessThan(commands.indexOf('xcrun simctl bootstatus U1 -b'));
       const mute = 'xcrun devicectl device settings audio --device U1 --volume 0 --json-output -';
-      expect(commands.filter((c) => c === mute).length).toBe(1);
-      expect(commands.indexOf('xcrun simctl bootstatus U1 -b')).toBeLessThan(commands.indexOf(mute));
+      const springBoardQuery = 'xcrun simctl spawn U1 notifyutil -g com.apple.springboard.finishedstartup';
+      const started = springBoard.at(-1) === springBoardStarted;
+      expect(commands.filter((c) => c === springBoardQuery).length).toBe(springBoard.length);
+      expect(commands.indexOf('xcrun simctl bootstatus U1 -b')).toBeLessThan(commands.indexOf(springBoardQuery));
+      expect(commands.filter((c) => c === mute).length).toBe(started ? 1 : 0);
+      expect(commands.indexOf(mute) > commands.lastIndexOf(springBoardQuery)).toBe(started);
       expect(notes.some((line) => line.includes('Could not mute this simulator'))).toBe(warns);
+      expect(notes.some((line) => line.includes('simulator muted'))).toBe(!warns);
     },
   );
 
@@ -831,6 +846,47 @@ describe('ensureBooted: android', () => {
     expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
     expect(probes >= 5).toBeTruthy();
   });
+
+  test.skipIf(process.platform !== 'darwin')(
+    'Android boot completes while the memory-culprit top read is still running, then names the culprit',
+    async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(0);
+      vi.spyOn(hostMemory, 'readHostMemoryPressure').mockReturnValue('warning');
+      let finishTop: (output: string) => void = () => {};
+      const top = vi.fn<() => Promise<string | null>>(() => new Promise((resolve) => (finishTop = resolve)));
+      const run = (cmd: string) => (cmd === 'emulator -list-avds' ? 'stim-app' : 'List of devices attached');
+      const runQuiet = (cmd: string) =>
+        cmd.includes('sys.boot_completed') ? '1' : cmd.includes('pm path android') ? 'package:/x' : '';
+      const runFileQuiet = (file: string, args: string[] = []) =>
+        file === 'adb' || file === 'emulator' ? runQuiet([file, ...args].join(' ')) : null;
+      setExecutor({
+        runFileQuiet,
+        runFileQuietAsync: async (file, args) => (file === '/usr/bin/top' ? top() : runFileQuiet(file, args)),
+        run,
+        runQuiet,
+        runFile: (file, args = []) => (file === 'adb' || file === 'emulator' ? run([file, ...args].join(' ')) : ''),
+        spawn: () => ({ pid: 987654, unref() {} }),
+      });
+      const events: string[] = [];
+      const resultPromise = ensureBooted({
+        platform: 'android',
+        projectPath: tmpHome,
+        device: { avdName: 'stim-app', consolePort: 5556, owned: true },
+        timeoutMs: 20000,
+        alive: () => true,
+        out: (line) => events.push(line),
+      });
+      await vi.runAllTimersAsync();
+      const result = await resultPromise;
+      expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
+      expect(top).toHaveBeenCalledTimes(1);
+      expect(events.filter((line) => line.includes('host memory pressure'))).toHaveLength(1);
+      expect(events.some((line) => line.includes('fseventsd'))).toBe(false);
+      finishTop(['PID    MEM    COMMAND', '76886  63G    fseventsd', ''].join('\n'));
+      await vi.waitFor(() => expect(events.some((line) => line.includes('fseventsd (pid 76886)'))).toBe(true));
+    },
+  );
 
   test.each([
     ['warning', 'late boot', true, 121000, true],
@@ -1489,7 +1545,7 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
-  test('completing adoption clears both transient adoption fields', () => {
+  test('completing adoption clears both transient adoption fields', async () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', {
@@ -1501,7 +1557,7 @@ describe('ensureOwnedDevice: ios', () => {
         parkedCacheKey: 'fingerprint-debug-sim',
       });
 
-      clearIosAdoptionPending(root);
+      await clearIosAdoptionPending(root);
 
       expect(getProject(root)?.platforms?.ios).toEqual({
         deviceUdid: 'U1',
@@ -1517,9 +1573,9 @@ describe('ensureOwnedDevice: ios', () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
-      recordIosSchemeApprovals(root, 'OTHER', ['bridge-->app']);
+      await recordIosSchemeApprovals(root, 'OTHER', ['bridge-->app']);
       expect(getProject(root)?.platforms?.ios?.schemeApprovals).toBeUndefined();
-      recordIosSchemeApprovals(root, 'U1', ['bridge-->app']);
+      await recordIosSchemeApprovals(root, 'U1', ['bridge-->app']);
 
       setExecutor(iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]).exec);
       const device = await ensureOwnedDevice({

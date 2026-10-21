@@ -9,7 +9,9 @@ import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolvePackageJson } from '../workspace/project.ts';
-import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
+import { expoBinFromPackage, expoBinPath, expoTelemetryEnv, findBinUpward } from '../supervisor/server-expo.ts';
+import type { FingerprintSource } from '@expo/fingerprint';
+import { expoConfigContents } from '../cache/build-cache.ts';
 import { remoteCommand } from './node-cli.ts';
 
 export const EAS_PROVIDER_PACKAGE = 'eas-build-cache-provider';
@@ -24,7 +26,11 @@ const DYNAMIC_CONFIG_FILES = ['app.config.ts', 'app.config.js', 'app.config.mjs'
 
 type ProjectConfig = Record<string, unknown>;
 
-type ExecFileFn = (file: string, args: string[], opts: { timeoutMs: number }) => string | Promise<string>;
+type ExecFileFn = (
+  file: string,
+  args: string[],
+  opts: { timeoutMs: number; env?: Record<string, string> },
+) => string | Promise<string>;
 
 interface ReadProjectConfigResult {
   config?: ProjectConfig | null;
@@ -175,7 +181,10 @@ export async function readProjectConfig(
     ((file, args, opts) => remoteCommand({ operation: context, expoBin: file }, file, args, { ...opts, cwd: root }));
   let stdout;
   try {
-    stdout = await exec(bin, ['config', '--json', root], { timeoutMs });
+    stdout = await exec(bin, ['config', '--json', root], {
+      timeoutMs,
+      env: expoTelemetryEnv(context?.env ?? process.env),
+    });
   } catch (err) {
     if (err instanceof Error && 'code' in err && err.code === 'STIM_CLAIM_UNAVAILABLE') throw err;
     context?.signal.throwIfAborted();
@@ -188,6 +197,23 @@ export async function readProjectConfig(
   }
 }
 
+/**
+ * The app config the fingerprint already evaluated, for a dynamic config. @expo/fingerprint's ExpoConfigEASProject
+ * skip removes `owner`, so a missing owner under the EAS provider cannot be told from a stripped one and is read from
+ * `expo config --json` instead.
+ */
+function fingerprintedConfig(
+  projectRoot: string,
+  sources?: readonly FingerprintSource[],
+): ReadProjectConfigResult | null {
+  if (!sources || !dynamicConfigFile(projectRoot)) return null;
+  const config = expoConfigContents(sources);
+  if (!config) return null;
+  const provider = normalizeProvider(providerFromConfig(config));
+  if (provider?.reference === EAS_PROVIDER_PACKAGE && ownerFromConfig(config) === null) return null;
+  return { config, source: 'fingerprint' };
+}
+
 export async function loadProjectProvider(
   projectRoot: string,
   {
@@ -196,17 +222,20 @@ export async function loadProjectProvider(
     run = null,
     requireFrom = null,
     timeoutMs = CONFIG_TIMEOUT_MS,
+    sources,
   }: {
     context?: StimContext;
     isExpo?: boolean;
     run?: ExecFileFn | null;
     requireFrom?: ((root: string) => NodeRequire) | null;
     timeoutMs?: number;
+    sources?: readonly FingerprintSource[];
   } = {},
 ): Promise<LoadProjectProviderResult> {
   if (!isExpo) return { none: true };
 
-  const read = await readProjectConfig(projectRoot, { context, run, timeoutMs });
+  const read =
+    fingerprintedConfig(projectRoot, sources) ?? (await readProjectConfig(projectRoot, { context, run, timeoutMs }));
   if (read.unavailable) return { unavailable: read.unavailable };
 
   const normalized = normalizeProvider(providerFromConfig(read.config));

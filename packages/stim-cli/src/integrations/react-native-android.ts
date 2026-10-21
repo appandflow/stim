@@ -7,6 +7,7 @@ import {
   filesystemBuildCapability,
   fingerprintDiffRecord,
   fingerprintProject,
+  gitignoredFingerprintInputs,
   inputsChangedDuringBuild,
   refingerprintAfterMutation,
   resolveBuild,
@@ -24,7 +25,7 @@ import { androidGradleProject, androidJobLayout, displayPath, NO_FINGERPRINT } f
 import { resolveKeystore, swapApkBundle } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import { resolveCcache } from '../engine/ccache.ts';
-import { planPrebuild, recordPrebuild, runPrebuild, staleNativeDirRefusal } from '../engine/prebuild.ts';
+import { planPrebuild, runPrebuild, staleNativeDirRefusal, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { loadProjectProvider } from '../engine/remote-cache.ts';
 import { androidRequirements, androidToolchainAsync } from '../offload/toolchain.ts';
 import { detectAndroidPackage, detectAppIds } from '../workspace/app-id.ts';
@@ -37,6 +38,7 @@ import {
   type ResolvedProjectSettings,
 } from '../workspace/settings.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { androidPathRoomRefusal } from '../engine/android-path-limit.ts';
 import { buildAndroid, productFlavorRefusal, readProductFlavors } from './react-native-build.ts';
 import {
   AndroidRecipeRefusal,
@@ -62,6 +64,7 @@ export interface ReactNativeAndroidDependencies {
   ccacheFor?: typeof resolveCcache;
   swapApk?: typeof swapApkBundle;
   readState?: typeof readWorkspaceState;
+  platform?: NodeJS.Platform;
 }
 
 const runtimeKind: AndroidProject['runtimeKind'] = ({ release }) => (release ? 'embedded-js' : 'metro');
@@ -92,6 +95,7 @@ export function reactNativeAndroidProject(
     packageRemedy: `Set \`expo.android.package\` in app.json / app.config.js, or \`namespace\` in ${relative(root, layout.moduleDir) || '.'}/build.gradle.`,
     variantProblem,
     targets: ['emulator', 'physical', 'hosted', 'remote'],
+    preflight: (target) => androidPathRoomRefusal(root, { ...target, platform: dependencies.platform }),
     eas: true,
     runtimeKind,
     runtime: ({ build, prepareMetro, phase }) =>
@@ -253,8 +257,8 @@ function reactNativeAndroidArtifact(
       if (!prebuildRan) return;
       beforePrepare();
       step('prebuild');
-      recordPrebuild(root, 'android', null);
-      const pre = await prebuild(root, 'android', writer, { isExpo, clean: plan === 'regenerate' });
+      await recordPrebuildAsync(root, 'android', null);
+      const pre = await prebuild(root, 'android', writer, { isExpo });
       if (pre.failed)
         throw new AndroidRecipeRefusal({
           code: pre.code,
@@ -267,9 +271,7 @@ function reactNativeAndroidArtifact(
           },
         });
       const outcome =
-        plan === 'generate'
-          ? 'android/ generated'
-          : 'android/ not generated from this fingerprint -> regenerated with --clean';
+        plan === 'generate' ? 'android/ generated' : 'android/ not generated from this fingerprint -> updated in place';
       phase('prebuild', `${outcome} (${formatDuration(pre.durationMs)})`);
     },
     async reconcile() {
@@ -283,7 +285,7 @@ function reactNativeAndroidArtifact(
           fingerprint,
         });
         editedConfig = after ? configInputsChanged(initialSources, after.sources, { prebuildRan }) : [];
-        if (after && !editedConfig.length) recordPrebuild(root, 'android', after.hash);
+        if (after && !editedConfig.length) await recordPrebuildAsync(root, 'android', after.hash);
         if (after?.moved && !editedConfig.length) {
           rekeyedBy.push('prebuild');
           phase('fingerprint', chalk.dim(`${shortHash(hash)} -> ${shortHash(after.hash)} (after prebuild)`));
@@ -373,7 +375,7 @@ function reactNativeAndroidArtifact(
       target.abi || cas || profile || !buildPlan.cache.remote
         ? null
         : {
-            load: () => loadProvider(root, { context: operation, isExpo }),
+            load: () => loadProvider(root, { context: operation, isExpo, sources: initialSources }),
             runOptions: Object.keys(runOptions).length ? runOptions : null,
           },
     offload: {
@@ -402,6 +404,15 @@ function reactNativeAndroidArtifact(
           ...androidJobLayout(layout),
         },
       },
+      fingerprintInputs: async () => ({
+        sources,
+        ignored: await gitignoredFingerprintInputs(
+          root,
+          sources,
+          { platform: 'android', androidLayout: layout },
+          { env: operation?.env },
+        ),
+      }),
       unchanged: async () => {
         const after = await refingerprintAfterMutation({
           projectRoot: root,

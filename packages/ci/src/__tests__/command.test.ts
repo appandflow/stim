@@ -48,8 +48,8 @@ test.skipIf(process.platform === 'win32')(
   'cancellation kills a test process and its resistant descendant',
   async () => {
     const pidFile = join(root, 'descendant.pid');
-    const descendant = `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);`;
-    const script = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], {stdio:'inherit'}); process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);`;
+    const descendant = `process.on('SIGTERM', () => {}); const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(`${pidFile}.tmp`)}, String(process.pid)); fs.renameSync(${JSON.stringify(`${pidFile}.tmp`)}, ${JSON.stringify(pidFile)}); setInterval(() => {}, 1000);`;
+    const script = `process.on('SIGTERM', () => {}); require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], {stdio:'inherit'}); setInterval(() => {}, 1000);`;
     const controller = new AbortController();
     const running = runCommand({
       command: [process.execPath, '-e', script],

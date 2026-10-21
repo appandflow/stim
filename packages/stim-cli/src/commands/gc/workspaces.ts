@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readdirSync, statSync } from 'fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
-import { basename, isAbsolute, join, relative } from 'path';
+import { basename, dirname, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
 import { formatBytes, isOnMountedVolume, listMountedVolumes, measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { isJsonObject, readJsonFile } from '@stim-cli/core/state';
@@ -175,6 +175,14 @@ export function rootPresence(path: string): boolean | null {
     const code = (error as NodeJS.ErrnoException)?.code;
     return code === 'ENOENT' || code === 'ENOTDIR' ? false : null;
   }
+}
+
+export function workspaceDirRemoved(dir: string): boolean {
+  return (
+    existsSync(workspacesRoot()) &&
+    canonicalPath(dirname(dir)) === canonicalPath(workspacesRoot()) &&
+    rootPresence(dir) === false
+  );
 }
 
 export async function collectOrphanedWorkspaces(

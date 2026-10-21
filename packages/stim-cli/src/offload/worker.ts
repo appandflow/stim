@@ -1,4 +1,4 @@
-import { dependencyInstall, type StimContext, withAmbientContext } from '@stim-cli/core';
+import { dependencyInstall, reusableDependencies, type StimContext, withAmbientContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -28,10 +28,10 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, sep } from 'node:path';
+import { basename, delimiter, dirname, join, relative, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
-import { fingerprintProject, refingerprintAfterMutation } from '../cache/build-cache.ts';
+import { compareSourceLists, fingerprintProject, refingerprintAfterMutation } from '../cache/build-cache.ts';
 import { buildIos, buildAndroid, gradlewPath } from '../integrations/react-native-build.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../cache/compilation-cache-corruption.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
@@ -46,6 +46,7 @@ import { logLines } from '../macos/run.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import { manifestDigest } from './manifest.ts';
+import { pathNodeVersion, projectNodeLine, unmetNodePin, withProjectNode } from '../supervisor/project-node.ts';
 import { parseNdjsonText, type NdjsonWriter } from '../ndjson.ts';
 import type { Optimizations } from '../optimizations.ts';
 import { podAction } from '../commands/ios/support.ts';
@@ -56,6 +57,7 @@ import { selectNativeXcodeProject } from '../integrations/native-xcode-project.t
 import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
 import type {
   BuildAndroidOptions,
+  BuildFingerprintSource,
   BuildStartParams,
   BuildSwiftpmArtifactQuery,
   GradleOffloadInputs,
@@ -118,7 +120,6 @@ export interface WorkerJob {
   } | null;
   swiftpmCache: string;
   project: string;
-  packageName: string | null;
   isExpo: boolean;
   configuration: string | null;
   scheme: string | null;
@@ -126,6 +127,12 @@ export interface WorkerJob {
   runtime: string | null;
   android: AndroidBuildOptions | null;
   expectedFingerprint: string | null;
+  /** The client's sources of `expectedFingerprint`, when its stim-server forwards them. */
+  expectedSources?: BuildFingerprintSource[];
+  /** The paths the client's git ignored for `expectedFingerprint`, which this checkout's git may not. */
+  expectedIgnored?: string[];
+  /** The top-level entries the client counted although an ignore pattern matches them; this checkout has no index. */
+  expectedTracked?: string[];
   cacheArtifact?: boolean;
   stimBuild?: string;
   native?: BuildStartParams['native'];
@@ -296,7 +303,10 @@ interface MirrorRecord {
   [path: string]: { sha256: string; kind: ManifestEntry['kind']; mtimeMs: number; size: number };
 }
 
-async function materialize(job: WorkerJob, src: string): Promise<{ written: number; removed: number }> {
+async function materialize(
+  job: WorkerJob,
+  src: string,
+): Promise<{ written: number; removed: number; record: MirrorRecord }> {
   const recordFile = join(job.area, 'mirror.json');
   let previous: MirrorRecord = {};
   try {
@@ -421,22 +431,89 @@ async function materialize(job: WorkerJob, src: string): Promise<{ written: numb
   const tmp = `${recordFile}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(next));
   renameSync(tmp, recordFile);
-  return { written, removed };
+  return { written, removed, record: next };
+}
+
+/** The synced files whose content no longer matches the manifest, such as a lockfile pod install rewrote. */
+function rewrittenFiles(src: string, manifest: readonly ManifestEntry[], record: MirrorRecord): string[] {
+  return manifest.flatMap((entry) => {
+    if (entry.kind === 'directory') return [];
+    const target = join(src, entry.path);
+    const stat = lstatSync(target, { throwIfNoEntry: false });
+    const known = record[entry.path];
+    if (stat && known && stat.mtimeMs === known.mtimeMs && stat.size === known.size) return [];
+    if (!stat) return [entry.path];
+    const content = stat.isSymbolicLink() ? readlinkSync(target) : stat.isFile() ? readFileSync(target) : null;
+    return content !== null && createHash('sha256').update(content).digest('hex') === entry.sha256 ? [] : [entry.path];
+  });
+}
+
+function namedList(names: readonly string[]): string {
+  const shown = names.slice(0, 3).join(', ');
+  return names.length > 3 ? `${shown} and ${names.length - 3} more` : shown;
+}
+
+function fingerprintMismatch(
+  job: WorkerJob,
+  there: string,
+  sources: readonly unknown[],
+  mutated: { steps: readonly string[]; files: readonly string[] },
+): string {
+  const differing = job.expectedSources
+    ? compareSourceLists(job.expectedSources, [...sources]).map((change) => change.name)
+    : [];
+  return [
+    `the checkout there fingerprints ${there.slice(0, 12)}, here ${job.expectedFingerprint?.slice(0, 12)}`,
+    ...(mutated.files.length ? [`${mutated.steps.join(' and ')} there rewrote ${namedList(mutated.files)}`] : []),
+    ...(differing.length ? [`differing sources: ${namedList(differing)}`] : []),
+  ].join('; ');
+}
+
+/**
+ * Puts the Node that `root`, or the nearest directory above it in `src`, pins first on this worker's `PATH`, and
+ * reports which Node the build runs on.
+ */
+function useProjectNode(root: string, src: string): void {
+  const node = withProjectNode(root, process.env, { top: src });
+  if (node.pinned) process.env.PATH = node.env.PATH;
+  note(
+    'deps',
+    node.pinned ? projectNodeLine(node.pinned) : `Node ${pathNodeVersion(process.env) ?? 'unknown'} on PATH`,
+  );
+}
+
+/**
+ * Names the `node` first on this worker's `PATH` in `<iosDir>/.xcode.env.local`. React Native's `with-environment.sh`
+ * runs Xcode's script phases on that file's `NODE_BINARY`, and its CocoaPods setup writes the file only when it is
+ * missing, so a file left from an earlier job, or one recording a Homebrew Cellar path, would otherwise win.
+ */
+function useXcodeNode(iosDir: string): void {
+  const node = (process.env.PATH ?? '')
+    .split(delimiter)
+    .filter(Boolean)
+    .map((dir) => join(dir, 'node'))
+    .find((path) => statSync(path, { throwIfNoEntry: false })?.isFile());
+  if (!node || !existsSync(iosDir)) return;
+  const file = join(iosDir, '.xcode.env.local');
+  const line = `export NODE_BINARY='${node.replaceAll("'", "'\\''")}'`;
+  const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  const next = /^export NODE_BINARY=.*$/m.test(text)
+    ? text.replace(/^export NODE_BINARY=.*$/gm, () => line)
+    : `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`;
+  if (next !== text) writeFileSync(file, next);
 }
 
 /** Installs JavaScript dependencies when the lockfile, or the install command, changed since the last install. */
 async function ensureDependencies(job: WorkerJob, src: string): Promise<void> {
-  const install = dependencyInstall(src, job.packageName);
+  const install = dependencyInstall(src, relative(src, realpathSync(join(src, job.project))));
   if (!install) return;
   const { command, args, digest, lockfile } = install;
-  const marker = join(job.area, 'dependencies');
+  const marker = join(job.area, install.marker);
   const installed = () => writeFileSync(join(job.area, 'lockfile'), lockfile);
-  if (existsSync(join(src, job.project, 'node_modules')) && existsSync(marker)) {
-    if (readFileSync(marker, 'utf8') === digest) return installed();
-  }
-  note('deps', `${command} ${args.join(' ')}`);
+  if (reusableDependencies(job.area, job.project, lockfile)) return installed();
+  note('deps', `${command} ${args.join(' ')}${install.dir === '.' ? '' : ` in ${install.dir}`}`);
   const child = getExecutor().spawn(command, args, {
-    cwd: src,
+    cwd: join(src, install.dir),
     env: { ...process.env, CI: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -608,10 +685,13 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     compiled = await workerOperation(root, (context) => compileMacos(context, job, root, log, time));
     if (!compiled.ok) return failed(compiled.code, compiled.message);
   } else {
+    useProjectNode(realRoot, realSrc);
+    const nodeFailed = (code: string, message: string) =>
+      failed(code, [message, unmetNodePin(realRoot, process.env, { top: realSrc })].filter(Boolean).join(' '));
     try {
       await time('depsMs', () => ensureDependencies(job, src));
     } catch (error) {
-      return failed('deps-failed', (error as Error).message);
+      return nodeFailed('deps-failed', (error as Error).message);
     }
 
     const platform = job.platform;
@@ -632,7 +712,13 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       return failed('bad-request', (error as Error).message);
     }
     const initial = await time('fingerprintMs', () =>
-      fingerprintProject(realRoot, { platform, iosProjectPath: iosProject.relative, androidLayout }),
+      fingerprintProject(realRoot, {
+        platform,
+        iosProjectPath: iosProject.relative,
+        androidLayout,
+        ignoredPaths: job.expectedIgnored,
+        trackedPaths: job.expectedTracked,
+      }),
     );
     if (!initial) return failed('no-fingerprint', 'The remote machine could not fingerprint the project.');
     const plan = planPrebuild(realRoot, platform, {
@@ -650,10 +736,11 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       const result = await time('prebuildMs', () =>
         runPrebuild(realRoot, platform, log, { clean: plan === 'regenerate' }),
       );
-      if (result?.failed) return failed('prebuild-failed', result.reason ?? 'expo prebuild failed.');
-      mutations.push('prebuild');
+      if (result?.failed) return nodeFailed('prebuild-failed', result.reason ?? 'expo prebuild failed.');
+      mutations.push('expo prebuild');
     }
     if (platform === 'ios') {
+      useXcodeNode(iosProject.dir);
       const podState = readPodState(realRoot, iosProject.dir);
       const pods = podAction(podState, podsAreStale(podState.lockText, podState.manifestText, podState.dir));
       if (pods.install) {
@@ -662,10 +749,11 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
           runPodInstall(realRoot, log, { directory: iosProject.dir, onHeartbeat: (line) => note('pods', line) }),
         );
         if (result?.failed) return failed('pods-failed', result.reason ?? 'pod install failed.');
-        mutations.push('pods');
+        mutations.push('pod install');
       }
     }
     fingerprint = initial.hash;
+    let sources = initial.sources;
     if (mutations.length) {
       const after = await time('fingerprintMs', () =>
         refingerprintAfterMutation({
@@ -674,20 +762,26 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
           previousHash: initial.hash,
           iosProjectPath: iosProject.relative,
           androidLayout,
+          ignoredPaths: job.expectedIgnored,
+          trackedPaths: job.expectedTracked,
         }),
       );
       if (!after) return failed('no-fingerprint', `No fingerprint after ${mutations.join(', ')}.`);
       fingerprint = after.hash;
-      if (mutations.includes('prebuild')) recordPrebuild(realRoot, platform, after.hash);
+      sources = after.sources;
+      if (mutations.includes('expo prebuild')) recordPrebuild(realRoot, platform, after.hash);
     }
     if (fingerprint !== job.expectedFingerprint) {
       return failed(
         'fingerprint-mismatch',
-        `the checkout there fingerprints ${fingerprint.slice(0, 12)}, here ${job.expectedFingerprint?.slice(0, 12)}`,
+        fingerprintMismatch(job, fingerprint, sources, {
+          steps: mutations,
+          files: mutations.length ? rewrittenFiles(src, job.manifest, mirrored.record) : [],
+        }),
       );
     }
 
-    const tools = job.cacheArtifact ? await reactNativeArtifactToolchain(platform, realRoot) : null;
+    const tools = job.cacheArtifact ? await reactNativeArtifactToolchain(platform, realRoot, iosProject.dir) : null;
     const query = tools ? reactNativeBuildQuery(job, fingerprint, job.project, tools) : null;
     const receipt = query ? reactNativeArtifactReceipt(query, tools) : null;
     compiled =
@@ -703,12 +797,14 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
         previousHash: builtFingerprint,
         iosProjectPath: iosProject.relative,
         androidLayout,
+        ignoredPaths: job.expectedIgnored,
+        trackedPaths: job.expectedTracked,
       }),
     );
     if (!settled || settled.moved) return failed('fingerprint-moved', 'The inputs changed during the build there.');
     const after =
       query && receipt
-        ? reactNativeArtifactReceipt(query, await reactNativeArtifactToolchain(platform, realRoot))
+        ? reactNativeArtifactReceipt(query, await reactNativeArtifactToolchain(platform, realRoot, iosProject.dir))
         : null;
     if (receipt && after && isDeepStrictEqual(receipt, after)) compiled.reactNativeArtifact = receipt;
   }

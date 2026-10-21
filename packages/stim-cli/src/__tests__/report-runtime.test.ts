@@ -9,6 +9,11 @@ import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
 import { runReport as executeReport, trackReportResource } from '../report-runtime.ts';
 
+vi.mock('../process-group-exit.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../process-group-exit.ts')>()),
+  groupExitBudgetMs: () => 1000,
+}));
+
 function runReport<T>(scope: StimContext, work: (operation: StimContext) => Promise<T>): Promise<T> {
   const result = executeReport(scope, (operation) => withAmbientContext(operation, () => work(operation)));
   pending.add(result);

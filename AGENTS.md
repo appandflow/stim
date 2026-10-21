@@ -73,9 +73,12 @@ back to an external Stim CLI. The bundled child proves its private Desktop
 authority for mutations; read-only or adopted connections retain their existing
 capability limits. A separately installed CLI is optional for coding agents and
 terminal use. External bootstrap tools run through `ProcessStream`.
-It connects to stim-server over the server's Unix socket
-`$STIM_HOME/server/local.sock`, which serves the server's own user without
-pairing or Noise. Build and test it with `swift build` and
+It connects to stim-server over the server's Unix socket, normally
+`$STIM_HOME/server/local.sock`. When that path exceeds macOS's 103-byte limit,
+core and Desktop use
+`/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`. Its directory
+is mode 0700 and owned by the server's user; the socket serves only that user
+without pairing or Noise. Build and test it with `swift build` and
 `swift test` from that directory, both with `-Xswiftc -warnings-as-errors` in
 CI. Format and lint its Swift sources with `scripts/format.sh` and
 `scripts/format.sh --check`. Its design tokens and empty-state agent prompts are generated from
@@ -300,6 +303,11 @@ outside it moves to its own issue and pull request.
   default. Update `cache-packages.test.ts` when those rules change.
 - **Source format.** Keep files under `src/`, `bin/`, and `test/` ASCII-only.
   Markdown can use Unicode.
+- **SwiftPM TMPDIR.** Run `swift` children with the ambient `TMPDIR`. SwiftPM
+  places every cross-process lock for its shared caches there, named after the
+  protected path, and offers no separate setting, so a private `TMPDIR` lets
+  concurrent builds race on the shared repository cache. `gc` cleans the
+  `TemporaryDirectory.*` entries SwiftPM leaves.
 - **Concurrency limits.** Build and device caps are opt-in through config or
   environment variables.
 - **Settings registry.** `packages/core/state/settings-registry.ts` defines
@@ -534,7 +542,9 @@ used but not owned. Hardware cannot be created or booted, so those paths
 install, launch, and read what logs they can, and nothing more. The only
 state a physical device leaves is its lease: the file under
 `$STIM_HOME/device-locks/` and the holder's token in that workspace's
-`state.json`. For live view and control of a leased Android phone, stim-server pushes the
+`state.json`, plus, for Android, the serial and Metro port of the `adb reverse`
+the run added, recorded in that `state.json` so `stop` and `worktree remove`
+remove the reverses that point at that Metro port and nothing else on the phone. For live view and control of a leased Android phone, stim-server pushes the
 scrcpy server jar to `/data/local/tmp`, runs it with `app_process` over an
 `adb forward`, and removes the jar and the forward when the stream stops; it
 changes no setting. A serial or UDID never enters the project registry, and
@@ -604,6 +614,12 @@ global state. Delete the directory and environment variable after each test.
 This redirects Stim state, not machine-global simulators or emulators. Never
 bypass the scoped GC guard for real-tool validation. Clean up only exact devices
 created by that validation, using centralized teardown and retained fixture records.
+
+The unit suite runs in a private `TMPDIR` (`vitest.global-tmpdir.ts`) and fails
+when it leaves an entry with one of the prefixes listed there. Other prefixes
+are not enforced, and a child started with a hand-built `env` bypasses the
+redirect. Remove every directory a test creates in `afterEach`, `afterAll` or
+`onTestFinished`.
 
 The EAS session ledger and project lock under `~/.stim/machine/eas` ignore
 `STIM_HOME` so every Stim home finds billable sessions. A test that reaches

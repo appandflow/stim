@@ -1,4 +1,4 @@
-import { readFile, readlink } from 'node:fs/promises';
+import { readFile, readlink, realpath } from 'node:fs/promises';
 import { createHash, webcrypto } from 'node:crypto';
 import {
   closeSync,
@@ -54,11 +54,12 @@ import {
 } from './native-source.ts';
 import { nativeGradleTransfer, type GradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
+import type { FingerprintSource } from '@expo/fingerprint';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
 import { namedBuildMachine, OffloadRefusal } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
-import { ambientContext, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
+import { ambientContext, dependencyLockfile, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
 import type {
   BuildArtifactIdentity,
   BuildOfferParams,
@@ -627,14 +628,15 @@ function repoIdentity(projectRoot: string): RepoIdentity {
 function repositoryIdentity(projectRoot: string, repoRoot: string, common: string): RepoIdentity {
   const digest = createHash('sha256').update(common).digest('hex').slice(0, 12);
   const name = (basename(dirname(common)) || 'repo').replace(/[^A-Za-z0-9._-]/g, '_').replace(/^[^A-Za-z0-9]+/, '');
-  const lock = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json'].find((file) => existsSync(join(repoRoot, file)));
+  const project = relative(repoRoot, realpathSync(projectRoot));
+  const lock = dependencyLockfile(repoRoot, project);
   return {
     repoRoot,
-    project: relative(repoRoot, realpathSync(projectRoot)),
+    project,
     repo: `${name.slice(0, 60) || 'repo'}-${digest}`,
     lockfile: lock
       ? createHash('sha256')
-          .update(readFileSync(join(repoRoot, lock)))
+          .update(readFileSync(join(repoRoot, lock.dir, lock.file)))
           .digest('hex')
       : null,
   };
@@ -1199,11 +1201,18 @@ async function syncSource(
   onEnter: (phase: string) => void,
   native?: NativeInputSnapshot | GradleTransfer,
   signal?: AbortSignal,
+  ignored: readonly string[] = [],
 ): Promise<
   { files: number; uploaded: number; uploadedBytes: number; syncMs: number; digest: string } | { failure: string }
 > {
   onEnter('sync');
   const syncStarted = Date.now();
+  const ignoredPaths: string[] = [];
+  for (const path of ignored) {
+    const inRepo = relative(identity.repoRoot, join(await realpath(dirname(path)), basename(path)));
+    if (inRepo && !isAbsolute(inRepo) && inRepo !== '..' && !inRepo.startsWith(`..${sep}`))
+      ignoredPaths.push(inRepo.split(sep).join('/'));
+  }
   const manifest =
     native && 'declaration' in native
       ? (await nativeGradleTransfer(join(identity.repoRoot, identity.project), native.declaration, signal)).files
@@ -1214,7 +1223,7 @@ async function syncSource(
             await sourceManifest(identity.repoRoot, false, signal),
             signal,
           )
-        : await sourceManifest(identity.repoRoot, false, signal);
+        : await sourceManifest(identity.repoRoot, false, signal, ignoredPaths);
   if (native && 'declaration' in native && manifestDigest(manifest) !== native.digest)
     return { failure: 'The native Gradle source changed before upload.' };
   const bySha = new Map(manifest.map((file) => [file.sha256, file]));
@@ -1385,6 +1394,35 @@ async function fetchArtifact({
   return { artifactPath, digest, received, declared };
 }
 
+interface FingerprintInputs {
+  sources: readonly FingerprintSource[];
+  ignored: readonly string[];
+  /** The paths, relative to the project, that this Mac's git ignores for the fingerprint. */
+  ignoredPaths?: readonly string[];
+  /** The top-level entries, relative to the project, that this Mac's git tracks although an ignore pattern matches them. */
+  trackedPaths?: readonly string[];
+}
+
+function fingerprintSourcesParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
+  if (!inputs || !connection.supports('fingerprint-sources')) return {};
+  return {
+    fingerprintSources: inputs.sources.map((source) => ({
+      id: source.type === 'contents' ? source.id : source.filePath,
+      hash: source.hash,
+    })),
+  };
+}
+
+function fingerprintIgnoredParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
+  if (!inputs?.ignoredPaths?.length || !connection.supports('fingerprint-ignored')) return {};
+  return { fingerprintIgnored: [...inputs.ignoredPaths] };
+}
+
+function fingerprintTrackedParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
+  if (!inputs?.trackedPaths?.length || !connection.supports('fingerprint-tracked')) return {};
+  return { fingerprintTracked: [...inputs.trackedPaths] };
+}
+
 function keepCorruptCacheMessage(
   failed: Extract<OffloadOutcome, { ok: false }>,
   result: Record<string, unknown>,
@@ -1407,6 +1445,8 @@ export async function offloadBuild(
     onRecord: (record: Record<string, unknown>) => void;
     /** One line about where the build goes, such as the next machine after a refusal. */
     note: (line: string) => void;
+    /** The fingerprint sources behind `expectedFingerprint` and the gitignored files they read, as absolute paths. */
+    fingerprintInputs?: () => Promise<FingerprintInputs>;
   } & (
     | { request: Extract<BuildRequest, { platform: 'macos' }>; expectedFingerprint?: never }
     | { request: Exclude<BuildRequest, { platform: 'macos' }>; expectedFingerprint: string | null }
@@ -1515,6 +1555,12 @@ export async function offloadBuild(
     let syncMs = 0;
     let uploadedBytes = 0;
     let workerStarted = 0;
+    let fingerprintInputs: Promise<FingerprintInputs | null> | undefined;
+    const readFingerprintInputs = () =>
+      (fingerprintInputs ??=
+        !native && request.platform !== 'macos' && input.fingerprintInputs
+          ? input.fingerprintInputs()
+          : Promise.resolve(null));
     const moveOn = (why: string): boolean => {
       const next = choice.runnersUp.shift();
       if (!next) return false;
@@ -1546,7 +1592,15 @@ export async function offloadBuild(
         break;
       }
       if (choice.cacheOnly) return fail('The exact artifact is no longer available.');
-      const synced = await syncSource(choice.connection, identity, onEnter, nativeTransferInput(native), signal);
+      const inputs = await readFingerprintInputs();
+      const synced = await syncSource(
+        choice.connection,
+        identity,
+        onEnter,
+        nativeTransferInput(native),
+        signal,
+        inputs?.ignored,
+      );
       checkCancelled();
       if ('failure' in synced) {
         if (moveOn(synced.failure)) continue;
@@ -1568,6 +1622,9 @@ export async function offloadBuild(
         project: identity.project,
         platform: request.platform,
         fingerprint: request.platform === 'macos' ? synced.digest : expectedFingerprint,
+        ...fingerprintSourcesParam(inputs, choice.connection),
+        ...fingerprintIgnoredParam(inputs, choice.connection),
+        ...fingerprintTrackedParam(inputs, choice.connection),
         ...(native
           ? {
               native: {

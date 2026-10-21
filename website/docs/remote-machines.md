@@ -323,9 +323,9 @@ downgrades a newer server.
 
 For iOS builds, Xcode and the simulator SDK must match, and the worker needs
 an iPhone simulator on the target runtime. The Stim build must match, and so
-must the CPU architecture for iOS and macOS builds. Project-selected CocoaPods versions must match unless the
-project's `Gemfile.lock` pins it; then both machines use Bundler and the pinned
-version. For macOS, Xcode and the macOS SDK must match. For Android, JDK major
+must the CPU architecture for iOS and macOS builds (macOS builds that run on the same worker excepted). Project-selected CocoaPods versions must match unless the
+project's `Gemfile.lock`, in `ios/` or the project root, pins it; then both
+machines use Bundler and the pinned version. For macOS, Xcode and the macOS SDK must match, except when `stim macos --remote <machine> --remote-build <machine>` builds and runs the app on the same Mac; then only the Stim build must match (see [Run it on another Mac](./macos.md#run-it-on-another-mac)). For Android, JDK major
 versions must match, and the worker needs the project's NDK, build-tools and
 compile SDK. An Android worker can have another CPU architecture, and it can
 be an x86_64 Linux or Windows machine; see [Linux worker](#linux-worker) and
@@ -340,6 +340,32 @@ machine's login shell, so Desktop, terminal and agent callers agree; `pod instal
 (including the Bundler run) runs in the same environment. A caller that already
 sets `GEM_HOME` keeps it, and if the login shell cannot be read the caller's
 environment is used.
+
+The worker installs dependencies with the lockfile nearest the app: the first
+`pnpm-lock.yaml`, `yarn.lock` or `package-lock.json` in the app's directory or
+above it in the repository, in the directory that holds it. An app with its own
+lockfile inside a larger repository installs its own dependencies there. In a
+pnpm workspace the worker installs every workspace package, as `pnpm install`
+does locally, because a native build can run a script of a package the app does
+not depend on, such as a Gradle task that runs `pnpm run --filter <package>`.
+
+When the app pins Node in `.nvmrc`, `.node-version`, `.tool-versions` or
+`package.json`'s `volta.node`, in its own directory or the nearest one above it
+in the repository, the worker installs dependencies, runs prebuild and pods, and
+runs xcodebuild with an installed Node that satisfies the pin: an nvm, fnm,
+Volta, asdf, mise or linked Homebrew `node`/`node@NN` install. On every
+offloaded iOS build, pinned or not, the worker also writes the first `node` on
+its `PATH` (the pinned Node when it put one first) as `NODE_BINARY` in the iOS
+project's `.xcode.env.local`, replacing any `export NODE_BINARY=` line already
+there. A warm Gradle daemon keeps
+running React Native's Node steps on the Node it started with
+([#4081](https://github.com/appandflow/stim/issues/4081)). A pin naming a version the
+worker does not have, such as `22.22.0`, uses the newest installed Node of that
+major that is not older than the pin, such as Homebrew's `node@22` at 22.23.2.
+Without one, the steps run on the worker's own `node`, and a failed install or
+prebuild names the pin and that Node's version. Install a matching Node on the
+worker, for example `brew install node@22`. When the pinned Node's major
+changes, the worker reinstalls dependencies so native modules match it.
 
 ## Use the Desktop wizard
 
@@ -717,19 +743,30 @@ Setup approves the key that holds one ticket, until one expiry, once per selecte
 capability. Its live journal holds no secret; anyone who knows the journal name,
 which only the ticket holder can derive, can read it until expiry.
 
+An offloaded React Native build sends the checkout's tracked and untracked
+files, and the gitignored files its native fingerprint hashes or its Expo config
+reads, such as `.env.local` and the other Expo `.env` files. Those files can hold
+secrets: Stim assumes every paired Mac belongs to the same person. Nothing under
+`node_modules` is sent, since the build Mac installs dependencies itself, and
+neither is build output the fingerprint ignores, such as `ios/Pods` or
+`android/build`.
+
 Build approval permits the client's project code, including config plugins,
 CocoaPods hooks, Xcode script phases and Gradle plugins, to run as the server
 user. It is not a sandbox for untrusted projects. Approved build or device-host
 clients can also request managed server updates. Only accept requests from
-machines you trust. Forwarded peer addresses only label approvals and key rate
-limits.
+machines you trust. Forwarded peer addresses label approvals and key rate
+limits. A local process on the server can forge one to lock a peer out
+temporarily; it cannot authenticate.
 
 ## Troubleshooting
 
 - [STIM_OFFLOAD_REFUSED](./troubleshooting.md#STIM_OFFLOAD_REFUSED): a named
   worker cannot take or finish the build. Check approval, tool compatibility,
-  capacity and the pinned server key. Rerun with `--remote-build auto` or `local`
-  only when you want to change placement.
+  capacity and the pinned server key. A `fingerprint-mismatch` reason names the
+  fingerprint sources that differ and the files `pod install` or prebuild rewrote
+  on the worker; make that input agree on both Macs. Rerun with
+  `--remote-build auto` or `local` only when you want to change placement.
 - [STIM_HOSTING_REFUSED](./troubleshooting.md#STIM_HOSTING_REFUSED): the host
   is unreachable, has no compatible simulator or cannot confirm the session.
   Retry the same host, or reconcile with `stim stop` when it is reachable.
@@ -835,7 +872,8 @@ agent-device is on PATH, the run uses the default slot and no `--runtime`,
 workspace runs another platform or model, and a Debug run's Metro can be
 reached (not `metro.tunnel` `off`; with an Expo tunnel, run
 `stim start --remote` first). A recorded EAS session is not sticky: once this
-machine has room, auto runs locally and the session bills until `stim stop`. When a check
+machine has room, auto runs locally and the session bills until `stim stop` or
+`remote.easMaxDurationMinutes`. When a check
 fails, the run continues as below and the placement record says why.
 
 If none admits and EAS is off or unusable, the run stays local and may wait in

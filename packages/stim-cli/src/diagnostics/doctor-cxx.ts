@@ -83,7 +83,7 @@ async function declaredLauncher(module: string, signal?: AbortSignal): Promise<b
     try {
       if (projectCmakeLauncher(await readFile(join(module, name), { encoding: 'utf8', signal }))) return true;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     }
   }
   return false;

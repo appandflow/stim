@@ -41,7 +41,10 @@ names; warm refuses with the exact Git command to run when that branch has no
 worktree or `HEAD` is detached. It copies missing
 ignored entries, including installed dependencies, Pods, native build output,
 `.env`, and local configuration files. APFS clones keep copies space-efficient
-where supported; a normal byte copy is used when cloning is unavailable.
+where supported; a normal byte copy is used when cloning is unavailable. On
+macOS with the Command Line Tools, an ignored directory such as `node_modules`
+or `ios/Pods` on the same APFS volume is cloned in one step, so even a large
+one takes seconds instead of minutes.
 Copies go directly to the destination with no intermediate staging. Keep the
 source checkout and the linked worktree on the same volume to benefit from CoW;
 `STIM_TMPDIR` and `tempDir` do not affect warming.
@@ -264,6 +267,20 @@ unless you pass `--force`. It refuses a worktree locked with `git worktree lock`
 even with `--force`; unlock it first. Both checks run before any resource is
 reclaimed. Untracked `.watchman-cookie-*` files, which watchman writes into the
 roots it watches, do not count as work; removal deletes them.
+
+Deleting `node_modules`, `ios/Pods` and build outputs can take most of a
+removal. Before git removes the worktree, Stim renames its ignored directories
+into `$STIM_HOME/trash`, which takes no time on the same volume, and a
+detached, low-priority `rm` deletes them after the command returns, so disk is
+freed a little later. Through the [programmatic API](./programmatic-api.md),
+the trash is deleted before `removeWorktree` resolves. When git refuses the
+removal, the directories are moved back. On Windows, or when `$STIM_HOME` is on another volume than the worktree,
+git deletes them as before. `stim gc` reports what is left in the trash, and
+`stim gc --delete` deletes the entries Stim wrote there (a `remove-*` directory
+with a `trash.json`) whose worktree is gone, including those of an interrupted
+removal, and keeps anything else. An entry whose worktree still exists, because
+the removal was killed before git ran, stays until you run `stim worktree
+remove` on that worktree again.
 
 Git-created branches stay. An existing Stim ownership record permits deleting
 a branch only when it has no unique commits.

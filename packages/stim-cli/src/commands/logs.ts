@@ -273,6 +273,7 @@ export default function logsCommand(program: Command): void {
       };
       const { view, readAgent, hostedReachable } = await openWorkspaceLogs(context, query, Boolean(opts.follow));
       const offsets = opts.follow ? view.sizes : null;
+      const identities = opts.follow ? view.identities : null;
       let timeline: NdjsonRecord[] = [];
       let rawRecords: NdjsonRecord[];
       try {
@@ -334,6 +335,7 @@ export default function logsCommand(program: Command): void {
       const stop = followLogs({
         dir,
         offsets,
+        identities,
         criteria,
         onRecord: emit,
         errorContext: opts.errors ? (opts.json ? 'field' : 'msg') : undefined,

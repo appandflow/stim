@@ -46,6 +46,7 @@ import {
   isJsonObject,
   loadConfig,
   settingsJsonSchema,
+  serverLocalSocket,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
 import * as stim from 'stim';
@@ -1215,10 +1216,14 @@ describe('pairing', () => {
           'native-gradle-artifact-cache',
           'native-gradle-peer-cache',
           'react-native-peer-cache',
+          'fingerprint-sources',
+          'fingerprint-ignored',
+          'fingerprint-tracked',
           'swiftpm-peer-cache',
           'build-dependency-cache',
           'hosted-android-data',
           'hosted-android-process',
+          'hosted-metro-ports',
           'server-update',
           'status-views',
         ],
@@ -1768,12 +1773,13 @@ require('node:net').createServer().listen(0, '127.0.0.1');
 });
 
 describe.skipIf(process.platform === 'win32')('local socket', () => {
-  const another = (name: string) =>
+  const another = (name: string, localSocket?: string) =>
     startServer({
       hosts: ['127.0.0.1'],
       port: 0,
       stimCli: join(root, 'fake-stim.mjs'),
       name,
+      localSocket,
       stimVersion: '9.9.9',
       serverVersion: '1.2.3',
       tailscaleState: { state: 'not-running', backendState: 'Stopped' },
@@ -1785,9 +1791,27 @@ describe.skipIf(process.platform === 'win32')('local socket', () => {
       pullRequests: async () => new Map(),
     });
 
+  test('a long hosted home serves a private socket and removes it on close', async () => {
+    process.env.STIM_HOME = join(root, 'device-host', 'sessions', 'x'.repeat(80), 'home');
+    expect(Buffer.byteLength(join(process.env.STIM_HOME, 'server', 'local.sock'))).toBeGreaterThan(107);
+    mkdirSync(process.env.STIM_HOME, { recursive: true });
+    await start();
+    const socket = serverLocalSocket();
+    expect(Buffer.byteLength(socket)).toBeLessThanOrEqual(103);
+    expect(server!.localSocket).toBe(socket);
+    expect(statSync(socket).mode & 0o777).toBe(0o600);
+    expect(statSync(dirname(socket)).mode & 0o777).toBe(0o700);
+    const client = await localConnect(socket);
+    expect(await client.request('hello', { client: CLIENT })).toHaveProperty('result.device.id', 'local');
+    await server!.close();
+    server = null;
+    expect(existsSync(socket)).toBe(false);
+    expect(existsSync(`${socket}.claims`)).toBe(false);
+  });
+
   test('two servers starting on one home over a stale socket leave exactly one serving it', async () => {
-    const socketPath = join(process.env.STIM_HOME!, 'server', 'local.sock');
-    mkdirSync(join(process.env.STIM_HOME!, 'server'), { recursive: true, mode: 0o700 });
+    const socketPath = serverLocalSocket();
+    mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 });
     writeFileSync(socketPath, 'stale');
     writeFileSync(join(root, 'fake-stim.mjs'), FAKE_STIM);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1809,7 +1833,7 @@ describe.skipIf(process.platform === 'win32')('local socket', () => {
     symlinkSync(elsewhere, join(process.env.STIM_HOME!, 'server'));
     writeFileSync(join(root, 'fake-stim.mjs'), FAKE_STIM);
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const linked = await another('Linked');
+    const linked = await another('Linked', join(process.env.STIM_HOME!, 'server', 'local.sock'));
     try {
       await linked.ready;
       expect(linked.localSocket).toBeNull();
@@ -1822,13 +1846,13 @@ describe.skipIf(process.platform === 'win32')('local socket', () => {
   });
 
   test('is private to this user, replaces a stale file and refuses a second server', async () => {
-    const socketPath = join(process.env.STIM_HOME!, 'server', 'local.sock');
-    mkdirSync(join(process.env.STIM_HOME!, 'server'), { recursive: true, mode: 0o755 });
+    const socketPath = serverLocalSocket();
+    mkdirSync(dirname(socketPath), { recursive: true, mode: 0o755 });
     writeFileSync(socketPath, 'stale');
     await start();
     expect(server!.localSocket).toBe(socketPath);
     expect(statSync(socketPath).mode & 0o777).toBe(0o600);
-    expect(statSync(join(process.env.STIM_HOME!, 'server')).mode & 0o777).toBe(0o700);
+    expect(statSync(dirname(socketPath)).mode & 0o777).toBe(0o700);
     expect(await (await desktop()).request('stats.get')).toHaveProperty('result');
 
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -2463,7 +2487,29 @@ describe('offloaded builds', () => {
 
       client.socket.send(blob('{}'));
       client.socket.send(blob('{"a":1}'));
-      const started = await client.request('build.start', START);
+      const fingerprintSources = [
+        { id: 'ios', hash: 'ab12' },
+        { id: 'expoConfig', hash: null },
+      ];
+      expect(
+        await client.request('build.start', { ...START, fingerprintSources: [{ id: 'ios', hash: '../x' }] }),
+      ).toMatchObject({ error: { code: 'bad-request' } });
+      expect(await client.request('build.start', { ...START, fingerprintIgnored: [3] })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      for (const bad of [[3], ['ios/main.jsbundle'], ['..'], ['.'], [''], ['a\0b'], ['*'.repeat(256)]]) {
+        expect(await client.request('build.start', { ...START, fingerprintTracked: bad })).toMatchObject({
+          error: { code: 'bad-request' },
+        });
+      }
+      const fingerprintIgnored = ['.env.local', 'ios/main.jsbundle'];
+      const fingerprintTracked = ['GoogleService-Info.plist'];
+      const started = await client.request('build.start', {
+        ...START,
+        fingerprintSources,
+        fingerprintIgnored,
+        fingerprintTracked,
+      });
       expect(started).toMatchObject({ result: { job: expect.any(String) } });
       const job = (started as { result: { job: string } }).result.job;
       const events = await progress(client);
@@ -2483,7 +2529,15 @@ describe('offloaded builds', () => {
       const area = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1');
       const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
       expect(ran.home).toBe(join(area, 'home'));
-      expect(ran.job).toMatchObject({ area, project: 'apps/mobile', expectedFingerprint: 'f00d', runtime: 'iOS-27-0' });
+      expect(ran.job).toMatchObject({
+        area,
+        project: 'apps/mobile',
+        expectedFingerprint: 'f00d',
+        expectedSources: fingerprintSources,
+        expectedIgnored: fingerprintIgnored,
+        expectedTracked: fingerprintTracked,
+        runtime: 'iOS-27-0',
+      });
       expect(ran.job.manifest.map((entry: { path: string }) => entry.path).toSorted()).toEqual([
         'apps/mobile/app.json',
         'apps/mobile/copy.json',
