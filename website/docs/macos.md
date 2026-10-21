@@ -209,7 +209,7 @@ and `off` builds here when local remains in the automatic build pool.
 members from automatic placement and its local fallback; explicit local or named
 placement bypasses membership. Configure `remote.machines` and approve build
 access as described in [settings](./settings.md). The worker needs matching Stim,
-CPU architecture, Xcode and macOS SDK, and network access to fetch package
+CPU architecture, Xcode and macOS SDK (except for an app built and run on the same Mac, above), and network access to fetch package
 dependencies the first time. It keeps SwiftPM dependencies per client and
 incremental outputs per repository. Verified completed apps can also be reused
 as described above. It runs no

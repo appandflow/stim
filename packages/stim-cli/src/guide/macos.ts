@@ -154,7 +154,8 @@ build pool. remote.buildPoolDisabled excludes members from automatic placement,
 including its local fallback. Explicit local or named placement bypasses membership.
 Configure remote.machines
 and approve build access as described in stim guide settings. The worker needs
-matching Stim, CPU architecture, Xcode and macOS SDK, plus network access to
+matching Stim, CPU architecture, Xcode and macOS SDK (except for an app built and run on
+the same Mac, below), plus network access to
 fetch package dependencies the first time. It keeps SwiftPM dependencies in a
 per-client cache and incremental outputs per repository. It runs fixed swift
 build commands without JavaScript installs, prebuild or pods. It receives only

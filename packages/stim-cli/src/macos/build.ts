@@ -65,7 +65,8 @@ export async function buildMacosBundle({
   const signal = runCancellationSignal(context) ?? context.signal;
   return withDrainingCancellation(context, signal, async () => {
     throwIfCancelled(signal, 'macOS build');
-    const builder = namedBuildMachine(buildMachine) ? buildPlacementCandidates(buildMachine).machines[0] : undefined;
+    const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
+    const builder = namedBuildMachine(buildMachine) ? machines[0] : undefined;
     const runsOnWorker = hostServerKey !== undefined && builder?.serverKey === hostServerKey;
     if (record) record.buildMachine = buildMachine;
     setRemoteLogSink(context, (entry) => writer.write({ ...entry, platform: 'macos' }));
@@ -170,7 +171,6 @@ export async function buildMacosBundle({
       }
       let cacheOnly = false;
       try {
-        const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
         const peer = recipe.cache?.peer?.() ?? null;
         const request = {
           ...recipe.offload.request(bundleId),
