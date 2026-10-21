@@ -21,7 +21,8 @@ import {
 import { canonicalPath } from './commands/gc/paths.ts';
 import type { Finding } from './diagnostics/doctor.ts';
 import { clearWorkspaceOutputs, collectWorkspaceOutputs } from './commands/gc/workspaces.ts';
-import type { GcOutput } from './commands/gc/results.ts';
+import { openGcLog } from './commands/gc/log.ts';
+import { createGcResults, type GcOutput } from './commands/gc/results.ts';
 import { workspaceActivity } from './devices/activity.ts';
 import { ownedAvdSerialResolverAsync } from './devices/android.ts';
 import { projectDeviceSlots } from './devices/device-slots.ts';
@@ -333,6 +334,7 @@ interface StepContext {
   env: NodeJS.ProcessEnv;
   dryRun: boolean;
   note: (line: string) => void;
+  record?: GcOutput['record'];
   now: number;
   diskRecovered: () => Promise<boolean>;
   signal?: AbortSignal;
@@ -354,6 +356,7 @@ async function reclaimIdleDevices({
   root,
   dryRun,
   note,
+  record,
   now,
   env,
   signal,
@@ -387,7 +390,7 @@ async function reclaimIdleDevices({
     idle,
     0,
     () => collect(Date.now()),
-    stepOutput(note),
+    stepOutput(note, record),
     signal,
     operation,
   );
@@ -498,6 +501,7 @@ async function reclaimWorkspaceOutputs({
   dryRun,
   now,
   note,
+  record,
   diskRecovered,
   signal,
   operation,
@@ -519,7 +523,7 @@ async function reclaimWorkspaceOutputs({
     const result = await clearWorkspaceOutputs(
       { ...report, workspaces: [entry] },
       { olderThan: null, now, signal, operation },
-      stepOutput(note),
+      stepOutput(note, record),
     );
     failures += result.failures;
     targets.push(...result.cleared);
@@ -538,15 +542,15 @@ export function trimmableCaches(env: NodeJS.ProcessEnv = process.env, cwd?: stri
   );
 }
 
-async function reclaimStaleCacheEntries({ dryRun, note, env, cwd, signal }: StepContext): Promise<StepResult> {
+async function reclaimStaleCacheEntries({ dryRun, note, record, env, cwd, signal }: StepContext): Promise<StepResult> {
   const caches = trimmableCaches(env, cwd);
   if (dryRun) return { targets: caches.map(cacheLabel), failures: 0 };
-  const { trimmed, failures } = await trimCaches(caches, STALE_CACHE_DAYS, stepOutput(note), signal);
+  const { trimmed, failures } = await trimCaches(caches, STALE_CACHE_DAYS, stepOutput(note, record), signal);
   return { targets: trimmed.map(cacheLabel), failures };
 }
 
-function stepOutput(note: (line: string) => void): GcOutput {
-  return { log: note, error: note, record: () => {}, fail: () => {} };
+function stepOutput(note: (line: string) => void, record: GcOutput['record'] = () => {}): GcOutput {
+  return { log: note, error: note, record, fail: () => {} };
 }
 
 const STEPS: Record<ReclaimStepName, (context: StepContext) => StepResult | Promise<StepResult>> = {
@@ -718,38 +722,45 @@ export async function enforceBudget(
       ),
     );
   }
-  for (const step of plan) {
-    signal?.throwIfAborted();
-    if (!dryRun && (!overBudget(short) || (DISK_ONLY.includes(step) && short.disk.length === 0))) break;
-    const freeBefore = measure.volumes.reduce((sum, v) => sum + v.freeMb, 0);
-    const result = await deps.step(step, {
-      root,
-      cwd,
-      env,
-      dryRun,
-      note,
-      now: deps.now(),
-      diskRecovered: async () =>
-        budgetShortfalls(budget, {
-          volumes: await (deps.volumesAsync?.(paths) ?? deps.volumes(paths)),
-          memory: null,
-        }).disk.length === 0,
-      signal,
-      operation,
-    });
-    signal?.throwIfAborted();
-    if (!dryRun) {
-      simSnapshot?.invalidate();
-      measure = await measureNow();
-      short = budgetShortfalls(budget, measure);
+  const gcLog = dryRun ? null : openGcLog({ trigger: 'budget', holdKept: true });
+  const gcResults = gcLog && createGcResults(gcLog.record);
+  try {
+    for (const step of plan) {
+      signal?.throwIfAborted();
+      if (!dryRun && (!overBudget(short) || (DISK_ONLY.includes(step) && short.disk.length === 0))) break;
+      const freeBefore = measure.volumes.reduce((sum, v) => sum + v.freeMb, 0);
+      const result = await deps.step(step, {
+        root,
+        cwd,
+        env,
+        dryRun,
+        note,
+        record: gcResults?.record,
+        now: deps.now(),
+        diskRecovered: async () =>
+          budgetShortfalls(budget, {
+            volumes: await (deps.volumesAsync?.(paths) ?? deps.volumes(paths)),
+            memory: null,
+          }).disk.length === 0,
+        signal,
+        operation,
+      });
+      signal?.throwIfAborted();
+      if (!dryRun) {
+        simSnapshot?.invalidate();
+        measure = await measureNow();
+        short = budgetShortfalls(budget, measure);
+      }
+      if (result.targets.length === 0 && result.failures === 0) continue;
+      const freedMb = Math.max(0, Math.round(measure.volumes.reduce((sum, v) => sum + v.freeMb, 0) - freeBefore));
+      reclaimed.push({ step, ...result, ...(dryRun ? {} : { freedMb }) });
+      const outcome = dryRun
+        ? result.targets.join(', ')
+        : `${result.targets.length}${result.failures ? `, ${result.failures} failed` : ''} (${formatSpace(freedMb)} freed)`;
+      note(chalk.dim(phaseLine('budget', `${STEP_ACTIONS[step]}: ${outcome}`)));
     }
-    if (result.targets.length === 0 && result.failures === 0) continue;
-    const freedMb = Math.max(0, Math.round(measure.volumes.reduce((sum, v) => sum + v.freeMb, 0) - freeBefore));
-    reclaimed.push({ step, ...result, ...(dryRun ? {} : { freedMb }) });
-    const outcome = dryRun
-      ? result.targets.join(', ')
-      : `${result.targets.length}${result.failures ? `, ${result.failures} failed` : ''} (${formatSpace(freedMb)} freed)`;
-    note(chalk.dim(phaseLine('budget', `${STEP_ACTIONS[step]}: ${outcome}`)));
+  } finally {
+    gcLog?.close();
   }
   if (!dryRun && short.hardFloor.length) {
     const tight = short.hardFloor.map((v) => `${formatSpace(v.freeMb)} on ${v.volume}`).join(' and ');

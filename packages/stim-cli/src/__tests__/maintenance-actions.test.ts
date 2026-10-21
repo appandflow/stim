@@ -13,7 +13,9 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { buildCacheRoot, metroCacheRoot } from '@stim-cli/core';
 import {
+  gcLogFile,
   maintenanceNdjsonFile,
+  readGcLog,
   readMaintenanceState,
   sharedCompilationCache,
   type MaintenanceAction,
@@ -191,6 +193,14 @@ test('on mode trims over-cap caches oldest first and clears only idle, unpinned,
   expect(readFileSync(join(workspaceDir(spaces.old.root), 'logs', 'maintenance.ndjson'), 'utf8')).toContain(
     'Cleared build outputs',
   );
+
+  const cleared = readGcLog().filter((record) => record.status === 'done');
+  expect(cleared.map((record) => record.kind).toSorted()).toEqual(['cache', 'workspaceOutputs']);
+  expect(cleared.every((record) => record.trigger === 'maintenance' && record.via === 'test')).toBe(true);
+  expect(new Set(cleared.map((record) => record.runId))).toEqual(new Set([records()[0]?.pass]));
+  const outputs = cleared.find((record) => record.kind === 'workspaceOutputs');
+  expect(outputs).toMatchObject({ label: spaces.old.root, id: spaces.old.root, path: spaces.old.root });
+  expect(outputs?.bytes).toBeGreaterThan(0);
 });
 
 test('report mode plans the same actions and deletes nothing', async () => {
@@ -208,6 +218,7 @@ test('report mode plans the same actions and deletes nothing', async () => {
   );
   expect(actionKinds()).toEqual(expect.arrayContaining(['would-trim-cache', 'would-clear-outputs']));
   expect(records().every((record) => record.mode === 'report')).toBe(true);
+  expect(existsSync(gcLogFile())).toBe(false);
 });
 
 test('the age sweep removes only what is provably stale', async () => {

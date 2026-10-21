@@ -902,7 +902,7 @@ device and inspect `stim logs --errors` before claiming recovery.
 ## `logs`
 
 ```text
-stim logs [--slot <name>] [--source <metro|client|device|build|agent|maintenance|all...>]
+stim logs [--slot <name>] [--source <metro|client|device|build|agent|maintenance|gc|all...>]
           [--level <debug|info|warn|error|fatal>] [--since <duration>]
           [--grep <expression>] [--tail <count>] [--errors]
           [--follow] [--json]
@@ -927,6 +927,11 @@ result.
 - `--source maintenance` shows maintenance actions, planned (report mode) or taken (on mode),
   and failures for this workspace. Add `--errors` to show only maintenance failures from it;
   failures before a later launch marker are hidden.
+- `--source gc` shows the machine-wide gc log: one record per item that
+  `stim gc`, automatic maintenance or the budget gate cleared, kept or failed to
+  clear, with the trigger, size and reason. It works from any directory, stands
+  alone (`--source all` leaves it out), and takes `--json`, `--since`, `--tail`
+  and `--follow`; `--errors` shows only failed items.
 - `--source agent` shows what agent-device did on this workspace's owned
   simulators and emulators: taps, typing, app opens, screenshots, and failed
   commands. A plain `logs` includes it; `--errors` includes it only when

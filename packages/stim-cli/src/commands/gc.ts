@@ -43,6 +43,7 @@ import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import type { StimConfig } from '@stim-cli/core/state';
 import type { GcSkip, OrphanedDevice } from './gc/types.ts';
+import { gcOptionsOf, openGcLog } from './gc/log.ts';
 import { createGcResults, GC_OUTPUT, type GcOutput, type GcResult } from './gc/results.ts';
 import { phase } from './gc/progress.ts';
 import {
@@ -734,7 +735,15 @@ export async function executeGc(
   write: (stream: 'stdout' | 'stderr', line: string) => void,
   claim?: ClaimHandle,
 ): Promise<GcExecutionResult> {
-  const results = createGcResults();
+  const log =
+    opts.delete || opts.idle !== undefined
+      ? openGcLog({
+          trigger: (deps.operation?.env ?? process.env).STIM_DESKTOP_APP ? 'desktop' : 'manual',
+          options: gcOptionsOf(opts),
+          holdKept: true,
+        })
+      : null;
+  const results = createGcResults(log?.record);
   let failed = false;
   const output: GcOutput = {
     log: (line) => write('stdout', line),
@@ -750,6 +759,7 @@ export async function executeGc(
     return { payload, exitCode: failed ? 1 : 0 };
   } finally {
     stopDeclaringSpawnsOn(deps.operation, claim);
+    log?.close();
   }
 }
 

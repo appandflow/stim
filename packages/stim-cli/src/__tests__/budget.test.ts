@@ -21,6 +21,7 @@ import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import * as idleGc from '../commands/gc/idle.ts';
 import * as metroReset from '../supervisor/cache-reset.ts';
 import { liveClaimOwner } from './_factories.ts';
+import { gcLogFile, readGcLog } from '@stim-cli/core/state';
 
 const GB = 1024;
 const BUDGET_ENV = [
@@ -180,6 +181,24 @@ describe('enforceBudget', () => {
         { step: 'idle-dev-servers', targets: ['idle-dev-servers-target'], freedMb: 13 * GB },
       ],
     });
+  });
+
+  test('what the reclaim steps clear is logged as a budget run, and a dry run logs nothing', async () => {
+    const { deps } = fakeDeps([10 * GB, 25 * GB]);
+    const recording: Partial<BudgetDeps> = {
+      ...deps,
+      step: async (step, context) => {
+        if (step === 'idle-devices') context.record?.('workspaceOutputs', 'done', '/w/old', { bytes: 4096 });
+        return { targets: [`${step}-target`], failures: 0 };
+      },
+    };
+    await enforceBudget({ root: apps, note: () => {}, budget: limits(), dryRun: true }, recording);
+    expect(existsSync(gcLogFile())).toBe(false);
+
+    await enforceBudget({ root: apps, note: () => {}, budget: limits() }, recording);
+    expect(readGcLog()).toMatchObject([
+      { trigger: 'budget', kind: 'workspaceOutputs', status: 'done', label: '/w/old', path: '/w/old', bytes: 4096 },
+    ]);
   });
 
   test('the simulator snapshot is dropped after each reclaim step, so the re-measure lists again', async () => {
