@@ -5,6 +5,7 @@ import SwiftUI
 
 struct AppPreferencesView: View {
   let stimHome: String
+  @ObservedObject var history: GcHistoryModel
   @AppStorage(AppPreferences.Key.appearance) private var appearance = Appearance.auto
   @AppStorage(AppPreferences.Key.sidebarStatuses) private var statuses = StatusFilter.encode(StatusFilter.defaultSelection)
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
@@ -145,21 +146,7 @@ struct AppPreferencesView: View {
         .foregroundStyle(Palette.tertiary)
       }
 
-      Section {
-        if autopilot.log.isEmpty {
-          InlineEmpty("No runs yet.")
-        } else {
-          ForEach(autopilot.log.prefix(50)) { entry in AutopilotLogRow(entry: entry) }
-        }
-      } header: {
-        HStack {
-          Text("Autopilot Activity")
-          Spacer()
-          if !autopilot.log.isEmpty {
-            Button("Clear") { autopilot.clearLog() }.buttonStyle(.stim())
-          }
-        }
-      }
+      CleanupHistorySection(history: history)
 
       Section {
         ForEach(OversightCategory.desktop, id: \.self) { category in
@@ -341,30 +328,6 @@ struct OversightLevelPicker: View {
     } label: {
       Label(category.label, systemImage: category.symbol)
     }
-  }
-}
-
-private struct AutopilotLogRow: View {
-  var entry: AutopilotLogEntry
-
-  var body: some View {
-    HStack(alignment: .firstTextBaseline, spacing: Space.md) {
-      Image(systemName: entry.exitStatus == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
-        .foregroundStyle(entry.exitStatus == 0 ? Palette.success : Palette.error)
-        .help(entry.exitStatus.map { $0 == 0 ? "Succeeded" : "Failed with exit status \($0)" } ?? "Did not finish")
-      VStack(alignment: .leading, spacing: Space.xxs) {
-        HStack {
-          Text(entry.trigger.title)
-          Spacer()
-          Text(entry.date.formatted(date: .abbreviated, time: .shortened)).foregroundStyle(Palette.tertiary)
-        }
-        Text(abbreviatingHome(entry.command)).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
-        if let note = entry.note {
-          Text(abbreviatingHome(note)).font(.stim(.footnote)).foregroundStyle(Palette.tertiary).lineLimit(2)
-        }
-      }
-    }
-    .textSelection(.enabled)
   }
 }
 

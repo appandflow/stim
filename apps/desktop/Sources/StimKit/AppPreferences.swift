@@ -34,7 +34,6 @@ public enum AppPreferences {
     public static let autopilotNightlyOlderThanDays = "autopilot.nightlyOlderThanDays"
     public static let autopilotPressure = "autopilot.pressure"
     public static let autopilotLastNightly = "autopilot.lastNightly"
-    public static let autopilotLog = "autopilot.log"
     public static let notifiesDiskPressure = "notify.diskPressure"
     public static let servesPhones = "servesPhones"
     public static let updatesBuildMachines = "updatesBuildMachines"

@@ -107,50 +107,7 @@ public struct PressurePlan: Hashable, Sendable {
 
 }
 
-/// One autopilot or plan run, kept in the app's activity log.
-public struct AutopilotLogEntry: Codable, Hashable, Identifiable, Sendable {
-  public enum Trigger: String, Codable, Sendable {
-    case idle, nightly, pressure, manual, pullRequests
-
-    public var title: String {
-      switch self {
-      case .idle: return "Idle devices"
-      case .nightly: return "Nightly cleanup"
-      case .pressure: return "Disk pressure"
-      case .manual: return "Requested"
-      case .pullRequests: return "Finished pull requests"
-      }
-    }
-  }
-
-  public var id: UUID
-  public var date: Date
-  public var trigger: Trigger
-  public var command: String
-  public var exitStatus: Int32?
-  public var note: String?
-
-  public init(date: Date, trigger: Trigger, command: String, exitStatus: Int32?, note: String?) {
-    id = UUID()
-    self.date = date
-    self.trigger = trigger
-    self.command = command
-    self.exitStatus = exitStatus
-    self.note = note
-  }
-}
-
-public enum AutopilotLog {
-  public static let limit = 200
-
-  /// `entries` with `entry` first, keeping the newest `limit`.
-  public static func appending(_ entry: AutopilotLogEntry, to entries: [AutopilotLogEntry]) -> [AutopilotLogEntry] {
-    Array(([entry] + entries).prefix(limit))
-  }
-
-  public static func decode(_ data: Data?) -> [AutopilotLogEntry] {
-    data.flatMap { try? JSONDecoder().decode([AutopilotLogEntry].self, from: $0) } ?? []
-  }
-
-  public static func encode(_ entries: [AutopilotLogEntry]) -> Data? { try? JSONEncoder().encode(entries) }
+/// What started a disk-reclaim run.
+public enum AutopilotTrigger: Sendable {
+  case pressure, manual
 }
