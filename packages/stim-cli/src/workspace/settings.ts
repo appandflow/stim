@@ -546,6 +546,10 @@ export function iosSimSlimProfileSetting(settings: unknown, settingsRoot: string
   }
 }
 
+export function iosSimSlimDefaultSetting(settings: unknown): boolean {
+  return isPlainObject(settings) && isPlainObject(settings.ios) && settings.ios.simslim === 'on';
+}
+
 function iosString(settings: unknown, key: string): unknown {
   if (!isPlainObject(settings) || !isPlainObject(settings.ios)) return undefined;
   return settings.ios[key];

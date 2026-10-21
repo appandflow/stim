@@ -19,6 +19,7 @@ import {
   iosSigningIdentitySettingError,
   iosSigningIdentitySha1Setting,
   iosSigningIdentitySha1SettingError,
+  iosSimSlimDefaultSetting,
   iosSimSlimProfileSetting,
   mergeSettingsLayers,
   metroCommandSettingError,
@@ -456,6 +457,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'ios.scheme': { valid: 'RNTester', invalid: ['RNTester'], expected: 'a string' },
   'ios.remote': { valid: 'mini', invalid: true, expected: 'a string' },
   'ios.projectPath': { valid: '.', invalid: {}, expected: 'a string path' },
+  'ios.simslim': { valid: 'on', invalid: true, expected: 'one of: on, off' },
   'ios.simslimProfile': { valid: '.simslim/dev.json', invalid: {}, expected: 'a string path' },
   'ios.signingIdentity': { valid: 'Apple Development: Jane', invalid: [], expected: 'a string' },
   'ios.signingIdentitySha1': { valid: 'A'.repeat(40), invalid: 42, expected: 'a string' },
@@ -1113,6 +1115,14 @@ test('an unknown or malformed key under machine optimizations still reaches unkn
   expect(settingShapeErrors(resolved)).toEqual([
     'Invalid optimizations.android setting "not an object". Expected an object.',
   ]);
+});
+
+test('a machine ios.simslim on is the default under every project, and a project off opts out', () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, ios: { simslim: 'on' } });
+  expect(iosSimSlimDefaultSetting(resolveSettings({}))).toBe(true);
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { simslim: 'off' } }));
+  expect(iosSimSlimDefaultSetting(resolveSettings({ repoRoot: tmpHome }))).toBe(false);
+  expect(iosSimSlimDefaultSetting({})).toBe(false);
 });
 
 test('a machine ios.deviceType and ios.runtime apply, and a project layer overrides them', () => {

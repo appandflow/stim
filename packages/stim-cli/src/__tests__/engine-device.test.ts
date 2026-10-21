@@ -1811,6 +1811,60 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
+  test('slims an owned simulator with the defaults when ios.simslim is on and no profile is set', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      setExecutor(exec);
+      const calls: unknown[] = [];
+
+      await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslim: 'on' } },
+        reconcileIosSimulator: async (args) => {
+          calls.push(args);
+          return { managed: true, profile: null };
+        },
+      });
+
+      expect(calls).toMatchObject([{ udid: 'U1', profile: null, slimByDefault: true, previouslyManaged: false }]);
+      expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('does not slim, and restores a managed simulator, when ios.simslim is off', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app', simslimManaged: true });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      setExecutor(exec);
+      const calls: unknown[] = [];
+
+      await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslim: 'off' } },
+        reconcileIosSimulator: async (args) => {
+          calls.push(args);
+          return { managed: false, profile: null };
+        },
+      });
+
+      expect(calls).toMatchObject([{ udid: 'U1', profile: null, slimByDefault: false, previouslyManaged: true }]);
+      expect(getProject(root)?.platforms?.ios?.simslimManaged).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('records SimSlim management before profile application can fail', async () => {
     const root = projectDir();
     try {

@@ -178,6 +178,26 @@ refuses with `STIM_BAD_ARG`, the same way an unresolvable per-project or
 per-invocation value does, and the message names the machine layer so it is
 clear where to fix it.
 
+### SimSlim for every owned simulator
+
+`ios.simslim` takes `on` or `off`, default `off`, and can be set at any layer.
+Set it on the machine layer to slim every Stim-owned iOS simulator on that Mac
+with SimSlim's default service categories, without adding a profile to each
+app:
+
+```sh
+stim settings set ios.simslim on --scope machine
+```
+
+A project `ios.simslimProfile` still applies in place of the defaults, whatever
+`ios.simslim` says. A workspace, repo, or committed `ios.simslim` of `off` opts
+that app out and restores stock services on its simulator. SimSlim's defaults
+disable push, StoreKit, iCloud, Safari sync, Mail, Calendar and Contacts
+services among others, so move an app that needs them to a profile that keeps
+those categories or to `off`. Install SimSlim once per Mac with
+`brew install mobai-app/tap/simslim`; without it `doctor` reports the gap and
+`stim ios` boots normally with a one-line note.
+
 ### Android AVD overrides
 
 New owned AVDs use the Pixel 6 hardware profile (1080 × 2400 pixels at 420 dpi)

@@ -1630,6 +1630,27 @@ test('runDoctor reports a configured SimSlim profile when the binary is missing'
   }
 });
 
+test('runDoctor reports ios.simslim on without the binary, and says nothing once it is installed', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-simslim-default-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { simslim: 'on' } }));
+    const options = { host: 'darwin' as const, concurrency: { maxBuilds: 0, maxDevices: 0 } };
+    const missing = await runDoctor(project, { ...options, lookupSimSlim: () => false });
+    expect(missing).toContainEqual(
+      expect.objectContaining({
+        level: 'cost',
+        title: expect.stringContaining('SimSlim is not installed'),
+        fix: expect.stringContaining('brew install'),
+      }),
+    );
+    const installed = await runDoctor(project, { ...options, lookupSimSlim: () => true });
+    expect(installed.some((finding) => /SimSlim/.test(finding.title))).toBe(false);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('runDoctor reports a wrong-typed setting as a finding rather than refusing', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-setting-shape-'));
   const home = mkdtempSync(join(tmpdir(), 'stim-doctor-setting-home-'));
