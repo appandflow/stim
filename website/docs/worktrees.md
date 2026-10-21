@@ -273,7 +273,9 @@ freed a little later. Through the [programmatic API](./programmatic-api.md),
 the trash is deleted before `removeWorktree` resolves. When git refuses the removal, the directories are moved
 back. On Windows, or when `$STIM_HOME` is on another volume than the worktree,
 git deletes them as before. `stim gc` reports what is left in the trash, and
-`stim gc --delete` deletes it, including the trash of an interrupted removal.
+`stim gc --delete` deletes the entries Stim wrote there (a `remove-*` directory
+with a `trash.json`), including those of an interrupted removal, and keeps
+anything else.
 
 Git-created branches stay. An existing Stim ownership record permits deleting
 a branch only when it has no unique commits.

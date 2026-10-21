@@ -1808,10 +1808,11 @@ test.skipIf(process.platform === 'win32')(
       const exec = getExecutor();
       setExecutor({
         ...exec,
-        runFile(file: string, args: string[] = [], opts?: Parameters<typeof exec.runFile>[2]) {
+        runFile(...params: Parameters<typeof exec.runFile>) {
+          const [file, args = []] = params;
           if (file === 'git' && args.includes('worktree') && args.includes('remove'))
             throw new Error('fatal: simulated');
-          return exec.runFile(file, args, opts as Parameters<typeof exec.runFile>[2]);
+          return exec.runFile(...params);
         },
       });
 

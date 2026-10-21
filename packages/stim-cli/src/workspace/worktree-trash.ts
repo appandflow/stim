@@ -19,6 +19,7 @@ import { gitAsync } from './git.ts';
 import { childEnvironment } from './git-read.ts';
 
 export const TRASH_MANIFEST = 'trash.json';
+export const TRASH_ENTRY_PREFIX = 'remove-';
 const TRASH_ENTRIES = 'entries';
 export const TRASH_CLAIMS = 'claims';
 const LIST_TIMEOUT_MS = 30_000;
@@ -106,7 +107,7 @@ export async function moveIgnoredTreesToTrash(
   try {
     await mkdir(root, { recursive: true });
     if (filesystemDevice(root) !== filesystemDevice(worktree)) return null;
-    dir = await mkdtemp(join(root, 'remove-'));
+    dir = await mkdtemp(join(root, TRASH_ENTRY_PREFIX));
     claim =
       tryAcquireClaim({ root: join(dir, TRASH_CLAIMS), mode: 'exclusive', label: 'worktree trash' }).acquired ?? null;
     if (!claim) throw new Error('the trash entry claim was not acquired');

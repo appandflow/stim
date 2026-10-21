@@ -419,9 +419,10 @@ LINKED WORKTREES
   delete as before; on Windows, or when $STIM_HOME is on another volume,
   nothing is renamed. When git refuses the removal, the directories are moved
   back. Each entry holds an ownership claim while the command or its rm uses
-  it; gc reports every entry under trash with its size and source worktree,
-  and gc --delete deletes those whose claim is free, which finishes a removal
-  that was interrupted.
+  it; gc reports every directory under trash with its size and, for an entry
+  Stim wrote, its source worktree. gc --delete deletes only a remove-* entry
+  with a valid trash.json whose claim is free, which finishes a removal that
+  was interrupted, and keeps any other directory.
   When git still refuses the removal, the kept ownership record no longer
   names the devices that were parked or deleted. A workspace that is in use
   (see IN USE below) keeps its directory, devices and registry entry, and the

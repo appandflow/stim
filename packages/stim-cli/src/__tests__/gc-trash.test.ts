@@ -54,7 +54,7 @@ test.skipIf(!POSIX)(
       [
         { path: crashed, worktree: '/w/gone', willDelete: true },
         { path: live.dir, worktree: join(base, 'live'), willDelete: false },
-      ].toSorted((a, b) => a.path.localeCompare(b.path)),
+      ].toSorted((a, b) => (a.path < b.path ? -1 : 1)),
     );
     for (const entry of report?.entries ?? []) expect(entry.bytes).toBeGreaterThanOrEqual(64 * 1024);
 
@@ -84,3 +84,32 @@ test.skipIf(!POSIX)(
   },
   30_000,
 );
+
+test.skipIf(!POSIX)('gc --delete keeps a trash directory Stim did not write', async () => {
+  const noManifest = join(trash, 'remove-nomanifest');
+  const malformed = join(trash, 'remove-malformed');
+  const incomplete = join(trash, 'remove-incomplete');
+  const foreign = join(trash, 'stray');
+  const crashed = join(trash, 'remove-crashed');
+  for (const dir of [noManifest, malformed, incomplete, foreign, crashed]) {
+    mkdirSync(join(dir, 'entries', '0'), { recursive: true });
+    writeFileSync(join(dir, 'entries', '0', 'file'), 'z');
+  }
+  writeFileSync(join(malformed, 'trash.json'), '{not json');
+  writeFileSync(join(incomplete, 'trash.json'), JSON.stringify({ worktree: '/w/a' }));
+  const valid = JSON.stringify({ worktree: '/w/b', createdAt: 'T' });
+  writeFileSync(join(foreign, 'trash.json'), valid);
+  writeFileSync(join(crashed, 'trash.json'), valid);
+
+  const report = await collectTrash();
+  expect(report?.entries.filter((entry) => entry.willDelete).map((entry) => entry.path)).toEqual([crashed]);
+  for (const dir of [noManifest, malformed, incomplete, foreign])
+    expect(report?.entries.find((entry) => entry.path === dir)?.kept).toMatch(/trash\.json/);
+
+  const done = await deleteTrash(undefined);
+
+  expect(done).toMatchObject({ count: 1, failures: 0 });
+  expect(existsSync(crashed)).toBe(false);
+  for (const dir of [noManifest, malformed, incomplete, foreign])
+    expect(existsSync(join(dir, 'entries', '0', 'file'))).toBe(true);
+});

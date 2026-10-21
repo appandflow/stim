@@ -14,7 +14,13 @@ import {
 import { directorySizeAsync, formatBytes } from '../../fs-util.ts';
 import { plural } from '../../command-output.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
-import { deleteTrashEntry, TRASH_CLAIMS, TRASH_MANIFEST, type TrashManifest } from '../../workspace/worktree-trash.ts';
+import {
+  deleteTrashEntry,
+  TRASH_CLAIMS,
+  TRASH_ENTRY_PREFIX,
+  TRASH_MANIFEST,
+  type TrashManifest,
+} from '../../workspace/worktree-trash.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 
 interface TrashEntry {
@@ -42,16 +48,18 @@ function claimKept(dir: string): string | null {
   return null;
 }
 
-async function readManifest(dir: string): Promise<Partial<TrashManifest>> {
+async function readManifest(dir: string): Promise<TrashManifest | null> {
   try {
     const parsed: unknown = JSON.parse(await readFile(join(dir, TRASH_MANIFEST), 'utf8'));
-    return parsed && typeof parsed === 'object' ? (parsed as Partial<TrashManifest>) : {};
+    if (!parsed || typeof parsed !== 'object' || !('worktree' in parsed) || !('createdAt' in parsed)) return null;
+    const { worktree, createdAt } = parsed;
+    return typeof worktree === 'string' && typeof createdAt === 'string' ? { worktree, createdAt } : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
-/** The entries under `$STIM_HOME/trash`, each deletable unless its ownership claim is live or unresolved. */
+/** The entries under `$STIM_HOME/trash`, each deletable only with a valid manifest and no live or unresolved ownership claim. */
 export async function collectTrash({
   signal,
   operation,
@@ -68,12 +76,12 @@ export async function collectTrash({
     const path = join(root, name);
     const stat = await lstat(path).catch(() => null);
     if (!stat?.isDirectory()) continue;
-    const manifest = await readManifest(path);
-    const kept = claimKept(path);
+    const manifest = name.startsWith(TRASH_ENTRY_PREFIX) ? await readManifest(path) : null;
+    const kept = manifest ? claimKept(path) : 'it has no valid trash.json, so Stim did not create it';
     entries.push({
       path,
-      worktree: typeof manifest.worktree === 'string' ? manifest.worktree : null,
-      removedAt: typeof manifest.createdAt === 'string' ? manifest.createdAt : null,
+      worktree: manifest?.worktree ?? null,
+      removedAt: manifest?.createdAt ?? null,
       bytes: await directorySizeAsync(path, { timeoutMs: 'unbounded', signal, operation }),
       willDelete: kept === null,
       kept,
