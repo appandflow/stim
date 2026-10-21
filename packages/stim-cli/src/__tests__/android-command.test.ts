@@ -58,7 +58,7 @@ import {
   upsertProject,
   writeConfigSetting,
 } from '../workspace/config.ts';
-import { buildMachinesFile, readLastBuilds } from '@stim-cli/core/state';
+import { buildMachinesFile, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import {
   workspaceDir,
@@ -2423,6 +2423,21 @@ describe('the other refusals', () => {
     assert(result.error);
     expect(result.error.code).toBe(NO_DEVICE);
     expect(result.error.message).toMatch(/no longer exists/);
+    const state = readWorkspaceState(root);
+    expect(readLastBuilds(state).android).toMatchObject({ status: 'failed', errorCode: NO_DEVICE });
+    expect(readBuildHistory(state).android?.[0]).toMatchObject({ result: 'failed', errorCode: NO_DEVICE });
+  });
+
+  test('a build that completes and then throws is recorded as failed with the error code', async () => {
+    const h = harness({
+      install: () => {
+        throw Object.assign(new Error('fixture install crash'), { code: 'STIM_FIXTURE_CRASH' });
+      },
+    });
+    await expect(h.run()).rejects.toThrow('fixture install crash');
+    const state = readWorkspaceState(root);
+    expect(readLastBuilds(state).android).toMatchObject({ status: 'failed', errorCode: 'STIM_FIXTURE_CRASH' });
+    expect(readBuildHistory(state).android?.[0]).toMatchObject({ result: 'failed', errorCode: 'STIM_FIXTURE_CRASH' });
   });
 
   const DISK_FATAL =
@@ -7671,6 +7686,25 @@ describe('named Android hosting placement', () => {
       expect(h.calls.spawn).toEqual([]);
     },
   );
+
+  test('a hosted launch failure after the build records the build as failed with its code', async () => {
+    const h = harness({
+      json: true,
+      remoteDevice: 'mini',
+      prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: hostDevice, session: null }),
+      placeHostedAndroid: async (_target: unknown, args: { reserved: (value: typeof placement) => void }) => {
+        args.reserved(placement);
+        return { placement, launched: 'unverified' };
+      },
+      build: async () => makeAndroidBuildSuccess({ apkPath: fakeApk() }),
+      verifyLaunched: async () => ({ fatal: true }),
+      install: never('local install'),
+    });
+    expect((await h.run()).error?.code).toBe('STIM_LAUNCH_FAILED');
+    const state = readWorkspaceState(root);
+    expect(readLastBuilds(state).android).toMatchObject({ status: 'failed', errorCode: 'STIM_LAUNCH_FAILED' });
+    expect(readBuildHistory(state).android?.[0]).toMatchObject({ result: 'failed', errorCode: 'STIM_LAUNCH_FAILED' });
+  });
 
   test('a host refusal keeps placement and never falls back to a local build', async () => {
     writeWorkspaceState(root, { android: { host: placement } });

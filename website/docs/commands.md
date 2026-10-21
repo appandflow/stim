@@ -1506,7 +1506,8 @@ cache facts. `configuration` is the iOS configuration or Android variant the run
 `phases` gives the milliseconds the run spent in each build phase it entered,
 such as `pods`, `compile` and `install`. Only runs that record a last build are
 listed: a run that stopped before looking up a build, such as one with a bad
-flag, is not.
+flag, is not. A run that builds or reuses an app and then fails at
+the device, install or launch step is listed with `failed` and its error code.
 
 Each booted simulator and detected emulator also shows who is using it:
 

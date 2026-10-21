@@ -1618,7 +1618,9 @@ RULES
                  existed count their device time in prepare and install
 
   Only runs that record a last build are listed: a run that stops before
-  looking up a build, such as a bad flag, is not. Estimates (expectedMs) come from run statistics, not builds.
+  looking up a build, such as a bad flag, is not. A run that builds or reuses
+  an app and then fails at the device, install or launch step is listed as
+  failed with its error code. Estimates (expectedMs) come from run statistics, not builds.
 
   done and total are counts, not a completion fraction: a target or task
   can take a second or ten minutes, and cached work finishes instantly.
