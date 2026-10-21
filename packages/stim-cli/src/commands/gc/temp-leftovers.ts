@@ -56,7 +56,7 @@ const REMEDIES: Record<TempLeftoverKind, string> = {
   xctrace:
     'stim gc --delete removes them once they are idle for 24 hours and no xctrace or Instruments process runs; export a recording you need first',
   swiftpm:
-    'stim gc --delete removes them once they are idle for 24 hours and no swift or xcodebuild process runs; stim macos keeps its own SwiftPM builds out of TMPDIR',
+    'stim gc --delete removes them once they are idle for 24 hours and no swift or xcodebuild process runs',
   jest: 'Jest owns this cache; clear it with `npx jest --clearCache`',
 };
 
