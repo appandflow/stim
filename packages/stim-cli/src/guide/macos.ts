@@ -162,6 +162,12 @@ the files git lists (tracked and untracked, not ignored). Resource and catalog
 sources must be among those files. The client sends resolved sources relative
 to the repository root; the worker resolves them inside its checkout.
 
+With --remote <machine> and --remote-build naming the same machine (the same
+paired node), the app is built and run there, so this Mac's Xcode, macOS SDK and
+CPU architecture do not have to match: the worker needs the same Stim build and
+its own Xcode and macOS SDK. This Mac's cache is skipped and the worker's cache
+identity comes from the worker's toolchain. Any other combination keeps the match.
+
 The client validates the development plist and resource entries before asking a machine. It verifies
 the returned archive's sha256, bundle identifier, executable, declared resources
 and ad hoc signature

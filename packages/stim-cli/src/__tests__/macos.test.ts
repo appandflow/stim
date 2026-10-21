@@ -418,6 +418,7 @@ describe('macOS build placement and promotion', () => {
       assetCatalog?: unknown;
       displayName?: string;
       cache?: MacosArtifactRecipe['cache'];
+      hostServerKey?: string;
     } = {},
   ) => {
     const selected = projectRegistry.selectMacos(root);
@@ -445,6 +446,7 @@ describe('macOS build placement and promotion', () => {
       note: () => {},
       record: buildRecord,
       buildMachine: extras.buildMachine ?? 'auto',
+      hostServerKey: extras.hostServerKey,
       displayName: extras.displayName,
     });
   };
@@ -592,12 +594,13 @@ describe('macOS build placement and promotion', () => {
     token: 'a'.repeat(64),
     sha256: 'b'.repeat(64),
   };
-  function succeeds(path: string): void {
+  function succeeds(path: string, cacheHit?: true): void {
     vi.spyOn(offload, 'offloadBuild').mockResolvedValue({
       ok: true,
       machine: 'mini',
       artifactPath: path,
       handoff,
+      cacheHit,
     } as Extract<offload.OffloadOutcome, { ok: true }>);
   }
 
@@ -643,6 +646,76 @@ describe('macOS build placement and promotion', () => {
     expect(buildRecord.cacheKey).toBeUndefined();
     writeWorkspaceState(root, { macos: record({ build: { ...buildRecord, state: 'ok' } }) });
     expect(readMacosRecord(root)?.build.offloadedTo).toBe('mini');
+  });
+
+  describe('an app hosted on the Mac that builds it', () => {
+    const nodeKey = 'NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNA';
+    const clientCache = () => {
+      const identity = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['identity']>(async () => ({
+        hash: 'client-inputs',
+        key: 'client-key',
+      }));
+      const restore = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['restore']>(async () => null);
+      const store = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['store']>();
+      return { identity, restore, store, cache: { identity, has: async () => false, restore, store } };
+    };
+    const runsOnWorker = () => {
+      const target = vi.mocked(offload.chooseBuildMachine).mock.calls[0]?.[0].target;
+      return target?.platform === 'macos' ? target.runsOnWorker : 'not macos';
+    };
+
+    beforeEach(() => {
+      vi.spyOn(machines, 'pairedMachines').mockReturnValue(
+        machines.pairedMachines().map((each) => Object.assign({}, each, { serverKey: nodeKey })),
+      );
+      succeeds(remoteBundle());
+    });
+
+    it('asks for no Xcode, SDK or CPU match with this Mac and keeps the client toolchain out of the cache', async () => {
+      const client = clientCache();
+      await build({ buildMachine: 'mini', hostServerKey: nodeKey, cache: client.cache });
+      expect(runsOnWorker()).toBe(true);
+      expect(client.identity).not.toHaveBeenCalled();
+      expect(client.restore).not.toHaveBeenCalled();
+      expect(client.store).not.toHaveBeenCalled();
+      expect(buildRecord.fingerprint).toBeUndefined();
+      expect(buildRecord.cacheKey).toBeUndefined();
+      expect(localBuilds).toBe(0);
+    });
+
+    it.each([
+      ['another node hosts it', { buildMachine: 'mini', hostServerKey: 'OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOA' }],
+      ['it is hosted on no remote Mac', { buildMachine: 'mini' }],
+      ['the build machine is not named', { buildMachine: 'auto', hostServerKey: nodeKey }],
+    ])('keeps the full toolchain match with this Mac when %s', async (_name, extras) => {
+      const client = clientCache();
+      await build({ ...extras, cache: client.cache });
+      expect(runsOnWorker()).toBeUndefined();
+      expect(client.identity).toHaveBeenCalled();
+    });
+
+    it('checks a fetched peer artifact against the worker CPU instead of this Mac', async () => {
+      const workerArch = process.arch === 'arm64' ? 'x64' : 'arm64';
+      const architecture = workerArch === 'x64' ? 'x86_64' : 'arm64';
+      const base = getExecutor();
+      setExecutor({
+        ...base,
+        runFileAsync: async (file, args, options) => {
+          if (file === 'xcrun' && args[0] === 'lipo') return architecture;
+          if (file === 'xcrun' && args[0] === 'vtool') return 'platform MACOS';
+          return base.runFileAsync(file, args, options);
+        },
+      });
+      vi.mocked(offload.chooseBuildMachine).mockResolvedValue(
+        Object.assign({}, choice, { offer: { capacity: {}, toolchain: { arch: workerArch } } }),
+      );
+      succeeds(remoteBundle(), true);
+      await expect(build({ buildMachine: 'mini', hostServerKey: nodeKey })).resolves.toMatchObject({
+        offloadedTo: 'mini',
+      });
+      succeeds(remoteBundle(), true);
+      await expect(build({ buildMachine: 'mini' })).rejects.toThrow('does not match this platform and architecture');
+    });
   });
 
   it('cancellation during fetched signature verification preserves the bundle without compiling locally', async () => {

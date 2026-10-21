@@ -34,7 +34,9 @@ import { applyHostedMacosProbe, readHostedMacosStatus } from '../device-host/hos
 import { reclaimProject } from '../devices/reclaim.ts';
 import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { stopMacosApp } from '../macos/stop.ts';
+import * as offload from '../offload/client.ts';
 import { BuildConnection } from '../offload/client.ts';
+import * as buildMachines from '../offload/build-machines.ts';
 import { getConfigPath } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { workspaceAgentDeviceDir, workspaceLogsDir } from '../workspace/paths.ts';
@@ -621,6 +623,34 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     expect(host.methods).not.toContain('device-host.reserve');
     expect(readMacosRecord(root)).toBeNull();
   });
+
+  test.each([
+    ['--remote-build names the hosting node', FAKE_SERVER_PUBLIC, true],
+    ['--remote-build names another node', OTHER_KEY, undefined],
+  ])(
+    '%s: the toolchain match with this Mac applies only when the app stays on its builder',
+    async (_name, buildKey, runsOnWorker) => {
+      writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'], buildMode: 'force' } }));
+      vi.spyOn(buildMachines, 'pairedMachines').mockReturnValue([
+        {
+          machine: 'mini',
+          transport: 'tailscale',
+          address: 'mini.tail1.ts.net',
+          state: 'approved',
+          requestedAt: 'now',
+          serverKey: buildKey,
+        },
+      ]);
+      const choose = vi.spyOn(offload, 'chooseBuildMachine').mockResolvedValue('mini: stop before building');
+      try {
+        await expect(runMacos(testContext(), root, () => {}, 'mini', 'mini')).rejects.toThrow('stop before building');
+        const target = choose.mock.calls[0]?.[0].target;
+        expect(target?.platform === 'macos' ? target.runsOnWorker : 'not macos').toBe(runsOnWorker);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    },
+  );
 
   test('status reports a stopped host session without discarding the placement or changing saved state', async () => {
     await runMacos(testContext(), root, () => {}, 'mini');

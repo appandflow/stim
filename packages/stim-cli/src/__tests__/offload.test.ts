@@ -434,6 +434,45 @@ describe('macOS build compatibility', () => {
       { code, reason: expect.any(String) },
     ]);
   });
+  describe('for an app that runs on the worker that builds it', () => {
+    const onWorker: BuildTarget = { ...target, runsOnWorker: true };
+    const other = { arch: 'x64', xcode: 'Xcode 27.1 / Build version 27A9275', macosSdk: '27.1' };
+
+    it('needs no Xcode, macOS SDK or CPU match with this Mac', () => {
+      expect(toolchainMismatches(onWorker, offer({ toolchain: other }).toolchain)).toEqual([]);
+      expect(toolchainMismatches(target, offer({ toolchain: other }).toolchain).map((problem) => problem.code)).toEqual(
+        ['arch', 'xcode', 'macos-sdk'],
+      );
+    });
+
+    it('still needs the same Stim build, a Mac, and a worker with Xcode and a macOS SDK', () => {
+      expect(toolchainMismatches(onWorker, offer({ toolchain: { stimBuild: 'b2' } }).toolchain)).toEqual([
+        { code: 'stim-build', reason: expect.any(String) },
+      ]);
+      expect(toolchainMismatches(onWorker, offer({ toolchain: { os: 'linux' } }).toolchain)).toEqual([
+        { code: 'platform', reason: expect.stringContaining('macOS') },
+      ]);
+      expect(toolchainMismatches(onWorker, offer({ toolchain: { xcode: null, macosSdk: null } }).toolchain)).toEqual([
+        { code: 'xcode', reason: 'no Xcode there' },
+        { code: 'macos-sdk', reason: 'no macOS SDK there' },
+      ]);
+    });
+
+    it('takes a worker SwiftPM artifact built with another Xcode than this Mac has', () => {
+      const fingerprint = 'a'.repeat(64);
+      const artifact = {
+        fingerprint,
+        cacheKey: `swiftpm-peer-${fingerprint}`,
+        name: 'App.app',
+        size: 10,
+        sha256: 'b'.repeat(64),
+      };
+      const options = { mode: 'auto' as const, here: IDLE, artifact: 'swiftpm' as const, cacheOnly: true };
+      const offers = [{ machine: 'mini', offer: offer({ artifact, toolchain: other }) }];
+      expect(pickOffer({ ...options, target: onWorker, offers }).order).toEqual([0]);
+      expect(pickOffer({ ...options, target, offers }).order).toEqual([]);
+    });
+  });
   it('accepts matching macOS tools without CocoaPods, runtimes or a JDK', () => {
     expect(
       toolchainMismatches(

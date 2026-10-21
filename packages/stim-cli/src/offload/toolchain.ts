@@ -54,7 +54,7 @@ export type BuildTarget =
       cocoapodsPinned: boolean;
     }
   | { platform: 'android'; native?: 'gradle'; local: AndroidToolchain; requires: AndroidRequirements }
-  | { platform: 'macos'; local: MacosToolchain };
+  | { platform: 'macos'; local: MacosToolchain; runsOnWorker?: true };
 
 const distDir = dirname(fileURLToPath(import.meta.url));
 
@@ -367,6 +367,11 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
   if (worker.os !== undefined && worker.os !== 'darwin') {
     const name = target.platform === 'ios' ? 'iOS' : 'macOS';
     return [...out, { code: 'platform', reason: `${worker.os} there, and ${name} builds need a Mac` }];
+  }
+  if (target.platform === 'macos' && target.runsOnWorker) {
+    if (!worker.xcode) out.push({ code: 'xcode', reason: 'no Xcode there' });
+    if (!worker.macosSdk) out.push({ code: 'macos-sdk', reason: 'no macOS SDK there' });
+    return out;
   }
   if (worker.arch !== local.arch) out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
   if (target.platform === 'macos') {
