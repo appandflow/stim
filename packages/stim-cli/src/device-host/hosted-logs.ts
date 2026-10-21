@@ -4,7 +4,8 @@ import { LOG_ROTATE_BYTES, withDirLockAsync, ambientWrite } from '@stim-cli/core
 import { isJsonObject, parseHostedLogsCursor, type HostedLogsCursor } from '@stim-cli/core/state';
 import { deviceSlotFileKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { macosDir } from '../macos/state.ts';
-import { createNdjsonWriter } from '../ndjson.ts';
+import { androidLogGroups, isAndroidCrashText } from '../collector/android.ts';
+import { createNdjsonWriter, type NdjsonRecord } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { call, type HostConnection } from './hosted-client.ts';
 
@@ -35,6 +36,15 @@ function readCursor(root: string, session: string, target: LogTarget): HostedLog
 const sameCursor = (a: HostedLogsCursor | undefined, b: HostedLogsCursor | undefined): boolean =>
   JSON.stringify(Object.entries(a ?? {}).toSorted()) === JSON.stringify(Object.entries(b ?? {}).toSorted());
 
+/** Records of the logcat runs a local Android launch would report as a native crash; a run split across pages is not joined. */
+function androidCrashRecords(records: Record<string, unknown>[]): Set<object> {
+  return new Set(
+    androidLogGroups(records as NdjsonRecord[])
+      .filter((group) => isAndroidCrashText(group.map((record) => record.msg ?? '').join('\n')))
+      .flat(),
+  );
+}
+
 async function commitPage(
   root: string,
   session: string,
@@ -54,10 +64,17 @@ async function commitPage(
           maxBytes: LOG_ROTATE_BYTES,
         });
         try {
+          const crashes = target.platform === 'android' ? androidCrashRecords(records) : new Set<object>();
           for (const record of records)
             writer.write(
               target.platform !== 'macos'
-                ? { ...record, src: 'device', platform: target.platform, slot: target.slot, event: 'hosted_native_log' }
+                ? {
+                    ...record,
+                    src: 'device',
+                    platform: target.platform,
+                    slot: target.slot,
+                    event: crashes.has(record) ? 'native_crash' : 'hosted_native_log',
+                  }
                 : record,
             );
         } finally {
