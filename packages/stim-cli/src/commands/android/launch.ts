@@ -73,6 +73,7 @@ import { type ReportAndroidResultArgs, finishAndroidUpload, reportAndroidResult,
 import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import { loadConfig, saveConfig, setDevice, withConfigLockAsync, upsertProject } from '../../workspace/config.ts';
 import { providerUploadOutcome } from '../../cache/build-cache.ts';
+import { settleFingerprintCheck, type FingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { launchOutcomeRecord, type MobileRuntimePreparation, type RuntimeReadiness } from '../native-runtime.ts';
 import type { RuntimePlan } from '../../engine/runtime-plan.ts';
 import { killPreviousCollector, startCollector } from './collector.ts';
@@ -453,6 +454,7 @@ interface FinishAndroidRunArgs {
   waitedForBuild: WaitedForBuild | null;
   ccache: CcacheActivity;
   uploadPending: Promise<RemoteUploadLike> | null;
+  fingerprintCheck?: FingerprintCheck | null;
   providerUpload: Promise<ProviderCallResult<void>> | null;
   providerName: string | null;
   remote: LoadProjectProviderResult | null;
@@ -647,6 +649,7 @@ export async function finishAndroidRun({
   waitedForBuild,
   ccache,
   uploadPending,
+  fingerprintCheck,
   providerUpload,
   providerName,
   remote,
@@ -932,6 +935,12 @@ export async function finishAndroidRun({
   const uploadWasAbandoned = await finishAndroidUpload(uploadPending, remote, phase);
   const providerOutcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName, env);
   if (providerOutcome) phase('cache', providerOutcome.warn ? chalk.yellow(providerOutcome.line) : providerOutcome.line);
+  await settleFingerprintCheck(
+    fingerprintCheck,
+    'android',
+    (line) => phase('fingerprint', chalk.yellow(line)),
+    (entry) => writer.write(entry),
+  );
 
   persistLastBuild({ recordBuild, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
 

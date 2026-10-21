@@ -1737,6 +1737,24 @@ THE BUILD CACHE HAS THREE LEVELS
   outcome, miss reason, phase timings and diagnostics, so a hit that turned
   into a miss shows which run changed what.
 
+  AN UNCHANGED TREE REUSES ITS FINGERPRINT. Each workspace records its last
+  full React Native or Expo fingerprint per platform, with the stat of every
+  file and directory it read, the lockfiles and install markers, each
+  autolinked package's manifests, and a digest of the environment. The next
+  ios or android lookup still evaluates the app config, and when that config,
+  every recorded stat and the environment are unchanged, it reuses the
+  recorded fingerprint instead of running autolinking and the file walk:
+
+    fingerprint inputs unchanged since the recorded fingerprint
+
+  A full fingerprint then runs in the background at low priority. If it
+  disagrees, for example after a hand edit under node_modules that makes a
+  package native without a lockfile change, the record is dropped and the
+  run ends with a warning naming both hashes and a fingerprint_memo_stale
+  record in the build log; run the command again to install the app for the
+  current tree. A record older than 24 hours is never used, --no-build-cache
+  always fingerprints in full, and --plan reuses a record without writing one.
+
   THE KEY CAN MOVE MID-RUN, and the run says so in two facts rather than two
   explanations. \`expo prebuild\` and \`pod install\` rewrite fingerprinted
   files while they work, so the run fingerprints again afterwards:

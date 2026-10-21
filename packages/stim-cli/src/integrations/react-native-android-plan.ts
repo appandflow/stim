@@ -1,6 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
+import { memoizedFingerprint } from '../cache/fingerprint-memo.ts';
 import { reportSignal } from '../report-runtime.ts';
 import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
@@ -313,10 +314,21 @@ export async function planReactNativeAndroid(
 
   let fingerprint;
   try {
-    fingerprint =
-      operation && reportSignal(operation)
-        ? await readDoctorFingerprint(operation, { root, platform: PLATFORM, androidLayout: layout })
-        : await deps.fingerprint(root, { platform: PLATFORM, androidLayout: layout });
+    fingerprint = (
+      await memoizedFingerprint(
+        root,
+        { platform: PLATFORM, androidLayout: layout },
+        {
+          consult: build.cache.read,
+          operation: operation && reportSignal(operation) ? undefined : operation,
+          record: false,
+          fingerprint: (projectRoot, fingerprintTarget) =>
+            operation && reportSignal(operation)
+              ? readDoctorFingerprint(operation, { root: projectRoot, platform: PLATFORM, androidLayout: layout })
+              : deps.fingerprint(projectRoot, fingerprintTarget),
+        },
+      )
+    ).fingerprint;
   } catch (error) {
     operation?.signal.throwIfAborted();
     return refuse({

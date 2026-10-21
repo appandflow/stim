@@ -1479,6 +1479,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         waitedForBuild: artifact.waitedForBuild,
         ccache: ccacheActivity,
         uploadPending: artifact.uploadPending,
+        fingerprintCheck: artifact.fingerprintCheck,
         providerUpload: artifact.providerUpload,
         providerName: artifact.providerName,
         remote: artifact.remote,

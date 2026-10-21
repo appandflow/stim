@@ -14,6 +14,7 @@ import {
   refingerprintAfterMutation,
   untrackedMissLine,
 } from '../cache/build-cache.ts';
+import type { FingerprintCheck } from '../cache/fingerprint-memo.ts';
 import { explainBuildMiss, fingerprintErrorMissReason } from '../cache/miss-reason.ts';
 import { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 import { DEFAULT_DEPS, type IosDeps } from '../commands/ios/dependencies.ts';
@@ -40,6 +41,7 @@ type ReactNativeIosDependencies = Pick<
   | 'discoverXcodeProject'
   | 'resolveScheme'
   | 'fingerprintProject'
+  | 'memoizedFingerprint'
   | 'untrackedNativeFiles'
   | 'resolveBuild'
   | 'storeBuild'
@@ -157,6 +159,7 @@ function reactNativeIosArtifact(
   let storeHash: string | null = null;
   let storeSources: FingerprintSource[] = [];
   let mutatingSteps: string[] = [];
+  let fingerprintCheck: FingerprintCheck | null = null;
   const identity = () => (storeHash ? { hash: storeHash, key: buildCacheKey(PLATFORM, storeHash, keyOptions) } : null);
   const materialize: IosArtifactRecipe['materialize'] = async (artifactPath, { fresh: isFresh, ownTemporary }) => {
     const lanAddress = device?.lanAddress ?? null;
@@ -281,7 +284,14 @@ function reactNativeIosArtifact(
       let computedFingerprint: string | null;
       let fingerprintError = 'no hash';
       try {
-        const computed = await d.fingerprintProject(root, { platform: PLATFORM, iosProjectPath: iosProject.relative });
+        const memo = await d.memoizedFingerprint(
+          root,
+          { platform: PLATFORM, iosProjectPath: iosProject.relative },
+          { consult: cachePolicy.read, record: true, operation, fingerprint: d.fingerprintProject },
+        );
+        const computed = memo.fingerprint;
+        fingerprintCheck = memo.check;
+        if (memo.memoHit) phase('fingerprint', chalk.dim('inputs unchanged since the recorded fingerprint'));
         computedFingerprint = computed?.hash ?? null;
         fingerprintSources = computed?.sources ?? [];
       } catch (error) {
@@ -300,6 +310,7 @@ function reactNativeIosArtifact(
       storeSources = fingerprintSources;
       return identity()!;
     },
+    fingerprintCheck: () => fingerprintCheck,
     cache: () =>
       filesystemBuildCapability({
         context: operation,

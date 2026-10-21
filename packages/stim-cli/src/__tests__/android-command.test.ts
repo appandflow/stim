@@ -5,7 +5,7 @@ import { operationState } from '../engine/operation-state.ts';
 import { nativeAndroidFixture } from './_native-android-project.ts';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
 import { runReload } from '../commands/reload.ts';
-import { resolveBuild } from '../cache/build-cache.ts';
+import { resolveBuild, type FingerprintTarget, type ProjectFingerprint } from '../cache/build-cache.ts';
 import { projectIntegrations } from '../integrations/projects.ts';
 import { createProjectRegistry } from '../integrations/project-registry.ts';
 import {
@@ -378,6 +378,13 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       calls.fingerprint.push(path);
       return { hash: FINGERPRINT, sources: [] };
     },
+    memoize: async (
+      projectRoot: string,
+      target: FingerprintTarget,
+      {
+        fingerprint,
+      }: { fingerprint?: (root: string, target: FingerprintTarget) => Promise<ProjectFingerprint | null> },
+    ) => ({ fingerprint: fingerprint ? await fingerprint(projectRoot, target) : null, memoHit: false, check: null }),
     untracked: (args: { projectRoot: string }) => {
       calls.untracked.push(args);
       return [];
@@ -2103,6 +2110,30 @@ describe('product flavors (--variant / android.variant)', () => {
 });
 
 describe('the applicationId comes from the built APK', () => {
+  test('a memoized fingerprint whose background check disagrees warns at the end of the run', async () => {
+    const consulted: boolean[] = [];
+    const h = harness({
+      resolveCached: () => '/cache/app-debug.apk',
+      memoize: async (_root: string, _target: FingerprintTarget, { consult }: { consult: boolean }) => {
+        consulted.push(consult);
+        return {
+          fingerprint: { hash: FINGERPRINT, sources: [] },
+          memoHit: true,
+          check: {
+            settle: async () => ({ status: 'stale', recorded: FINGERPRINT, current: 'ffee0011' }),
+            cancel: () => {},
+          },
+        };
+      },
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(consulted).toEqual([true]);
+    expect(h.calls.fingerprint).toEqual([]);
+    expect(h.stderr.join('\n')).toMatch(/no longer matches the tree \(ffee0011\)/);
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
+    expect(records.find((record) => record.event === 'fingerprint_memo_stale')).toMatchObject({ current: 'ffee0011' });
+  });
+
   test('the APK is authoritative when it answers, even when project detection disagrees', async () => {
     const h = harness({ readApkPackage: () => 'io.tlon.groups' });
     const result = await h.run();
@@ -3073,6 +3104,33 @@ describe('--no-build-cache', () => {
     );
     expect(activeReport).toMatchObject({ outcome: 'cold', outcomeKnown: true });
     expect(activeReport).not.toHaveProperty('cacheLookupOutcome');
+  });
+
+  test('fingerprints in full without consulting the memo', async () => {
+    const consulted: boolean[] = [];
+    const h = harness({
+      useBuildCache: false,
+      memoize: async (
+        projectRoot: string,
+        target: FingerprintTarget,
+        {
+          consult,
+          fingerprint,
+        }: {
+          consult: boolean;
+          fingerprint?: (root: string, target: FingerprintTarget) => Promise<ProjectFingerprint | null>;
+        },
+      ) => {
+        consulted.push(consult);
+        return {
+          fingerprint: fingerprint ? await fingerprint(projectRoot, target) : null,
+          memoHit: false,
+          check: null,
+        };
+      },
+    });
+    await h.run();
+    expect(consulted).toEqual([false]);
   });
 
   test('still STORES -- over the entry it was told not to trust -- and still uploads', async () => {

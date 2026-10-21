@@ -9,6 +9,7 @@ import { readHostedIos, writeHostedIosAsync } from '../../device-host/ios-state.
 import { loadCacheProvider } from '@stim-cli/cache';
 import { buildIos, discoverXcodeProject } from '../../integrations/react-native-build.ts';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
+import { memoizedFingerprint } from '../../cache/fingerprint-memo.ts';
 import {
   fingerprintProject,
   resolveBuild,
@@ -134,6 +135,7 @@ export interface IosDeps {
   pidExists: typeof pidExists;
   getConcurrencyLimits: typeof getConcurrencyLimits;
   fingerprintProject: typeof fingerprintProject;
+  memoizedFingerprint: typeof memoizedFingerprint;
   untrackedNativeFiles: typeof untrackedNativeFiles;
   resolveBuild: typeof resolveBuild;
   storeBuild: BuildStore;
@@ -239,6 +241,7 @@ export const DEFAULT_DEPS: IosDeps = {
   pidExists,
   getConcurrencyLimits,
   fingerprintProject,
+  memoizedFingerprint,
   untrackedNativeFiles,
   resolveBuild,
   storeBuild,

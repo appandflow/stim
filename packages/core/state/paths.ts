@@ -53,6 +53,15 @@ export function workspaceEndedAgentsLock(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'ended-agents.lock');
 }
 
+/** The last full native fingerprint of one platform with the state of its inputs, written by the CLI. */
+export function workspaceFingerprintMemoFile(projectRoot: string, platform: string): string {
+  return join(workspaceDir(projectRoot), 'fingerprint-memo', `${platform}.json`);
+}
+
+export function workspaceFingerprintMemoLock(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'fingerprint-memo.lock');
+}
+
 export function supervisorPidFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'supervisor.pid');
 }

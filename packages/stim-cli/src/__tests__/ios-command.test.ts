@@ -331,6 +331,11 @@ function harness(overrides: LooseDeps = {}) {
       record('fingerprintProject', path);
       return { hash: FINGERPRINT, sources: [] };
     },
+    memoizedFingerprint: async (projectRoot, target, { fingerprint }) => ({
+      fingerprint: fingerprint ? await fingerprint(projectRoot, target) : null,
+      memoHit: false,
+      check: null,
+    }),
     untrackedNativeFiles: (args) => {
       record('untrackedNativeFiles', args);
       return [];
@@ -1522,6 +1527,55 @@ describe('the cache', () => {
     const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe('local');
     expect(facts.appPath).toBe(cachedApp);
+  });
+
+  test('a memoized fingerprint whose background check disagrees warns at the end of the run', async () => {
+    reserve();
+    const consulted: boolean[] = [];
+    const { exitCode, stderr } = await run(
+      {},
+      {
+        resolveBuild: () => '/cache/Fixture.app',
+        memoizedFingerprint: async (_root, _target, { consult }) => {
+          consulted.push(consult);
+          return {
+            fingerprint: { hash: FINGERPRINT, sources: [] },
+            memoHit: true,
+            check: {
+              settle: async () => ({ status: 'stale', recorded: FINGERPRINT, current: 'ffee0011' }),
+              cancel: () => {},
+            },
+          };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(consulted).toEqual([true]);
+    expect(stderr).toMatch(/inputs unchanged since the recorded fingerprint/);
+    expect(stderr).toMatch(/fingerprint a3f9b1\.\. no longer matches the tree \(ffee0011\)/);
+    expect(buildRecords().find((entry) => entry.event === 'fingerprint_memo_stale')).toMatchObject({
+      recorded: FINGERPRINT,
+      current: 'ffee0011',
+    });
+  });
+
+  test('--no-build-cache fingerprints in full without consulting the memo', async () => {
+    reserve();
+    const consulted: boolean[] = [];
+    await run(
+      { buildCache: false },
+      {
+        memoizedFingerprint: async (projectRoot, target, { consult, fingerprint }) => {
+          consulted.push(consult);
+          return {
+            fingerprint: fingerprint ? await fingerprint(projectRoot, target) : null,
+            memoHit: false,
+            check: null,
+          };
+        },
+      },
+    );
+    expect(consulted).toEqual([false]);
   });
 
   test('a hit reads the bundle id from the cached binary, not from the config', async () => {

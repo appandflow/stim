@@ -169,7 +169,7 @@ export function androidProjectFingerprintOptions(
   };
 }
 
-interface FingerprintTarget {
+export interface FingerprintTarget {
   platform?: string;
   iosProjectPath?: string;
   androidLayout?: AndroidLayout | null;
@@ -206,7 +206,7 @@ export function trackedFingerprintPaths(
   return names.filter((name) => matched.has(name) && !ignored.has(name)).toSorted();
 }
 
-async function fingerprintOptions(
+export async function fingerprintOptions(
   projectRoot: string,
   {
     platform,

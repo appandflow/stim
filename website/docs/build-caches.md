@@ -113,6 +113,15 @@ the project lists and has no suffix.
 installs the saved `.app` or `.apk`. A miss runs the native build and stores the
 result. Two matching misses use one build through a single-flight lock.
 
+When nothing the fingerprint reads has changed since the last run in the same
+workspace, `stim ios` and `stim android` reuse the recorded fingerprint instead
+of computing it again. Stim still evaluates the app config, and it compares the
+stat of every recorded input file and directory, the lockfiles and install
+markers, and a digest of the environment. A full fingerprint then runs in the
+background. If it disagrees, Stim drops the record and ends the run with a
+warning; run the command again to use the current tree. A record is never used
+after 24 hours, and `--no-build-cache` always fingerprints in full.
+
 After local and configured-provider misses, development builds can reuse an
 exact completed archive from an enabled paired build worker with
 `react-native-peer-cache`. The query includes the post-prebuild/pod-install

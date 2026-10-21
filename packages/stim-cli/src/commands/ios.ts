@@ -1281,6 +1281,7 @@ async function runIos(
     } catch (error) {
       return reportRunFailure(error);
     } finally {
+      artifact?.cancelFingerprintCheck();
       await artifact?.release();
     }
   } finally {

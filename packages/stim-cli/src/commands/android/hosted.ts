@@ -1,3 +1,5 @@
+import chalk from 'chalk';
+import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { hostedAndroidStatus, type HostedDeviceSelectors, type HostedAppOffer } from '@stim-cli/core/state';
 import { placeHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { writeHostedAndroidAsync } from '../../device-host/ios-state.ts';
@@ -148,6 +150,12 @@ export async function finishHostedAndroidRun({
     });
     await finishAndroidUpload(artifact.uploadPending, artifact.remote, phase);
     await artifact.providerUpload;
+    await settleFingerprintCheck(
+      artifact.fingerprintCheck,
+      'android',
+      (line) => phase('fingerprint', chalk.yellow(line)),
+      (entry) => report.writer.write(entry),
+    );
     const facts = reportAndroidResult({
       ...report,
       out,
