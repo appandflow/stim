@@ -170,11 +170,13 @@ function fingerprintSources(value: unknown): BuildFingerprintSource[] | null | u
 
 function fingerprintIgnored(value: unknown): string[] | null | undefined {
   if (value === undefined) return undefined;
-  const valid =
-    Array.isArray(value) &&
-    value.length <= MAX_FINGERPRINT_SOURCES &&
-    value.every((path) => typeof path === 'string' && path.length > 0 && path.length <= MAX_PATH_CHARS);
-  return valid ? (value as string[]) : null;
+  if (!Array.isArray(value) || value.length > MAX_FINGERPRINT_SOURCES) return null;
+  const paths: string[] = [];
+  for (const path of value) {
+    if (typeof path !== 'string' || path.length === 0 || path.length > MAX_PATH_CHARS) return null;
+    paths.push(path);
+  }
+  return paths;
 }
 
 const GRADLE_NAME = /^[A-Za-z0-9_-]{1,100}$/;
