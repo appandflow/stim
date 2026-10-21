@@ -1141,10 +1141,12 @@ test('final log drain has a time bound even while pages advance', async () => {
 });
 
 test('follow discovers an iOS slot placed after the follower starts', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
   const stop = followHostedLogs(root, false);
   try {
     writeHostedIos(root, 'tablet', placement());
     logRecords = [{ ts: 1, src: 'device', level: 'error', msg: 'late slot failure' }];
+    await vi.advanceTimersByTimeAsync(10_000);
     await vi.waitFor(
       () =>
         expect(readFileSync(join(workspaceLogsDir(root), 'ios.tablet-host.ndjson'), 'utf8')).toContain(
@@ -1154,6 +1156,7 @@ test('follow discovers an iOS slot placed after the follower starts', async () =
     );
   } finally {
     stop();
+    vi.useRealTimers();
   }
 });
 
