@@ -2,7 +2,7 @@ import type { RuntimePreparationResult } from '../engine/runtime-plan.ts';
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { selectAndroidPlacement } from './android/remote.ts';
 import { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-android.ts';
-import { readHostedAndroid, writeHostedAndroid, writeDevicePlacementAsync } from '../device-host/ios-state.ts';
+import { readHostedAndroid, writeDevicePlacementAsync, writeHostedAndroidAsync } from '../device-host/ios-state.ts';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
@@ -71,7 +71,7 @@ import {
   type RunEstimates,
 } from '../engine/stats.ts';
 import { writeWorkspaceLaunchAsync } from '../supervisor/state.ts';
-import { readWorkspaceState, recordWorkspaceUseAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, recordWorkspaceUseAsync, writeWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import {
   installAndroidApp,
   launchAndroidApp,
@@ -313,7 +313,7 @@ interface RunAndroidOptions {
   prepareHostedAndroid?: typeof prepareHostedAndroid;
   placeHostedAndroid?: typeof placeHostedAndroid;
   readHostedAndroid?: typeof readHostedAndroid;
-  writeHostedAndroid?: typeof writeHostedAndroid;
+  writeHostedAndroid?: typeof writeHostedAndroidAsync;
   buildMachine?: string;
   progress?: BuildProgress;
   easProfile?: string;
@@ -385,7 +385,7 @@ interface RunAndroidOptions {
   kill?: (pid: number, signal: NodeJS.Signals) => boolean;
   createWriter?: typeof createNdjsonWriter;
   writeLaunch?: typeof writeWorkspaceLaunchAsync;
-  writeState?: typeof writeWorkspaceState;
+  writeState?: (root: string, patch: Record<string, unknown>) => unknown;
   recordBuild?: typeof recordFinishedBuild;
   recordStats?: typeof recordRunStats;
   recordCapacityRefusal?: typeof recordCapacityRefusal;
@@ -466,7 +466,7 @@ function resolveRunAndroidOptions(
     kill = (pid, signal) => process.kill(pid, signal),
     createWriter = createNdjsonWriter,
     writeLaunch = writeWorkspaceLaunchAsync,
-    writeState = writeWorkspaceState,
+    writeState = writeWorkspaceStateAsync,
     recordBuild,
     recordStats = recordRunStats,
     recordCapacityRefusal: recordRefusal,
@@ -1338,7 +1338,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         logsDir,
         selectors,
         place: options.placeHostedAndroid ?? placeHostedAndroid,
-        writePlacement: options.writeHostedAndroid ?? writeHostedAndroid,
+        writePlacement: options.writeHostedAndroid ?? writeHostedAndroidAsync,
         verifyLaunch: verifyLaunched,
         writeLaunch,
         readApkPackage,

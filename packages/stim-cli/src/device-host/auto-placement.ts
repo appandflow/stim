@@ -20,7 +20,7 @@ import { getProject, loadConfig } from '../workspace/config.ts';
 import { hostingMachines } from './machines.ts';
 import { call, connectHost, requireHostedAppMode, type HostConnection } from './hosted-client.ts';
 import { prepareHostedNative, type HostedNativeTarget } from './hosted-native.ts';
-import { readHostedNative, writeHostedNative } from './ios-state.ts';
+import { readHostedNative, writeHostedNativeAsync } from './ios-state.ts';
 import {
   decideDevicePlacement,
   type EasFallbackCheck,
@@ -144,7 +144,7 @@ export async function automaticDevicePlacement(
   {
     machines = () => hostingMachines(undefined, signal),
     read = readHostedNative,
-    write = writeHostedNative,
+    write = writeHostedNativeAsync,
     resume = prepareHostedNative,
     peek = () => peekDeviceSlots({ platform, project: getProject(root), slot }),
     capacity = machineCapacity,
@@ -154,7 +154,7 @@ export async function automaticDevicePlacement(
   }: {
     machines?: () => string[] | null | Promise<string[] | null>;
     read?: typeof readHostedNative;
-    write?: typeof writeHostedNative;
+    write?: (...args: Parameters<typeof writeHostedNativeAsync>) => unknown;
     resume?: typeof prepareHostedNative;
     peek?: () => ReturnType<typeof peekDeviceSlots>;
     capacity?: typeof machineCapacity;
@@ -186,7 +186,7 @@ export async function automaticDevicePlacement(
         skipped: [],
         sticky: true,
       };
-    write(root, slot, null, platform);
+    await write(root, slot, null, platform);
   }
   const devices = peek();
   if (devices.localLive)

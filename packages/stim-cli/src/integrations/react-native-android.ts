@@ -25,7 +25,7 @@ import { androidGradleProject, androidJobLayout, displayPath, NO_FINGERPRINT } f
 import { resolveKeystore, swapApkBundle } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import { resolveCcache } from '../engine/ccache.ts';
-import { planPrebuild, recordPrebuild, runPrebuild, staleNativeDirRefusal } from '../engine/prebuild.ts';
+import { planPrebuild, runPrebuild, staleNativeDirRefusal, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { loadProjectProvider } from '../engine/remote-cache.ts';
 import { androidRequirements, androidToolchainAsync } from '../offload/toolchain.ts';
 import { detectAndroidPackage, detectAppIds } from '../workspace/app-id.ts';
@@ -257,7 +257,7 @@ function reactNativeAndroidArtifact(
       if (!prebuildRan) return;
       beforePrepare();
       step('prebuild');
-      recordPrebuild(root, 'android', null);
+      await recordPrebuildAsync(root, 'android', null);
       const pre = await prebuild(root, 'android', writer, { isExpo });
       if (pre.failed)
         throw new AndroidRecipeRefusal({
@@ -285,7 +285,7 @@ function reactNativeAndroidArtifact(
           fingerprint,
         });
         editedConfig = after ? configInputsChanged(initialSources, after.sources, { prebuildRan }) : [];
-        if (after && !editedConfig.length) recordPrebuild(root, 'android', after.hash);
+        if (after && !editedConfig.length) await recordPrebuildAsync(root, 'android', after.hash);
         if (after?.moved && !editedConfig.length) {
           rekeyedBy.push('prebuild');
           phase('fingerprint', chalk.dim(`${shortHash(hash)} -> ${shortHash(after.hash)} (after prebuild)`));

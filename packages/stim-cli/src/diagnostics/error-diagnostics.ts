@@ -5,7 +5,7 @@ import type { NdjsonRecord } from '../ndjson.ts';
 import { bundleLocations, symbolicateErrors } from './error-symbolication.ts';
 import { resolveProjectMetro } from '../metro.ts';
 import { attachExpoErrorContext, readLogRecords } from '@stim-cli/core/state';
-import { writeDiagnosticOnce } from './diagnostic-store.ts';
+import { writeDiagnosticOnceAsync } from './diagnostic-store.ts';
 
 const SOURCE_LOCATION = /(?<![^\s()"\\])[^\s()"\\]+:\d+:\d+/g;
 
@@ -226,7 +226,7 @@ export async function errorDiagnostics(
       rendered[entry.index] = value;
       if (bundleLocations(value).length === bundleLocations(entry.record).length) continue;
       try {
-        writeDiagnosticOnce(
+        await writeDiagnosticOnceAsync(
           join(directory, `${key(entry.record)}.json`),
           JSON.stringify({ original: key(entry.record), rendered: value }),
         );

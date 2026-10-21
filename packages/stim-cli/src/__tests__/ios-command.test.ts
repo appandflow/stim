@@ -44,7 +44,7 @@ import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
 import { getProject, setDevice, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { prepareHostedIos } from '../device-host/hosted-ios.ts';
-import { writeHostedIos } from '../device-host/ios-state.ts';
+import { writeHostedNative } from '../device-host/ios-state.ts';
 import type { HostedIosPlacement } from '@stim-cli/core/state';
 import { buildMachinesFile, deviceHostMachinesFile, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
@@ -127,6 +127,9 @@ const RUNTIMES = [
   },
 ];
 import { DEBUG_VERIFY_STEP_MS, type RunLease } from '../engine/device-lease-run.ts';
+
+const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | null): void =>
+  writeHostedNative(root, slot, host, 'ios');
 
 const UDID = 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9';
 const FINGERPRINT = 'a3f9b1c2d3e4f5';

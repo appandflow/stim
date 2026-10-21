@@ -98,12 +98,28 @@ export function writeHostedNative(
 export function readHostedIos(root: string, slot?: string): Record<string, HostedIosPlacement> {
   return readHostedNative(root, 'ios', slot) as Record<string, HostedIosPlacement>;
 }
-export function writeHostedIos(root: string, slot: string, host: HostedIosPlacement | null): void {
-  writeHostedNative(root, slot, host, 'ios');
+/** Records a hosted placement after asynchronously acquiring the workspace state lock. */
+export function writeHostedNativeAsync(
+  root: string,
+  slot: string,
+  host: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice> | null,
+  platform: 'ios' | 'android',
+): Promise<void> {
+  return withWorkspaceStateLockAsync(root, () => writeHostedNative(root, slot, host, platform));
 }
+
+export function writeHostedIosAsync(root: string, slot: string, host: HostedIosPlacement | null): Promise<void> {
+  return writeHostedNativeAsync(root, slot, host, 'ios');
+}
+
+export function writeHostedAndroidAsync(
+  root: string,
+  slot: string,
+  host: HostedAndroidPlacement | null,
+): Promise<void> {
+  return writeHostedNativeAsync(root, slot, host, 'android');
+}
+
 export function readHostedAndroid(root: string, slot?: string): Record<string, HostedAndroidPlacement> {
   return readHostedNative(root, 'android', slot) as Record<string, HostedAndroidPlacement>;
-}
-export function writeHostedAndroid(root: string, slot: string, host: HostedAndroidPlacement | null): void {
-  writeHostedNative(root, slot, host, 'android');
 }

@@ -7,8 +7,12 @@ import { hostedMetroGateways } from '@stim-cli/core/state';
 import { watchHostedMetro } from '../supervisor/hosted-metro.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { closeHostedMetro, requireHostedMetro } from '../device-host/metro-gateway.ts';
-import { writeHostedIos } from '../device-host/ios-state.ts';
+import { writeHostedNative } from '../device-host/ios-state.ts';
+import type { HostedIosPlacement } from '@stim-cli/core/state';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+
+const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | null): void =>
+  writeHostedNative(root, slot, host, 'ios');
 
 const gateway = vi.hoisted(() => ({
   close: vi.fn<() => Promise<void>>(),

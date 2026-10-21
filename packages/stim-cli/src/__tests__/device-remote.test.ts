@@ -19,6 +19,7 @@ import {
 } from '../engine/device-remote.ts';
 import { PUBLIC_METRO_ENV } from '../engine/metro-reach.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
+import { withDirLockTransaction } from '@stim-cli/core';
 import { easSessionLedgerLock } from '@stim-cli/core/state';
 import { readEasSessionLedger, recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 import { saveConfig } from '../workspace/config.ts';
@@ -1040,9 +1041,45 @@ describe('session creation', () => {
 });
 
 describe('fixed ownership claim teardown', () => {
+  test('recording a session claim waits for a held ledger lock without blocking the event loop', async () => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    let release = () => {};
+    const holding = withDirLockTransaction(
+      easSessionLedgerLock(ledgerRoot),
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+      { ensureParent: () => mkdirSync(ledgerRoot, { recursive: true }) },
+    );
+    let ticks = 0;
+    const timer = setInterval(() => {
+      if (++ticks === 10) release();
+    }, 20);
+    try {
+      await recordEasSessionClaim(
+        {
+          sessionId: 'drs_waited',
+          name: 'stim-wt',
+          platform: 'ios',
+          workspaceRoot: root,
+          workspaceHome: tmpHome,
+          stateFile: workspaceStateFile(root),
+        },
+        ledgerRoot,
+      );
+    } finally {
+      clearInterval(timer);
+      release();
+      await holding;
+    }
+    expect(ticks).toBeGreaterThanOrEqual(10);
+    expect([...readEasSessionLedger(ledgerRoot).claims.keys()]).toEqual(['drs_waited']);
+  });
+
   test('verified teardown removes the claim', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
-    recordEasSessionClaim(
+    await recordEasSessionClaim(
       {
         sessionId: 'drs_42',
         name: 'stim-wt',
@@ -1075,7 +1112,7 @@ describe('fixed ownership claim teardown', () => {
 
   test('failed teardown keeps the claim', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
-    recordEasSessionClaim(
+    await recordEasSessionClaim(
       {
         sessionId: 'drs_42',
         name: 'stim-wt',
@@ -1094,7 +1131,7 @@ describe('fixed ownership claim teardown', () => {
 
   test('verified teardown contains a throwing claim removal and reports reconciliation', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
-    recordEasSessionClaim(
+    await recordEasSessionClaim(
       {
         sessionId: 'drs_42',
         name: 'stim-wt',
@@ -1127,7 +1164,7 @@ describe('fixed ownership claim teardown', () => {
 
   test('verified teardown reports a false claim removal for reconciliation', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
-    recordEasSessionClaim(
+    await recordEasSessionClaim(
       {
         sessionId: 'drs_42',
         name: 'stim-wt',
@@ -1905,7 +1942,7 @@ describe('a re-run does not orphan the session it already has', () => {
   test('a stopped recorded session with an unreconciled claim is not replaced', async () => {
     recordSession('drs_dead');
     const ledgerRoot = join(tmpHome, 'machine-eas');
-    recordEasSessionClaim(
+    await recordEasSessionClaim(
       {
         sessionId: 'drs_dead',
         name: 'stim-wt',

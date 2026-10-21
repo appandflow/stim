@@ -23,7 +23,7 @@ import type { FailArgs } from '../commands/ios/types.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
 import { easDeviceBuildRemedy } from '../engine/eas-build.ts';
 import { copyAppAside, writeIpTxt } from '../engine/ios-lan.ts';
-import { recordPrebuild, staleNativeDirRefusal } from '../engine/prebuild.ts';
+import { staleNativeDirRefusal, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { bundlerPin } from '../engine/bundler.ts';
 import { iosToolchainAsync } from '../offload/toolchain.ts';
 import { resolveIosProjectDir, type IosProjectDir, type SettingsObject } from '../workspace/settings.ts';
@@ -343,7 +343,7 @@ function reactNativeIosArtifact(
       if (mutates && cachePolicy.read) beforePrepare();
       if (prebuild === 'generate' || prebuild === 'regenerate') {
         step('prebuild');
-        recordPrebuild(root, PLATFORM, null);
+        await recordPrebuildAsync(root, PLATFORM, null);
         const result = await d.runPrebuild(root, PLATFORM, logWriter());
         if (result?.failed) {
           phase('prebuild', 'FAILED');
@@ -410,7 +410,7 @@ function reactNativeIosArtifact(
         });
         const prebuildRan = mutatingSteps.includes('prebuild');
         const editedConfig = after ? configInputsChanged(fingerprintSources, after.sources, { prebuildRan }) : [];
-        if (after && !editedConfig.length && prebuildRan) recordPrebuild(root, PLATFORM, after.hash);
+        if (after && !editedConfig.length && prebuildRan) await recordPrebuildAsync(root, PLATFORM, after.hash);
         if (!after || editedConfig.length) {
           storeHash = null;
           note(
