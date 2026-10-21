@@ -33,6 +33,7 @@ import {
   fingerprintProject,
   gitignoredFingerprintInputs,
   ignoredFingerprintPaths,
+  trackedFingerprintPaths,
   prepareProviderDownloadDir,
   providerDownloadPath,
   refingerprintAfterMutation,
@@ -772,6 +773,31 @@ describe('fingerprints that depend on a local git exclude', () => {
   test('names nothing for Android or when nothing is ignored', () => {
     expect(ignoredFingerprintPaths(root, { platform: 'android' })).toEqual([]);
     expect(ignoredFingerprintPaths(root, { platform: 'ios', iosProjectPath: '.' })).toEqual([]);
+  });
+
+  test('a build worker counts the top-level file the client tracks although a .gitignore pattern matches it', async () => {
+    for (const dir of [root, worker]) {
+      writeFileSync(join(dir, '.gitignore'), 'node_modules/\n*.plist\nconfig/\n');
+      mkdirSync(join(dir, 'config'));
+      writeFileSync(join(dir, 'config/app.json'), 'tracked');
+      writeFileSync(join(dir, 'GoogleService-Info.plist'), 'tracked');
+      writeFileSync(join(dir, 'Other.plist'), 'untracked');
+    }
+    git(root, 'add', '.gitignore');
+    git(root, 'add', '-f', 'GoogleService-Info.plist', 'config/app.json');
+    const target = { platform: 'ios', iosProjectPath: '.' };
+    const trackedPaths = trackedFingerprintPaths(root, target);
+    expect(trackedPaths).toEqual(['GoogleService-Info.plist', 'config']);
+    expect(ignoredFingerprintPaths(root, target)).toEqual(['Other.plist']);
+    const client = (await fingerprintProject(root, target))?.hash;
+    expect((await fingerprintProject(worker, target))?.hash).not.toBe(client);
+    expect((await fingerprintProject(worker, { ...target, trackedPaths }))?.hash).toBe(client);
+  }, 30_000);
+
+  test('names no tracked entries for Android, the default iOS layout, or when no pattern matches a tracked file', () => {
+    expect(trackedFingerprintPaths(root, { platform: 'android' })).toEqual([]);
+    expect(trackedFingerprintPaths(root, { platform: 'ios' })).toEqual([]);
+    expect(trackedFingerprintPaths(root, { platform: 'ios', iosProjectPath: '.' })).toEqual([]);
   });
 });
 

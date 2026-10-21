@@ -179,6 +179,24 @@ function fingerprintIgnored(value: unknown): string[] | null | undefined {
   return paths;
 }
 
+function fingerprintTracked(value: unknown): string[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_FINGERPRINT_SOURCES) return null;
+  const names: string[] = [];
+  for (const name of value) {
+    const valid =
+      typeof name === 'string' &&
+      name.length > 0 &&
+      name.length <= 255 &&
+      name !== '.' &&
+      name !== '..' &&
+      !/[/\0]/.test(name);
+    if (!valid) return null;
+    names.push(name);
+  }
+  return names;
+}
+
 const GRADLE_NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const GRADLE_ROOT = /^[A-Za-z0-9._/ -]{1,200}$/;
 const GRADLE_MODULE = /^(:(?!\.\.?(?::|$))[A-Za-z0-9._-]+){1,20}$/;
@@ -1572,6 +1590,12 @@ export class BuildSession {
         'bad-request',
         `params.fingerprintIgnored must be at most ${MAX_FINGERPRINT_SOURCES} paths of at most ${MAX_PATH_CHARS} characters.`,
       );
+    const expectedTracked = fingerprintTracked(params.fingerprintTracked);
+    if (expectedTracked === null)
+      return refusal(
+        'bad-request',
+        `params.fingerprintTracked must be at most ${MAX_FINGERPRINT_SOURCES} top-level entry names.`,
+      );
     const android = platform === 'android' ? androidOptions(params.android) : null;
     if (platform === 'android' && !android) {
       return refusal(
@@ -1626,6 +1650,7 @@ export class BuildSession {
         expectedFingerprint: params.fingerprint as string | null,
         ...(expectedSources ? { expectedSources } : {}),
         ...(expectedIgnored ? { expectedIgnored } : {}),
+        ...(expectedTracked ? { expectedTracked } : {}),
         optimizations: isJsonObject(params.optimizations) ? params.optimizations : null,
       },
     });

@@ -174,6 +174,7 @@ interface FingerprintTarget {
   iosProjectPath?: string;
   androidLayout?: AndroidLayout | null;
   ignoredPaths?: readonly string[];
+  trackedPaths?: readonly string[];
 }
 
 /**
@@ -190,19 +191,42 @@ export function ignoredFingerprintPaths(
   return [...gitIgnoredNames(projectRoot, Object.keys(BUNDLE_OUTPUT_IGNORES), true), ...appRoot].toSorted();
 }
 
+/**
+ * With `ios.projectPath` '.', the top-level entries that git tracks here although an ignore pattern matches them, as
+ * the names a build worker must count: its mirror index is empty, so its own `check-ignore` skips them.
+ */
+export function trackedFingerprintPaths(
+  projectRoot: string,
+  { platform, iosProjectPath = DEFAULT_IOS_PROJECT_PATH }: FingerprintTarget,
+): string[] {
+  if (platform !== 'ios' || iosProjectPath !== '.') return [];
+  const names = appRootNames(readdirSync(projectRoot));
+  const ignored = gitIgnoredNames(projectRoot, names);
+  const matched = gitIgnoredNames(projectRoot, names, true);
+  return names.filter((name) => matched.has(name) && !ignored.has(name)).toSorted();
+}
+
 async function fingerprintOptions(
   projectRoot: string,
-  { platform, iosProjectPath = DEFAULT_IOS_PROJECT_PATH, androidLayout = null, ignoredPaths = [] }: FingerprintTarget,
+  {
+    platform,
+    iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
+    androidLayout = null,
+    ignoredPaths = [],
+    trackedPaths = [],
+  }: FingerprintTarget,
 ): Promise<FingerprintOptions> {
   const ignoredHere = (names: readonly string[], noIndex = false) =>
     new Set([...gitIgnoredNames(projectRoot, names, noIndex), ...ignoredPaths.filter((path) => names.includes(path))]);
+  const ignoredAtAppRoot = (names: readonly string[]) =>
+    new Set([...ignoredHere(names)].filter((name) => !trackedPaths.includes(name)));
   const platforms =
     platform && FINGERPRINT_PLATFORMS.has(platform)
       ? { platforms: [platform] as FingerprintOptions['platforms'] }
       : undefined;
   const ios: Pick<FingerprintOptions, 'extraSources' | 'ignorePaths'> =
     platform === 'ios'
-      ? iosProjectFingerprintOptions(projectRoot, iosProjectPath, { ignored: (_, names) => ignoredHere(names) })
+      ? iosProjectFingerprintOptions(projectRoot, iosProjectPath, { ignored: (_, names) => ignoredAtAppRoot(names) })
       : androidLayout?.custom
         ? androidProjectFingerprintOptions(projectRoot, androidLayout)
         : {};
@@ -604,6 +628,7 @@ export async function refingerprintAfterMutation({
   iosProjectPath,
   androidLayout,
   ignoredPaths,
+  trackedPaths,
   fingerprint = fingerprintProject,
 }: {
   projectRoot: string;
@@ -612,6 +637,7 @@ export async function refingerprintAfterMutation({
   iosProjectPath?: string;
   androidLayout?: AndroidLayout;
   ignoredPaths?: readonly string[];
+  trackedPaths?: readonly string[];
   fingerprint?: typeof fingerprintProject;
 }): Promise<(ProjectFingerprint & { moved: boolean }) | null> {
   let computed: ProjectFingerprint | null = null;
@@ -621,6 +647,7 @@ export async function refingerprintAfterMutation({
       ...(iosProjectPath ? { iosProjectPath } : {}),
       ...(androidLayout ? { androidLayout } : {}),
       ...(ignoredPaths ? { ignoredPaths } : {}),
+      ...(trackedPaths ? { trackedPaths } : {}),
     });
   } catch {
     return null;

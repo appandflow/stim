@@ -1718,7 +1718,10 @@ connected since stim-server started keeps its directory when revoked.
   `fingerprint-ignored` feature, it can send `fingerprintIgnored`, the paths
   relative to `project` that its git ignores for `fingerprint` through
   `.git/info/exclude` or a global excludes file, which the machine's synced
-  checkout has no copy of. It returns `{ "job" }`. It fails with
+  checkout has no copy of. With the `fingerprint-tracked` feature, it can
+  send `fingerprintTracked`, the top-level entry names of `project` that its
+  git tracks although an ignore pattern matches them, which the machine's
+  empty index would skip. It returns `{ "job" }`. It fails with
   `build-busy` while the offer would be declined, naming the reason, or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with

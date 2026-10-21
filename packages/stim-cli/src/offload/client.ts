@@ -1399,6 +1399,8 @@ interface FingerprintInputs {
   ignored: readonly string[];
   /** The paths, relative to the project, that this Mac's git ignores for the fingerprint. */
   ignoredPaths?: readonly string[];
+  /** The top-level entries, relative to the project, that this Mac's git tracks although an ignore pattern matches them. */
+  trackedPaths?: readonly string[];
 }
 
 function fingerprintSourcesParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
@@ -1414,6 +1416,11 @@ function fingerprintSourcesParam(inputs: FingerprintInputs | null, connection: B
 function fingerprintIgnoredParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
   if (!inputs?.ignoredPaths?.length || !connection.supports('fingerprint-ignored')) return {};
   return { fingerprintIgnored: [...inputs.ignoredPaths] };
+}
+
+function fingerprintTrackedParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
+  if (!inputs?.trackedPaths?.length || !connection.supports('fingerprint-tracked')) return {};
+  return { fingerprintTracked: [...inputs.trackedPaths] };
 }
 
 function keepCorruptCacheMessage(
@@ -1617,6 +1624,7 @@ export async function offloadBuild(
         fingerprint: request.platform === 'macos' ? synced.digest : expectedFingerprint,
         ...fingerprintSourcesParam(inputs, choice.connection),
         ...fingerprintIgnoredParam(inputs, choice.connection),
+        ...fingerprintTrackedParam(inputs, choice.connection),
         ...(native
           ? {
               native: {

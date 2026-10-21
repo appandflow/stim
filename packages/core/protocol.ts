@@ -71,6 +71,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `react-native-peer-cache` offers development archives with build-proven fingerprints, options and toolchains.
  * `fingerprint-sources` accepts `fingerprintSources` on `build.start`, so a fingerprint mismatch names the differing sources.
  * `fingerprint-ignored` accepts `fingerprintIgnored` on `build.start`, the paths the caller's git ignored that the machine's git cannot.
+ * `fingerprint-tracked` accepts `fingerprintTracked` on `build.start`, the top-level entries the caller's git tracks although an ignore pattern matches them.
  * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
  * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
  * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
@@ -118,6 +119,7 @@ export const FEATURES = [
   'react-native-peer-cache',
   'fingerprint-sources',
   'fingerprint-ignored',
+  'fingerprint-tracked',
   'swiftpm-peer-cache',
   'build-dependency-cache',
   'hosted-android-data',
@@ -1156,6 +1158,8 @@ export interface BuildStartParams {
   fingerprintSources?: BuildFingerprintSource[];
   /** Paths relative to `project` that the client's git ignores for `fingerprint`, such as through .git/info/exclude. */
   fingerprintIgnored?: string[];
+  /** Top-level entries of `project` that the client's git tracks although an ignore pattern matches them. */
+  fingerprintTracked?: string[];
   native?:
     | {
         provider: 'xcode';
