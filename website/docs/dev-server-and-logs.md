@@ -336,7 +336,8 @@ Without an observed `pending`, Stim keeps its default three-second stability
 window after bundle delivery. The window ends early, half a second after the
 app's React Native runtime logs `Running "<name>"` for this launch on either
 platform. A fatal record or an exited process before the window ends still
-fails the launch; an error after it appears in `stim logs --errors`. Managed Metro servers report when the native
+fails the launch. An error after it, such as a first render that takes longer
+than that half second to throw, appears in `stim logs --errors`. Managed Metro servers report when the native
 bundle response finishes; build-complete output alone does not close an observed
 request. Without response capture, Stim falls back to the build-complete marker.
 When Android reports queued JavaScript loading, Stim waits for device JavaScript

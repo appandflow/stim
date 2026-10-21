@@ -43,7 +43,6 @@ import {
   MANIFEST_GRACE_MS,
   MANIFEST_VERIFY_TIMEOUT_MS,
   STABILITY_WINDOW_MS,
-  JS_RUNNING_SETTLE_MS,
   VERIFY_TIMEOUT_MS,
   isBundleProof,
   isBundleRequestProof,
@@ -1634,7 +1633,7 @@ describe('verifyLaunch: the stability window ends on evidence that the app JavaS
     async (platform) => {
       const result = await run(platform, { device: [device(platform, 3000, 'Running "main" with {"rootTag":11}')] });
       expect(result).toMatchObject({ verified: true, jsRunning: true, processAlive: true });
-      expect(result.waitedMs).toBe(3000 + JS_RUNNING_SETTLE_MS - since);
+      expect(result.waitedMs).toBe(3000 + 500 - since);
       expect(result.waitedMs).toBeLessThan(STABILITY_WINDOW_MS + 1000);
     },
   );
@@ -1649,6 +1648,21 @@ describe('verifyLaunch: the stability window ends on evidence that the app JavaS
     const result = await run('ios', { device: [device('ios', 1800, 'Running "main" with {"rootTag":1}')] });
     expect(result.waitedMs).toBe(2000 - since + STABILITY_WINDOW_MS);
     expect(result.jsRunning).toBeUndefined();
+  });
+
+  test('Android: a Running line from before the JavaScript bundle began loading is not evidence', async () => {
+    const result = await run('android', {
+      device: [
+        { ...device('android', 2200, 'Running "launcher"'), proc: 'ReactNativeJS(1)' },
+        {
+          ...device('android', 2500, 'ReactHost{0}.getOrCreateReactInstanceTask(): Loading JS Bundle'),
+          proc: 'unknown:BridgelessReact(1)',
+          level: 'warn',
+        },
+        { ...device('android', 4000, 'Running "main"'), proc: 'ReactNativeJS(1)' },
+      ],
+    });
+    expect(result).toMatchObject({ verified: true, jsRunning: true, waitedMs: 4000 + 500 - since });
   });
 
   test('a Running line from the other platform is not evidence', async () => {

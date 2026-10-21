@@ -94,7 +94,7 @@ export const VERIFY_TIMEOUT_MS = 20000;
 export const MANIFEST_GRACE_MS = 15000;
 export const MANIFEST_VERIFY_TIMEOUT_MS = 60000;
 export const STABILITY_WINDOW_MS = 3000;
-export const JS_RUNNING_SETTLE_MS = 500;
+const JS_RUNNING_SETTLE_MS = 500;
 const VERIFY_POLL_MS = 500;
 
 const BUNDLE_EVENTS = new Set([
@@ -159,11 +159,12 @@ function isJsRunning(record: NdjsonRecord, platform: 'ios' | 'android' | null): 
 
 function jsRunningSince(
   signals: NdjsonRecord[],
-  proof: NdjsonRecord | null,
+  since: number | null,
+  runtimeWaiting: boolean,
   platform: 'ios' | 'android' | null,
 ): number | null {
-  if (!proof) return null;
-  const running = signals.find((record) => Number(record.ts) >= Number(proof.ts) && isJsRunning(record, platform));
+  if (since === null || runtimeWaiting) return null;
+  const running = signals.find((record) => Number(record.ts) >= since && isJsRunning(record, platform));
   return running ? Number(running.ts) : null;
 }
 
@@ -380,7 +381,7 @@ export async function verifyLaunch({
     const runtimeWaiting = runtimeLoadingAt !== null && runtimeStartedAt === null;
     const completedAt = proof ? Math.max(Number(proof.ts), runtimeStartedAt ?? 0) : null;
     if (completedAt !== null) stabilityDeadline = completedAt + Math.max(0, stabilityMs);
-    const jsRunningAt = jsRunningSince(signals, proof, platform);
+    const jsRunningAt = jsRunningSince(signals, completedAt, runtimeWaiting, platform);
     const windowEnd = settledWindowEnd(stabilityDeadline, jsRunningAt);
     const readinessDeadline = completedAt !== null ? completedAt + APP_READINESS_TIMEOUT_MS : bundleDeadline;
     if (pendingAt === null) {
