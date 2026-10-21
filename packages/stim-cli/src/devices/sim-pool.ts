@@ -311,6 +311,7 @@ async function settleParkedAfter<P extends PoolPlatform>(
               [...new Set([claim, ...(cause instanceof WorkspaceProcessCleanupError ? cause.claims : [])])],
               cause.message,
               'Verify the parked-device operation and its descendants have stopped.',
+              cause,
             ),
             { reportCleanup: true },
           );

@@ -17,14 +17,15 @@ struct SettingsView: View {
   private let actions: ActionCenter
 
   init(
-    cli: Task<StimCLI, Never>, store: StatusStore, machine: MachineSettingsStore, buildMachines: BuildMachinesModel,
+    environment: Task<[String: String], Never>, store: StatusStore, machine: MachineSettingsStore,
+    buildMachines: BuildMachinesModel,
     actions: ActionCenter
   ) {
     self.store = store
     self.actions = actions
     self.machine = machine
     self.buildMachines = buildMachines
-    _model = StateObject(wrappedValue: SettingsModel(cli: cli, machine: machine))
+    _model = StateObject(wrappedValue: SettingsModel(environment: environment, machine: machine))
   }
 
   var body: some View {

@@ -733,20 +733,27 @@ import Testing
     var status: Int32?
   }
 
-  private func run(_ script: String) async throws -> Collector {
+  private func run(_ script: String, bootstrap: Bool = false) async throws -> Collector {
     let collector = Collector()
     try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
       do {
-        try ProcessStream.start(
-          executable: "/bin/sh", arguments: ["-c", script], cwd: NSTemporaryDirectory(),
-          onLine: { line in collector.lock.withLock { collector.lines.append(line) } },
-          onExit: { status in
-            collector.lock.withLock {
-              collector.status = status
-              collector.linesAtExit = collector.lines.count
-            }
-            done.resume()
-          })
+        let onLine: @Sendable (OutputLine) -> Void = { line in collector.lock.withLock { collector.lines.append(line) } }
+        let onExit: @Sendable (Int32) -> Void = { status in
+          collector.lock.withLock {
+            collector.status = status
+            collector.linesAtExit = collector.lines.count
+          }
+          done.resume()
+        }
+        if bootstrap {
+          try ProcessStream.start(
+            StimCommand(["-c", script], cwd: NSTemporaryDirectory(), program: "sh"),
+            environment: ["PATH": "/usr/bin:/bin"], onLine: onLine, onExit: onExit)
+        } else {
+          try ProcessStream.start(
+            executable: "/bin/sh", arguments: ["-c", script], cwd: NSTemporaryDirectory(),
+            onLine: onLine, onExit: onExit)
+        }
       } catch {
         done.resume(throwing: error)
       }
@@ -760,6 +767,25 @@ import Testing
     #expect(result.linesAtExit == 2001)
     #expect(result.lines.filter { $0.channel == .stdout }.last == OutputLine(.stdout, "out1999"))
     #expect(result.lines.filter { $0.channel == .stderr } == [OutputLine(.stderr, "err tail")])
+  }
+
+  @Test func bootstrapToolsKeepOutputExitStatusAndReceiptEnvironment() async throws {
+    let result = try await run(
+      "printf '%s|%s' \"$NO_COLOR\" \"$FORCE_COLOR\"; [ -n \"$STIM_RUN_ID\" ] && printf '|receipt'; printf 'failure tail' >&2; exit 7",
+      bootstrap: true)
+    #expect(result.status == 7)
+    #expect(result.linesAtExit == 2)
+    #expect(result.lines.filter { $0.channel == .stdout } == [OutputLine(.stdout, "1|0|receipt")])
+    #expect(result.lines.filter { $0.channel == .stderr } == [OutputLine(.stderr, "failure tail")])
+  }
+
+  @Test func bootstrapRefusesStimInsteadOfStartingAnExternalFallback() {
+    let error = #expect(throws: ServerError.self) {
+      try ProcessStream.start(
+        StimCommand(["--version"], cwd: NSTemporaryDirectory()), environment: ["PATH": "/usr/bin:/bin"],
+        onLine: { _ in }, onExit: { _ in })
+    }
+    #expect(error?.code == "unsupported")
   }
 
   @Test func reportsTheExitWhenABackgroundChildKeepsThePipeOpen() async throws {
@@ -1234,28 +1260,6 @@ import Testing
     let environment = LoginShell.fallback(["PATH": "/usr/bin:/usr/local/bin:/custom", "HOME": "/Users/dev"])
     #expect(environment["PATH"] == "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/custom:/bin:/usr/sbin:/sbin")
     #expect(environment["HOME"] == "/Users/dev")
-  }
-
-  @Test func resolvesStimFromThePathAndLetsStimBinWin() throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let stim = dir.appendingPathComponent("stim").path
-    FileManager.default.createFile(atPath: stim, contents: Data(), attributes: [.posixPermissions: 0o755])
-
-    let found = StimCLI(environment: ["PATH": "/nonexistent:\(dir.path)", "ANDROID_HOME": "/sdk"])
-    #expect(found.executable == stim)
-    #expect(found.environment["ANDROID_HOME"] == "/sdk")
-
-    let explicit = StimCLI(environment: ["PATH": dir.path, "STIM_BIN": "/opt/node/bin/stim"])
-    #expect(explicit.executable == "/opt/node/bin/stim")
-    #expect(explicit.environment["PATH"] == "/opt/node/bin:\(dir.path)")
-
-    #expect(StimCLI(environment: ["PATH": "/nonexistent"]).executable == nil)
-
-    let overridden = StimCLI(environment: ["PATH": dir.path, "STIM_BIN": "/opt/node/bin/stim"], override: "/custom/stim")
-    #expect(overridden.executable == "/custom/stim")
-    #expect(StimCLI(environment: ["PATH": dir.path], override: "").executable == stim)
   }
 
 }

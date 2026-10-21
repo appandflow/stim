@@ -16,7 +16,6 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.terminalBundleID) private var terminal = ""
   @AppStorage(AppPreferences.Key.tipsEnabled) private var showsTips = true
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
-  @AppStorage(AppPreferences.Key.stimExecutable) private var stimExecutable = ""
   @AppStorage(AppPreferences.Key.remoteSessionMinutes) private var remoteMinutes = 30
   @AppStorage(AppPreferences.Key.autopilotIdleShutdown) private var idleShutdown = true
   @AppStorage(AppPreferences.Key.autopilotIdleMinutes) private var idleMinutes = 60
@@ -218,7 +217,7 @@ struct AppPreferencesView: View {
         }
       }
 
-      Section("Stim CLI") {
+      Section("Stim") {
         LabeledContent("Stim home") {
           Text(abbreviatingHome(stimHome))
             .font(.stim(.body, mono: true))
@@ -229,12 +228,6 @@ struct AppPreferencesView: View {
             .foregroundStyle(Palette.tertiary)
         }
         stimVersionRow
-        HStack {
-          TextField("stim from Stim Desktop's PATH", text: $stimExecutable)
-          Button("Choose\u{2026}", action: chooseExecutable).buttonStyle(.stim())
-        }
-        Text("Overrides STIM_BIN and PATH. Takes effect the next time Stim Desktop starts.")
-          .foregroundStyle(Palette.tertiary)
       }
     }
     .formStyle(.grouped)
@@ -282,14 +275,6 @@ struct AppPreferencesView: View {
       loginError = "Could not change the login item: \(error.localizedDescription)"
       launchesAtLogin = SMAppService.mainApp.status == .enabled
     }
-  }
-
-  private func chooseExecutable() {
-    let panel = NSOpenPanel()
-    panel.canChooseFiles = true
-    panel.canChooseDirectories = false
-    panel.prompt = "Choose"
-    if panel.runModal() == .OK, let url = panel.url { stimExecutable = url.path }
   }
 }
 

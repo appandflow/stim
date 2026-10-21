@@ -891,3 +891,45 @@ test.each(['complete', 'abort'])(
     }
   },
 );
+
+test('device unlock filters this client home, project, platform and slot and cancels pending lock acquisition', async () => {
+  const { root, home } = fixture('unlock');
+  const other = join(scratch, 'other');
+  mkdirSync(other);
+  vi.stubEnv('STIM_HOME', home);
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ projects: { [root]: {}, [other]: {} } }));
+  for (const [holder, platform, slot, id] of [
+    [root, 'ios', 'secondary', 'own'],
+    [root, 'ios', 'default', 'keep-slot'],
+    [root, 'android', 'secondary', 'keep-platform'],
+    [other, 'ios', 'secondary', 'foreign'],
+  ] as const) {
+    expect(takeLease({ root: holder, platform, slot, id, kind: 'declared' }).status).toBe('taken');
+  }
+  const lock = deviceLeaseLockPath('ios', 'own');
+  mkdirSync(lock);
+  const controller = new AbortController();
+  const client = createStim({ projectRoot: root, home });
+  const pending = client.unlockDevice({ platform: 'ios', slot: 'secondary', signal: controller.signal });
+  const cancel = setTimeout(() => controller.abort(), 20);
+  try {
+    await expect(pending).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  } finally {
+    clearTimeout(cancel);
+    rmSync(lock, { recursive: true, force: true });
+  }
+  expect(existsSync(deviceLeasePath('ios', 'own'))).toBe(true);
+  const cwd = process.cwd();
+  const environment = { ...process.env };
+  const result = await client.unlockDevice({ platform: 'ios', slot: 'secondary' });
+  expect(result.map((lease) => lease.id)).toEqual(['own']);
+  expect(existsSync(deviceLeasePath('ios', 'own'))).toBe(false);
+  for (const [platform, id] of [
+    ['ios', 'keep-slot'],
+    ['android', 'keep-platform'],
+    ['ios', 'foreign'],
+  ] as const)
+    expect(existsSync(deviceLeasePath(platform, id))).toBe(true);
+  expect(process.cwd()).toBe(cwd);
+  expect(process.env).toEqual(environment);
+});

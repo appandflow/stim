@@ -135,24 +135,25 @@ private let setUp = SetupChecks(
 @Test func guideOpensUntilClosedAndReopensOnTheStepARestartSaved() throws {
   var missing = setUp
   missing.skillPath = nil
-  try withProgress { progress in
-    #expect(progress.stepAtLaunch(missing) == .welcome)
-    progress.saveForRestart(at: .check)
-    #expect(progress.stepAtLaunch(missing) == .check)
-    progress.resumed()
-    #expect(progress.stepAtLaunch(missing) == .welcome)
+  let suite = "SetupGuideTests-\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suite))
+  defer { defaults.removePersistentDomain(forName: suite) }
+  let progress = SetupGuideProgress(defaults)
+  #expect(progress.stepAtLaunch(missing) == .welcome)
+  defaults.set(SetupStep.check.rawValue, forKey: SetupGuideProgress.resumeKey)
+  #expect(progress.stepAtLaunch(missing) == .check)
+  progress.resumed()
+  #expect(progress.stepAtLaunch(missing) == .welcome)
 
-    progress.finish()
-    #expect(progress.stepAtLaunch(missing) == nil)
+  progress.finish()
+  #expect(progress.stepAtLaunch(missing) == nil)
 
-    progress.saveForRestart(at: .cli)
-    #expect(progress.stepAtLaunch(missing) == .cli)
-    progress.finish()
-    #expect(progress.resumeStep == nil)
-    #expect(progress.stepAtLaunch(missing) == nil)
-  }
+  defaults.set(SetupStep.cli.rawValue, forKey: SetupGuideProgress.resumeKey)
+  #expect(progress.stepAtLaunch(missing) == .cli)
+  progress.finish()
+  #expect(progress.resumeStep == nil)
+  #expect(progress.stepAtLaunch(missing) == nil)
 }
-
 @Test func anExistingUserWhoIsAlreadySetUpNeverSeesTheGuideAtLaunch() throws {
   try withProgress { progress in
     #expect(progress.stepAtLaunch(setUp) == nil)
@@ -174,7 +175,7 @@ private let setUp = SetupChecks(
   let defaults = try #require(UserDefaults(suiteName: suite))
   defer { defaults.removePersistentDomain(forName: suite) }
   let fromEnvironment = SetupGuideProgress(defaults, environment: ["STIM_DESKTOP_SKIP_ONBOARDING": "1"])
-  fromEnvironment.saveForRestart(at: .cli)
+  defaults.set(SetupStep.cli.rawValue, forKey: SetupGuideProgress.resumeKey)
   #expect(fromEnvironment.stepAtLaunch(missing) == nil)
   #expect(!defaults.bool(forKey: SetupGuideProgress.completedKey))
   defaults.removeObject(forKey: SetupGuideProgress.resumeKey)

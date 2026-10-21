@@ -1,6 +1,9 @@
 import type { DoctorContext, DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
 import type { BuildTarget } from '../offload/toolchain.ts';
+import type { StimContext } from '@stim-cli/core';
 import type { SettingsObject } from '../workspace/settings.ts';
+
+type RepairResult = { removed: string[]; refused: { path: string; reason: string }[] };
 
 /** Adds read-only project checks to shared findings; only repair runs under doctor --fix. */
 export interface ProjectDoctor {
@@ -15,6 +18,7 @@ export interface ProjectDoctor {
     platform: DoctorPlatform | undefined,
     settings: SettingsObject | null,
     repoRoot: string | null,
-  ): { removed: string[]; refused: { path: string; reason: string }[] };
+    operation?: StimContext,
+  ): RepairResult | Promise<RepairResult>;
   successLines?(platform: DoctorPlatform | undefined): string[];
 }

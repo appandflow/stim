@@ -4,7 +4,7 @@ import SwiftUI
 import SystemConfiguration
 
 struct BuildSection: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var env: Workspace
   var openLogs: (LogQuery) -> Void
   var openBuild: (BuildSheetSelection) -> Void

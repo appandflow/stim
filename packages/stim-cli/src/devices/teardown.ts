@@ -602,6 +602,7 @@ export async function teardownOwnedAvd(avdName: string, options: AvdTeardownOpti
           [...new Set([claim, ...(error instanceof WorkspaceProcessCleanupError ? error.claims : [])])],
           error.message,
           'Verify the AVD operation and its descendants have stopped.',
+          error,
         ),
         { reportCleanup: true },
       );

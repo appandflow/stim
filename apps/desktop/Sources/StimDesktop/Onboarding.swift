@@ -5,9 +5,7 @@ import StimKit
 import StimStores
 @preconcurrency import UserNotifications
 
-/// Checks at launch that the `stim` and `stim-server` Stim Desktop runs are
-/// recent enough, and whether Stim already opens its devices here. It also drives the setup guide, which opens at
-/// the first launch and from the Help menu.
+/// Checks optional agent CLI setup and the local server, and drives the setup guide.
 @MainActor
 final class Onboarding: ObservableObject {
   struct Report: Equatable {
@@ -16,8 +14,6 @@ final class Onboarding: ObservableObject {
     var stimOwner: PackageManager?
     var installers: [PackageManager]
     var defaultInstaller: PackageManager
-    /// The executable the launch resolved differs from the one the preferences resolve now.
-    var needsRelaunch: Bool
     var server: CLICompatibility?
     var serverPath: String?
     var viewerKeys: [String]
@@ -29,9 +25,7 @@ final class Onboarding: ObservableObject {
     var home: String
     var androidSDK: String?
     var javaHome: String?
-    /// The Node, older than Stim supports, that kept `stim` from reporting its version.
-    var nodeBlockingStim: NodeRuntime?
-    /// The same for `stim-server`.
+    /// The Node, older than Stim supports, that kept `stim-server` from reporting its version.
     var nodeBlockingServer: NodeRuntime?
 
     var nodeBlocksStim: Bool
@@ -40,8 +34,6 @@ final class Onboarding: ObservableObject {
 
   enum PopupKind {
     case node
-    case stim
-    case relaunch
     case server
     case viewer
   }
@@ -64,13 +56,11 @@ final class Onboarding: ObservableObject {
   private let progress = SetupGuideProgress()
   private var launchDecided = false
   private let environment: Task<[String: String], Never>
-  private let cli: Task<StimCLI, Never>
   private let actions: ActionCenter
   private var phoneSubscription: AnyCancellable?
 
-  init(environment: Task<[String: String], Never>, cli: Task<StimCLI, Never>, actions: ActionCenter) {
+  init(environment: Task<[String: String], Never>, actions: ActionCenter) {
     self.environment = environment
-    self.cli = cli
     self.actions = actions
     latestStim = releases.latest
     let servesPhones = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
@@ -112,23 +102,30 @@ final class Onboarding: ObservableObject {
 
   func check() {
     let environment = environment
-    let cli = cli
     let defaults = UserDefaults.standard
-    let stimOverride = defaults.string(forKey: AppPreferences.Key.stimExecutable)
     let serverOverride = defaults.string(forKey: AppPreferences.Key.stimServerExecutable) ?? ""
     Task {
       let environment = await environment.value
-      let launched = await cli.value
       let report = await Task.detached {
         let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
         let packages = await PackageManagerLayout.probe(environment: environment, home: home)
-        let stim = await StimCLI.resolve(environment: environment, override: stimOverride) { packages }
+        let stim = SetupChecks.tool("stim", environment: environment)
+        let launcher = await NodeLauncher.resolve(executable: stim, name: "stim", environment: environment) { packages }
+        var versionOutput: String?
+        if let stim,
+          let command = try? (launcher?.command(["--version"]) ?? (program: stim, arguments: ["--version"])),
+          let result = try? await ProcessRequest(
+            command.program, command.arguments, environment: environment, timeout: 10
+          ).run(), result.succeeded
+        {
+          versionOutput = result.stdoutText
+        }
         let compatibility = CLICompatibility.check(
-          executable: stim.executable, versionOutput: await stim.versionOutput(), minimum: StimCLI.minimumVersion)
+          executable: stim, versionOutput: versionOutput, minimum: SetupChecks.stimMinimum)
         let server = await StimServerCLI.resolve(environment: environment, override: serverOverride) { packages }
-        var node = stim.launcher?.runtime
-        if node == nil { node = await NodeRuntime.probe(environment: stim.environment, home: home) }
-        let nodePath = node?.path ?? SetupChecks.tool("node", environment: stim.environment)
+        var node = launcher?.runtime
+        if node == nil { node = await NodeRuntime.probe(environment: environment, home: home) }
+        let nodePath = node?.path ?? SetupChecks.tool("node", environment: environment)
         let skillPath = SetupChecks.installedSkill(home: home) {
           FileManager.default.fileExists(atPath: $0)
         }
@@ -137,12 +134,10 @@ final class Onboarding: ObservableObject {
           minimum: StimServerCLI.minimumVersion)
         return Report(
           stim: compatibility,
-          stimPath: stim.executable,
-          stimOwner: (stim.launcher?.source ?? stim.executable).flatMap { packages.owner(ofExecutable: $0) },
+          stimPath: stim,
+          stimOwner: (launcher?.source ?? stim).flatMap { packages.owner(ofExecutable: $0) },
           installers: packages.installed,
           defaultInstaller: packages.defaultInstaller(path: environment["PATH"] ?? ""),
-          needsRelaunch: compatibility.isCompatible
-            && (stim.executable != launched.executable || stim.launcher?.source != launched.launcher?.source),
           server: serverCompatibility,
           serverPath: server.executable,
           viewerKeys: [],
@@ -156,12 +151,10 @@ final class Onboarding: ObservableObject {
             FileManager.default.fileExists(atPath: $0)
           },
           javaHome: environment["JAVA_HOME"].flatMap { $0.isEmpty ? nil : $0 },
-          nodeBlockingStim: compatibility == .outdated(found: nil)
-            ? stim.launcher.flatMap(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
           nodeBlockingServer: serverCompatibility == .outdated(found: nil)
             ? server.launcher.flatMap(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
-          nodeBlocksStim: compatibility == .outdated(found: nil) && stim.launcher != nil
-            && stim.launcher?.runtime?.isSupported != true,
+          nodeBlocksStim: compatibility == .outdated(found: nil) && launcher != nil
+            && launcher?.runtime?.isSupported != true,
           nodeBlocksServer: serverCompatibility == .outdated(found: nil) && server.launcher != nil
             && server.launcher?.runtime?.isSupported != true)
       }.value
@@ -185,12 +178,13 @@ final class Onboarding: ObservableObject {
   }
 
   func refreshViewerSettings() async {
-    guard let report, report.stim.isCompatible, offersViewer else { return }
+    guard report != nil, offersViewer else { return }
     guard
       let settings = try? await readServerSettings(
-        cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: NSHomeDirectory())
+        stimHome: StimHome.path(environment: await environment.value), connection: ServerSession.shared.statsConnection,
+        cwd: NSHomeDirectory())
     else { return }
-    guard self.report?.stimPath == report.stimPath, self.report?.stim.isCompatible == true, offersViewer else { return }
+    guard offersViewer else { return }
     self.report?.viewerKeys = DesktopViewerSettings.unset(in: settings.settings)
   }
 
@@ -215,9 +209,6 @@ final class Onboarding: ObservableObject {
   var javaCommand: StimCommand { StimCommand(["-version"], cwd: home, program: "java") }
 
   static func doctorCommand(in folder: String) -> StimCommand { StimCommand(["doctor", "--json"], cwd: folder) }
-
-  /// Whether the `stim` this launch resolved is the one installed now, so the app can run it.
-  var runsStim: Bool { report.map { $0.stim.isCompatible && !$0.needsRelaunch } ?? false }
 
   func openGuide() {
     guard !showsGuide else { return }
@@ -274,16 +265,6 @@ final class Onboarding: ObservableObject {
     projectFolder = url.path
   }
 
-  func finishAndRestart() {
-    progress.finish()
-    relaunch()
-  }
-
-  func restartForSetup() {
-    progress.saveForRestart(at: guideStep)
-    relaunch()
-  }
-
   private static func notificationAccess() async -> NotificationAccess {
     guard Notifier.isAvailable else { return .unavailable }
     switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
@@ -325,10 +306,6 @@ final class Onboarding: ObservableObject {
       ServerController.shared.stop()
       ServerController.shared.start()
     }
-  }
-
-  func chooseStim() {
-    choose(AppPreferences.Key.stimExecutable)
   }
 
   func chooseServer() {

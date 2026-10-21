@@ -1606,6 +1606,27 @@ export function protocolJsonSchema(): JsonSchema {
               },
             },
           }),
+          request('desktop.remedy.subscribe', {
+            oneOf: ['doctor-fix', 'device-unlock'].map((action) => ({
+              type: 'object',
+              required: ['cwd', 'action'],
+              additionalProperties: false,
+              properties: {
+                cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+                action: { const: action },
+                platform: { enum: ['ios', 'android'] },
+                ...(action === 'device-unlock'
+                  ? {
+                      slot: {
+                        type: 'string',
+                        pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$',
+                        not: { enum: ['constructor', 'prototype', '__proto__'] },
+                      },
+                    }
+                  : {}),
+              },
+            })),
+          }),
           request('desktop.machine-access.subscribe', {
             type: 'object',
             required: ['cwd'],
@@ -2333,6 +2354,7 @@ export function protocolJsonSchema(): JsonSchema {
                   'desktop-worktree-remove-progress',
                   'desktop-worktree-warm-progress',
                   'desktop-machine-access-progress',
+                  'desktop-remedy-progress',
                 ],
               },
               subscription: { type: 'string' },
@@ -2356,6 +2378,7 @@ export function protocolJsonSchema(): JsonSchema {
                   'desktop-worktree-remove-ended',
                   'desktop-worktree-warm-ended',
                   'desktop-machine-access-ended',
+                  'desktop-remedy-ended',
                 ],
               },
               subscription: { type: 'string' },

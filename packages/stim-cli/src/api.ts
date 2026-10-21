@@ -17,7 +17,7 @@ import {
 } from './workspace/project.ts';
 import { repoRootAsync } from './workspace/worktree.ts';
 import { recordWorkspaceUseAsync } from './workspace/workspace-state.ts';
-import { readDoctorReport } from './commands/doctor.ts';
+import { readDoctorReport, repairDoctorReport } from './commands/doctor.ts';
 import { recordDoctorCheck } from './guide-status.ts';
 import { executeGc, readGcReport, withGcMaintenanceClaim } from './commands/gc.ts';
 import { removeWorktreeTarget, warmWorktreeTarget } from './commands/worktree.ts';
@@ -34,6 +34,7 @@ import { runWeb } from './commands/web.ts';
 import { readIosBuildPlan } from './commands/ios/next-build.ts';
 import { readAndroidBuildPlan } from './commands/android/next-build.ts';
 import { planMacos } from './macos/plan.ts';
+import { releaseWorkspaceLeasesAsync } from './engine/device-lease.ts';
 import { validateDeviceSlot } from './devices/device-slots.ts';
 import type { FailArgs } from './commands/ios/types.ts';
 import { operationState } from './engine/operation-state.ts';
@@ -61,6 +62,8 @@ import type {
   StimReadOptions,
   StimPlanOptions,
   StimDoctorOptions,
+  StimDoctorRepairOptions,
+  StimDeviceUnlockOptions,
   StimMachineAccessOptions,
   StimGcOptions,
   StimGcMutationOptions,
@@ -82,6 +85,8 @@ export type {
   StimDiagnostics,
   StimDiagnosticsOptions,
   StimDoctorOptions,
+  StimDoctorRepairOptions,
+  StimDeviceUnlockOptions,
   StimDoctorReport,
   StimMachineAccessOptions,
   StimGcOptions,
@@ -237,6 +242,30 @@ export function createStim(options: StimOptions): StimClient {
         return result;
       });
     },
+    repairDoctor: async ({ signal, platform, beforeRepair }: StimDoctorRepairOptions = {}) => {
+      if (platform !== undefined && platform !== 'ios' && platform !== 'android')
+        throw new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios or android.' });
+      const result = await report(
+        signal,
+        (context) => repairDoctorReport(context, platform, version, beforeRepair),
+        120_000,
+      );
+      await read(begin(signal), (context) =>
+        recordDoctorCheck(result.report.project, platform, version, context.signal),
+      );
+      return result;
+    },
+    unlockDevice: ({ signal, platform, slot, beforeUnlock }: StimDeviceUnlockOptions = {}) =>
+      read(begin(signal), async (context) => {
+        if (platform !== undefined && platform !== 'ios' && platform !== 'android')
+          throw new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios or android.' });
+        if (slot !== undefined) validateDeviceSlot(slot);
+        const root = findStartRoot(context.projectRoot);
+        if (!root) throw new StimError(NO_PROJECT_REFUSAL);
+        beforeUnlock?.(root);
+        context.signal.throwIfAborted();
+        return releaseWorkspaceLeasesAsync(root, { platform, slot }, context.signal);
+      }),
     requestMachineAccess: async ({ signal, ticket }: StimMachineAccessOptions = {}) => {
       if (ticket !== undefined && (typeof ticket !== 'string' || !decodeSecret(ticket.trim())))
         throw new StimError({ code: 'STIM_BAD_ARG', message: 'The setup ticket must encode 32 random bytes.' });
@@ -374,7 +403,7 @@ export function createStim(options: StimOptions): StimClient {
         ).catch((cause: unknown) => {
           if (cause instanceof WorkspaceProcessCleanupError) throw cause;
           const failure = claimFailure(cause, null);
-          if (failure) throw new StimError(failure);
+          if (failure) throw new StimError(failure, { cause });
           throw cause;
         }),
       );
@@ -645,18 +674,21 @@ async function lifecycle<T>(operation: Operation, work: (context: StimContext) =
         return await work(context);
       } catch (error) {
         const failure = error as Partial<StimFailure>;
-        throw new StimError({
-          code: failure?.code ?? 'STIM_RUN_FAILED',
-          message: error instanceof Error ? error.message : String(error),
-          remedy: failure?.remedy ?? null,
-          details: {
-            logs,
-            cause:
-              error instanceof WorkspaceProcessCleanupError
-                ? { retainedClaimRoots: [...new Set(error.claims.map((claim) => claim.root))] }
-                : failure?.details,
+        throw new StimError(
+          {
+            code: failure?.code ?? 'STIM_RUN_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+            remedy: failure?.remedy ?? null,
+            details: {
+              logs,
+              cause:
+                error instanceof WorkspaceProcessCleanupError
+                  ? { retainedClaimRoots: [...new Set(error.claims.map((claim) => claim.root))] }
+                  : failure?.details,
+            },
           },
-        });
+          { cause: error instanceof StimError && !('reportCleanup' in error) ? (error.cause ?? error) : error },
+        );
       }
     });
   } finally {

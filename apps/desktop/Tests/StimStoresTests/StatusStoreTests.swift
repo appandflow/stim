@@ -12,8 +12,8 @@ private func payload(live: Int) -> StatusPayload {
 
 @MainActor
 private func makeStore() -> StatusStore {
-  let cli = Task { StimCLI(environment: ["PATH": "/nonexistent"]) }
-  return StatusStore(cli: cli)
+  let environment = Task { ["PATH": "/nonexistent"] }
+  return StatusStore(environment: environment)
 }
 
 @MainActor
@@ -43,8 +43,8 @@ struct StatusStoreTests {
   @Test func doctorReadsTheMatchingServerWithoutCLIAndKeepsLastGoodOnFailure() async throws {
     let directory = try doctorWorkspace()
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": directory.path]) }
-    let store = StatusStore(cli: cli, stimHome: directory.path)
+    let environment = Task { ["PATH": "/nonexistent", "STIM_HOME": directory.path] }
+    let store = StatusStore(environment: environment, stimHome: directory.path)
     var socket: IdentityTransport!
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/doctor-test.sock"), clientName: "test", clientVersion: "1",
@@ -86,8 +86,8 @@ struct StatusStoreTests {
   @Test func anActionDuringDoctorDiscardsTheEarlierReplyAndRefreshesAgain() async throws {
     let directory = try doctorWorkspace()
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": directory.path]) }
-    let store = StatusStore(cli: cli, stimHome: directory.path)
+    let environment = Task { ["PATH": "/nonexistent", "STIM_HOME": directory.path] }
+    let store = StatusStore(environment: environment, stimHome: directory.path)
     var socket: IdentityTransport!
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/doctor-test.sock"), clientName: "test", clientVersion: "1",
@@ -205,8 +205,8 @@ struct StatusStoreTests {
         from: URL(
           string:
             "https://stim.appandflow.com/open?v=1&machine=\(home)&workspace=\(workspace)")!))
-    let cli = StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": "/home-a"])
-    let store = StatusStore(cli: Task { cli }, stimHome: "/home-a")
+    let environment = ["PATH": "/nonexistent", "STIM_HOME": "/home-a"]
+    let store = StatusStore(environment: Task { environment }, stimHome: "/home-a")
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "test", clientVersion: "1",
       transport: { _, onEvent in IdentityTransport(home: home, onEvent: onEvent) })
@@ -235,7 +235,7 @@ struct StatusStoreTests {
     #expect(store.target(for: link, connection: (client, "/home-a")) == nil)
   }
 
-  private func watchingCLI(in directory: URL) throws -> StimCLI {
+  private func watchingEnvironment(in directory: URL) throws -> [String: String] {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let executable = directory.appendingPathComponent("stim")
     let script = """
@@ -247,7 +247,7 @@ struct StatusStoreTests {
       """
     try Data(script.utf8).write(to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-    return StimCLI(environment: ["PATH": "/usr/bin:/bin", "STIM_HOME": directory.path], override: executable.path)
+    return ["PATH": "\(directory.path):/usr/bin:/bin", "STIM_HOME": directory.path]
   }
 
   private func watcherPIDs(in directory: URL) -> [Int32] {
@@ -257,8 +257,8 @@ struct StatusStoreTests {
 
   @Test(arguments: [false, true]) func socketPathRefusalsShowTheRemedyOnlyForTheMatchingHome(matchingHome: Bool) async {
     let home = "/tmp/stim-status-test"
-    let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": home]) }
-    let store = StatusStore(cli: cli, stimHome: home)
+    let environment = Task { ["PATH": "/nonexistent", "STIM_HOME": home] }
+    let store = StatusStore(environment: environment, stimHome: home)
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/" + String(repeating: "x", count: 103)), clientName: "test", clientVersion: "1")
     defer { client.stop() }
@@ -282,8 +282,8 @@ struct StatusStoreTests {
 
   @Test func unavailableStatusNeverStartsACommandAndKeepsTheLastPayload() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("watch-\(UUID().uuidString)")
-    let cli = try watchingCLI(in: directory)
-    let store = StatusStore(cli: Task { cli })
+    let environment = try watchingEnvironment(in: directory)
+    let store = StatusStore(environment: Task { environment })
     defer {
       store.serverDelivering(true)
       for pid in watcherPIDs(in: directory) { kill(pid, SIGKILL) }

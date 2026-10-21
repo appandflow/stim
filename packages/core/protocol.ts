@@ -138,6 +138,7 @@ export const FEATURES = [
   'desktop-full-logs',
   'desktop-doctor-run',
   'desktop-machine-access',
+  'desktop-remedy',
   'desktop-stop',
   'desktop-reload',
   'desktop-start',
@@ -163,6 +164,7 @@ export const METHODS = [
   'desktop.logs.subscribe',
   'desktop.doctor.run',
   'desktop.machine-access.subscribe',
+  'desktop.remedy.subscribe',
   'desktop.stop.subscribe',
   'desktop.reload.subscribe',
   'desktop.start.subscribe',
@@ -1616,6 +1618,13 @@ export interface Methods {
     params: { cwd: string; platform?: 'ios' | 'android' };
     result: Record<string, unknown>;
   };
+  'desktop.remedy.subscribe': {
+    params: { cwd: string } & (
+      | { action: 'doctor-fix'; platform?: 'ios' | 'android' }
+      | { action: 'device-unlock'; platform?: 'ios' | 'android'; slot?: string }
+    );
+    result: SubscribeResult;
+  };
   'desktop.machine-access.subscribe': { params: { cwd: string; ticket?: string }; result: SubscribeResult };
   'desktop.stop.subscribe': { params: { cwd: string; slot?: string }; result: SubscribeResult };
   'desktop.reload.subscribe': { params: { cwd: string; platform?: ReloadPlatform }; result: SubscribeResult };
@@ -2102,7 +2111,24 @@ export interface DesktopMachineAccessEndedEvent {
   message: string;
 }
 
+export interface DesktopRemedyProgressEvent {
+  event: 'desktop-remedy-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+export interface DesktopRemedyEndedEvent {
+  event: 'desktop-remedy-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 export type ServerEvent =
+  | DesktopRemedyProgressEvent
+  | DesktopRemedyEndedEvent
   | DesktopMachineAccessProgressEvent
   | DesktopMachineAccessEndedEvent
   | DesktopWorktreeWarmProgressEvent

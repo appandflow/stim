@@ -20,6 +20,7 @@ type PhoneMethod = Exclude<
   | 'desktop.settings.write'
   | 'desktop.logs.subscribe'
   | 'desktop.doctor.run'
+  | 'desktop.remedy.subscribe'
   | 'desktop.stop.subscribe'
   | 'desktop.reload.subscribe'
   | 'desktop.start.subscribe'
@@ -75,6 +76,8 @@ describe('the shared phone protocol', () => {
         | Server.DesktopReportEvent['event']
         | Server.DesktopStopProgressEvent['event']
         | Server.DesktopStopEndedEvent['event']
+        | Server.DesktopRemedyProgressEvent['event']
+        | Server.DesktopRemedyEndedEvent['event']
         | Server.DesktopReloadProgressEvent['event']
         | Server.DesktopReloadEndedEvent['event']
         | Server.DesktopStartProgressEvent['event']

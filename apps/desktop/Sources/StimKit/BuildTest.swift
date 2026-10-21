@@ -8,7 +8,7 @@ public enum OffloadResult: Equatable, Sendable {
   public static func parse(_ data: Data, machine: String, exit: Int32, stderr: String = "") throws -> Self {
     if let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: data) { return .refused(refusal) }
     guard let facts = try? JSONDecoder().decode([String: JSONValue].self, from: data) else {
-      throw StimCLI.Failure.exited(exit, stderr: stderr)
+      throw CommandFailure.exited(exit, stderr: stderr)
     }
     guard exit == 0, facts["offloadedTo"]?.string == machine,
       facts["launched"] == .bool(true) || facts["launched"] == .string("bundling")
@@ -18,7 +18,7 @@ public enum OffloadResult: Equatable, Sendable {
 
   public static func localPassed(_ data: Data, exit: Int32, stderr: String = "") throws -> Bool {
     guard let facts = try? JSONDecoder().decode([String: JSONValue].self, from: data) else {
-      throw StimCLI.Failure.exited(exit, stderr: stderr)
+      throw CommandFailure.exited(exit, stderr: stderr)
     }
     guard exit == 0 else { return false }
     return facts["offloadedTo"]?.string == nil && (facts["launched"] == .bool(true) || facts["launched"] == .string("bundling"))

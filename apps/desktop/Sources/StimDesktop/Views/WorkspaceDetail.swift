@@ -3,7 +3,7 @@ import StimStores
 import SwiftUI
 
 struct WorkspaceDetail: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var statsReader: StatsReader
   var env: Workspace
   var page: WorktreePage
@@ -70,14 +70,14 @@ struct WorkspaceDetail: View {
   private var workspace: Workspace { archivedPage?.workspace ?? env }
 
   static func archived(
-    _ archive: ArchivedWorkspace, cli: Task<StimCLI, Never>, statsReader: StatsReader,
+    _ archive: ArchivedWorkspace, environment: Task<[String: String], Never>, statsReader: StatsReader,
     environments: [Workspace] = [], inspector: InspectorPresentation = .column,
     inspectorWidth: Binding<CGFloat> = .constant(320),
     logQuery: Binding<LogQuery> = .constant(LogQuery()), openReplacement: @escaping (String) -> Void = { _ in }
   ) -> Self {
     let adapted = ArchivedPage(archive: archive, now: Date())
     return Self(
-      cli: cli, statsReader: statsReader, env: adapted.workspace,
+      environment: environment, statsReader: statsReader, env: adapted.workspace,
       page: WorktreePage.groups(environments: [adapted.workspace])[0], selectedPath: archive.projectRoot,
       sampled: [:], usage: nil, machine: nil, reportsBundles: false, history: OwnerHistory(),
       inspector: inspector, inspectorWidth: inspectorWidth, focusedID: .constant(nil), logQuery: logQuery,
@@ -123,7 +123,8 @@ struct WorkspaceDetail: View {
     .navigationTitle(workspace.names.title)
     .sheet(item: $viewing) { viewed in
       DeviceViewer(
-        cli: cli, env: page.apps.first { $0.path == viewed.workspace } ?? workspace, deviceID: viewed.id, machine: machine,
+        environment: environment, env: page.apps.first { $0.path == viewed.workspace } ?? workspace, deviceID: viewed.id,
+        machine: machine,
         windowSize: windowSize,
         revealInLogs: { slot, at in
           logWorkspacePath = viewed.workspace
@@ -137,7 +138,7 @@ struct WorkspaceDetail: View {
       Group {
         if page.isUnified {
           BuildSheet(
-            cli: cli, env: workspace, selection: selection, page: page,
+            environment: environment, env: workspace, selection: selection, page: page,
             openLogs: openBuildLogs,
             openAppLogs: { app, query in
               logWorkspacePath = app.path
@@ -145,7 +146,7 @@ struct WorkspaceDetail: View {
             })
         } else {
           BuildSheet(
-            cli: cli, env: workspace, selection: selection, openLogs: openBuildLogs, archive: archive,
+            environment: environment, env: workspace, selection: selection, openLogs: openBuildLogs, archive: archive,
             logsExpired: archivedPage?.logsExpired ?? false, readsServer: readsServer)
         }
       }
@@ -230,10 +231,10 @@ struct WorkspaceDetail: View {
     VStack(spacing: 0) {
       HStack(spacing: Space.md) {
         if archive != nil, let archivedPage {
-          ArchivedHeaderLine(cli: cli, page: archivedPage) { confirmingArchiveDelete = true }
+          ArchivedHeaderLine(environment: environment, page: archivedPage) { confirmingArchiveDelete = true }
         } else {
           WorkspaceHeaderLine(
-            cli: cli, env: workspace, page: page.isUnified ? page : nil,
+            environment: environment, env: workspace, page: page.isUnified ? page : nil,
             openAppLogs: { app in
               logWorkspacePath = app.path
               logQuery.errorsOnly = false
@@ -282,7 +283,7 @@ struct WorkspaceDetail: View {
               InlineEmpty("Archived logs are read through stim-server.").padding(Space.xxl)
             } else {
               LogsView(
-                cli: cli, env: archive == nil ? (page.isUnified ? logsApp : workspace) : nil, query: $logQuery,
+                environment: environment, env: archive == nil ? (page.isUnified ? logsApp : workspace) : nil, query: $logQuery,
                 moment: $logMoment,
                 page: page.isUnified ? page : nil, selectedApp: $logWorkspacePath, archive: archive
               )
@@ -361,7 +362,7 @@ struct WorkspaceDetail: View {
   @ViewBuilder private var inspectorPanel: some View {
     if page.isUnified {
       WorktreeInspector(
-        cli: cli, page: page, stats: groupStats, machine: machine, sampled: sampled, history: history,
+        environment: environment, page: page, stats: groupStats, machine: machine, sampled: sampled, history: history,
         reportsBundles: reportsBundles,
         openLogs: { app, query in
           if let app { logWorkspacePath = app.path }
@@ -371,7 +372,8 @@ struct WorkspaceDetail: View {
       ).frame(maxHeight: .infinity)
     } else {
       Inspector(
-        cli: cli, env: workspace, stats: stats.flatMap { $0.path == workspace.path ? $0.fetched : nil } ?? Fetched(),
+        environment: environment, env: workspace,
+        stats: stats.flatMap { $0.path == workspace.path ? $0.fetched : nil } ?? Fetched(),
         machine: machine, usage: usage, history: history,
         reportsBundles: reportsBundles,
         openLogs: openBuildLogs,

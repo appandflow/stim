@@ -12,16 +12,16 @@ final class SettingsModel: ObservableObject {
   @Published private(set) var writing: Set<String> = []
   @Published private(set) var directory: String?
 
-  private let cli: Task<StimCLI, Never>
+  private let environment: Task<[String: String], Never>
   private let machine: MachineSettingsStore
 
   #if DEBUG
     private(set) var inMemory = false
 
     init(fixtures: [SettingField], payload: SettingsPayload?, error: String? = nil) {
-      let cli = Task { StimCLI(environment: [:]) }
-      self.cli = cli
-      machine = MachineSettingsStore(cli: cli, server: { nil }, actions: { nil })
+      let environment = Task { [String: String]() }
+      self.environment = environment
+      machine = MachineSettingsStore(environment: environment, server: { nil }, actions: { nil })
       fields = fixtures
       self.payload = payload
       loadError = error
@@ -29,8 +29,8 @@ final class SettingsModel: ObservableObject {
     }
   #endif
 
-  init(cli: Task<StimCLI, Never>, machine: MachineSettingsStore) {
-    self.cli = cli
+  init(environment: Task<[String: String], Never>, machine: MachineSettingsStore) {
+    self.environment = environment
     self.machine = machine
   }
 
@@ -45,13 +45,17 @@ final class SettingsModel: ObservableObject {
     #if DEBUG
       if inMemory { return }
     #endif
-    let cli = cli
+    let environment = environment
     let cwd = directory ?? NSHomeDirectory()
     Task.detached {
-      let cli = await cli.value
+      let environment = await environment.value
       let connection = await ServerSession.shared.statsConnection
-      let schema = await Result.awaiting { try await readServerSettingsSchema(cli: cli, connection: connection) }
-      let payload = await Result.awaiting { try await readServerSettings(cli: cli, connection: connection, cwd: cwd) }
+      let schema = await Result.awaiting {
+        try await readServerSettingsSchema(stimHome: StimHome.path(environment: environment), connection: connection)
+      }
+      let payload = await Result.awaiting {
+        try await readServerSettings(stimHome: StimHome.path(environment: environment), connection: connection, cwd: cwd)
+      }
       await MainActor.run {
         guard self.directory == directory else { return }
         switch schema {

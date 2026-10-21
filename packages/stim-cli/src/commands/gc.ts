@@ -717,6 +717,7 @@ export async function withGcMaintenanceClaim<T>(
           [...new Set([claim, ...(cause instanceof WorkspaceProcessCleanupError ? cause.claims : [])])],
           cause.message,
           'Verify GC and its owned children have stopped.',
+          cause,
         ),
         { reportCleanup: true },
       );

@@ -21,24 +21,24 @@ final class BuildMachinesModelTests: XCTestCase {
     }
 
     func make() -> BuildMachinesModel {
-      let cli = Task { StimCLI(environment: [:], override: "/usr/bin/false") }
+      let environment = Task { [String: String]() }
       let settings = MachineSettingsStore(
         read: {
-          guard let machines = await self.machines else { throw StimCLI.Failure.exited(1, stderr: "Unexpected settings read") }
+          guard let machines = await self.machines else { throw CommandFailure.exited(1, stderr: "Unexpected settings read") }
           return Harness.payload(machines)
         },
         write: { _, value, _, _ in
-          guard let value else { throw StimCLI.Failure.exited(1, stderr: "Unexpected settings write") }
+          guard let value else { throw CommandFailure.exited(1, stderr: "Unexpected settings write") }
           await MainActor.run { self.machines = value }
           return .written(Harness.payload(value).entry("remote.machines")!)
         })
       return BuildMachinesModel(
-        cli: cli, settings: settings, statsReader: StatsReader(cli: cli, server: { nil }),
+        environment: environment, settings: settings, statsReader: StatsReader(environment: environment, server: { nil }),
         now: { self.now },
         machineAccess: { checkout, ask in
           self.calls.append((checkout, ask))
           if self.block { await withCheckedContinuation { self.waiting = $0 } }
-          if self.fails { throw StimCLI.Failure.exited(1, stderr: "Doctor failed") }
+          if self.fails { throw CommandFailure.exited(1, stderr: "Doctor failed") }
           var object: [String: Any] = ["project": checkout, "findings": [], "remoteMachines": []]
           if let hosts = self.hosts { object["deviceHosts"] = hosts.map { ["machine": $0, "state": "approved"] } }
           return try JSONDecoder().decode(DoctorReport.self, from: JSONSerialization.data(withJSONObject: object))

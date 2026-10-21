@@ -352,8 +352,9 @@ function captureFix(root: string, env: NodeJS.ProcessEnv): { out: string; exitCo
   console.error = (...args: unknown[]): void => void lines.push(args.map(String).join(' '));
   console.log = (...args: unknown[]): void => void lines.push(`STDOUT:${args.map(String).join(' ')}`);
   try {
-    applySandboxFix(root, env);
-    return { out: lines.join('\n'), exitCode: process.exitCode };
+    const result = applySandboxFix(root, env);
+    expect(process.exitCode).toBeUndefined();
+    return { out: lines.join('\n'), exitCode: result || undefined };
   } finally {
     console.error = realError;
     console.log = realLog;

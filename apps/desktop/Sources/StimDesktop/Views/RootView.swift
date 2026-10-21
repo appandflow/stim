@@ -80,18 +80,18 @@ struct RootView: View {
   @Environment(\.openSettings) private var openSettings
   @AppStorage("settingsTab") private var settingsTab = "app"
 
-  private let cli: Task<StimCLI, Never>
+  private let environment: Task<[String: String], Never>
   private let tutorialClock = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
   init(
-    cli: Task<StimCLI, Never>, store: StatusStore, actions: ActionCenter, autopilot: AutopilotRunner,
+    environment: Task<[String: String], Never>, store: StatusStore, actions: ActionCenter, autopilot: AutopilotRunner,
     onboarding: Onboarding, gc: GcReportStore, buildMachines: BuildMachinesModel, metrics: MetricsStore,
     storage: StorageStore, planChecks: BuildPlanChecks, statsReader: StatsReader, tips: TipCoordinator
   ) {
     SidebarWidthGuard.prime()
     self.tips = tips
     self.buildMachines = buildMachines
-    self.cli = cli
+    self.environment = environment
     self.onboarding = onboarding
     self.store = store
     self.actions = actions
@@ -290,7 +290,7 @@ struct RootView: View {
       navigation.apply = show
       navigation.startMonitoring()
       store.start()
-      tutorial.configure(cli: cli)
+      tutorial.configure(environment: environment)
       openRequests.openMainWindow = { [openWindow] in openWindow(id: "main") }
     }
     .onDisappear {
@@ -974,7 +974,8 @@ struct RootView: View {
     case .environment(let path):
       if let page = WorktreePage(path: path, environments: store.payload?.environments ?? []) {
         let host = WorkspaceDetailHost(
-          statsReader: statsReader, cli: cli, page: page, selectedPath: path, metrics: metrics, machine: store.payload?.machine,
+          statsReader: statsReader, environment: environment, page: page, selectedPath: path, metrics: metrics,
+          machine: store.payload?.machine,
           reportsBundles: store.payload?.environments.contains { $0.metro?.bundle != nil } ?? false,
           inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedDeviceID, logQuery: $logQuery,
           logWorkspacePath: logsWorkspace, archived: store.payload?.archived ?? [],
@@ -993,7 +994,7 @@ struct RootView: View {
     case .archived(let id):
       if let archive = store.payload?.archived?.first(where: { $0.id == id }) {
         WorkspaceDetail.archived(
-          archive, cli: cli, statsReader: statsReader, environments: store.payload?.environments ?? [],
+          archive, environment: environment, statsReader: statsReader, environments: store.payload?.environments ?? [],
           inspector: inspector, inspectorWidth: $inspectorWidth, logQuery: $archivedLogQuery,
           openReplacement: { navigate(.environment($0), .click("archived workspace replacement")) }
         )
@@ -1002,7 +1003,7 @@ struct RootView: View {
     case .worktree(let path):
       if let worktree = store.payload?.unprovisionedWorktrees?.first(where: { $0.path == path }) {
         NoEnvironmentDetail(
-          worktree: worktree, cli: cli,
+          worktree: worktree, environment: environment,
           apps: notSetUpApps(for: worktree, environments: store.payload?.environments ?? [], project: store.project(ofPath:)),
           projectName: store.title(of: store.project(ofPath: worktree.path)))
       } else {
@@ -1042,7 +1043,7 @@ struct RootView: View {
 
 private struct WorkspaceDetailHost: View {
   var statsReader: StatsReader
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var page: WorktreePage
   var selectedPath: String
   var metrics: MetricsStore
@@ -1059,7 +1060,8 @@ private struct WorkspaceDetailHost: View {
   var body: some View {
     let env = page.apps[0]
     WorkspaceDetail(
-      cli: cli, statsReader: statsReader, env: env, page: page, selectedPath: selectedPath, sampled: metrics.usage,
+      environment: environment, statsReader: statsReader, env: env, page: page, selectedPath: selectedPath,
+      sampled: metrics.usage,
       usage: metrics.usage[env.path], machine: machine,
       reportsBundles: reportsBundles,
       history: metrics.owners, inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedID,

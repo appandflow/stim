@@ -10,11 +10,11 @@ public struct ServerStopResult: Sendable {
 /// Runs an existing Desktop stop command through the same-home bundled server. Cancellation unsubscribes;
 /// the server finishes any teardown already started. A dropped connection never retries the stop.
 @MainActor public func runServerStop(
-  _ command: StimCommand, cli: StimCLI, connection: (client: ServerClient, home: String)?,
+  _ command: StimCommand, stimHome: String, connection: (client: ServerClient, home: String)?,
   onLine: @escaping @MainActor (OutputLine) -> Void = { _ in }
 ) async throws -> ServerStopResult {
   try Task.checkCancellation()
-  guard let client = readCapableServer(connection, stimHome: cli.stimHome), client.hasDesktopAuthority else {
+  guard let client = readCapableServer(connection, stimHome: stimHome), client.hasDesktopAuthority else {
     throw ServerError(
       code: "not-connected", message: "The bundled local stim-server is not ready to stop this workspace for this Stim home.")
   }

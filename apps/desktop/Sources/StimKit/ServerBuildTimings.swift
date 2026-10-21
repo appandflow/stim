@@ -2,10 +2,10 @@ import Foundation
 
 /// The latest offloaded build's timings from the matching local server, without a CLI fallback.
 @MainActor public func readServerBuildTimings(
-  cli: StimCLI, connection: (client: ServerClient, home: String)?, cwd: String
+  stimHome: String, connection: (client: ServerClient, home: String)?, cwd: String
 ) async throws -> BuildTimings {
   try Task.checkCancellation()
-  guard let client = readCapableServer(connection, stimHome: cli.stimHome) else {
+  guard let client = readCapableServer(connection, stimHome: stimHome) else {
     throw ServerError(
       code: "not-connected", message: "The local stim-server is not ready to read build timings for this Stim home.")
   }

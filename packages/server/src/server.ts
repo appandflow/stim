@@ -65,6 +65,7 @@ import { Recorder, type RecordLimits } from './recorder.ts';
 import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
 import { probeDirectories, STARTUP_PROBE_MS, STARTUP_RETRY_MS, type StartupState } from './startup.ts';
 import {
+  ClaimUnavailableError,
   claimRemoveCommand,
   exclusiveClaimDir,
   readClaimSet,
@@ -581,7 +582,13 @@ function reloadAction(
   };
 }
 
-type StartOutcome = StopOutcome & { code?: string; unresolved?: boolean; retainedClaimRoots?: string[] };
+type StartOutcome = StopOutcome & {
+  code?: string;
+  unresolved?: boolean;
+  retainedClaimRoots?: string[];
+  cleanupComplete?: Promise<void>;
+  cleanupSettled?: () => boolean;
+};
 
 function lifecycleAction(
   cwd: string,
@@ -622,6 +629,8 @@ function lifecycleAction(
       (result): StartOutcome => result,
       (cause: unknown): StartOutcome => {
         const details = cause instanceof StimError && isJsonObject(cause.details) ? cause.details.cause : undefined;
+        const cleanup = cause instanceof StimError ? cause.cause : undefined;
+        const settled = cleanup instanceof Error && 'cleanupSettled' in cleanup ? cleanup.cleanupSettled : undefined;
         return {
           ok: false,
           message: readFailure(cause),
@@ -629,7 +638,15 @@ function lifecycleAction(
             ? {
                 code: cause.code,
                 stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
-                unresolved: cause.code === 'STIM_CLAIM_UNAVAILABLE',
+                unresolved:
+                  cause.code === 'STIM_CLAIM_UNAVAILABLE' &&
+                  !(cleanup instanceof ClaimUnavailableError && !('reportCleanup' in cleanup)),
+                ...(typeof settled === 'function' ? { cleanupSettled: () => settled() === true } : {}),
+                ...(cleanup instanceof Error &&
+                'cleanupComplete' in cleanup &&
+                cleanup.cleanupComplete instanceof Promise
+                  ? { cleanupComplete: cleanup.cleanupComplete }
+                  : {}),
                 ...(isJsonObject(details) &&
                 Array.isArray(details.retainedClaimRoots) &&
                 details.retainedClaimRoots.every((root) => typeof root === 'string' && isAbsolute(root))
@@ -795,6 +812,44 @@ function machineAccessAction(
       stdout: JSON.stringify(await client.requestMachineAccess({ ticket, signal })),
       summary: 'Machine access report completed.',
     }),
+    onProgress,
+  );
+}
+
+function remedyAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  request: Methods['desktop.remedy.subscribe']['params'],
+  admit: (workspace: string) => void,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'Desktop remedy',
+    'STIM_REPORT_TIMEOUT',
+    async (client, signal) => {
+      if (request.action === 'doctor-fix') {
+        const { report, exitCode } = await client.repairDoctor({
+          platform: request.platform,
+          signal,
+          beforeRepair: admit,
+        });
+        const stdout = JSON.stringify(report);
+        return exitCode === 0
+          ? { ok: true, stdout, summary: 'Doctor repair completed.' }
+          : { ok: false, stdout, code: 'STIM_DOCTOR_REPAIR_FAILED', message: 'Doctor reported repair refusals.' };
+      }
+      const released = await client.unlockDevice({
+        platform: request.platform,
+        slot: request.slot,
+        signal,
+        beforeUnlock: admit,
+      });
+      return { ok: true, stdout: JSON.stringify(released), summary: `Released ${released.length} device lease(s).` };
+    },
     onProgress,
   );
 }
@@ -1629,6 +1684,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-worktree-remove',
               'desktop-worktree-warm',
               'desktop-machine-access',
+              'desktop-remedy',
               'desktop-plan',
             ].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
@@ -1651,6 +1707,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-worktree-remove',
                 'desktop-worktree-warm',
                 'desktop-machine-access',
+                'desktop-remedy',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2959,6 +3016,44 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
     }
 
+    function subscribeRemedy(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (!desktopSessions.has(socket))
+        return error(id, 'forbidden', 'Repairs require the connection of the Stim Desktop that started this server.');
+      if (
+        !isJsonObject(params) ||
+        (params.action !== 'doctor-fix' && params.action !== 'device-unlock') ||
+        Object.keys(params).some(
+          (key) => !['cwd', 'action', 'platform', ...(params.action === 'device-unlock' ? ['slot'] : [])].includes(key),
+        ) ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd) ||
+        (params.platform !== undefined && params.platform !== 'ios' && params.platform !== 'android') ||
+        (params.slot !== undefined &&
+          (typeof params.slot !== 'string' ||
+            !SLOT_NAME.test(params.slot) ||
+            ['constructor', 'prototype', '__proto__'].includes(params.slot)))
+      )
+        return error(
+          id,
+          'bad-request',
+          'Choose an absolute cwd, doctor-fix or device-unlock, and an optional ios/android platform; slot applies only to device-unlock.',
+        );
+      const request: Methods['desktop.remedy.subscribe']['params'] =
+        params.action === 'doctor-fix'
+          ? { cwd: params.cwd, action: params.action, platform: params.platform }
+          : {
+              cwd: params.cwd,
+              action: params.action,
+              platform: params.platform,
+              slot: typeof params.slot === 'string' ? params.slot : undefined,
+            };
+      subscribeLifecycle(id, params.cwd, owner, 'remedy', (cwd, admit, onProgress) =>
+        remedyAction(cwd, options.env, actionLimits, request, admit, onProgress),
+      );
+    }
+
     function subscribeMachineAccess(id: RequestId, params: unknown, owner: PairedDevice): void {
       if (!desktopSessions.has(socket))
         return error(
@@ -3043,7 +3138,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       id: RequestId,
       requestedCwd: string,
       owner: PairedDevice,
-      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove' | 'worktree-warm' | 'machine-access',
+      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove' | 'worktree-warm' | 'machine-access' | 'remedy',
       begin: (
         cwd: string,
         admit: (workspace: string) => void,
@@ -3109,7 +3204,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       void run.outcome.then(finish);
       void run.drained.then((outcome) => {
-        if (kind === 'gc' || kind === 'worktree-remove' || kind === 'worktree-warm' || kind === 'machine-access')
+        if (
+          kind === 'gc' ||
+          kind === 'worktree-remove' ||
+          kind === 'worktree-warm' ||
+          kind === 'machine-access' ||
+          kind === 'remedy'
+        )
           desktopReports.invalidate();
         const release = () => {
           commands.delete(cancel);
@@ -3120,18 +3221,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const roots = outcome.retainedClaimRoots;
         if (outcome.unresolved) {
           const reconcile = () => {
-            if (!roots?.length) return;
+            if (!roots?.length && !outcome.cleanupSettled) return;
             if (
-              roots.some((root) => {
+              roots?.some((root) => {
                 const claims = readClaimSet(root);
                 return claims.live.length > 0 || claims.unresolved.length > 0;
               })
             )
               return;
+            if (outcome.cleanupSettled && !outcome.cleanupSettled()) return;
             release();
             retainedLifecycles.delete(reconcile);
           };
-          retainedLifecycles.add(reconcile);
+          if (!roots?.length && !outcome.cleanupSettled && outcome.cleanupComplete) {
+            void outcome.cleanupComplete.then(release, () => {});
+          } else {
+            retainedLifecycles.add(reconcile);
+          }
         } else {
           release();
         }
@@ -3650,6 +3756,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.logs.subscribe',
           'desktop.doctor.run',
           'desktop.machine-access.subscribe',
+          'desktop.remedy.subscribe',
           'desktop.stop.subscribe',
           'desktop.reload.subscribe',
           'desktop.start.subscribe',
@@ -3791,6 +3898,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const cleanupSubscriptions: Record<string, typeof subscribeGc> = {
         'desktop.machine-access.subscribe': subscribeMachineAccess,
+        'desktop.remedy.subscribe': subscribeRemedy,
         'desktop.gc.subscribe': subscribeGc,
         'desktop.worktree.remove.subscribe': subscribeWorktreeRemove,
         'desktop.worktree.warm.subscribe': subscribeWorktreeWarm,

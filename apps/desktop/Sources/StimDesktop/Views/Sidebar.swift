@@ -639,24 +639,6 @@ struct SidebarFooter: View {
 
   @ViewBuilder private var leftStatus: some View {
     switch status {
-    case .stimUnavailable(let compatibility):
-      let text = compatibility == .missing ? "Install stim" : "stim update available"
-      if onboarding.installCLICommand == nil {
-        statusLabel(dot: Palette.warning, text: text)
-          .help(
-            "This stim is older than Stim Desktop needs, and no package manager installed it. Update it where it came from"
-          )
-      } else {
-        Button(action: onboarding.installStim) {
-          statusLabel(dot: Palette.warning, text: text)
-        }
-        .buttonStyle(.hoverRow(outset: Space.sm))
-        .help(
-          compatibility == .missing
-            ? "Stim Desktop cannot find stim \u{2014} click to install it with \(onboarding.installer.rawValue)"
-            : "This stim is older than Stim Desktop needs, or its version is unreadable \u{2014} click to update it with \(onboarding.report?.stimOwner?.rawValue ?? "its package manager")"
-        )
-      }
     case .stimUpdateAvailable(let installed, let latest):
       Button(action: onboarding.installStim) {
         statusLabel(dot: Palette.primary, text: "stim \(latest.description) available")
@@ -689,7 +671,7 @@ struct SidebarFooter: View {
       .help("Free disk is under the Stim budget \u{2014} click to open Machine")
     case .normal(let version):
       let help: String =
-        version.map { "stim \($0) is installed and works with this Stim Desktop" } ?? "Checking the installed stim"
+        version.map { "Optional agent CLI stim \($0) is installed" } ?? "Stim Desktop uses its bundled server"
       statusLabel(dot: Palette.success, text: version.map { "Stim \($0)" } ?? "Stim")
         .help(help)
     }

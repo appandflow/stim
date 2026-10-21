@@ -1284,7 +1284,7 @@ export async function reactNativeDoctorFindings({
     localIos && optimizations?.ios.compilationCache ? checkCcacheConflict(podfile, podfileProperties) : null,
     ...(platform === 'ios' || optimizations?.android.compilerCache !== 'ccache'
       ? []
-      : androidCcacheFindings(projectRoot, platform, lookupCcache, androidLayout)),
+      : await androidCcacheFindings(projectRoot, platform, lookupCcache, androidLayout)),
     checkAndroidPathRoom(projectRoot, platform, host),
     checkAndroidSdk(projectRoot, platform, androidLayout),
     checkChrome({
@@ -1355,18 +1355,19 @@ export function checkAndroidSdk(
   };
 }
 
-function androidCcacheFindings(
+async function androidCcacheFindings(
   projectRoot: string,
   platform: DoctorPlatform | undefined,
   lookupCcache: (() => boolean) | null,
   layout: AndroidLayout,
-): (Finding | null)[] {
+): Promise<(Finding | null)[]> {
   if (platform !== 'android' && !hasAndroidProject(layout)) return [];
   const onPath = lookupCcache ? lookupCcache() : ccacheIsOnPath();
   let cxx: Finding | null;
   try {
-    cxx = checkCxxCompilerLauncher({ states: readCxxLauncherStates(projectRoot, layout), ccacheOnPath: onPath });
+    cxx = checkCxxCompilerLauncher({ states: await readCxxLauncherStates(projectRoot, layout), ccacheOnPath: onPath });
   } catch (error) {
+    getExecutor().reportSignal?.()?.throwIfAborted();
     cxx = finding(
       'cost',
       'CMake launcher state could not be inspected',
