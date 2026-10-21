@@ -299,7 +299,10 @@ outside it moves to its own issue and pull request.
 - **Cache contracts.** The cache packages must work without `Stim` installed.
   Keep their config path, cache root, cache key, and registration behavior
   aligned with the CLI. Resolution order is environment, machine config, then
-  default. Update `cache-packages.test.ts` when those rules change.
+  default. Update `cache-packages.test.ts` when those rules change. Published
+  packages depend on each other at the exact release version (`workspace:*`,
+  never `workspace:^`), so a cache package installed beside a different `stim`
+  version brings its own copy of `@stim-cli/core`.
 - **Source format.** Keep files under `src/`, `bin/`, and `test/` ASCII-only.
   Markdown can use Unicode.
 - **SwiftPM TMPDIR.** Run `swift` children with the ambient `TMPDIR`. SwiftPM

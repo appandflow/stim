@@ -397,16 +397,16 @@ importers:
   packages/agent-driver:
     dependencies:
       '@stim-cli/core':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../core
 
   packages/agent-driver-agent-device:
     dependencies:
       '@stim-cli/agent-driver':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../agent-driver
       '@stim-cli/core':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../core
 
   packages/cache: {}
@@ -417,7 +417,7 @@ importers:
         specifier: ^3.1149.0
         version: 3.1149.0
       '@stim-cli/cache':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../cache
       tar:
         specifier: ^7.5.22
@@ -429,7 +429,7 @@ importers:
         specifier: ^7.0.6
         version: 7.0.6
       stim:
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../stim-cli
     devDependencies:
       '@types/cross-spawn':
@@ -445,16 +445,16 @@ importers:
   packages/expo-build-cache:
     dependencies:
       '@stim-cli/core':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../core
 
   packages/metro:
     dependencies:
       '@stim-cli/cache':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../cache
       '@stim-cli/core':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../core
       metro-cache:
         specifier: '*'
@@ -463,22 +463,22 @@ importers:
   packages/server:
     dependencies:
       '@stim-cli/agent-driver':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../agent-driver
       '@stim-cli/agent-driver-agent-device':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../agent-driver-agent-device
       '@stim-cli/cache':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../cache
       '@stim-cli/core':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../core
       '@stim-cli/transport':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../transport
       '@stim-cli/transport-tailscale':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../transport-tailscale
       stim:
         specifier: workspace:*
@@ -497,19 +497,19 @@ importers:
         specifier: ^0.20.10
         version: 0.20.10(supports-color@8.1.1)
       '@stim-cli/agent-driver':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../agent-driver
       '@stim-cli/agent-driver-agent-device':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../agent-driver-agent-device
       '@stim-cli/cache':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../cache
       '@stim-cli/core':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../core
       '@stim-cli/metro':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../metro
       '@xmldom/xmldom':
         specifier: 0.9.12
@@ -551,10 +551,10 @@ importers:
   packages/transport-tailscale:
     dependencies:
       '@stim-cli/core':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../core
       '@stim-cli/transport':
-        specifier: workspace:^
+        specifier: workspace:*
         version: link:../transport
 
   website:

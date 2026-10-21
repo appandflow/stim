@@ -19,7 +19,7 @@ const packageDirs = [
 ];
 const versionPattern =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*))*)?$/;
-const acceptedRanges = new Set(['workspace:^', 'workspace:~', 'workspace:*']);
+const exactRange = 'workspace:*';
 const usage = 'usage: node scripts/release-prep.mjs <X.Y.Z[-rc.N]>\n       node scripts/release-prep.mjs --check';
 
 const fail = (message) => {
@@ -63,10 +63,8 @@ const audit = () => {
     versions.set(dir, manifest.version);
     for (const { group, name, range } of internalRanges(manifest)) {
       ranges += 1;
-      // A `workspace:` range carrying its own semver (`workspace:^1.2.3`) is
-      // still a hand-maintained number, which is the thing this replaces.
-      if (!acceptedRanges.has(range)) {
-        problems.push(`packages/${dir} ${group}.${name} is "${range}", not one of ${[...acceptedRanges].join(', ')}`);
+      if (range !== exactRange) {
+        problems.push(`packages/${dir} ${group}.${name} is "${range}", not "${exactRange}"`);
       }
     }
   }
@@ -132,7 +130,7 @@ if (target === '--check') {
   for (const problem of before.problems) process.stderr.write(`release-prep: ${problem}\n`);
   if (before.problems.length > 0) process.exit(1);
   process.stdout.write(`release-prep: ${packageDirs.length} packages at ${before.version}\n`);
-  process.stdout.write(`release-prep: ${before.ranges} inter-package ranges, all workspace:\n`);
+  process.stdout.write(`release-prep: ${before.ranges} inter-package ranges, all workspace:*\n`);
   process.exit(0);
 }
 
@@ -169,7 +167,7 @@ if (after.version !== target) restore(`the manifests read ${after.version} after
 process.stdout.write(`\nrelease-prep: ${before.version} -> ${target}\n`);
 for (const dir of packageDirs) process.stdout.write(`  ${`packages/${dir}`.padEnd(28)}${target}\n`);
 process.stdout.write(
-  `  ${'inter-package ranges'.padEnd(28)}${after.ranges} workspace: ranges, substituted at pack time\n`,
+  `  ${'inter-package ranges'.padEnd(28)}${after.ranges} workspace:* ranges, packed as exact versions\n`,
 );
 process.stdout.write(`  ${'pnpm-lock.yaml'.padEnd(28)}still matches the manifests\n`);
 process.stdout.write('\nNext: RELEASE.md section 2, step 2.\n');
