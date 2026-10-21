@@ -1094,7 +1094,7 @@ async function shutDownDevices(
       { reportCleanup: true },
     );
   }
-  if (rejected.length > 0) throw rejected[0];
+  if (rejected.length > 0) throw cleanup[0] ?? rejected[0];
   return device;
 }
 

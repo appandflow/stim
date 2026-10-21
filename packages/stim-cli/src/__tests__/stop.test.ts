@@ -710,6 +710,22 @@ describe('devices shut down concurrently', () => {
     expect(error.message).toContain('android teardown unresolved.');
   });
 
+  test('a cleanup error is surfaced ahead of a non-cleanup rejection from another device', async () => {
+    const { opts } = seams({
+      project: bothDevices,
+      teardownIos: async () => {
+        throw new Error('aborted');
+      },
+      teardownAvd: async () => {
+        throw retained('android', 'android teardown unresolved.');
+      },
+    });
+    await expect(runStop(opts)).rejects.toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      claims: [{ label: 'android' }],
+    });
+  });
+
   test('one rejected teardown names its claim while the finished device is still reported', async () => {
     const lines: string[] = [];
     const { opts } = seams({
