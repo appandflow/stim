@@ -333,6 +333,14 @@ last configured, approved member of either pool. A remote that Tailscale reports
 running an OS other than macOS never counts for the device pool. Excluding local
 prevents local fallback. See [automatic machine pools](./remote-machines.md#automatic-machine-pools).
 
+`remote.easMaxDurationMinutes` (default 30) is the number of minutes after which EAS
+stops each EAS Simulator session Stim creates, for `--remote eas` and
+`remote.easFallback`. It bounds the cost of a session that nobody ended, such as one
+whose workspace was deleted by hand. `stim stop` and `stim gc --delete` still end a
+session sooner, and a later run replaces an expired one. EAS rejects a value above
+the account plan's session limit. A run reuses a live session without checking how
+much of the cap is left.
+
 `remote.machines` names the remote machines this machine may build on and host owned
 simulator sessions on, by MagicDNS name and optional serve port (default 7443).
 Name each node and port once. Set it with

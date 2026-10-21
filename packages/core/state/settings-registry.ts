@@ -930,6 +930,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'When ios.remote or android.remote is auto, this machine is at its concurrency.maxDevices cap and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can',
   },
   {
+    key: 'remote.easMaxDurationMinutes',
+    type: { kind: 'number', integer: true, minimum: 1 },
+    scopes: MACHINE,
+    default: 30,
+    description:
+      "Maximum minutes of each EAS Simulator session Stim creates, after which EAS stops it and stops billing; stim stop and gc --delete end a session sooner. EAS rejects a value above the account plan's session limit",
+  },
+  {
     key: 'remote.build',
     type: {
       kind: 'string',

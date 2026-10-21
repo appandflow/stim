@@ -872,7 +872,8 @@ agent-device is on PATH, the run uses the default slot and no `--runtime`,
 workspace runs another platform or model, and a Debug run's Metro can be
 reached (not `metro.tunnel` `off`; with an Expo tunnel, run
 `stim start --remote` first). A recorded EAS session is not sticky: once this
-machine has room, auto runs locally and the session bills until `stim stop`. When a check
+machine has room, auto runs locally and the session bills until `stim stop` or
+`remote.easMaxDurationMinutes`. When a check
 fails, the run continues as below and the placement record says why.
 
 If none admits and EAS is off or unusable, the run stays local and may wait in

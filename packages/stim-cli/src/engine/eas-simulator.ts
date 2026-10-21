@@ -94,7 +94,6 @@ export function createSessionArgs({
     '--name',
     ownedSessionName(label),
   ];
-  // EAS duration limits vary by account, so omit the flag unless the caller sets a limit.
   if (maxDurationMinutes) args.push('--max-duration-minutes', String(maxDurationMinutes));
   if (device) args.push('--device', device);
   return args;

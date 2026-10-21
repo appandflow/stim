@@ -676,7 +676,7 @@ is on PATH, the slot is default, no --runtime, --system-image or
 another platform or model, and a Debug run's Metro is reachable (not
 metro.tunnel off; on an Expo tunnel, run stim start --remote first). A recorded
 EAS session is not sticky: once this machine has room, auto runs here and the
-session bills until stim stop. If any check fails, or the
+session bills until stim stop or remote.easMaxDurationMinutes. If any check fails, or the
 setting is off, auto runs here and may wait in the existing FIFO device
 slot queue; --no-wait and --wait 0 refuse with STIM_AT_CAPACITY. The placement
 line explains the decision, the skipped hosts and why EAS was not used
