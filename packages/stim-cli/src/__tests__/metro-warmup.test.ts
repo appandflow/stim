@@ -1,6 +1,6 @@
 import { once } from 'node:events';
 import { createServer, get, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -183,11 +183,18 @@ describe('the bundle URL an app requested earlier', () => {
   const APP_URL = '/apps/mobile/index.ts.bundle?platform=ios&dev=true&lazy=true&transform.routerRoot=src%2Fapp';
   const MANIFEST = JSON.stringify({ launchAsset: { url: `http://127.0.0.1:1${APP_URL}` } });
   let logsDir: string;
+  let serverRoot: string;
+  let projectRoot: string;
   beforeEach(() => {
     logsDir = mkdtempSync(join(tmpdir(), 'stim-warmup-'));
+    serverRoot = mkdtempSync(join(tmpdir(), 'stim-warmup-root-'));
+    projectRoot = join(serverRoot, 'apps', 'mobile');
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(join(projectRoot, 'index.ts'), '');
   });
   afterEach(() => {
     rmSync(logsDir, { recursive: true, force: true });
+    rmSync(serverRoot, { recursive: true, force: true });
   });
 
   const metroLog = (...lines: string[]) => writeFileSync(join(logsDir, 'metro.ndjson'), `${lines.join('\n')}\n`);
@@ -200,7 +207,7 @@ describe('the bundle URL an app requested earlier', () => {
       requests.push(String(req.url));
       res.end(req.url === '/' ? MANIFEST : '');
     });
-    await warmMetro({ port, platform, isExpo: true, bundleUrl, logsDir });
+    await warmMetro({ port, platform, isExpo: true, bundleUrl, logsDir, root: projectRoot });
     return requests;
   }
 
@@ -241,6 +248,7 @@ describe('the bundle URL an app requested earlier', () => {
     ['only another platform is recorded', () => metroLog(started('android', '/a.bundle?platform=android'))],
     ['the recorded URL is for another platform', () => metroLog(started('ios', '/a.bundle?platform=android'))],
     ['the recorded URL is not a bundle', () => metroLog(started('ios', '/status?platform=ios'))],
+    ['the recorded entry file is gone', () => metroLog(started('ios', APP_URL.replace('index.ts', 'moved.ts')))],
     ['the record has no URL', () => metroLog(started('ios', undefined))],
     ['the log is malformed', () => metroLog('{not json', started('ios', 3))],
   ])('falls back to the Expo manifest when %s', async (_name, setup) => {

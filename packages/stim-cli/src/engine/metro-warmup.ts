@@ -1,5 +1,6 @@
 import { request } from 'node:http';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve as resolvePath, sep } from 'node:path';
 import { rotatedLogPath } from '@stim-cli/core';
 import { acceptsShape, settingDefinition } from '@stim-cli/core/state';
 import { tailLines } from '../devices/activity.ts';
@@ -36,9 +37,26 @@ async function requestLocal(url: URL, platform: string, prefetch: boolean): Prom
   });
 }
 
-function recordedBundleUrl(logsDir: string | null | undefined, platform: 'ios' | 'android'): string | null {
+const ENTRY_EXTENSIONS = ['', '.js', '.jsx', '.ts', '.tsx'];
+
+// Metro resolves the URL path against its server root, which is the project root or one of its ancestors.
+function entryExists(bundlePath: string, root: string): boolean {
+  const entry = decodeURIComponent(bundlePath.replace(/\.bundle\/*$/, ''));
+  if (entry.startsWith('/.expo/')) return true;
+  for (let dir = resolvePath(root); ; dir = dirname(dir)) {
+    const file = resolvePath(dir, `.${entry}`);
+    if (file.startsWith(dir + sep) && ENTRY_EXTENSIONS.some((ext) => existsSync(file + ext))) return true;
+    if (dirname(dir) === dir) return false;
+  }
+}
+
+function recordedBundleUrl(
+  logsDir: string | null | undefined,
+  root: string | null | undefined,
+  platform: 'ios' | 'android',
+): string | null {
   const setting = settingDefinition(`metro.warmupUrl.${platform}`);
-  if (!logsDir || !setting) return null;
+  if (!logsDir || !root || !setting) return null;
   const log = join(logsDir, 'metro.ndjson');
   for (const file of [log, rotatedLogPath(log)]) {
     for (const line of (tailLines(file) ?? []).toReversed()) {
@@ -47,7 +65,8 @@ function recordedBundleUrl(logsDir: string | null | undefined, platform: 'ios' |
         if (
           record?.event === 'bundle_response_started' &&
           record.platform === platform &&
-          acceptsShape(setting, record.url)
+          acceptsShape(setting, record.url) &&
+          entryExists(new URL(record.url, 'http://localhost').pathname, root)
         )
           return record.url;
       } catch {}
@@ -63,6 +82,7 @@ export async function warmMetro({
   appId,
   bundleUrl,
   logsDir,
+  root,
 }: {
   port: number;
   platform: 'ios' | 'android';
@@ -70,6 +90,7 @@ export async function warmMetro({
   appId?: string | null;
   bundleUrl?: string | null;
   logsDir?: string | null;
+  root?: string | null;
 }): Promise<void> {
   try {
     const origin = `http://127.0.0.1:${port}`;
@@ -89,7 +110,7 @@ export async function warmMetro({
       sourcePaths: 'url-server',
       ...(appId ? { app: appId } : {}),
     }).toString();
-    bundleUrl ||= recordedBundleUrl(logsDir, platform);
+    bundleUrl ||= recordedBundleUrl(logsDir, root, platform);
     if (!bundleUrl && isExpo) {
       const body = await requestLocal(new URL(origin), platform, false);
       if (body === null) return;
