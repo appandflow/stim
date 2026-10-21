@@ -116,18 +116,8 @@ struct NoticeStack: View {
   var body: some View {
     ZStack(alignment: .bottom) {
       if let notice = center.current {
-        let behind = min(center.notices.count - 1, 2)
-        ForEach(Array((0..<behind).reversed()), id: \.self) { depth in
-          Card(fill: Palette.raised, border: Palette.separator, clipsContent: false) {
-            Color.clear
-          }
-          .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
-          .padding(.horizontal, CGFloat(depth + 1) * Space.md)
-          .frame(height: 40)
-          .offset(y: CGFloat(depth + 1) * Space.md)
-          .accessibilityHidden(true)
-        }
         NoticeCard(notice: notice, center: center, dismissAll: onDismissAll ?? center.dismissAll)
+          .background(alignment: .bottom) { edges }
           .id(notice.id)
           .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
       }
@@ -137,6 +127,22 @@ struct NoticeStack: View {
     .padding(.bottom, Space.xl + CGFloat(min(max(center.notices.count - 1, 0), 2)) * Space.md)
     .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: center.notices.map(\.id))
     .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: center.index)
+  }
+
+  private var edges: some View {
+    let behind = min(center.notices.count - 1, 2)
+    return ZStack(alignment: .bottom) {
+      ForEach(Array((0..<behind).reversed()), id: \.self) { depth in
+        Card(fill: Palette.raised, border: Palette.separator, clipsContent: false) {
+          Color.clear
+        }
+        .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+        .padding(.horizontal, CGFloat(depth + 1) * Space.md)
+        .frame(height: 40)
+        .offset(y: CGFloat(depth + 1) * Space.md)
+        .accessibilityHidden(true)
+      }
+    }
   }
 }
 
