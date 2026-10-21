@@ -460,7 +460,7 @@ test('warm removes a project-local pnpm store from a copied node_modules and ski
 test('warm removes the Xcode derived data an Expo package left in node_modules, hoisted or in the pnpm store', async () => {
   const hoisted = 'node_modules/expo-modules-jsi/apple';
   const virtual = 'node_modules/.pnpm/expo-modules-jsi@58.0.4_react-native@0.88.0/node_modules/expo-modules-jsi/apple';
-  const other = 'node_modules/.pnpm/expo-modules-jsi-extra@1.0.0/node_modules/expo-modules-jsi-extra/apple';
+  const other = 'node_modules/.pnpm/expo-modules-jsi-extra@1.0.0/node_modules/expo-modules-jsi/apple';
   for (const dir of [hoisted, virtual, other]) {
     write(root, `${dir}/.DerivedData/ModuleCache.noindex/foo.pcm`, 'baked source paths');
     write(root, `${dir}/Package.swift`, 'import PackageDescription');
@@ -474,6 +474,28 @@ test('warm removes the Xcode derived data an Expo package left in node_modules, 
   }
   expect(existsSync(join(target, other, '.DerivedData'))).toBe(true);
 }, 30_000);
+
+test.skipIf(process.platform === 'win32')(
+  'warm removes derived data reached through the pnpm symlink layout, and a symlinked known path without following it (POSIX symlinks; skipped on win32)',
+  async () => {
+    const real = 'node_modules/.pnpm/expo-modules-jsi@58.0.4/node_modules/expo-modules-jsi';
+    write(root, `${real}/apple/.DerivedData/foo.pcm`, 'baked source paths');
+    symlinkSync(
+      '.pnpm/expo-modules-jsi@58.0.4/node_modules/expo-modules-jsi',
+      join(root, 'node_modules/expo-modules-jsi'),
+    );
+    write(base, 'outside/store/blob', 'outside data');
+    symlinkSync(join(base, 'outside/store'), join(root, 'node_modules/.pnpm-store'));
+    const result = await warm();
+    expect(result.failed).toEqual([]);
+    expect(existsSync(join(target, real, 'apple/.DerivedData'))).toBe(false);
+    expect(lstatSync(join(target, real, 'apple')).isDirectory()).toBe(true);
+    expect(lstatSync(join(target, 'node_modules/expo-modules-jsi')).isSymbolicLink()).toBe(true);
+    expect(lstatSync(join(target, 'node_modules/.pnpm-store'), { throwIfNoEntry: false })).toBeUndefined();
+    expect(readFileSync(join(base, 'outside/store/blob'), 'utf-8')).toBe('outside data');
+  },
+  30_000,
+);
 
 test.skipIf(process.platform === 'win32')(
   'warm never removes known paths through a copied symlink that leaves the worktree (POSIX symlinks; skipped on win32)',

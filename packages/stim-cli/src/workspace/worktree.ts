@@ -336,7 +336,12 @@ async function removeCopiedPath(root: string, rel: string, signal: AbortSignal):
   if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return;
   const stat = await lstat(parent);
   const target = join(parent, basename(path));
-  if (!(await lstat(target).catch(() => null))) return;
+  try {
+    await lstat(target);
+  } catch (error) {
+    if (isMissingError(error)) return;
+    throw error;
+  }
   await chmod(parent, stat.mode | 0o700);
   try {
     await removeTemporaryEntryAsync(target, signal);

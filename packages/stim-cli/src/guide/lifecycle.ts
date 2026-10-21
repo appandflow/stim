@@ -2278,7 +2278,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   under a copied android, android/build or android/build/generated (Gradle
   regenerates it for the destination checkout on its next build), and the
   expo-modules-jsi/apple/.DerivedData Xcode build state, directly under
-  node_modules or in the pnpm virtual store. Warm also skips paths
+  node_modules or in the pnpm virtual store. An ignored directory that Git
+  reports above those names (for example an app directory with no tracked
+  files) is copied as is. Warm also skips paths
   overlapping a nested destination worktree or below a symlink ancestor.
   Tracked .idea settings come from Git and stay untouched by warm.
 
