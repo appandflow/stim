@@ -951,6 +951,23 @@ describe('session creation', () => {
     expect(booted.reason).toContain('eas sim failed');
   });
 
+  test('an Expo app without an EAS project gets the EAS link remedy, not the owned-simulator one', async () => {
+    const stderr = [
+      '★ eas-cli@25.3.0 is now available.',
+      'EAS project not configured. This command cannot configure it in non-interactive mode. Run one of the following, then re-run this command:',
+      '  eas init --id <project-id> --non-interactive',
+    ].join('\n');
+    mockExec({ errors: { sim: Object.assign(new Error('simulator command failed.'), { stderr }) } });
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+    expect(booted).toEqual({
+      failed: true,
+      code: 'STIM_REMOTE_EAS_UNAVAILABLE',
+      reason: 'The Expo app is not linked to an EAS project, so no EAS Simulator session was created.',
+      remedy:
+        'Link it with `eas init --id <project-id> --non-interactive` (existing project) or `eas init --account <account-name> --non-interactive` (new project), then run `stim ios --remote eas` again.',
+    });
+  });
+
   test('every eas and agent-device call runs under a deadline', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx());
