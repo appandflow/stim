@@ -46,4 +46,44 @@ private let latest = SemanticVersion("1.14.0")!
     #expect(StimRelease.isDue(lastChecked: now.addingTimeInterval(-86400), now: now))
     #expect(StimRelease.isDue(lastChecked: now.addingTimeInterval(3600), now: now))
   }
+
+  @Test func refetchesACacheTheInstalledStimHasOvertaken() {
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    let installed = SemanticVersion("1.24.0")!
+    let cached = SemanticVersion("1.23.1")!
+    let recent = now.addingTimeInterval(-StimRelease.staleRetryInterval)
+    #expect(StimRelease.isDue(lastChecked: recent, now: now, installed: installed, cachedLatest: cached))
+    #expect(!StimRelease.isDue(lastChecked: recent, now: now, installed: cached, cachedLatest: cached))
+    #expect(!StimRelease.isDue(lastChecked: recent, now: now, installed: cached, cachedLatest: installed))
+  }
+
+  @Test func throttlesTheRefetchWhileTheInstalledStimStaysAheadOfTheRegistry() {
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    let installed = SemanticVersion("1.25.0-rc.1")!
+    let cached = SemanticVersion("1.24.0")!
+    let justChecked = now.addingTimeInterval(-60)
+    #expect(!StimRelease.isDue(lastChecked: justChecked, now: now, installed: installed, cachedLatest: cached))
+  }
+
+  @Test func refetchesWhenTheSettingsIntervalHasPassed() {
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    let interval = StimRelease.settingsInterval
+    #expect(!StimRelease.isDue(lastChecked: now.addingTimeInterval(-interval + 60), now: now, interval: interval))
+    #expect(StimRelease.isDue(lastChecked: now.addingTimeInterval(-interval), now: now, interval: interval))
+  }
+}
+
+@Suite struct StimReleaseShownLatestTests {
+  @Test func neverShowsALatestBelowTheInstalledStim() {
+    let installed = SemanticVersion("1.24.0")!
+    #expect(StimRelease.shownLatest(installed: installed, latest: SemanticVersion("1.23.1")) == nil)
+    #expect(StimRelease.shownLatest(installed: SemanticVersion("1.25.0-rc.1")!, latest: installed) == nil)
+  }
+
+  @Test func showsALatestAtOrAboveTheInstalledStim() {
+    let installed = SemanticVersion("1.24.0")!
+    #expect(StimRelease.shownLatest(installed: installed, latest: installed) == installed)
+    #expect(StimRelease.shownLatest(installed: installed, latest: SemanticVersion("1.25.0")) == SemanticVersion("1.25.0"))
+    #expect(StimRelease.shownLatest(installed: installed, latest: nil) == nil)
+  }
 }
