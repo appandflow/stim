@@ -39,8 +39,7 @@ export default function setup(): () => void {
     });
     try {
       rmSync(root, { recursive: true, force: true, maxRetries: 3 });
-    } catch {
-    }
+    } catch {}
     if (leaked.length === 0) return;
     const counts = new Map<string, number>();
     for (const name of leaked) {
