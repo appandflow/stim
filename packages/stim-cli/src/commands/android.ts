@@ -2,7 +2,7 @@ import type { RuntimePreparationResult } from '../engine/runtime-plan.ts';
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { selectAndroidPlacement } from './android/remote.ts';
 import { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-android.ts';
-import { readHostedAndroid, writeHostedAndroid, writeDevicePlacement } from '../device-host/ios-state.ts';
+import { readHostedAndroid, writeHostedAndroid, writeDevicePlacementAsync } from '../device-host/ios-state.ts';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
@@ -71,12 +71,7 @@ import {
   type RunEstimates,
 } from '../engine/stats.ts';
 import { writeWorkspaceLaunchAsync } from '../supervisor/state.ts';
-import {
-  readWorkspaceState,
-  recordWorkspaceUseAsync,
-  writeWorkspaceState,
-  withWorkspaceStateLockAsync,
-} from '../workspace/workspace-state.ts';
+import { readWorkspaceState, recordWorkspaceUseAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   installAndroidApp,
   launchAndroidApp,
@@ -944,8 +939,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   if ('failure' in hosting) return fail(hosting.failure.code, hosting.failure.message, hosting.failure.remedy);
   const { target, hostedTarget, budget, selectors } = hosting;
   record.devicePlacement = hosting.devicePlacement;
-  const devicePlacement = record.devicePlacement;
-  await withWorkspaceStateLockAsync(root, () => writeDevicePlacement(root, slot, PLATFORM, devicePlacement));
+  await writeDevicePlacementAsync(root, slot, PLATFORM, record.devicePlacement);
   const physical = target.kind === 'physical';
   const remoteBackend = target.kind === 'remote' ? target.backend : null;
   if (hostedTarget) {

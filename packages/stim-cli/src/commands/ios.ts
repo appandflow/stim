@@ -1,7 +1,7 @@
 import type { IosArtifactContext, IosProject } from '../integrations/ios-project.ts';
 import { simulatorRuntime } from '../offload/client.ts';
 import type { RuntimePreparationError, RuntimePreparationResult } from '../engine/runtime-plan.ts';
-import { writeDevicePlacement } from '../device-host/ios-state.ts';
+import { writeDevicePlacementAsync } from '../device-host/ios-state.ts';
 import type { DevicePlacement } from '@stim-cli/core/state';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { devClientPortBusy } from '../device-host/hosted-native.ts';
@@ -68,7 +68,7 @@ import { parseBuildMachineOption } from '../offload/selection.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import type { ReclaimedStep } from '../budget.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
-import { recordWorkspaceUseAsync, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
+import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { ensureDevServer, isPhysicalDeviceRequest, type MobileRuntimePreparation } from './native-runtime.ts';
 import {
@@ -657,8 +657,7 @@ async function runIos(
   const targetRefusal = iosProjectTargetRefusal(integration, { physical, placement: remoteSelection });
   if (targetRefusal) return fail(targetRefusal);
   devicePlacement = remoteSelection.devicePlacement;
-  const placement = devicePlacement;
-  await withWorkspaceStateLockAsync(root, () => writeDevicePlacement(root, slot, PLATFORM, placement));
+  await writeDevicePlacementAsync(root, slot, PLATFORM, devicePlacement);
   const { machine: hostedMachine, backend: remoteBackend } = remoteSelection;
   const viewer = resolveSimulatorAppFlag(
     opts.simulatorApp,
