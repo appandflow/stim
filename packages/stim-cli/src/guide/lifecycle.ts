@@ -100,11 +100,12 @@ hosting Mac keeps Metro local through a private bridge; see hosted-ios. Step 2 r
 Metro while other work happens.
 
 Each time Stim boots an owned local simulator or emulator, it mutes it: iOS
-simulators to volume zero through Xcode's devicectl once SpringBoard has
-finished starting, because SpringBoard resets the volume while it starts, and
-after any SimSlim reconcile, because SimSlim reboots the simulator, and
-Android 15 and later emulators to media volume zero. A device that is already
-running keeps its volume. Turn sound on for one device with Sound (iOS) or
+simulators to volume zero through Xcode's devicectl, and Android 15 and later
+emulators to media volume zero. The iOS mute runs after SimSlim has applied its
+profile and once SpringBoard has finished starting, because both a SimSlim
+reboot and SpringBoard's startup reset the volume. A device that is already
+running keeps its volume, except that SimSlim reboots a running simulator whose
+profile changed. Turn sound on for one device with Sound (iOS) or
 Media sound (Android) in its Stim Desktop options; the choice lasts until that
 device next boots. Android 14 and older images have no shell command that can
 set media volume, so startup warns, as it does whenever a mute is not
