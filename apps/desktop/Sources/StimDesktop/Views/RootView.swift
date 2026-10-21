@@ -1184,6 +1184,7 @@ struct MachineSummary: View {
     HStack(spacing: Space.md) {
       if let error = store.error {
         Label(abbreviatingHome(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
+          .labelStyle(.titleAndIcon)
           .lineLimit(1)
           .frame(maxWidth: 220)
           .help(abbreviatingHome(error))
