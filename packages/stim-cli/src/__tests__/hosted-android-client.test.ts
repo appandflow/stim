@@ -2,6 +2,7 @@ import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { createHash } from 'node:crypto';
 import { Command } from 'commander';
 import logsCommand from '../commands/logs.ts';
+import { parseLogcatLine } from '../collector/android.ts';
 import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { syncHostedLogs, followHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
@@ -20,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   deviceHostMachinesFile,
+  queryLogs,
   readWorkspaceState,
   type HostedAndroidPlacement,
   type HostedAppOffer,
@@ -431,6 +433,27 @@ test('Android errors are paged into the workspace once per slot and stop copies 
   expect(methods.slice(stop + 1).some((entry) => entry.method === 'device-host.logs.query')).toBe(true);
   expect(readFileSync(file, 'utf8')).toContain('stop-time native tail');
   expect(readHostedAndroid(root)).toEqual({});
+});
+
+test('hosted Android --errors keeps a crash run whole and leaves other error lines to --source device', async () => {
+  writeHostedAndroid(root, 'default', placement);
+  const lines = [
+    '1.001 E/Choreographer(10): Skipped 40 frames!',
+    '1.002 E/Choreographer(10): Skipped 41 frames!',
+    '2.001 E/AndroidRuntime(10): FATAL EXCEPTION: main',
+    '2.002 E/AndroidRuntime(10): Process: dev.fixture, PID: 10',
+    '3.001 E/Choreographer(10): Skipped 50 frames!',
+  ];
+  logRecords = lines.map((line) => parseLogcatLine(line)).filter((record) => record !== null);
+  expect(logRecords).toHaveLength(5);
+  const target = await prepareHostedAndroid('mini', {}, placement);
+  await pullHostedNativeLogs(root, 'default', placement, target.host, false, 'android');
+  const dir = workspaceLogsDir(root);
+  expect(queryLogs({ dir, errorsOnly: true }).map((record) => record.msg)).toEqual([
+    'FATAL EXCEPTION: main',
+    'Process: dev.fixture, PID: 10',
+  ]);
+  expect(queryLogs({ dir, errorsOnly: true, sources: ['device'] })).toHaveLength(5);
 });
 
 test('stim logs --errors --json pulls Android native records without progress on stdout', async () => {

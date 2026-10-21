@@ -28,6 +28,7 @@ import { gatewayAddresses, clearHostedMetro } from '../device-host/metro-gateway
 import { reconcileHostedMetro, watchHostedMetro } from '../supervisor/hosted-metro.ts';
 import { getConfigPath, getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { parseLogStreamLine } from '../collector/ios.ts';
 import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { followHostedMacosLogs, followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -1002,9 +1003,10 @@ test('hosted iOS native errors are paged into the workspace once per slot and pu
   expect(
     stored.every((record) => record.src === 'device' && record.platform === 'ios' && record.slot === 'tablet'),
   ).toBe(true);
-  expect(queryLogs({ dir: workspaceLogsDir(root), errorsOnly: true }).map((record) => record.msg)).toEqual([
-    'native 3',
-  ]);
+  expect(queryLogs({ dir: workspaceLogsDir(root), errorsOnly: true })).toEqual([]);
+  expect(
+    queryLogs({ dir: workspaceLogsDir(root), errorsOnly: true, sources: ['device'] }).map((record) => record.msg),
+  ).toEqual(['native 3']);
   logRecords.push(
     ...Array.from({ length: 130 }, (_, index) => ({
       ts: index + 4,
@@ -1022,6 +1024,46 @@ test('hosted iOS native errors are paged into the workspace once per slot and pu
   expect(finalLogs).toContain('final error 130');
   expect(finalLogs.trim().split('\n')).toHaveLength(133);
   expect(readHostedIos(root)).toEqual({});
+});
+
+test('hosted iOS OS log lines leave --errors the way the same lines do on a local simulator', async () => {
+  const lines = [
+    ['com.apple.UIKit', '-[UIApplication statusBarStyle] API has been deprecated and is a no-op on 27.0 and later.'],
+    ['com.apple.coreanimation', 'cannot add handler to 0 from 0 - dropping'],
+    ['com.apple.UIKit', 'button text attributes only respected for UIControlStateNormal'],
+  ].map(([subsystem, eventMessage], index) =>
+    JSON.stringify({
+      eventType: 'logEvent',
+      messageType: 'Error',
+      timestamp: new Date(1_000 + index).toISOString(),
+      processImagePath: '/path/Stim.app/Stim',
+      subsystem,
+      eventMessage,
+    }),
+  );
+  const records = lines.map((line) => parseLogStreamLine(line)).filter((record) => record !== null);
+  expect(records).toHaveLength(3);
+  const local = mkdtempSync(join(tmpdir(), 'stim-local-logs-'));
+  try {
+    writeFileSync(
+      join(local, 'device.ndjson'),
+      records.map((record) => JSON.stringify({ ...record, platform: 'ios', slot: 'default' })).join('\n') + '\n',
+    );
+    writeHostedIos(root, 'default', placement());
+    logRecords = records;
+    const target = await prepareHostedIos('mini', {}, placement());
+    await pullHostedNativeLogs(root, 'default', placement(), target.host);
+    const hosted = workspaceLogsDir(root);
+    for (const criteria of [{ errorsOnly: true }, { errorsOnly: true, sources: ['device'] }, {}]) {
+      expect(queryLogs({ dir: hosted, ...criteria }).map((record) => record.msg)).toEqual(
+        queryLogs({ dir: local, ...criteria }).map((record) => record.msg),
+      );
+    }
+    expect(queryLogs({ dir: hosted, errorsOnly: true })).toEqual([]);
+    expect(queryLogs({ dir: hosted, errorsOnly: true, sources: ['device'] })).toHaveLength(3);
+  } finally {
+    rmSync(local, { recursive: true, force: true });
+  }
 });
 
 test('an older host gets no iOS log queries and follow warns once while retaining copied logs', async () => {

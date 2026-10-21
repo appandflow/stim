@@ -116,10 +116,7 @@ export function bundleMarkerPlatform(record: NdjsonRecord): string | null {
 }
 
 function isAppDeviceRecord(record: NdjsonRecord): boolean {
-  return (
-    record.src === 'device' &&
-    (record.event === 'native_crash' || record.event === 'hosted_native_log' || record.platform === 'web')
-  );
+  return record.src === 'device' && (record.event === 'native_crash' || record.platform === 'web');
 }
 
 export function recordMatches(record: NdjsonRecord | null | undefined, criteria: QueryCriteria = {}): boolean {
