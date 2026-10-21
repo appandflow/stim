@@ -1,3 +1,4 @@
+import { isJsonObject } from '@stim-cli/core/state';
 import type { StimContext } from '@stim-cli/core';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { removeMetroReverses } from './android.ts';
@@ -15,8 +16,9 @@ function readRecords(state: { [key: string]: unknown } | null | undefined): Reco
   const records: Record<string, PhoneReverseRecord> = {};
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return records;
   for (const [key, value] of Object.entries(raw)) {
-    const entry = value as Partial<PhoneReverseRecord> | null;
-    if (typeof entry?.serial !== 'string' || !Array.isArray(entry.ports) || !parseDeviceSlotKey(key)) continue;
+    if (!isJsonObject(value)) continue;
+    const entry = value;
+    if (typeof entry.serial !== 'string' || !Array.isArray(entry.ports) || !parseDeviceSlotKey(key)) continue;
     records[key] = {
       serial: entry.serial,
       ports: entry.ports.filter((port) => Number.isSafeInteger(port) && port > 0),

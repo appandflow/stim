@@ -538,7 +538,10 @@ async function stopWorkspace({
       operation?.signal.throwIfAborted();
       report(
         chalk.yellow(
-          phaseLine('device', `could not remove the adb reverse from the phone: ${(error as Error).message}`),
+          phaseLine(
+            'device',
+            `could not remove the adb reverse from the phone: ${error instanceof Error ? error.message : error}`,
+          ),
         ),
       );
     }

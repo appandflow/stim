@@ -1106,7 +1106,9 @@ async function notePhoneReverse(
     out(
       phaseLine(
         'state',
-        chalk.yellow(`could not record the adb reverse on ${serial}: ${(error as Error)?.message || error}`),
+        chalk.yellow(
+          `could not record the adb reverse on ${serial}: ${error instanceof Error ? error.message : error}`,
+        ),
       ),
     );
   }
