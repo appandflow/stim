@@ -3,10 +3,13 @@
 A local Expo build-cache provider that shares `.app` and `.apk` artifacts across
 worktrees and direct Expo builds.
 Stim and Expo CLI compute the fingerprint that keys this cache separately, and
-Stim ignores two machine-local Android paths (`android/local.properties`,
-`android/.idea`) that Expo CLI does not. On a machine where those exist, the
-two hashes differ and each side fills its own entry. List them in the project's
-`.fingerprintignore` to bring the hashes back together.
+Stim ignores machine-local and generated paths that Expo CLI does not:
+`android/local.properties`, `android/.idea`, Xcode's `*.xcodeproj/xcuserdata`,
+and, while a `.gitignore` pattern matches them (even when committed), the
+`react-native bundle` output `ios/main.jsbundle` and `ios/assets`. On a
+machine where those exist, the two hashes differ and each side fills its own
+entry. List them in the project's `.fingerprintignore` to bring the hashes back
+together.
 
 If Stim is not installed globally, replace `stim` with `npx stim`.
 

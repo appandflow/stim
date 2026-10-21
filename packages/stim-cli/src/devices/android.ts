@@ -1347,6 +1347,53 @@ export async function shutdownAndroidEmulator(
   await run(['-s', serial, 'emu', 'kill'], Math.max(1, timeoutMs - (Date.now() - started)));
 }
 
+function reverseDevicePortsTo(listing: unknown, hostPort: number): string[] {
+  return String(listing ?? '')
+    .split('\n')
+    .flatMap((line) => {
+      const [, device, host] = line.trim().split(/\s+/);
+      return device?.startsWith('tcp:') && host === `tcp:${hostPort}` ? [device] : [];
+    });
+}
+
+/**
+ * Removes the reverses that point an owned emulator at `metroPort`, verified by the emulator's own
+ * console. The adb server connects a reverse stream from the device to the host port synchronously
+ * on its single event thread (packages/modules/adb services.cpp `service_to_fd`), and on Windows a
+ * refused loopback connect takes seconds, so an app retrying a stopped Metro stalls every adb call.
+ * https://github.com/appandflow/stim/issues/4101
+ */
+export async function removeOwnedEmulatorMetroReverses(
+  avdName: string,
+  serial: string,
+  metroPort: number,
+  operation?: StimContext,
+): Promise<void> {
+  if ((await getAvdNameForSerialAsync(serial, { operation })) !== avdName) return;
+  const adb = androidToolPath('adb', process.platform, operation?.env);
+  const options = {
+    timeoutMs: ADB_PROP_TIMEOUT_MS,
+    killSignal: 'SIGKILL' as const,
+    cwd: androidToolCwd() ?? operation?.cwd,
+  };
+  const listing = await runOperationFileQuiet(
+    operation,
+    getExecutor(),
+    adb,
+    ['-s', serial, 'reverse', '--list'],
+    options,
+  );
+  for (const devicePort of reverseDevicePortsTo(listing, metroPort)) {
+    await runOperationFileQuiet(
+      operation,
+      getExecutor(),
+      adb,
+      ['-s', serial, 'reverse', '--remove', devicePort],
+      options,
+    );
+  }
+}
+
 function avdProcessLockPaths(avdDirectory: string, platform: NodeJS.Platform): string[] {
   const names = ['hardware-qemu.ini.lock', 'userdata-qemu.img.lock'];
   return names.map((name) => join(avdDirectory, name, ...(platform === 'win32' ? ['pid'] : [])));

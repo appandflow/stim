@@ -56,6 +56,7 @@ export interface AndroidArtifactRecipe {
       | Parameters<typeof chooseBuildMachine>[0]['target']
       | Promise<Parameters<typeof chooseBuildMachine>[0]['target']>;
     request: Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'android' }>;
+    fingerprintInputs?: Parameters<typeof offloadBuild>[0]['fingerprintInputs'];
     unchanged(): Promise<boolean>;
   } | null;
 }

@@ -678,7 +678,7 @@ test('the agent and cleanup guides shut down owned simulators without an occupan
 test('the guide names every path Stim ignores by default', () => {
   const lifecycle = renderSection('lifecycle', 'builds') ?? '';
   for (const path of DEFAULT_FINGERPRINT_IGNORES) {
-    const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*$/, '');
+    const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*(\/\*)?$/, '');
     expect(lifecycle).toContain(bare);
   }
 });

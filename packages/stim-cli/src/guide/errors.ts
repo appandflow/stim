@@ -394,6 +394,13 @@ Unlisted or unpaired names refuse at setup before consulting the cache, without
 a build record or failed-run stats. A listed paired name with a cache hit needs
 no build and does not contact the selected machine.
 
+A fingerprint-mismatch reason means the worker fingerprints the synced
+checkout differently. It names the sources that differ and the files pod
+install or prebuild rewrote there. Stim already sends the gitignored files the
+fingerprint reads, such as .env.local. Make the named input agree on both Macs,
+for example by committing the lockfile pod install rewrote there; pairing does
+not change it.
+
 Run stim doctor --fix to ask for build access if not paired. Check
 stim settings get remote.machines. A person on the worker approves this machine
 by running the stim-server setup command doctor --fix printed, with its ticket

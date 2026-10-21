@@ -7110,7 +7110,14 @@ describe('strict remote machine selection', () => {
     expect(build).not.toHaveBeenCalled();
   });
 
-  test.each(['sync failed'])('remote %s never falls back to Gradle', async (reason) => {
+  test.each([
+    ['sync failed', /doctor --fix/],
+    [
+      'fingerprint-mismatch: the checkout there fingerprints a, here b; differing sources: expoConfig',
+      /^(?!.*doctor --fix).*sources that differ/,
+    ],
+    ['fingerprint-mismatch: The worker resolved a different native artifact identity.', /doctor --fix/],
+  ])('remote %s never falls back to Gradle', async (reason, remedy) => {
     configureMini();
     const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
@@ -7120,6 +7127,7 @@ describe('strict remote machine selection', () => {
     const result = await harness({ buildMachine: 'mini', build, acquireSlot: slot }).run();
     expect(result.error?.code).toBe('STIM_OFFLOAD_REFUSED');
     expect(result.error?.message).toContain(reason);
+    expect(result.error?.remedy).toMatch(remedy);
     expect(build).not.toHaveBeenCalled();
     expect(slot).not.toHaveBeenCalled();
     expect(readLastBuilds(readWorkspaceState(root)).android?.errorCode).toBe('STIM_OFFLOAD_REFUSED');

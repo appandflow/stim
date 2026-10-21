@@ -1975,6 +1975,20 @@ export function protocolJsonSchema(): JsonSchema {
               scheme: { type: ['string', 'null'] },
               runtime: { type: ['string', 'null'], minLength: 1 },
               fingerprint: { type: ['string', 'null'], minLength: 1 },
+              fingerprintSources: {
+                type: 'array',
+                maxItems: 20000,
+                description: 'The id and hash of each source of fingerprint, to name the sources that differ.',
+                items: {
+                  type: 'object',
+                  required: ['id', 'hash'],
+                  additionalProperties: false,
+                  properties: {
+                    id: { type: 'string', minLength: 1, maxLength: 1024 },
+                    hash: { type: ['string', 'null'], pattern: '^[0-9a-f]{1,128}$' },
+                  },
+                },
+              },
               native: {
                 oneOf: [
                   {
