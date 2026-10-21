@@ -9,12 +9,7 @@ export interface MacosArtifactRecipe {
   arguments: string[];
   bundleId: string;
   cache?: MacosArtifactCache;
-  compile(context: {
-    scratch: string;
-    temporary: string;
-    writer: NdjsonWriter;
-    note: (line: string) => void;
-  }): Promise<string>;
+  compile(context: { scratch: string; writer: NdjsonWriter; note: (line: string) => void }): Promise<string>;
   stage(bin: string, bundle: string, bundleId: string, displayName?: string): Promise<void>;
   validateFetched(bundle: string, bundleId: string, displayName?: string): Promise<void>;
   offload: {

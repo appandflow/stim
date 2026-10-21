@@ -1773,8 +1773,9 @@ inside a registered project, holds a live or unverifiable ownership claim or
 a `.lock` directory with no claim set, or cannot be listed, and keeps a recording that
 cannot be read, and keeps every recording while `xctrace` or Instruments runs and every
 SwiftPM temp directory while a `swift` or `xcodebuild` process runs, or when the
-process list cannot be read. Stim's own SwiftPM macOS builds run `swift` with a
-`TMPDIR` of their own, in the workspace or the build worker's area, and remove it afterwards. Jest's cache is never deleted. gc never
+process list cannot be read. Stim's own SwiftPM macOS builds run `swift` with the
+ambient `TMPDIR`, because SwiftPM keeps the locks for its shared caches there, so
+their temp directories land here too. Jest's cache is never deleted. gc never
 follows a symlink or acts outside `TMPDIR`, and with `STIM_HOME` set it skips
 them. Automatic maintenance runs the same deletion at disk pressure level 2.
 

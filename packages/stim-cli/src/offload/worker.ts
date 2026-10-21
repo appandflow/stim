@@ -80,7 +80,6 @@ import {
   validateGradleManifest,
   verifyGradleTransfer,
 } from '../integrations/native-gradle-inputs.ts';
-import { withScratchTmpdir } from '../temporary.ts';
 import { writeConfigSetting } from '../workspace/config.ts';
 import {
   nativeGradleArtifactSnapshotFromReceipt,
@@ -1076,38 +1075,32 @@ async function compileMacos(
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no SwiftPM options.' };
   const src = join(job.area, 'src');
   const scratch = join(job.area, 'macos', job.project.replaceAll('/', '_') || 'root');
-  const swiftTmp = join(job.area, 'tmp', job.job);
-  const run = (args: string[], capture = false): Promise<string> =>
-    withScratchTmpdir(swiftTmp, async () => {
-      const child = getExecutor().spawn('swift', args, {
-        cwd: root,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...context.env, TMPDIR: swiftTmp },
-      });
-      let stdout = '';
-      let firstError: string | null = null;
-      const tail: string[] = [];
-      const write = (msg: string) => {
-        const plain = stripAnsi(msg);
-        if (firstError === null && /\.swift:\d+:\d+: error:/.test(plain)) firstError = plain;
-        tail.push(plain);
-        if (tail.length > 3) tail.shift();
-        note('build', msg);
-        log.write({ src: 'build', platform: 'macos', level: 'debug', msg });
-      };
-      child.stdout?.on('data', (chunk: Buffer) => {
-        if (capture) stdout += chunk.toString('utf8');
-      });
-      if (child.stdout) logLines(child.stdout, write);
-      if (child.stderr) logLines(child.stderr, write);
-      await new Promise<void>((done, reject) => {
-        child.once('error', reject);
-        child.once('close', (code) =>
-          code === 0 ? done() : reject(new Error(firstError ?? (tail.join(' | ') || `swift build failed (${code})`))),
-        );
-      });
-      return stdout.trim();
+  const run = async (args: string[], capture = false): Promise<string> => {
+    const child = getExecutor().spawn('swift', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let firstError: string | null = null;
+    const tail: string[] = [];
+    const write = (msg: string) => {
+      const plain = stripAnsi(msg);
+      if (firstError === null && /\.swift:\d+:\d+: error:/.test(plain)) firstError = plain;
+      tail.push(plain);
+      if (tail.length > 3) tail.shift();
+      note('build', msg);
+      log.write({ src: 'build', platform: 'macos', level: 'debug', msg });
+    };
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (capture) stdout += chunk.toString('utf8');
     });
+    if (child.stdout) logLines(child.stdout, write);
+    if (child.stderr) logLines(child.stderr, write);
+    await new Promise<void>((done, reject) => {
+      child.once('error', reject);
+      child.once('close', (code) =>
+        code === 0 ? done() : reject(new Error(firstError ?? (tail.join(' | ') || `swift build failed (${code})`))),
+      );
+    });
+    return stdout.trim();
+  };
   try {
     const extras = resolveBundleExtras(src, src, options.resources, options.assetCatalog);
     const query: BuildSwiftpmArtifactQuery | null =
