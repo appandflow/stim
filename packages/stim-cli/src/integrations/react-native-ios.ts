@@ -520,7 +520,7 @@ function reactNativeIosArtifact(
       physical || !cachePolicy.remote || buildProfile || buildScheme
         ? null
         : {
-            load: () => d.loadProjectProvider(root, { context: operation, isExpo }),
+            load: () => d.loadProjectProvider(root, { context: operation, isExpo, sources: fingerprintSources }),
             runOptions: iosProviderRunOptions(configuration, target.keyArch),
           },
     offload: {

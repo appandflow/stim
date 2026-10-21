@@ -13,7 +13,7 @@ import { spawnDeclared } from './spawn-claims.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { killOnAbort } from '../workspace/git-read.ts';
 import { operationState } from './operation-state.ts';
-import { cleanLine } from '../supervisor/server-expo.ts';
+import { cleanLine, expoTelemetryEnv } from '../supervisor/server-expo.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
 
 export const JS_BUNDLE_NAME = 'main.jsbundle';
@@ -369,7 +369,7 @@ export async function swapJsBundle({
       spawn(invocation.file, invocation.args, {
         cwd: root,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...(context?.env ?? process.env), FORCE_COLOR: '0' },
+        env: { ...(context?.env ?? process.env), ...expoTelemetryEnv(context?.env ?? process.env), FORCE_COLOR: '0' },
       }),
     );
     killOnAbort(context ? (operationState(context).runSignal ?? context.signal) : undefined)(child);

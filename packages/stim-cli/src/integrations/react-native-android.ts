@@ -375,7 +375,7 @@ function reactNativeAndroidArtifact(
       target.abi || cas || profile || !buildPlan.cache.remote
         ? null
         : {
-            load: () => loadProvider(root, { context: operation, isExpo }),
+            load: () => loadProvider(root, { context: operation, isExpo, sources: initialSources }),
             runOptions: Object.keys(runOptions).length ? runOptions : null,
           },
     offload: {

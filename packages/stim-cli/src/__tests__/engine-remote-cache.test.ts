@@ -22,6 +22,7 @@ import {
 } from '../engine/remote-cache.ts';
 import { makeError } from './_factories.ts';
 import assert from 'node:assert';
+import type { FingerprintSource } from '@expo/fingerprint';
 
 let root: string;
 
@@ -137,6 +138,16 @@ describe('runOptionsFor', () => {
   });
 });
 
+function writeDynamicConfigProject() {
+  writeProviderModule('app.config.js', 'module.exports = {};');
+  mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
+  writeFileSync(join(root, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n');
+}
+
+function expoConfigSource(config: Record<string, unknown>): FingerprintSource[] {
+  return [{ type: 'contents', id: 'expoConfig', contents: JSON.stringify(config), reasons: ['expoConfig'], hash: 'h' }];
+}
+
 describe('readProjectConfig', () => {
   test('a static app.json is parsed directly, with no child process at all', async () => {
     writeAppJson({ expo: { buildCacheProvider: 'eas' } });
@@ -177,6 +188,25 @@ describe('readProjectConfig', () => {
     expect(call.opts?.timeoutMs).toBe(CONFIG_TIMEOUT_MS);
     expect(read.source).toBe('app.config.js');
     expect(providerFromConfig(read.config)).toEqual({ plugin: './p.cjs' });
+  });
+
+  test('the config child runs with Expo telemetry off unless the user chose a value', async () => {
+    writeDynamicConfigProject();
+    const seen: (Record<string, string> | undefined)[] = [];
+    const run = (_file: string, _args: string[], opts: { env?: Record<string, string> }) => {
+      seen.push(opts.env);
+      return '{}';
+    };
+    await readProjectConfig(root, { run });
+    const original = process.env.EXPO_NO_TELEMETRY;
+    process.env.EXPO_NO_TELEMETRY = '0';
+    try {
+      await readProjectConfig(root, { run });
+    } finally {
+      if (original === undefined) delete process.env.EXPO_NO_TELEMETRY;
+      else process.env.EXPO_NO_TELEMETRY = original;
+    }
+    expect(seen).toEqual([{ EXPO_NO_TELEMETRY: '1' }, {}]);
   });
 
   test('a dynamic config with no installed expo is unavailable, never guessed from app.json', async () => {
@@ -288,6 +318,71 @@ describe('loadProjectProvider', () => {
     writeAppJson({ expo: { buildCacheProvider: 'my-bucket' } });
     const result = await loadProjectProvider(root);
     expect(result.unavailable).toMatch(/not "eas" or \{ plugin/);
+  });
+});
+
+describe('loadProjectProvider with the fingerprint config', () => {
+  const countingRun = () => {
+    const calls: string[][] = [];
+    return {
+      calls,
+      run: (_file: string, args: string[]) => {
+        calls.push(args);
+        return JSON.stringify({ name: 'app' });
+      },
+    };
+  };
+
+  test('a dynamic config the fingerprint evaluated is not evaluated again', async () => {
+    writeDynamicConfigProject();
+    const { calls, run } = countingRun();
+    const result = await loadProjectProvider(root, { run, sources: expoConfigSource({ name: 'app' }) });
+    expect(result).toEqual({ none: true });
+    expect(calls).toEqual([]);
+  });
+
+  test("the fingerprint's buildCacheProvider is the one used", async () => {
+    writeDynamicConfigProject();
+    const { calls, run } = countingRun();
+    const result = await loadProjectProvider(root, {
+      run,
+      sources: expoConfigSource({ buildCacheProvider: { plugin: './p.cjs' } }),
+    });
+    expect(result.unavailable).toMatch(/Custom Expo buildCacheProvider plugins are not supported/);
+    expect(calls).toEqual([]);
+  });
+
+  test('without an expoConfig source the config is evaluated once', async () => {
+    writeDynamicConfigProject();
+    const { calls, run } = countingRun();
+    const unrelated: FingerprintSource[] = [{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: 'h' }];
+    expect(await loadProjectProvider(root, { run, sources: unrelated })).toEqual({ none: true });
+    expect(await loadProjectProvider(root, { run, sources: [] })).toEqual({ none: true });
+    expect(calls).toEqual([
+      ['config', '--json', root],
+      ['config', '--json', root],
+    ]);
+  });
+
+  test('the EAS provider keeps its owner from the fingerprint, and reads it when the fingerprint dropped it', async () => {
+    writeDynamicConfigProject();
+    const { calls, run } = countingRun();
+    await loadProjectProvider(root, {
+      run,
+      sources: expoConfigSource({ buildCacheProvider: 'eas', owner: 'th3rd-wave' }),
+    });
+    expect(calls).toEqual([]);
+    await loadProjectProvider(root, { run, sources: expoConfigSource({ buildCacheProvider: 'eas' }) });
+    expect(calls).toEqual([['config', '--json', root]]);
+  });
+
+  test('a static app.json is read from the file, not from the fingerprint', async () => {
+    writeAppJson({ expo: { buildCacheProvider: { plugin: LOCAL_PROVIDER_PACKAGE } } });
+    const { calls, run } = countingRun();
+    expect(await loadProjectProvider(root, { run, sources: expoConfigSource({ buildCacheProvider: 'eas' }) })).toEqual({
+      none: true,
+    });
+    expect(calls).toEqual([]);
   });
 });
 
