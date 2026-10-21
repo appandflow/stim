@@ -12,7 +12,7 @@ import {
 } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
 import { macosAppPresent } from '../macos/state.ts';
-import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { WorkspaceProcessCleanupError, withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import {
   NATIVE_RUN_LOCK,
   NATIVE_RUN_WAIT_MS,
@@ -1082,7 +1082,19 @@ async function shutDownDevices(
     }
     device[key] = reportDevice(label, outcome.value, report, kind);
   });
-  for (const outcome of settled) if (outcome.status === 'rejected') throw outcome.reason;
+  const rejected = settled.flatMap((outcome) => (outcome.status === 'rejected' ? [outcome.reason] : []));
+  const cleanup = rejected.filter((reason) => reason instanceof WorkspaceProcessCleanupError);
+  if (cleanup.length > 1) {
+    throw Object.assign(
+      new WorkspaceProcessCleanupError(
+        [...new Set(cleanup.flatMap((error) => error.claims))],
+        cleanup.map((error) => error.message).join(' '),
+        'Verify the device operations and their descendants have stopped.',
+      ),
+      { reportCleanup: true },
+    );
+  }
+  if (rejected.length > 0) throw cleanup[0] ?? rejected[0];
   return device;
 }
 

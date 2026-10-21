@@ -27,6 +27,8 @@ import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { recordPhoneReverse } from '../devices/phone-reverses.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { tryAcquireClaim } from '../ownership-claim.ts';
 
 test('a live legacy supervisor is retained without signalling or releasing its port', async () => {
   const { calls, opts } = seams({
@@ -673,6 +675,72 @@ describe('devices shut down concurrently', () => {
     await expect(runStop(opts)).rejects.toThrow('claims retained');
     expect(events).toEqual(['android:end']);
     expect(lines.some((line) => line.includes('shut down stim-app'))).toBe(true);
+  });
+
+  const retained = (name: string, message: string) => {
+    const claim = tryAcquireClaim({ root: join(tmpHome, `${name}.claims`), mode: 'exclusive', label: name }).acquired;
+    if (!claim) throw new Error('The private fixture claim was not acquired');
+    return new WorkspaceProcessCleanupError([claim], message, 'Verify the child.');
+  };
+
+  test('two rejected teardowns surface one error naming both retained claims', async () => {
+    const { opts } = seams({
+      project: bothDevices,
+      teardownIos: async () => {
+        throw retained('ios', 'ios teardown unresolved.');
+      },
+      teardownAvd: async () => {
+        await delay(10);
+        throw retained('android', 'android teardown unresolved.');
+      },
+    });
+    const error = await runStop(opts).then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(WorkspaceProcessCleanupError);
+    if (!(error instanceof WorkspaceProcessCleanupError)) return;
+    expect(error.code).toBe('STIM_CLAIM_UNAVAILABLE');
+    expect(error.claims.map((claim) => claim.label)).toEqual(['ios', 'android']);
+    for (const claim of error.claims) {
+      expect(error.message).toContain(claim.path);
+      expect(error.remedy).toContain(claim.path);
+    }
+    expect(error.message).toContain('ios teardown unresolved.');
+    expect(error.message).toContain('android teardown unresolved.');
+  });
+
+  test('a cleanup error is surfaced ahead of a non-cleanup rejection from another device', async () => {
+    const { opts } = seams({
+      project: bothDevices,
+      teardownIos: async () => {
+        throw new Error('aborted');
+      },
+      teardownAvd: async () => {
+        throw retained('android', 'android teardown unresolved.');
+      },
+    });
+    await expect(runStop(opts)).rejects.toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      claims: [{ label: 'android' }],
+    });
+  });
+
+  test('one rejected teardown names its claim while the finished device is still reported', async () => {
+    const lines: string[] = [];
+    const { opts } = seams({
+      report: (line: string) => lines.push(line),
+      project: bothDevices,
+      teardownIos: async () => {
+        throw retained('ios', 'ios teardown unresolved.');
+      },
+      teardownAvd: async () => ({ status: 'torn-down', label: 'stim-app' }),
+    });
+    await expect(runStop(opts)).rejects.toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      claims: [{ label: 'ios' }],
+    });
+    expect(lines.filter((line) => line.includes('shut down stim-app'))).toHaveLength(1);
   });
 });
 
