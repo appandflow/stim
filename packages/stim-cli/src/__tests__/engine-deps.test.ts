@@ -165,6 +165,7 @@ describe('podEnvForRuby (#43, #44)', () => {
     });
     expect(env.PATH).toBe(`${rvmBin}${delimiter}/usr/bin`);
     expect(env.GEM_HOME).toBe(rvmGems);
+    expect(env.GEM_PATH).toBe([rvmGems, `${rvmGems}@global`].join(delimiter));
     const none = podEnvForRuby('3.3.10', {
       env: { PATH: '/usr/bin' },
       home: '/home/u',
@@ -173,6 +174,23 @@ describe('podEnvForRuby (#43, #44)', () => {
     });
     expect(none.PATH).toBe('/usr/bin');
     expect(none.GEM_HOME).toBeUndefined();
+  });
+
+  test("gives a pinned rvm Ruby the gemset and @global bins and GEM_PATH that 'rvm use' sets", () => {
+    const rvm = join('/home/u', '.rvm');
+    const gems = join(rvm, 'gems', 'ruby-3.4.8');
+    const global = `${gems}@global`;
+    const ruby = join(rvm, 'rubies', 'ruby-3.4.8', 'bin');
+    const present = new Set([ruby, gems, join(gems, 'bin'), join(global, 'bin')]);
+    const env = podEnvForRuby('3.4.8', {
+      env: { PATH: '/usr/bin' },
+      home: '/home/u',
+      exists: (p) => present.has(p),
+      loginEnv: () => null,
+    });
+    expect(env.PATH).toBe([join(gems, 'bin'), join(global, 'bin'), ruby, '/usr/bin'].join(delimiter));
+    expect(env.GEM_HOME).toBe(gems);
+    expect(env.GEM_PATH).toBe([gems, global].join(delimiter));
   });
 
   test("uses rvm's default Ruby without reading the login shell when the project pins none", () => {
