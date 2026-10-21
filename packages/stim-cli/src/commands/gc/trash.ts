@@ -59,7 +59,7 @@ async function worktreeKept(worktree: string): Promise<string | null> {
     if (code === 'ENOENT' || code === 'ENOTDIR') return null;
     return `its worktree ${worktree} cannot be checked (${String(code ?? 'unknown error')})`;
   }
-  return `its worktree ${worktree} still exists; run \`stim worktree remove\` on it to finish the removal, then gc deletes this entry`;
+  return `its worktree ${worktree} still exists; if it is the one this entry came from, run \`stim worktree remove\` on it to finish the removal, then gc deletes this entry`;
 }
 
 async function readManifest(dir: string): Promise<TrashManifest | null> {

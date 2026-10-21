@@ -50,13 +50,7 @@ test.skipIf(!POSIX)(
     plantClaim(join(crashed, 'claims'), 'exclusive', goneClaimOwner());
 
     const report = await collectTrash();
-    expect(
-      report?.entries.map(({ path, worktree, willDelete }) => ({
-        path,
-        worktree,
-        willDelete,
-      })),
-    ).toEqual(
+    expect(report?.entries.map(({ path, worktree, willDelete }) => ({ path, worktree, willDelete }))).toEqual(
       [
         { path: crashed, worktree: '/w/gone', willDelete: true },
         { path: live.dir, worktree: join(base, 'live'), willDelete: false },
