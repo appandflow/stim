@@ -1,9 +1,9 @@
 import { plural, t } from '@lingui/core/macro';
+import { STALE_MS } from '@stim-cli/core/oversight';
 
 import { agentsSummary, workspaceAgentSessions } from '@/lib/agents';
 import type { HomeItem } from '@/lib/home';
 import { rowProblems, rowStatus, type RowProblem, type RowStatus } from '@/lib/home-list';
-import { STALE_MS } from '@stim-cli/core/oversight';
 import { worktreePage } from '@/lib/worktree-page';
 import { gitChip } from '@/lib/workspace-view';
 import { devicesOf, isActive, platformName } from '@/lib/workspaces';
