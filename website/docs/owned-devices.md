@@ -655,6 +655,8 @@ back through it in the Stim phone app.
   3 days (`maintenance.deviceIdleDays`) otherwise, and `gc.worktreeGraceMinutes`
   for a workspace whose worktree is finished but kept. A workspace pinned with
   `maintenance.keep` keeps its devices. `stim status` shows the disk they use.
+  Its daily age sweep also deletes parked simulators and emulators parked for
+  `maintenance.olderThanDays` (7 days; 0 never), through centralized teardown.
 - `stim gc` reports stale and orphaned resources. `stim gc --json` prints the
   same report as one JSON object.
 - `stim gc --delete` removes verified resources from the report, including

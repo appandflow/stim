@@ -237,9 +237,15 @@ async function shutDownIdleDevice(action: MaintenanceAction): Promise<ActionOutc
 
 async function deleteParkedDevice(action: MaintenanceAction): Promise<ActionOutcome> {
   if (deviceSweepIsScoped()) return kept('STIM_HOME scopes this config, and devices are machine-wide');
-  const sims = (await collectParkedSims({})).filter((sim) => sim.udid === action.target);
-  const avds = sims.length ? [] : (await collectParkedAvds({})).filter((avd) => avd.name === action.target);
-  if (!sims.length && !avds.length) return kept('it is no longer parked');
+  const age = { olderThanDays: action.olderThanDays ?? null, now: Date.now() };
+  const sims = (await collectParkedSims({}, age)).filter((sim) => sim.udid === action.target);
+  const avds = sims.length ? [] : (await collectParkedAvds({}, age)).filter((avd) => avd.name === action.target);
+  if (!sims.length && !avds.length)
+    return kept(
+      action.olderThanDays === undefined
+        ? 'it is no longer parked'
+        : `it is no longer parked, or was parked within ${action.olderThanDays} days`,
+    );
   const before = lowestFree(measureDisk());
   const { results } = await quietly(async () => (await deleteParkedSims(sims)) + (await deleteParkedAvds(avds)));
   return outcomeOf(results, freedSince(before));

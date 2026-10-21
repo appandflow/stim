@@ -731,11 +731,12 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'maintenance.olderThanDays',
-    type: { kind: 'number', integer: true, minimum: 1 },
+    type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,
     default: 7,
     env: 'STIM_MAINTENANCE_OLDER_THAN_DAYS',
-    description: 'Age in days for the age sweep: unused workspace build outputs and shared cache entries',
+    description:
+      'Days unused before the age sweep removes it: workspace build outputs, shared cache entries, parked simulators and emulators, and, with maintenance.removeIdleWorktrees, clean pushed linked worktrees; 0 turns those age removals off',
   },
   {
     key: 'maintenance.deviceIdleDays',
@@ -798,6 +799,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     env: 'STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES',
     description:
       'Remove clean linked worktrees whose branch or pull request finished, under gc.worktreeGraceMinutes, and at disk pressure level 3 clean, pushed ones with no commits of their own',
+  },
+  {
+    key: 'maintenance.removeIdleWorktrees',
+    type: BOOLEAN,
+    scopes: MACHINE,
+    default: false,
+    env: 'STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES',
+    description:
+      'In the age sweep, also remove clean, pushed linked worktrees whose branch is not merged once no Stim command has used them for maintenance.olderThanDays, with their git-ignored files; needs maintenance.removeFinishedWorktrees',
   },
   {
     key: 'maintenance.keep',

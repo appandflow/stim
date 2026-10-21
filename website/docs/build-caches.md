@@ -484,12 +484,29 @@ stops the disk-driven ones once free space is back above the floor:
    on-disk content store, whose entries live inside shared database files, so
    Stim cannot remove only the entries a running build does not need.
 5. Linked worktrees whose branch or pull request finished, by the same rules as
-   `stim gc --delete` and `gc.worktreeGraceMinutes`.
-6. Owned simulators and emulators of a finished worktree that is kept, such as
+   `stim gc --delete` and `gc.worktreeGraceMinutes`. With
+   `maintenance.removeIdleWorktrees true` (off by default), the daily sweep also
+   removes clean, pushed linked worktrees unused for `maintenance.olderThanDays`,
+   as `stim gc --delete --worktrees --older-than <days>` removes them. A dirty
+   worktree, one with unpushed commits, the source checkout and one whose last
+   use is unknown are never removed. `maintenance.removeFinishedWorktrees false`
+   turns off both.
+6. Parked simulators and emulators unused for `maintenance.olderThanDays` in the
+   daily sweep, deleted through centralized teardown after their ownership is
+   checked again.
+7. Owned simulators and emulators of a finished worktree that is kept, such as
    a dirty one, once idle for `gc.worktreeGraceMinutes`, and of any workspace
    idle for `maintenance.deviceIdleDays` (3 days) in the daily sweep. Idle
    means no dev server, native run, build, lease, managed lock, driven or busy
    device, and no recorded use. The next run recreates them.
+
+The daily sweep covers what Stim Desktop's nightly cleanup does. It runs in
+the background of Stim commands every `maintenance.sweepHours` (24), never at a
+set hour, and waits while the host load is over `maintenance.maxLoadPerCore`.
+`maintenance.olderThanDays` (7) is the age for steps 2, 3, 5 and 6; set it to 0
+and the sweep removes nothing in them by age. Step 1, step 7 (which
+`maintenance.deviceIdleDays` controls), finished worktrees, and the cap and
+low-disk parts of steps 2 and 3 still run.
 
 A pass keeps a workspace that is in use, holds a lock, was used within
 `maintenance.protectRecentHours`, or is the workspace of the command that

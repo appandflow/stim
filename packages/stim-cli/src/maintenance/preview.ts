@@ -154,6 +154,7 @@ export async function plannedMaintenance(
       sizes: currentSizes,
       protectRecentMs: settings.protectRecentHours * 3_600_000,
       refresh,
+      idleDays: sweep && settings.removeIdleWorktrees && settings.olderThanDays > 0 ? settings.olderThanDays : null,
       operation,
     });
     merge(planned);
