@@ -1708,7 +1708,11 @@ connected since stim-server started keeps its directory when revoked.
   write and remote policies allow it. With the `fingerprint-sources` feature, a
   caller can send `fingerprintSources`, the `id` and `hash` of each source of
   `fingerprint`, and a `fingerprint-mismatch` failure names the sources that
-  differ and the synced files prebuild or `pod install` rewrote. It returns `{ "job" }`. It fails with
+  differ and the synced files prebuild or `pod install` rewrote. With the
+  `fingerprint-ignored` feature, it can send `fingerprintIgnored`, the paths
+  relative to `project` that its git ignores for `fingerprint` through
+  `.git/info/exclude` or a global excludes file, which the machine's synced
+  checkout has no copy of. It returns `{ "job" }`. It fails with
   `build-busy` while the offer would be declined, naming the reason, or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with

@@ -129,6 +129,8 @@ export interface WorkerJob {
   expectedFingerprint: string | null;
   /** The client's sources of `expectedFingerprint`, when its stim-server forwards them. */
   expectedSources?: BuildFingerprintSource[];
+  /** The paths the client's git ignored for `expectedFingerprint`, which this checkout's git may not. */
+  expectedIgnored?: string[];
   cacheArtifact?: boolean;
   stimBuild?: string;
   native?: BuildStartParams['native'];
@@ -708,7 +710,12 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       return failed('bad-request', (error as Error).message);
     }
     const initial = await time('fingerprintMs', () =>
-      fingerprintProject(realRoot, { platform, iosProjectPath: iosProject.relative, androidLayout }),
+      fingerprintProject(realRoot, {
+        platform,
+        iosProjectPath: iosProject.relative,
+        androidLayout,
+        ignoredPaths: job.expectedIgnored,
+      }),
     );
     if (!initial) return failed('no-fingerprint', 'The remote machine could not fingerprint the project.');
     const plan = planPrebuild(realRoot, platform, {
@@ -752,6 +759,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
           previousHash: initial.hash,
           iosProjectPath: iosProject.relative,
           androidLayout,
+          ignoredPaths: job.expectedIgnored,
         }),
       );
       if (!after) return failed('no-fingerprint', `No fingerprint after ${mutations.join(', ')}.`);
@@ -785,6 +793,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
         previousHash: builtFingerprint,
         iosProjectPath: iosProject.relative,
         androidLayout,
+        ignoredPaths: job.expectedIgnored,
       }),
     );
     if (!settled || settled.moved) return failed('fingerprint-moved', 'The inputs changed during the build there.');

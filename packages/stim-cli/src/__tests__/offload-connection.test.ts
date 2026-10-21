@@ -394,6 +394,60 @@ describe('offloadBuild', () => {
     await busy.closed;
   });
 
+  it.each([true, false])(
+    'sends the paths the client git ignored only to a machine with the fingerprint-ignored feature: %s',
+    async (supported) => {
+      const machine = await fakeMachine(
+        'mini',
+        offer(0.1),
+        { result: { job: 'j1' } },
+        {
+          hello: () => ({
+            result: {
+              capabilities: ['build'],
+              features: supported ? ['fingerprint-sources', 'fingerprint-ignored'] : [],
+            },
+          }),
+        },
+      );
+      machines.push(machine);
+      const choice = await chooseBuildMachine({
+        projectRoot: repo,
+        target: TARGET,
+        mode: 'auto',
+        here: HERE,
+        note: () => {},
+        machines: [credential('mini')],
+      });
+      if (typeof choice === 'string') throw new Error(choice);
+      await offloadBuild({
+        choice,
+        expectedFingerprint: 'f00d',
+        request: {
+          platform: 'ios',
+          runtime: 'iOS-27-0',
+          configuration: null,
+          scheme: null,
+          iosProjectPath: 'ios',
+          isExpo: false,
+          optimizations: null,
+        },
+        fingerprintInputs: async () => ({
+          sources: [],
+          ignored: [],
+          ignoredPaths: ['.env.local', 'ios/main.jsbundle'],
+        }),
+        stagingDir: join(repo, 'staging'),
+        onPhase: () => {},
+        onEnter: () => {},
+        onRecord: () => {},
+        note: () => {},
+      });
+      const start = machine.requests.find((entry) => entry.method === 'build.start')?.params;
+      expect(start?.fingerprintIgnored).toEqual(supported ? ['.env.local', 'ios/main.jsbundle'] : undefined);
+    },
+  );
+
   it('builds here when every machine refuses build.start', async () => {
     const refusal = { error: { code: 'build-busy', message: 'busy' } };
     const first = await fakeMachine('first', offer(0.1), refusal);
