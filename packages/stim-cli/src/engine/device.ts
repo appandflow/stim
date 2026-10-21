@@ -51,7 +51,7 @@ export interface OwnedDeviceRecord {
 }
 
 export interface DeviceSettings {
-  ios?: { deviceType?: string; runtime?: string; simslimProfile?: string };
+  ios?: { deviceType?: string; runtime?: string; simslim?: string; simslimProfile?: string };
   android?: {
     systemImage?: string;
     deviceProfile?: string;

@@ -332,6 +332,14 @@ your app's needs: disabled services can affect tests. Current SimSlim 0.8
 requires iOS 18.5 or newer. Run `stim guide lifecycle simslim` for installation
 and profile setup; `doctor` recommends it without applying it automatically.
 
+To slim every Stim-owned simulator on a Mac without a profile per app, run
+`stim settings set ios.simslim on --scope machine`. A project profile still wins,
+and `ios.simslim` set to `off` in a project opts that app out. The first slim of
+a simulator reboots it once; an already slim simulator is left alone. Simulators
+that are running or parked are slimmed the next time Stim boots or adopts them.
+Hosted simulators on a named Mac are never changed. If `simslim` is not
+installed, `doctor` reports it and `stim ios` boots without it.
+
 A simulator can report Booted and show SpringBoard while process startup is
 stalled. Stim checks a bounded process spawn before installation and bounds
 local launch calls. When macOS reports elevated memory pressure, diagnostics
