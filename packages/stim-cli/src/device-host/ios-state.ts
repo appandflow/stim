@@ -37,7 +37,7 @@ export function readHostedNative(
   return slot === undefined ? placements : placements[slot] ? { [slot]: placements[slot] } : {};
 }
 
-export function writeDevicePlacement(
+function writeDevicePlacement(
   root: string,
   slot: string,
   platform: 'ios' | 'android',
