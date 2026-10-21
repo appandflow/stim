@@ -259,24 +259,26 @@ export function podEnvForRuby(
     LANG: env.LANG ?? 'en_US.UTF-8',
     LC_ALL: env.LC_ALL ?? env.LANG ?? 'en_US.UTF-8',
   };
-  const candidates: Array<{ bin: string; gems?: string }> = version
+  const candidates: Array<{ bin: string; rvm?: string }> = version
     ? [
         { bin: join(home, '.rbenv', 'versions', version, 'bin') },
-        {
-          bin: join(home, '.rvm', 'rubies', `ruby-${version}`, 'bin'),
-          gems: join(home, '.rvm', 'gems', `ruby-${version}`),
-        },
+        { bin: join(home, '.rvm', 'rubies', `ruby-${version}`, 'bin'), rvm: `ruby-${version}` },
         { bin: join(home, '.asdf', 'installs', 'ruby', version, 'bin') },
         { bin: join(home, '.local', 'share', 'mise', 'installs', 'ruby', version, 'bin') },
       ]
     : [];
   for (const c of candidates) {
     if (!exists(c.bin)) continue;
-    out.PATH = `${c.bin}${delimiter}${out.PATH ?? ''}`;
-    if (c.gems && exists(c.gems)) {
-      out.GEM_HOME = c.gems;
-      out.GEM_PATH = c.gems;
+    if (c.rvm) {
+      const rvm = rvmRuby(join(home, '.rvm'), c.rvm, exists);
+      out.PATH = prependPath(rvm.bins, out.PATH);
+      if (exists(rvm.gems.home)) {
+        out.GEM_HOME = rvm.gems.home;
+        out.GEM_PATH = rvm.gems.path;
+      }
+      return out;
     }
+    out.PATH = `${c.bin}${delimiter}${out.PATH ?? ''}`;
     return out;
   }
   if (env.GEM_HOME) return out;
@@ -298,6 +300,20 @@ export function podEnvForRuby(
   return out;
 }
 
+/** What `rvm use <name>` sets: the gemset and its `@global` gemset on `GEM_PATH` and their `bin` directories on `PATH`. */
+function rvmRuby(
+  rvm: string,
+  name: string,
+  exists: (p: string) => boolean,
+): { bins: string[]; gems: { home: string; path: string } } {
+  const gems = join(rvm, 'gems', name);
+  const global = `${gems}@global`;
+  return {
+    bins: [join(gems, 'bin'), join(global, 'bin'), join(rvm, 'rubies', name, 'bin')].filter(exists),
+    gems: { home: gems, path: [gems, global].join(delimiter) },
+  };
+}
+
 /**
  * The Ruby a new login shell makes the default, read from the version manager's files: rvm's `default` alias in
  * `~/.rvm/config/alias`, or rbenv's global `~/.rbenv/version`.
@@ -309,14 +325,7 @@ function defaultRuby(
 ): { bins: string[]; gems?: { home: string; path: string } } | null {
   const rvm = join(home, '.rvm');
   const alias = /^default=(\S+)$/m.exec(read(join(rvm, 'config', 'alias')) ?? '')?.[1];
-  if (alias && exists(join(rvm, 'rubies', alias, 'bin'))) {
-    const gems = join(rvm, 'gems', alias);
-    const global = `${gems}@global`;
-    return {
-      bins: [join(gems, 'bin'), join(global, 'bin'), join(rvm, 'rubies', alias, 'bin')].filter(exists),
-      gems: { home: gems, path: [gems, global].join(delimiter) },
-    };
-  }
+  if (alias && exists(join(rvm, 'rubies', alias, 'bin'))) return rvmRuby(rvm, alias, exists);
   const rbenv = read(join(home, '.rbenv', 'version'))?.trim();
   if (rbenv && exists(join(home, '.rbenv', 'versions', rbenv, 'bin'))) {
     return { bins: [join(home, '.rbenv', 'versions', rbenv, 'bin')] };
