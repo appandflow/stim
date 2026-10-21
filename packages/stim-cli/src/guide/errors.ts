@@ -945,14 +945,19 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   proxy is selected. They never select the backend.`,
     },
     STIM_REMOTE_EAS_UNAVAILABLE: {
-      summary: '--remote eas needs eas-cli 21.6.0 or later',
+      summary: '--remote eas needs eas-cli 21.6.0 or later and an Expo app linked to an EAS project',
       body: () => `STIM_REMOTE_EAS_UNAVAILABLE
   \`--remote eas\` requires eas-cli 21.6.0 or later, the first release with
   the \`eas simulator:*\` commands Stim runs. Stim reads \`eas --version\` and
   refuses before any build or session work when eas-cli is missing, older, or
   reports no version. Upgrade it (\`npm install --global eas-cli@latest\`, or
   the project's eas-cli dependency). Proxy environment variables do not change
-  this selection and are not passed to EAS.`,
+  this selection and are not passed to EAS.
+  It is also the code when EAS reports that the Expo app has no EAS project
+  (no extra.eas.projectId), so no session was created. Link the app with
+  \`eas init --id <project-id> --non-interactive\` or create a project with
+  \`eas init --account <account-name> --non-interactive\`, then rerun. Rerunning
+  \`stim ios\` or \`stim android\` without the link fails the same way.`,
     },
     STIM_REMOTE_PLATFORM_MISMATCH: {
       summary: 'the recorded remote session belongs to the other platform; stop, then rerun',
