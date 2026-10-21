@@ -799,6 +799,21 @@ describe('refingerprintAfterMutation', () => {
     expect(shifted).toEqual({ hash: '7ea8b7c', sources: [fpDir('android', 'dd')], moved: true });
   });
 
+  test('recomputes with the ignore decisions the caller was given', async () => {
+    let target: { ignoredPaths?: readonly string[] } = {};
+    await refingerprintAfterMutation({
+      projectRoot: root,
+      platform: 'ios',
+      previousHash: 'abc123',
+      ignoredPaths: ['.env.local'],
+      fingerprint: async (_, given) => {
+        target = given ?? {};
+        return { hash: 'abc123', sources: [] };
+      },
+    });
+    expect(target.ignoredPaths).toEqual(['.env.local']);
+  });
+
   test('a hash that did not move is reported as not moved, so nothing is re-keyed', async () => {
     const same = await refingerprintAfterMutation({
       projectRoot: root,
