@@ -981,6 +981,9 @@ billing even when the build cannot be interrupted.
 On a physical iPhone, stopping the log collector closes the running app.
 `stop` also releases this workspace's device leases. It never uninstalls the
 app or shuts down the phone; hardware has no owned-device registry entry.
+On a physical Android phone, `stop` and `worktree remove` also remove the
+`adb reverse` that `android --device` added for this workspace's Metro port, and
+leave every other reverse on the phone alone.
 
 ## `device lock` and `device unlock`
 

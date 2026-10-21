@@ -1347,12 +1347,12 @@ export async function shutdownAndroidEmulator(
   await run(['-s', serial, 'emu', 'kill'], Math.max(1, timeoutMs - (Date.now() - started)));
 }
 
-function reverseDevicePortsTo(listing: unknown, hostPort: number): string[] {
+function reverseDevicePortsTo(listing: unknown, hostPorts: readonly number[]): string[] {
   return String(listing ?? '')
     .split('\n')
     .flatMap((line) => {
       const [, device, host] = line.trim().split(/\s+/);
-      return device?.startsWith('tcp:') && host === `tcp:${hostPort}` ? [device] : [];
+      return device?.startsWith('tcp:') && hostPorts.some((port) => host === `tcp:${port}`) ? [device] : [];
     });
 }
 
@@ -1370,6 +1370,14 @@ export async function removeOwnedEmulatorMetroReverses(
   operation?: StimContext,
 ): Promise<void> {
   if ((await getAvdNameForSerialAsync(serial, { operation })) !== avdName) return;
+  await removeMetroReverses(serial, [metroPort], operation);
+}
+
+export async function removeMetroReverses(
+  serial: string,
+  hostPorts: readonly number[],
+  operation?: StimContext,
+): Promise<void> {
   const adb = androidToolPath('adb', process.platform, operation?.env);
   const options = {
     timeoutMs: ADB_PROP_TIMEOUT_MS,
@@ -1383,7 +1391,7 @@ export async function removeOwnedEmulatorMetroReverses(
     ['-s', serial, 'reverse', '--list'],
     options,
   );
-  for (const devicePort of reverseDevicePortsTo(listing, metroPort)) {
+  for (const devicePort of reverseDevicePortsTo(listing, hostPorts)) {
     await runOperationFileQuiet(
       operation,
       getExecutor(),

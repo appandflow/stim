@@ -260,7 +260,9 @@ on signing, report the remedy and ask the user.
 
 stop and worktree remove release this workspace's leases. On a physical
 iPhone, stop also closes the app by ending its log collector; it does not
-shut down the phone or uninstall the app.
+shut down the phone or uninstall the app. On a physical Android phone they
+also remove the adb reverse the android --device run added for this
+workspace's Metro port, and nothing else on the phone.
 
 Owned-device caps wait in FIFO order across the Stim home for 600s by default.
 Use --wait <seconds> to change the bound or --no-wait to refuse at once.

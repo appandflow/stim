@@ -10,13 +10,14 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject, setDevice, getProject } from '../workspace/config.ts';
 import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
+import { recordPhoneReverse } from '../devices/phone-reverses.ts';
 import {
   ensureWorkspaceStorage,
   workspaceAgentDeviceDir,
   workspaceDir,
   workspaceStateFile,
 } from '../workspace/paths.ts';
-import { liveClaimOwner, plantClaim } from './_factories.ts';
+import { liveClaimOwner, makeExecutor, plantClaim } from './_factories.ts';
 import { writeWebRecord } from '../web/state.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 import { testContext } from './_context.ts';
@@ -848,6 +849,29 @@ test('reclaimProject releases the leases the workspace holds', async () => {
       { platform: 'ios', id: 'UDID-1', deviceName: 'Old iPhone', expiresAt: expect.any(String) },
     ]);
     expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['R5CT']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reclaimProject removes the adb reverses a --device run left on the phone', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
+  const adb: string[] = [];
+  setExecutor(
+    makeExecutor({
+      runFileQuietAsync: async (_file, args) => {
+        adb.push(args.join(' '));
+        return args.includes('--list') ? 'UsbFfs tcp:8087 tcp:8087\nUsbFfs tcp:8085 tcp:8085\n' : '';
+      },
+    }),
+  );
+  try {
+    ensureWorkspaceStorage(root);
+    recordPhoneReverse(root, 'default', 'RFCR7081Q9L', 8087);
+
+    await reclaimProject(root, { deleteOwnedDevices: false });
+
+    expect(adb).toEqual(['-s RFCR7081Q9L reverse --list', '-s RFCR7081Q9L reverse --remove tcp:8087']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
