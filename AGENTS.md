@@ -346,7 +346,18 @@ outside it moves to its own issue and pull request.
   `remote.buildMode` places iOS simulator Debug builds and Android emulator
   debug builds and macOS SwiftPM Debug builds;
   every offload failure falls back to a local build, and no failure path
-  writes the cache. A hosted macOS session takes a build the same Mac ran for
+  writes the cache. Two machines build for each other, and reuse each other's
+  completed React Native and SwiftPM artifacts, when their bundled Stim
+  reports the same `STIM_BUILD_COMPAT`
+  (`packages/core/state/stim-build.ts`); a machine that reports none needs
+  the same Stim build digest. Bump it when a machine with the same value but
+  the other version of a file listed in `scripts/build-compat.json` would
+  build a different artifact or read a build or artifact message
+  differently; a fix that makes a failing worker build succeed, or a field
+  negotiated by a `hello` feature, needs no bump. `pnpm run lint` fails until
+  `node scripts/build-compat.mjs --update` records the change, and the
+  reviewer checks that record against this rule. The compatibility version
+  never enters the local cache key. A hosted macOS session takes a build the same Mac ran for
   it, instead of an upload, only when the build client and the device-host
   client are approved for the same client key, and only bytes matching the
   client's verified bundle manifest. The worker builds each client and

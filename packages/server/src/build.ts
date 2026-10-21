@@ -252,7 +252,7 @@ function macosBuildOptions(
       : swiftpmArtifactQuery({
           project: params.project,
           sourceDigest: params.fingerprint,
-          stimBuild: params.stimBuild,
+          ...(typeof params.compat === 'number' ? { compat: params.compat } : { stimBuild: params.stimBuild }),
           inputs: options.artifactInputs,
           build: {
             product: options.product,
@@ -793,7 +793,7 @@ export class BuildHost {
     const query = swiftpmArtifactQuery({
       project: job.project,
       sourceDigest: job.expectedFingerprint,
-      stimBuild: job.stimBuild,
+      ...(typeof job.compat === 'number' ? { compat: job.compat } : { stimBuild: job.stimBuild }),
       inputs: options.artifactInputs,
       build: {
         product: options.product,
@@ -1625,8 +1625,16 @@ export class BuildSession {
     }
     const toolchain = await this.host.toolchain(null, native?.provider);
     if (this.closed) return refusal('build-refused', 'The connection closed.');
-    if (!toolchain || toolchain.stimBuild !== params.stimBuild) {
-      return refusal('build-refused', `This machine runs Stim build ${toolchain?.stimBuild ?? 'unknown'}.`);
+    const compat = typeof params.compat === 'number' ? params.compat : undefined;
+    if (!toolchain) return refusal('build-refused', 'This machine runs Stim build unknown.');
+    if (compat !== undefined && toolchain.compat !== undefined) {
+      if (toolchain.compat !== compat)
+        return refusal(
+          'build-refused',
+          `This machine runs Stim build ${toolchain.stimBuild ?? 'unknown'} with build compatibility ${toolchain.compat}, not ${compat}.`,
+        );
+    } else if (toolchain.stimBuild !== params.stimBuild) {
+      return refusal('build-refused', `This machine runs Stim build ${toolchain.stimBuild ?? 'unknown'}.`);
     }
     const launched = this.host.launch({
       client: this.client,
@@ -1643,6 +1651,7 @@ export class BuildSession {
         isExpo: params.isExpo === true,
         cacheArtifact: params.cacheArtifact === true,
         stimBuild: params.stimBuild,
+        ...(compat !== undefined && toolchain.compat !== undefined ? { compat } : {}),
         configuration: optional(params.configuration),
         scheme: optional(params.scheme),
         iosProjectPath: optional(params.iosProjectPath),

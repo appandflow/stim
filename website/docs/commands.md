@@ -205,7 +205,7 @@ Stim Host permissions; otherwise `host` is omitted.
 Doctor also asks each approved machine for one build offer, the same offer
 `stim ios` and `stim android` ask for, and reports every reason that machine
 would not take this app's builds now, each as a finding with a fix: it does
-not answer, it runs another Stim build (update it to this machine's build), its
+not answer, it runs an incompatible Stim build (update it to this machine's build), its
 CPU differs; for iOS (unless `--platform android`) its Xcode, simulator SDK or
 CocoaPods selected for this project differ, it has no Bundler for a project whose `Gemfile.lock` pins
 CocoaPods (its own CocoaPods version does not matter then), or it has no

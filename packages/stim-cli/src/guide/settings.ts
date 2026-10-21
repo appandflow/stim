@@ -888,10 +888,14 @@ Stim connects to a named machine only while its name still belongs to the pinned
 node and never sends the token to another node. \`doctor\` reports each
 remote machine's build pairing state and, for an approved one, asks it for one build
 offer and lists every reason it would not take this app's iOS build: no
-answer, another Stim build, CPU, Xcode, simulator SDK or CocoaPods, no
+answer, an incompatible Stim build, CPU, Xcode, simulator SDK or CocoaPods, no
 Bundler for an app whose Gemfile.lock pins CocoaPods, no iPhone simulator on
 the runtime \`stim ios\` builds for here, low disk, or busy. With Package.swift
 and no platform selection on a Mac, it also checks the macOS Xcode and SDK.
+Two machines build for each other when their Stim releases share a build
+compatibility version, which changes only when what a worker builds, how it
+builds, or the build messages change; their Stim builds can differ. A
+stim-server too old to report one needs the same Stim build as this machine.
 
 \`remote.build\` (machine scope, default auto) selects placement for
 \`ios\`, \`android\` and \`macos\`. \`--remote-build <auto|local|name>\`
