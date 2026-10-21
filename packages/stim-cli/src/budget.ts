@@ -258,8 +258,8 @@ async function readMemoryUse(
   signal?.throwIfAborted();
   const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal, operation });
   const config = loadConfig();
-  const simsRead = simSnapshot ? snapshotSims(simSnapshot, signal, operation) : listSims(signal, operation);
-  simsRead.catch(() => {});
+  const sims = simSnapshot ? await snapshotSims(simSnapshot, signal, operation) : await listSims(signal, operation);
+  signal?.throwIfAborted();
   const serials = new Map<string, string | null>();
   for (const record of Object.values(config?.projects ?? {})) {
     for (const { platforms } of projectDeviceSlots(record)) {
@@ -276,7 +276,6 @@ async function readMemoryUse(
       }
     }
   }
-  const sims = await simsRead;
   signal?.throwIfAborted();
   return estimateMemoryUse({
     config,
