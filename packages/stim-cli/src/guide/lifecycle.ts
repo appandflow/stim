@@ -2269,11 +2269,18 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   paths eligible under the source checkout's Git ignore rules, including .env
   and local configuration. The source's nonempty
   .worktreeexclude replaces its resolved worktree.exclude setting. Nested
-  registered worktrees, .DS_Store, .DerivedData, .idea, .jj, a project-local
-  .pnpm-store, and android/build/generated/autolinking caches are excluded,
-  including inside newly copied directories; pnpm refills its store from the
-  network or its global store. Gradle regenerates autolinking
-  for the destination checkout on its next build. Warm also skips paths
+  registered worktrees and ignored entries named .DS_Store, .DerivedData,
+  .idea, .jj or .pnpm-store are not copied, and neither is
+  android/build/generated/autolinking. Warm never walks a copied directory, so
+  a .DS_Store or .idea inside a copied directory stays. Warm deletes only
+  these paths from the copy: .pnpm-store in a copied node_modules (pnpm
+  refills it from the network or its global store), the autolinking directory
+  under a copied android, android/build or android/build/generated (Gradle
+  regenerates it for the destination checkout on its next build), and the
+  expo-modules-jsi/apple/.DerivedData Xcode build state, directly under
+  node_modules or in the pnpm virtual store. An ignored directory that Git
+  reports above those names (for example an app directory with no tracked
+  files) is copied as is. Warm also skips paths
   overlapping a nested destination worktree or below a symlink ancestor.
   Tracked .idea settings come from Git and stay untouched by warm.
 

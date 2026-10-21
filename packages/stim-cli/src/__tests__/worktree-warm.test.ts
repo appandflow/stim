@@ -166,15 +166,12 @@ test.skipIf(process.platform === 'win32')(
     const destination = join(target, 'node_modules/pkg/index.js');
     linkSync(source, join(root, 'node_modules/pkg/sibling.js'));
     symlinkSync('pkg', join(root, 'node_modules/alias'));
-    write(base, 'outside/.DerivedData/keep', 'outside data');
+    mkdirSync(join(base, 'outside'));
     symlinkSync('../../outside', join(root, 'node_modules/outside'));
-    symlinkSync('../../../outside', join(root, 'node_modules/pkg/.DerivedData'));
     const result = await warm();
     expect(result.failed).toEqual([]);
     expect(readlinkSync(join(target, 'node_modules/alias'))).toBe('pkg');
     expect(readlinkSync(join(target, 'node_modules/outside'))).toBe('../../outside');
-    expect(existsSync(join(target, 'node_modules/pkg/.DerivedData'))).toBe(false);
-    expect(readFileSync(join(base, 'outside/.DerivedData/keep'), 'utf-8')).toBe('outside data');
     const published = lstatSync(destination);
     expect(published.ino).not.toBe(lstatSync(source).ino);
     expect(published.nlink).toBe(1);
@@ -398,24 +395,21 @@ test('warm reports carried node_modules installed from an older lockfile that bo
   expect(result.stderr).not.toMatch(/carried dependencies may be stale/);
 }, 30_000);
 
-test('warm copies literal ignored filenames and skips Finder, IDE, jj, and derived data', async () => {
+test('warm skips ignored Finder, IDE and jj entries, and leaves the same names inside a copied directory', async () => {
   write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.DS_Store\n.idea/\n.jj/\n');
   write(root, '.jj/repo/op_heads', 'source jj state');
   write(root, 'tracked-app/.idea/codeStyles.xml', 'shared IDE settings');
   git(root, 'add', '-f', 'tracked-app/.idea/codeStyles.xml');
   git(root, 'commit', '-qm', 'tracked IDE settings');
   git(target, 'merge', '--ff-only', 'main');
-  expect(readFileSync(join(target, 'tracked-app/.idea/codeStyles.xml'), 'utf-8')).toBe('shared IDE settings');
   write(root, 'tracked-app/.idea/codeStyles.xml', 'local source changes');
   write(root, '.idea/workspace.xml', 'source IDE state');
   write(root, '.DS_Store', 'source Finder metadata');
   const literalName = process.platform === 'win32' ? ".env with 'quotes'" : '.env with "quotes"';
   write(root, literalName, 'literal env');
   write(root, 'node_modules/pkg/.DS_Store', 'nested Finder metadata');
-  write(root, 'node_modules/pkg/.DS_Store.keep', 'package data');
   write(root, 'node_modules/pkg/.idea/workspace.xml', 'nested IDE state');
-  write(root, 'node_modules/pkg/.idea-extra/keep', 'package IDE data');
-  write(root, 'node_modules/pkg/.DerivedData/large', 'skip');
+  write(root, 'node_modules/pkg/apple/.DerivedData/large', 'nested derived data');
   write(root, 'node_modules/pkg/index.js', 'package');
   const result = await warm();
   expect(result.failed).toEqual([]);
@@ -423,56 +417,107 @@ test('warm copies literal ignored filenames and skips Finder, IDE, jj, and deriv
   expect(result.copied).not.toContain('.idea');
   expect(result.copied).not.toContain('.jj');
   expect(existsSync(join(target, '.jj'))).toBe(false);
-  expect(readFileSync(join(target, literalName), 'utf-8')).toBe('literal env');
   expect(existsSync(join(target, '.DS_Store'))).toBe(false);
-  expect(existsSync(join(target, 'node_modules/pkg/.DS_Store'))).toBe(false);
-  expect(readFileSync(join(target, 'node_modules/pkg/.DS_Store.keep'), 'utf-8')).toBe('package data');
   expect(existsSync(join(target, '.idea'))).toBe(false);
-  expect(existsSync(join(target, 'node_modules/pkg/.idea'))).toBe(false);
-  expect(readFileSync(join(target, 'node_modules/pkg/.idea-extra/keep'), 'utf-8')).toBe('package IDE data');
+  expect(readFileSync(join(target, literalName), 'utf-8')).toBe('literal env');
   expect(readFileSync(join(target, 'tracked-app/.idea/codeStyles.xml'), 'utf-8')).toBe('shared IDE settings');
-  expect(existsSync(join(target, 'node_modules/pkg/.DerivedData'))).toBe(false);
+  expect(readFileSync(join(target, 'node_modules/pkg/.DS_Store'), 'utf-8')).toBe('nested Finder metadata');
+  expect(readFileSync(join(target, 'node_modules/pkg/.idea/workspace.xml'), 'utf-8')).toBe('nested IDE state');
+  expect(readFileSync(join(target, 'node_modules/pkg/apple/.DerivedData/large'), 'utf-8')).toBe('nested derived data');
+  expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('package');
   expect(readFileSync(join(root, '.DS_Store'), 'utf-8')).toBe('source Finder metadata');
-  expect(readFileSync(join(root, 'node_modules/pkg/.DS_Store'), 'utf-8')).toBe('nested Finder metadata');
   expect(readFileSync(join(root, '.idea/workspace.xml'), 'utf-8')).toBe('source IDE state');
-  expect(readFileSync(join(root, 'node_modules/pkg/.idea/workspace.xml'), 'utf-8')).toBe('nested IDE state');
   expect(readFileSync(join(root, 'tracked-app/.idea/codeStyles.xml'), 'utf-8')).toBe('local source changes');
 
   write(target, '.DS_Store', 'destination Finder metadata');
-  write(target, 'node_modules/pkg/.DS_Store', 'destination nested metadata');
   write(target, '.idea/workspace.xml', 'destination IDE state');
-  write(target, 'node_modules/pkg/.idea/workspace.xml', 'destination nested IDE state');
   expect((await warm()).failed).toEqual([]);
   expect(readFileSync(join(target, '.DS_Store'), 'utf-8')).toBe('destination Finder metadata');
-  expect(readFileSync(join(target, 'node_modules/pkg/.DS_Store'), 'utf-8')).toBe('destination nested metadata');
   expect(readFileSync(join(target, '.idea/workspace.xml'), 'utf-8')).toBe('destination IDE state');
-  expect(readFileSync(join(target, 'node_modules/pkg/.idea/workspace.xml'), 'utf-8')).toBe(
-    'destination nested IDE state',
-  );
 }, 30_000);
 
-test('warm removes every nested exclusion from a wide, deep carried tree', async () => {
-  const dirs: string[] = [];
-  for (let a = 0; a < 6; a++)
-    for (let b = 0; b < 6; b++) for (let c = 0; c < 6; c++) dirs.push(`node_modules/p${a}/d${b}/e${c}`);
-  for (const dir of dirs) {
-    write(root, `${dir}/index.js`, dir);
-    write(root, `${dir}/.DS_Store`, 'Finder metadata');
-    write(root, `${dir}/.idea/workspace.xml`, 'IDE state');
+test('warm removes a project-local pnpm store from a copied node_modules and skips one at the root', async () => {
+  write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.pnpm-store/\n');
+  write(root, '.pnpm-store/v11/files/00/blob', 'root store');
+  write(root, 'node_modules/.pnpm-store/v11/files/00/blob', 'store beside node_modules content');
+  write(root, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg/index.js', 'package');
+  write(root, 'apps/mobile/package.json', '{}');
+  git(root, 'add', 'apps/mobile/package.json');
+  git(root, 'commit', '-qm', 'workspace package');
+  write(root, 'apps/mobile/node_modules/.pnpm-store/v11/blob', 'workspace store');
+  write(root, 'apps/mobile/node_modules/dep/index.js', 'workspace package');
+  const result = await warm();
+  expect(result.failed).toEqual([]);
+  expect(result.copied.toSorted()).toEqual(['apps/mobile/node_modules', 'node_modules']);
+  expect(existsSync(join(target, '.pnpm-store'))).toBe(false);
+  expect(existsSync(join(target, 'node_modules/.pnpm-store'))).toBe(false);
+  expect(existsSync(join(target, 'apps/mobile/node_modules/.pnpm-store'))).toBe(false);
+  expect(readFileSync(join(target, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg/index.js'), 'utf-8')).toBe('package');
+  expect(readFileSync(join(target, 'apps/mobile/node_modules/dep/index.js'), 'utf-8')).toBe('workspace package');
+  expect(existsSync(join(root, 'node_modules/.pnpm-store/v11/files/00/blob'))).toBe(true);
+}, 30_000);
+
+test('warm removes the Xcode derived data an Expo package left in node_modules, hoisted or in the pnpm store', async () => {
+  const hoisted = 'node_modules/expo-modules-jsi/apple';
+  const virtual = 'node_modules/.pnpm/expo-modules-jsi@58.0.4_react-native@0.88.0/node_modules/expo-modules-jsi/apple';
+  const other = 'node_modules/.pnpm/expo-modules-jsi-extra@1.0.0/node_modules/expo-modules-jsi/apple';
+  for (const dir of [hoisted, virtual, other]) {
+    write(root, `${dir}/.DerivedData/ModuleCache.noindex/foo.pcm`, 'baked source paths');
+    write(root, `${dir}/Package.swift`, 'import PackageDescription');
   }
   const result = await warm();
   expect(result.failed).toEqual([]);
-  const left = dirs.filter(
-    (dir) => existsSync(join(target, dir, '.DS_Store')) || existsSync(join(target, dir, '.idea')),
-  );
-  expect(left).toEqual([]);
-  expect(dirs.filter((dir) => readFileSync(join(target, dir, 'index.js'), 'utf-8') !== dir)).toEqual([]);
+  for (const dir of [hoisted, virtual]) {
+    expect(existsSync(join(target, dir, '.DerivedData'))).toBe(false);
+    expect(readFileSync(join(target, dir, 'Package.swift'), 'utf-8')).toBe('import PackageDescription');
+    expect(existsSync(join(root, dir, '.DerivedData/ModuleCache.noindex/foo.pcm'))).toBe(true);
+  }
+  expect(existsSync(join(target, other, '.DerivedData'))).toBe(true);
 }, 30_000);
 
-test.each(['android/build/', 'apps/mobile/'])(
+test.skipIf(process.platform === 'win32')(
+  'warm removes derived data reached through the pnpm symlink layout, and a symlinked known path without following it (POSIX symlinks; skipped on win32)',
+  async () => {
+    const real = 'node_modules/.pnpm/expo-modules-jsi@58.0.4/node_modules/expo-modules-jsi';
+    write(root, `${real}/apple/.DerivedData/foo.pcm`, 'baked source paths');
+    symlinkSync(
+      '.pnpm/expo-modules-jsi@58.0.4/node_modules/expo-modules-jsi',
+      join(root, 'node_modules/expo-modules-jsi'),
+    );
+    write(base, 'outside/store/blob', 'outside data');
+    symlinkSync(join(base, 'outside/store'), join(root, 'node_modules/.pnpm-store'));
+    const result = await warm();
+    expect(result.failed).toEqual([]);
+    expect(existsSync(join(target, real, 'apple/.DerivedData'))).toBe(false);
+    expect(lstatSync(join(target, real, 'apple')).isDirectory()).toBe(true);
+    expect(lstatSync(join(target, 'node_modules/expo-modules-jsi')).isSymbolicLink()).toBe(true);
+    expect(lstatSync(join(target, 'node_modules/.pnpm-store'), { throwIfNoEntry: false })).toBeUndefined();
+    expect(readFileSync(join(base, 'outside/store/blob'), 'utf-8')).toBe('outside data');
+  },
+  30_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'warm never removes known paths through a copied symlink that leaves the worktree (POSIX symlinks; skipped on win32)',
+  async () => {
+    write(base, 'outside/apple/.DerivedData/keep', 'outside data');
+    write(root, 'node_modules/pkg/index.js', 'package');
+    symlinkSync(join(base, 'outside'), join(root, 'node_modules/expo-modules-jsi'));
+    const result = await warm();
+    expect(result.failed).toEqual([]);
+    expect(readlinkSync(join(target, 'node_modules/expo-modules-jsi'))).toBe(join(base, 'outside'));
+    expect(readFileSync(join(base, 'outside/apple/.DerivedData/keep'), 'utf-8')).toBe('outside data');
+  },
+  30_000,
+);
+
+test.each(['android/build/', 'android/', 'apps/mobile/android/build/generated/', 'apps/mobile/android/'])(
   'warm excludes generated autolinking from ignored %s',
   async (ignored) => {
     write(root, '.gitignore', `${ignored}\n`);
+    write(root, 'apps/mobile/package.json', '{}');
+    git(root, 'add', 'apps/mobile/package.json', '.gitignore');
+    git(root, 'commit', '-qm', 'workspace package');
     const app = ignored.startsWith('apps/') ? 'apps/mobile/' : '';
     const generated = `${app}android/build/generated`;
     write(root, `${generated}/autolinking/autolinking.json`, 'source checkout paths');
@@ -506,21 +551,21 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'warm removes excluded copies from read-only directories and restores their modes (POSIX directory modes; skipped on win32)',
+  'warm removes known paths from read-only directories and restores their modes (POSIX directory modes; skipped on win32)',
   async () => {
-    write(root, 'node_modules/pkg/index.js', 'read-only package');
-    write(root, 'node_modules/pkg/.DerivedData/large', 'excluded');
-    chmodSync(join(root, 'node_modules/pkg'), 0o555);
+    const apple = 'node_modules/expo-modules-jsi/apple';
+    write(root, `${apple}/Package.swift`, 'read-only package');
+    write(root, `${apple}/.DerivedData/large`, 'excluded');
+    chmodSync(join(root, apple), 0o555);
     try {
       const result = await runWarm(target);
       expect(result.code).toBe(0);
-      expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('read-only package');
-      expect(lstatSync(join(target, 'node_modules/pkg')).mode & 0o777).toBe(0o555);
-      expect(existsSync(join(target, 'node_modules/pkg/.DerivedData'))).toBe(false);
+      expect(readFileSync(join(target, apple, 'Package.swift'), 'utf-8')).toBe('read-only package');
+      expect(lstatSync(join(target, apple)).mode & 0o777).toBe(0o555);
+      expect(existsSync(join(target, apple, '.DerivedData'))).toBe(false);
     } finally {
-      chmodSync(join(root, 'node_modules/pkg'), 0o755);
-      const pkg = join(target, 'node_modules/pkg');
-      if (existsSync(pkg)) chmodSync(pkg, 0o755);
+      chmodSync(join(root, apple), 0o755);
+      if (existsSync(join(target, apple))) chmodSync(join(target, apple), 0o755);
     }
   },
   30_000,
