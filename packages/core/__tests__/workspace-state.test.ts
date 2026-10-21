@@ -96,6 +96,14 @@ describe('last build per platform', () => {
     expect(readLastBuilds({ lastBuild: { ...ios, status: 'running' } })).toEqual({});
   });
 
+  test('a hosted Android run written with status success reads as ok and succeeded', () => {
+    const written = { ...ios, platform: 'android', status: 'success' };
+    expect(readLastBuilds({ lastAndroidBuild: written, lastBuild: written }).android).toMatchObject({ status: 'ok' });
+    expect(
+      readBuildHistory({ buildHistory: { android: [{ ...written, result: 'failed', slot: 'default' }] } }).android?.[0],
+    ).toMatchObject({ status: 'ok', result: 'succeeded' });
+  });
+
   test('a newer lastBuild wins over an older per-platform record, as after an older Stim ran', () => {
     const newer = { ...ios, cacheHit: 'local', startedAt: '2026-09-25T11:00:00.000Z' };
     expect(readLastBuilds({ lastIosBuild: ios, lastBuild: newer }).ios).toMatchObject({ cacheHit: 'local' });

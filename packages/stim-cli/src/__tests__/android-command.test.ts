@@ -7511,10 +7511,13 @@ describe('named Android hosting placement', () => {
           : { code: 'STIM_AT_CAPACITY' },
       );
       expect(checkBudget).toHaveBeenCalledTimes(admits ? 0 : 1);
-      const builtRecord = expect.objectContaining({ status: 'success' });
+      const builtRecord = expect.objectContaining({ status: 'ok' });
       const history = expect.any(Object);
       expect(readWorkspaceState(root)?.lastAndroidBuild).toEqual(admits ? builtRecord : baseline);
       expect(readWorkspaceState(root)?.buildHistory).toEqual(admits ? history : undefined);
+      const state = readWorkspaceState(root);
+      expect(readLastBuilds(state).android?.status).toBe('ok');
+      expect(readBuildHistory(state).android?.[0]?.result).toBe(admits ? 'succeeded' : undefined);
       expect(readWorkspaceState(root)?.android).toMatchObject({
         devicePlacement: { decision: admits ? 'hosted' : 'local' },
       });
@@ -7557,7 +7560,7 @@ describe('named Android hosting placement', () => {
       startedAt: '2026-10-06T12:00:00Z',
       fingerprint: 'previous',
       cacheKey: 'previous-key',
-      status: 'success',
+      status: 'ok',
     });
     writeWorkspaceState(root, { lastAndroidBuild: baseline });
     const h = harness({
