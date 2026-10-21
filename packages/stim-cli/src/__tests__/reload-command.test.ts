@@ -1000,3 +1000,51 @@ test('a stopped named slot keeps its slot in the reload recovery command', async
   });
   expect(result).toMatchObject({ ok: false, error: { remedy: 'Run `stim ios --slot phone` to launch it.' } });
 });
+
+describe('a workspace with no launch on an owned local simulator or emulator', () => {
+  const session = {
+    platform: 'ios' as const,
+    sessionId: '01a15cf7-0000',
+    startedAt: null,
+    webPreviewUrl: null,
+  };
+
+  test('an EAS Simulator session is named, with the Metro-level reload as the remedy', async () => {
+    const result = await runReload({
+      root: '/project',
+      deps: reloadDeps({ readLaunches: () => ({}), readRemote: () => session }),
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_UNSUPPORTED' } });
+    const error = !result.ok ? result.error : null;
+    expect(error?.message).toContain('01a15cf7-0000');
+    expect(error?.remedy).toContain('agent-device metro reload --metro-port 8082');
+    expect(error?.remedy).not.toContain('Run `stim ios` first');
+  });
+
+  test('a session on the other platform does not answer a platform-specific reload', async () => {
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({ readLaunches: () => ({}), readRemote: () => session }),
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_STOPPED' } });
+  });
+
+  test('an unrecorded launch points a physical device at the Metro-level reload', async () => {
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({ readLaunches: () => ({}), readRemote: () => null }),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'STIM_RELOAD_STOPPED',
+        message: 'No android app launch is recorded for this workspace.',
+      },
+    });
+    const remedy = !result.ok ? result.error.remedy : null;
+    expect(remedy).toContain('Run `stim android` first.');
+    expect(remedy).toContain('agent-device metro reload --metro-port 8082');
+  });
+});

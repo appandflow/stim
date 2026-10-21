@@ -1031,6 +1031,15 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   The live app was launched with embedded JavaScript. Run the platform command
   with a Debug configuration or variant first.`,
     },
+    STIM_RELOAD_UNSUPPORTED: {
+      summary: 'the workspace device is an EAS Simulator session; reload with agent-device metro reload',
+      body: () => `STIM_RELOAD_UNSUPPORTED
+  The workspace's recorded remote device is an EAS Simulator session. stim
+  reload acts only on an owned local simulator or emulator, so it does not
+  reach the session. Run \`agent-device metro reload --metro-port <port>\` with
+  this workspace's Metro port; it asks every app connected to that Metro to
+  reload. Nothing is launched or stopped.`,
+    },
     STIM_RELOAD_STOPPED: {
       summary: 'the recorded app is gone, its device is not live and owned, or the process could not be proven',
       aliases: ['STIM_RELOAD_UNOWNED', 'STIM_RELOAD_PROBE_FAILED'],
@@ -1039,7 +1048,10 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   workspace, or simctl/adb could not prove the process exists. For web,
   STOPPED means no owned Chrome is running (run stim web) and PROBE_FAILED
   that its identity could not be verified. A bare reload picks the Chrome page
-  only when no native launch is recorded. No launch or
+  only when no native launch is recorded. Stim records launches only on owned
+  local simulators and emulators, so an app on a physical device (--device)
+  also gets STOPPED; the remedy names agent-device metro reload with this
+  workspace's Metro port. No launch or
   device lifecycle action is taken; follow the printed platform-command or
   process-probe remedy.`,
     },

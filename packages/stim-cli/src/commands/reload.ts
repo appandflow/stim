@@ -21,7 +21,9 @@ import { readWorkspaceState, recordWorkspaceUseAsync } from '../workspace/worksp
 import { resolveOwnedAvdSerialAsync, type ResolvedAvdSerial } from '../devices/android.ts';
 import { listAllIosSimsAsync, resolveOwnedIosSim, type ResolvedIosSim } from '../devices/ios.ts';
 import {
+  readRemoteSession,
   readWorkspaceLaunches,
+  type RemoteSessionRecord,
   type WorkspaceLaunchPlatform,
   type WorkspaceLaunchRecord,
 } from '../supervisor/state.ts';
@@ -65,6 +67,7 @@ export interface ReloadDeps {
   findWorkspace: (cwd: string) => string | null | Promise<string | null>;
   getProject: typeof getProject;
   readLaunches: typeof readWorkspaceLaunches;
+  readRemote: (root: string) => RemoteSessionRecord | null;
   resolveIos: (udid: string) => ResolvedIosSim | Promise<ResolvedIosSim>;
   resolveAndroid: (avdName: string) => Promise<ResolvedAvdSerial>;
   iosProcess: typeof iosAppProcess;
@@ -88,6 +91,7 @@ const DEFAULT_DEPS: ReloadDeps = {
   findWorkspace: (cwd) => findCommandWorkspaceAsync(cwd, repoRootAsync, (line) => console.error(line)),
   getProject,
   readLaunches: readWorkspaceLaunches,
+  readRemote: readRemoteSession,
   resolveIos: async (udid) => resolveOwnedIosSim(udid, await listAllIosSimsAsync({})),
   resolveAndroid: resolveOwnedAvdSerialAsync,
   iosProcess: iosAppProcess,
@@ -275,6 +279,38 @@ async function inspectTarget(
   return { platform, slot, record, deviceName: configured.avdName };
 }
 
+function remoteSessionFor(
+  session: RemoteSessionRecord | null,
+  platform: ReloadPlatform | null,
+): RemoteSessionRecord | null {
+  return session && (!platform || !session.platform || session.platform === platform) ? session : null;
+}
+
+function unlaunchedRefusal(
+  platform: ReloadPlatform | null,
+  metroPort: number | null,
+  remote: RemoteSessionRecord | null,
+): ReloadFailure {
+  const metroReload = metroPort ? `agent-device metro reload --metro-port ${metroPort}` : null;
+  if (remote) {
+    return failure(
+      'STIM_RELOAD_UNSUPPORTED',
+      `This workspace's remote device is EAS Simulator session ${remote.sessionId}, which stim reload does not reach.`,
+      metroReload
+        ? `If the app is running there, run \`${metroReload}\`; it asks every app connected to this workspace's Metro to reload. Otherwise run \`stim ${platform ?? remote.platform ?? 'ios'} --remote eas\` to launch it.`
+        : 'Run `stim start`, launch the app on the session, then reload it with `agent-device metro reload --metro-port <port>`.',
+    );
+  }
+  const run = platform ? `Run \`stim ${platform}\` first.` : 'Run `stim ios` or `stim android` first.';
+  return failure(
+    'STIM_RELOAD_STOPPED',
+    platform ? `No ${platform} app launch is recorded for this workspace.` : 'No live app launch is recorded.',
+    metroReload
+      ? `${run} Stim records launches only on owned local simulators and emulators, so an app running on a physical device (--device) is not recorded; reload it with \`${metroReload}\`.`
+      : run,
+  );
+}
+
 function isTargetFailure(value: LiveTarget | TargetFailure): value is TargetFailure {
   return 'error' in value;
 }
@@ -449,11 +485,7 @@ export async function runReload({
       ok: false,
       error:
         firstFailure ??
-        failure(
-          'STIM_RELOAD_STOPPED',
-          platform ? `No ${platform} app launch is recorded for this workspace.` : 'No live app launch is recorded.',
-          platform ? `Run \`stim ${platform}\` first.` : 'Run `stim ios` or `stim android` first.',
-        ),
+        unlaunchedRefusal(platform, project.metroPort ?? null, remoteSessionFor(d.readRemote(root), platform)),
     };
   }
 
