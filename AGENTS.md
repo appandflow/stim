@@ -539,7 +539,8 @@ matches the system image and recorded AVD creation settings and keeps the AVD
 name. When an adopted emulator lacks room on `/data` for the install, trim app
 caches, then wipe its user data through centralized teardown. Delete parked
 devices only by eviction, adoption-time reconciliation of a listed unavailable
-simulator, `gc --delete`, or automatic maintenance at disk pressure level 2; erase them only with `gc --cache parked
+simulator, `gc --delete`, or automatic maintenance at disk pressure level 2 or
+in its age sweep after `maintenance.olderThanDays`; erase them only with `gc --cache parked
 --delete`. Every route uses centralized teardown and ownership revalidation.
 `gc --delete` deletes parked hosted devices through their owning session home.
 

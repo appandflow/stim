@@ -61,13 +61,23 @@ In on mode a pass runs, cheapest to rebuild first:
      claim (taken for each xcodebuild run that compiles with it) or that
      claim is unresolved; the emptying holds the exclusive claim
   5. linked worktrees whose branch or pull request finished (gc's finished
-     worktree rules and gc.worktreeGraceMinutes; maintenance.removeFinishedWorktrees)
-  6. owned simulators and emulators of a finished worktree that is kept, such
+     worktree rules and gc.worktreeGraceMinutes; maintenance.removeFinishedWorktrees),
+     and in the age sweep clean, pushed ones unused for olderThanDays, as
+     gc --delete --worktrees --older-than removes them; never a dirty one, one
+     with unpushed commits, the source checkout, or one whose last use is
+     unknown
+  6. parked simulators and emulators unused for olderThanDays in the age
+     sweep, through centralized teardown with ownership checked again
+  7. owned simulators and emulators of a finished worktree that is kept, such
      as a dirty one (not one locked with git worktree lock), once it finished
      and was idle for gc.worktreeGraceMinutes (at least protectRecentHours),
      and of any
      workspace idle for maintenance.deviceIdleDays (3; 0 turns it off) in the
      age sweep. Devices are recreated on the next run.
+The age sweep (every maintenance.sweepHours, 24) covers Stim Desktop's nightly
+cleanup, run in the background of commands instead of at an hour.
+maintenance.olderThanDays (7) is its age for steps 2, 3, 5 and 6; 0 never
+removes anything by age, while step 1 still runs.
 Disk-driven steps stop once free space is back above the floor. Kept for
 every pass: a workspace that is in use, holds a lock, was used within
 maintenance.protectRecentHours, is pinned with maintenance.keep, or is the

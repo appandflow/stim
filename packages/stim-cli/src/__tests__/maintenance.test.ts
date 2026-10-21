@@ -123,7 +123,7 @@ test('maintenance settings reject unknown modes and invalid ranges before they c
     ['maintenance.mode', 'act', 'on'],
     ['maintenance.worktreeCheckMinutes', 0, 1],
     ['maintenance.sweepHours', -1, 0],
-    ['maintenance.olderThanDays', 0, 1],
+    ['maintenance.olderThanDays', -1, 0],
     ['maintenance.protectRecentHours', -1, 0],
     ['maintenance.removeFinishedWorktrees', 'yes', false],
     ['maintenance.keep', 'yes', true],

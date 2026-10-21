@@ -325,11 +325,12 @@ export async function runMaintenance(trigger: string): Promise<void> {
         record('maintenance_failure', 'error', `${check} check failed: ${message}`, { target: check, error: message });
       }
     }
+    const plannedWorktrees = ran.has('worktree') || (ran.has('sweep') && settings.removeFinishedWorktrees);
     let result: PlannedMaintenance;
     try {
       result = await plannedMaintenance(state.pressure, state.sizes, settings, {
         sweep: ran.has('sweep'),
-        worktrees: ran.has('worktree'),
+        worktrees: plannedWorktrees,
         idle: ran.has('idle'),
       });
     } catch (error) {
@@ -406,7 +407,8 @@ export async function runMaintenance(trigger: string): Promise<void> {
     }
     const retained = state.plan.filter(
       (action) =>
-        ((action.check === 'sweep' || action.check === 'worktree') && !ran.has(action.check)) ||
+        (action.check === 'sweep' && !ran.has('sweep')) ||
+        (action.check === 'worktree' && !plannedWorktrees) ||
         (action.kind === 'would-shutdown-device' && action.check === undefined && !ran.has('idle')),
     );
     const previousActions = new Set(state.plan.map(actionKey));

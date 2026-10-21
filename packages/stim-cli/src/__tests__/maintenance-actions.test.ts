@@ -22,6 +22,9 @@ import {
   type MaintenanceRecord,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import * as gcDevices from '../commands/gc/devices.ts';
+import * as ios from '../devices/ios.ts';
+import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { register, readManifest } from '../cache/cache-manifest.ts';
 import { pruneCache } from '../cache/caches.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
@@ -497,3 +500,106 @@ test('finished worktrees are removed, except a pinned one and the one the pass s
     expect.arrayContaining(['pinned by maintenance.keep', 'the command that started this pass runs inside it']),
   );
 }, 60_000);
+
+function ageWorktrees(worktrees: Record<string, string>, days: Record<string, number>) {
+  for (const [name, path] of Object.entries(worktrees)) {
+    ensureWorkspaceStorage(path);
+    recordWorkspaceUse(path, ago(days[name] ?? 0));
+  }
+}
+
+test('the age sweep removes a clean pushed worktree unused for olderThanDays, and keeps dirty, unpushed and recent ones', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'dirty', 'unpushed', 'recent']);
+  const at = (name: string) => worktrees[name] ?? '';
+  const [idle, dirty, unpushed, recent] = [at('idle'), at('dirty'), at('unpushed'), at('recent')] as const;
+  writeFileSync(join(dirty, 'notes.txt'), 'uncommitted');
+  writeFileSync(join(unpushed, 'local.txt'), 'local');
+  execSync('git add -A && git commit -q -m local', { cwd: unpushed, timeout: 15_000 });
+  ageWorktrees(worktrees, { idle: 10, dirty: 10, unpushed: 10, recent: 2 });
+  vi.spyOn(process, 'cwd').mockReturnValue(repo);
+
+  await runMaintenance('test');
+
+  expect(existsSync(idle)).toBe(false);
+  expect(existsSync(dirty)).toBe(true);
+  expect(existsSync(unpushed)).toBe(true);
+  expect(existsSync(recent)).toBe(true);
+  expect(actionKinds()).toEqual(['remove-worktree']);
+}, 60_000);
+
+test('olderThanDays 0 keeps idle worktrees, outputs and cache entries while the sweep still removes orphans', async () => {
+  process.env.STIM_MAINTENANCE_OLDER_THAN_DAYS = '0';
+  const { repo, worktrees } = gitRepoWithWorktrees(['idle']);
+  ageWorktrees(worktrees, { idle: 30 });
+  const old = workspace('old-outputs', { usedDaysAgo: 30 });
+  const orphanDir = ensureWorkspaceStorage(join(projects, 'deleted-worktree'));
+  writeFileSync(join(orphanDir, 'state.json'), '{}');
+  const cache = join(projects, 'shared-cache');
+  const oldEntry = join(cache, 'old-entry');
+  mkdirSync(oldEntry, { recursive: true });
+  utimesSync(oldEntry, new Date(), ago(30));
+  register({ dir: cache, name: 'Shared cache' });
+  vi.spyOn(process, 'cwd').mockReturnValue(repo);
+
+  await runMaintenance('test');
+
+  expect(resolveMaintenanceSettings().invalid).toBeUndefined();
+  expect(existsSync(worktrees.idle ?? '')).toBe(true);
+  expect(hasOutputs(old.dir)).toBe(true);
+  expect(existsSync(oldEntry)).toBe(true);
+  expect(existsSync(orphanDir)).toBe(false);
+  expect(actionKinds()).toEqual(['remove-orphan']);
+}, 60_000);
+
+test('the age sweep deletes a parked simulator unused for olderThanDays through teardown and keeps a recently parked one', async () => {
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  const real = getExecutor();
+  setExecutor({
+    ...getExecutor(),
+    findExecutable: (name) => (name === 'git' ? real.findExecutable(name) : null),
+    runFileAsync: async (file, args: string[], opts) =>
+      file === 'git' || file === 'du' ? real.runFileAsync(file, args, opts) : '',
+  });
+  const park = (udid: string, daysAgo: number) => {
+    const source = join(projects, `source-${udid}`);
+    mkdirSync(source, { recursive: true });
+    upsertProject(source, { platforms: { ios: { deviceUdid: udid, deviceName: `stim-${udid}`, owned: true } } });
+    parkSim({
+      platform: 'ios',
+      projectPath: source,
+      max: 3,
+      record: {
+        udid,
+        name: `stim-${udid}`,
+        runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+        deviceTypeIdentifier: 'iphone',
+        simslimManaged: false,
+        parkedAt: ago(daysAgo).toISOString(),
+      },
+    });
+  };
+  park('OLD-PARKED', 10);
+  park('NEW-PARKED', 2);
+  const listed = (udid: string): ios.IosSimRecord => ({
+    udid,
+    name: `stim-${udid}`,
+    state: 'Shutdown',
+    runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+    deviceTypeIdentifier: 'iphone',
+    available: true,
+  });
+  vi.spyOn(ios, 'listAllIosSimsAsync').mockResolvedValue([listed('OLD-PARKED'), listed('NEW-PARKED')]);
+  vi.spyOn(ios, 'listIosDeviceTypesAsync').mockResolvedValue([]);
+  const deleted: string[] = [];
+  vi.spyOn(ios, 'deleteParkedIosSim').mockImplementation(async (udid) => {
+    deleted.push(udid);
+  });
+  process.env.STIM_MAINTENANCE_DEVICE_IDLE_DAYS = '0';
+  process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
+
+  await runMaintenance('test');
+
+  expect(deleted).toEqual(['OLD-PARKED']);
+  expect(readParked('ios').map((record) => record.udid)).toEqual(['NEW-PARKED']);
+  expect(actionKinds()).toContain('delete-parked-device');
+});

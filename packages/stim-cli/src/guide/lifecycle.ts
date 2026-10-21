@@ -1339,7 +1339,8 @@ result as proof instead of requiring an unrelated screenshot.`,
 
   \`gc --older-than <days>\` reports and deletes, or with \`--cache parked\`
   erases, only the devices parked at least that long; one parked at an unknown
-  time stays.
+  time stays. Automatic maintenance's daily age sweep deletes the devices
+  parked for maintenance.olderThanDays (7; 0 never) the same way.
 
   If simulator listing or deletion fails, \`gc --delete\` reports the failure
   and keeps that entry. It never turns an unverified absence into a dropped
