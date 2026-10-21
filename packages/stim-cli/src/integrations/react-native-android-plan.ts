@@ -81,14 +81,15 @@ function imageReplacement(
   slot: string,
   flagImage: string | undefined,
   deps: Pick<AndroidPlanDeps, 'avdSystemImage' | 'avdDirectory'>,
-): { replaces: boolean } | { refusal: PlanRefusal } {
+): { replaces: boolean; refusal: PlanRefusal | null } {
   const record = deviceSlotPlatforms(getProject(root), slot)?.android;
   if (!flagImage || !record?.owned || !record.avdName || record.setupIncomplete || !deps.avdDirectory(record.avdName))
-    return { replaces: false };
+    return { replaces: false, refusal: null };
   const current = deps.avdSystemImage(record.avdName);
-  if (!current || current === flagImage) return { replaces: false };
-  if (record.bootPending) return { replaces: true };
+  if (!current || current === flagImage) return { replaces: false, refusal: null };
+  if (record.bootPending) return { replaces: true, refusal: null };
   return {
+    replaces: false,
     refusal: {
       code: 'STIM_BAD_ARG',
       message: `This project's emulator ${record.avdName} uses system image ${current}, but ${flagImage} was requested. --system-image replaces only an emulator that never finished a boot, and this one has.`,
@@ -231,10 +232,10 @@ export async function planReactNativeAndroid(
     });
   }
   const replacement =
-    target.kind === 'emulator'
+    target.kind === 'emulator' || target.kind === 'hosted'
       ? imageReplacement(root, slot, opts.systemImage?.trim() || undefined, deps)
-      : { replaces: false };
-  if ('refusal' in replacement) return refuse(replacement.refusal);
+      : { replaces: false, refusal: null };
+  if (target.kind === 'emulator' && replacement.refusal) return refuse(replacement.refusal);
   const abiKeyed = build.targetAbiOnly && !build.release;
   let localImageRead: Promise<EmulatorImage> | undefined;
   const localImage = () =>
@@ -288,6 +289,7 @@ export async function planReactNativeAndroid(
           'Run `stim android` to build for the remote device, or unset android.remote to plan the owned emulator.',
       });
     }
+    if (hostedPlan.kind === 'local' && replacement.refusal) return refuse(replacement.refusal);
     placement = hostedPlan.placement;
     if (hostedPlan.kind === 'hosted' && 'architecture' in hostedPlan.choice)
       hostedAbi = hostedPlan.choice.architecture ?? null;

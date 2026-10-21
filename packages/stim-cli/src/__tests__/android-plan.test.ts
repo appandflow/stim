@@ -403,23 +403,22 @@ describe('planAndroid', () => {
     expect(payload.cacheKey).toBe(buildCacheKey('android', HASH, { variant: 'debug', abi: 'x86_64' }));
   });
 
-  test.each(['debug', 'release'])(
-    'an explicit --system-image refuses to replace an AVD that finished a boot (%s)',
-    async (variant) => {
-      upsertProject(app, { platforms: { android: { avdName: 'stim-fixture', owned: true } } });
-      const before = getProject(app);
-      const { payload, exitCode } = await plan(
-        { systemImage: X86.pkg, variant },
-        { avdDirectory: () => join(app, 'avd'), avdSystemImage: () => ARM.pkg },
-      );
-      expect(exitCode).toBe(1);
-      expect(payload).toMatchObject({
-        code: 'STIM_BAD_ARG',
-        message: expect.stringContaining('never finished a boot'),
-      });
-      expect(getProject(app)).toEqual(before);
-    },
-  );
+  test.each([
+    { variant: 'debug', remote: undefined },
+    { variant: 'release', remote: undefined },
+    { variant: 'debug', remote: 'auto' },
+  ])('an explicit --system-image refuses to replace an AVD that finished a boot (%j)', async ({ variant, remote }) => {
+    if (remote) writeFileSync(join(app, '.stim.json'), JSON.stringify({ android: { remote } }));
+    upsertProject(app, { platforms: { android: { avdName: 'stim-fixture', owned: true } } });
+    const before = getProject(app);
+    const { payload, exitCode } = await plan(
+      { systemImage: X86.pkg, variant },
+      { avdDirectory: () => join(app, 'avd'), avdSystemImage: () => ARM.pkg },
+    );
+    expect(exitCode).toBe(1);
+    expect(payload).toMatchObject({ code: 'STIM_BAD_ARG', message: expect.stringContaining('never finished a boot') });
+    expect(getProject(app)).toEqual(before);
+  });
 
   test('no installed system image refuses, because the ABI in the key is unknown', async () => {
     const { payload, exitCode } = await plan({}, { listSystemImages: () => [] });
