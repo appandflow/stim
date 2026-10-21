@@ -532,7 +532,16 @@ async function stopWorkspace({
   const releasePhoneReverses = async () => {
     if (phoneReversesRemoved) return;
     phoneReversesRemoved = true;
-    await removePhoneReverses(root, { slot: hostedSlot, operation });
+    try {
+      await removePhoneReverses(root, { slot: hostedSlot, operation });
+    } catch (error) {
+      operation?.signal.throwIfAborted();
+      report(
+        chalk.yellow(
+          phaseLine('device', `could not remove the adb reverse from the phone: ${(error as Error).message}`),
+        ),
+      );
+    }
   };
   const releaseReverses = async () => {
     await removeOwnedEmulatorReverses(proj, reservedPort, operation);

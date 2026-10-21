@@ -35,11 +35,6 @@ export function recordPhoneReverse(root: string, slot: string, serial: string, p
   });
 }
 
-/**
- * Removes the Metro reverses a `--device` run added to a physical Android phone and forgets them. Only the host
- * ports the run recorded are removed, on the serial it recorded; every other reverse on the phone stays.
- * https://github.com/appandflow/stim/issues/4132
- */
 export async function removePhoneReverses(
   root: string,
   { slot, operation }: { slot?: string; operation?: StimContext } = {},
@@ -52,7 +47,10 @@ export async function removePhoneReverses(
   await updateWorkspaceStateAsync(root, (state) => {
     const remaining = readRecords(state);
     for (const [key, done] of records) {
-      if (remaining[key]?.serial === done.serial) delete remaining[key];
+      const current = remaining[key];
+      if (current?.serial !== done.serial) continue;
+      current.ports = current.ports.filter((port) => !done.ports.includes(port));
+      if (current.ports.length === 0) delete remaining[key];
     }
     const { [KEY]: _, ...rest } = state;
     return Object.keys(remaining).length ? { ...rest, [KEY]: remaining } : rest;

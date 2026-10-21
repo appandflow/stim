@@ -5781,6 +5781,12 @@ describe('--device refusals found in review', () => {
     expect(result.error?.code).toBe('STIM_BAD_ARG');
   });
 
+  test('an emulator run records no phone reverse', async () => {
+    const h = harness();
+    await h.run();
+    expect(existsSync(workspaceStateFile(root)) ? readState().phoneReverses : undefined).toBeUndefined();
+  });
+
   test('a physical run records its Metro reverse, and no other serial, in the workspace state', async () => {
     const h = harness({
       device: true,

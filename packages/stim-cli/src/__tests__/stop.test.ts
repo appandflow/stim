@@ -715,7 +715,8 @@ describe('stop removes the adb reverses a --device run left on a physical phone'
     });
     await runStop(opts);
     expect(events).toEqual(expected);
-    expect(readWorkspaceState(tmpRoot)?.phoneReverses !== undefined).toBe(expected.length === 0);
+    const recordKept = expected.length === 0;
+    expect(readWorkspaceState(tmpRoot)?.phoneReverses !== undefined).toBe(recordKept);
   });
 
   test('stop --slot removes only that slot phone, and keeps the others recorded', async () => {
