@@ -592,6 +592,7 @@ describe('the Metro store injected into an Expo child', () => {
     expect(
       expoMetroStoreEnv({
         root: '/w/app',
+        port: 8082,
         storeRoot: '/cache/app',
         adapterPath: adapter,
         existingOverride: '/w/app/custom-metro.cjs',
@@ -600,6 +601,7 @@ describe('the Metro store injected into an Expo child', () => {
       EXPO_OVERRIDE_METRO_CONFIG: adapter,
       STIM_METRO_STORE: '/cache/app',
       STIM_PROJECT_ROOT: '/w/app',
+      STIM_METRO_PORT: '8082',
       STIM_EXPO_METRO_CONFIG: '/w/app/custom-metro.cjs',
     });
   });
