@@ -153,11 +153,15 @@ public enum AppPreferences {
   }
 
   public static func showsWorkspaceCards(_ defaults: UserDefaults = .standard) -> Bool {
-    defaults.object(forKey: Key.showsWorkspaceCards) as? Bool ?? true
+    isOn(Key.showsWorkspaceCards, defaults)
   }
 
   public static func offersTutorial(_ defaults: UserDefaults = .standard) -> Bool {
-    defaults.object(forKey: Key.offersTutorial) as? Bool ?? true
+    isOn(Key.offersTutorial, defaults)
+  }
+
+  private static func isOn(_ key: String, _ defaults: UserDefaults) -> Bool {
+    defaults.object(forKey: key) == nil || defaults.bool(forKey: key)
   }
 
   public static var pausesHiddenFrames: Bool {
