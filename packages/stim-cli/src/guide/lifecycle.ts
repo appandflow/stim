@@ -1818,8 +1818,11 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   BUILD is what breaks that, and it fails silently -- a cache that never hits
   looks exactly like a cache that is not there.
 
-  Stim ignores two paths a fresh checkout never has and no native build reads:
-  android/local.properties and android/.idea. A project does not repeat those.
+  Stim ignores paths a fresh checkout never has and no native Debug build
+  reads: android/local.properties, android/.idea, *.xcodeproj/xcuserdata, and,
+  while a .gitignore pattern matches them (even when committed), the
+  \`react-native bundle\` output ios/main.jsbundle and ios/assets. A project
+  does not repeat those.
   Everything else is the project's call, including a lockfile whose checksums
   embed machine paths -- ignoring a path any project might read turns a slow
   build into a wrong one.

@@ -740,6 +740,14 @@ Setup approves the key that holds one ticket, until one expiry, once per selecte
 capability. Its live journal holds no secret; anyone who knows the journal name,
 which only the ticket holder can derive, can read it until expiry.
 
+An offloaded React Native build sends the checkout's tracked and untracked
+files, and the gitignored files its native fingerprint hashes or its Expo config
+reads, such as `.env.local` and the other Expo `.env` files. Those files can hold
+secrets: Stim assumes every paired Mac belongs to the same person. Nothing under
+`node_modules` is sent, since the build Mac installs dependencies itself, and
+neither is build output the fingerprint ignores, such as `ios/Pods` or
+`android/build`.
+
 Build approval permits the client's project code, including config plugins,
 CocoaPods hooks, Xcode script phases and Gradle plugins, to run as the server
 user. It is not a sandbox for untrusted projects. Approved build or device-host
@@ -752,8 +760,10 @@ temporarily; it cannot authenticate.
 
 - [STIM_OFFLOAD_REFUSED](./troubleshooting.md#STIM_OFFLOAD_REFUSED): a named
   worker cannot take or finish the build. Check approval, tool compatibility,
-  capacity and the pinned server key. Rerun with `--remote-build auto` or `local`
-  only when you want to change placement.
+  capacity and the pinned server key. A `fingerprint-mismatch` reason names the
+  fingerprint sources that differ and the files `pod install` or prebuild rewrote
+  on the worker; make that input agree on both Macs. Rerun with
+  `--remote-build auto` or `local` only when you want to change placement.
 - [STIM_HOSTING_REFUSED](./troubleshooting.md#STIM_HOSTING_REFUSED): the host
   is unreachable, has no compatible simulator or cannot confirm the session.
   Retry the same host, or reconcile with `stim stop` when it is reachable.

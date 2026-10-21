@@ -67,6 +67,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
  * `native-gradle-artifact-cache` applies caller cache policy to verified worker-scoped APK reuse.
  * `react-native-peer-cache` offers development archives with build-proven fingerprints, options and toolchains.
+ * `fingerprint-sources` accepts `fingerprintSources` on `build.start`, so a fingerprint mismatch names the differing sources.
  * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
  * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
  * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
@@ -112,6 +113,7 @@ export const FEATURES = [
   'native-gradle-artifact-cache',
   'native-gradle-peer-cache',
   'react-native-peer-cache',
+  'fingerprint-sources',
   'swiftpm-peer-cache',
   'build-dependency-cache',
   'hosted-android-data',
@@ -1118,6 +1120,11 @@ export interface BuildAndroidOptions {
   module?: string | null;
 }
 
+export interface BuildFingerprintSource {
+  id: string;
+  hash: string | null;
+}
+
 export interface GradleOffloadInputs {
   complete: true;
   ignored: string[];
@@ -1138,6 +1145,8 @@ export interface BuildStartParams {
   iosProjectPath?: string | null;
   runtime?: string | null;
   fingerprint: string | null;
+  /** The id and hash of each source of `fingerprint`, so the machine can name the sources its fingerprint differs in. */
+  fingerprintSources?: BuildFingerprintSource[];
   native?:
     | {
         provider: 'xcode';

@@ -31,6 +31,7 @@ import {
   fingerprintDiffRecord,
   DEFAULT_FINGERPRINT_IGNORES,
   fingerprintProject,
+  gitignoredFingerprintInputs,
   prepareProviderDownloadDir,
   providerDownloadPath,
   refingerprintAfterMutation,
@@ -333,7 +334,11 @@ test('fingerprintProject ignores the paths a fresh checkout does not have', asyn
     return { hash: 'h', sources: [] };
   };
   await fingerprintProject(root, { platform: 'ios', createFingerprint });
-  expect(options?.ignorePaths).toEqual(['**/android/local.properties', '**/android/.idea/**']);
+  expect(options?.ignorePaths).toEqual([
+    '**/android/local.properties',
+    '**/android/.idea/**',
+    '**/*.xcodeproj/xcuserdata/**/*',
+  ]);
   expect(options?.platforms).toEqual(['ios']);
 });
 
@@ -631,6 +636,73 @@ test('the real @expo/fingerprint differ reports additions and removals with thei
     ]),
   );
   expect(changes).toHaveLength(2);
+});
+
+describe('gitignored fingerprint inputs', () => {
+  const write = (path: string, content = path) => {
+    mkdirSync(join(root, path, '..'), { recursive: true });
+    writeFileSync(join(root, path), content);
+  };
+  beforeEach(() => {
+    resetExecutor();
+    write('package.json', '{"name":"app"}');
+    write(
+      '.gitignore',
+      'node_modules/\n.env.local\nios/Pods/\nios/assets/\n*.jsbundle\nxcuserdata\nios/GoogleService-Info.plist\ncreds/\n',
+    );
+    write('.env.sample');
+    write('ios/Podfile');
+    getExecutor().runFile('git', ['init', '--quiet', root], { timeoutMs: 10_000 });
+    getExecutor().runFile('git', ['-C', root, 'add', '.'], { timeoutMs: 10_000 });
+    write('.env.local');
+    write('ios/GoogleService-Info.plist');
+    write('ios/Pods/Manifest.lock');
+    write('ios/assets/node_modules/icon.png');
+    write('ios/main.jsbundle');
+    write('ios/App.xcodeproj/xcuserdata/me.xcuserdatad/xcschemes/xcschememanagement.plist');
+    write('node_modules/expo-camera/ios/Camera.swift');
+    write('creds/google-services.json');
+    write('creds/release.keystore');
+  });
+
+  test('are the ignored files a checkout lacks, without dependencies or build leftovers', async () => {
+    const sources: FingerprintSource[] = [
+      { type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: 'a' },
+      { type: 'dir', filePath: 'node_modules/expo-camera/ios', reasons: ['expoAutolinkingIos'], hash: 'b' },
+      { type: 'contents', id: 'expoConfig', contents: '{}', reasons: ['expoConfig'], hash: 'c' },
+      { type: 'file', filePath: 'creds/google-services.json', reasons: ['expoConfigExternalFile'], hash: 'd' },
+      { type: 'dir', filePath: '../outside-the-repository', reasons: ['extraSources'], hash: 'e' },
+    ];
+    const real = realpathSync(root);
+    expect(await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: {} })).toEqual([
+      join(real, '.env.local'),
+      join(real, 'creds/google-services.json'),
+      join(real, 'ios/GoogleService-Info.plist'),
+    ]);
+    expect(
+      await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: { EXPO_NO_DOTENV: '1' } }),
+    ).toEqual([join(real, 'creds/google-services.json'), join(real, 'ios/GoogleService-Info.plist')]);
+    expect(await gitignoredFingerprintInputs(real, sources.slice(0, 2), { platform: 'ios' }, { env: {} })).toEqual([
+      join(real, 'ios/GoogleService-Info.plist'),
+    ]);
+  });
+
+  test('gitignored build leftovers in ios/ leave the real fingerprint unchanged; native inputs move it', async () => {
+    const hashOf = async () => (await fingerprintProject(root, { platform: 'ios' }))?.hash;
+    rmSync(join(root, 'ios/GoogleService-Info.plist'));
+    getExecutor().runFile('git', ['-C', root, 'add', '-f', 'ios/main.jsbundle'], { timeoutMs: 10_000 });
+    const withLeftovers = await hashOf();
+    rmSync(join(root, 'ios/assets'), { recursive: true });
+    rmSync(join(root, 'ios/main.jsbundle'));
+    rmSync(join(root, 'ios/App.xcodeproj'), { recursive: true });
+    expect(await hashOf()).toBe(withLeftovers);
+    write('ios/GoogleService-Info.plist');
+    expect(await hashOf()).not.toBe(withLeftovers);
+    const withPlist = await hashOf();
+    write('.gitignore', 'node_modules/\n');
+    write('ios/assets/Sound.caf');
+    expect(await hashOf()).not.toBe(withPlist);
+  }, 30_000);
 });
 
 test('fingerprintDiffRecord caps the logged list at 20 names and carries the total count', () => {
