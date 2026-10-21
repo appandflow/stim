@@ -69,7 +69,7 @@ export interface ReloadDeps {
   readLaunches: typeof readWorkspaceLaunches;
   readRemote: (root: string) => RemoteSessionRecord | null;
   resolveIos: (udid: string) => ResolvedIosSim | Promise<ResolvedIosSim>;
-  resolveAndroid: (avdName: string) => Promise<ResolvedAvdSerial>;
+  resolveAndroid: (avdName: string, preferredSerial?: string) => Promise<ResolvedAvdSerial>;
   iosProcess: typeof iosAppProcess;
   androidProcess: typeof androidAppProcess;
   resolveMetro: (port: number, root: string, signal?: AbortSignal) => Promise<MetroResolution>;
@@ -93,7 +93,7 @@ const DEFAULT_DEPS: ReloadDeps = {
   readLaunches: readWorkspaceLaunches,
   readRemote: readRemoteSession,
   resolveIos: async (udid) => resolveOwnedIosSim(udid, await listAllIosSimsAsync({})),
-  resolveAndroid: resolveOwnedAvdSerialAsync,
+  resolveAndroid: (avdName, preferredSerial) => resolveOwnedAvdSerialAsync(avdName, { preferredSerial }),
   iosProcess: iosAppProcess,
   androidProcess: androidAppProcess,
   resolveMetro: (port, root, signal) =>
@@ -253,7 +253,7 @@ async function inspectTarget(
   }
   let resolved: ResolvedAvdSerial;
   try {
-    resolved = await d.resolveAndroid(configured.avdName);
+    resolved = await d.resolveAndroid(configured.avdName, record.deviceId);
   } catch (error) {
     return {
       platform,
