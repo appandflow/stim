@@ -20,7 +20,7 @@ import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
-import { loadConfig, removeProject } from '../workspace/config.ts';
+import { loadConfig, removeProject, withConfigLockAsync } from '../workspace/config.ts';
 import { plural, quotedPath } from '../command-output.ts';
 import { directorySizeAsync, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
@@ -213,10 +213,14 @@ export function readGcReport(options: GcReadOptions = {}, deps: GcDependencies =
   );
 }
 
-function removeInvalidProjectEntries(invalidProjects: string[], output: GcOutput, signal?: AbortSignal): void {
+async function removeInvalidProjectEntries(
+  invalidProjects: string[],
+  output: GcOutput,
+  signal?: AbortSignal,
+): Promise<void> {
   for (const path of invalidProjects) {
     signal?.throwIfAborted();
-    removeProject(path);
+    await withConfigLockAsync(() => removeProject(path), signal);
     output.log(chalk.green(`Removed the invalid registry entry ${path}`));
     output.record('project', 'done', path);
   }
@@ -1152,7 +1156,7 @@ async function runGcCore(
   deleteFailures += await deleteGradleVersions(report.gradleVersions, output, deps.operation);
 
   throwIfCancelled(signal, 'GC');
-  removeInvalidProjectEntries(invalidProjects, output, signal);
+  await removeInvalidProjectEntries(invalidProjects, output, signal);
 
   throwIfCancelled(signal, 'GC');
   deleteFailures += await pruneDeadProjects(deadProjects, output, deps.operation);

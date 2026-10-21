@@ -51,7 +51,7 @@ import {
   type RunLease,
 } from '../engine/device-lease-run.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
-import { getConcurrencyLimits, getProject, upsertProject } from '../workspace/config.ts';
+import { getConcurrencyLimits, getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild } from '../engine/build-lock.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
@@ -70,8 +70,13 @@ import {
   statsProjectKey,
   type RunEstimates,
 } from '../engine/stats.ts';
-import { writeWorkspaceLaunch } from '../supervisor/state.ts';
-import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { writeWorkspaceLaunchAsync } from '../supervisor/state.ts';
+import {
+  readWorkspaceState,
+  recordWorkspaceUseAsync,
+  writeWorkspaceState,
+  withWorkspaceStateLockAsync,
+} from '../workspace/workspace-state.ts';
 import {
   installAndroidApp,
   launchAndroidApp,
@@ -269,7 +274,7 @@ export function runAndroidOperation(
     root,
     { command: 'android', platform: PLATFORM, slot: opts.slot ?? 'default' },
     async (claim) => {
-      recordWorkspaceUse(root, new Date(), context.env, context.cwd);
+      await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
       const progress = startBuildProgress({
         root,
         platform: PLATFORM,
@@ -384,7 +389,7 @@ interface RunAndroidOptions {
   spawn?: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
   kill?: (pid: number, signal: NodeJS.Signals) => boolean;
   createWriter?: typeof createNdjsonWriter;
-  writeLaunch?: typeof writeWorkspaceLaunch;
+  writeLaunch?: typeof writeWorkspaceLaunchAsync;
   writeState?: typeof writeWorkspaceState;
   recordBuild?: typeof recordFinishedBuild;
   recordStats?: typeof recordRunStats;
@@ -465,7 +470,7 @@ function resolveRunAndroidOptions(
     spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
     kill = (pid, signal) => process.kill(pid, signal),
     createWriter = createNdjsonWriter,
-    writeLaunch = writeWorkspaceLaunch,
+    writeLaunch = writeWorkspaceLaunchAsync,
     writeState = writeWorkspaceState,
     recordBuild,
     recordStats = recordRunStats,
@@ -939,7 +944,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   if ('failure' in hosting) return fail(hosting.failure.code, hosting.failure.message, hosting.failure.remedy);
   const { target, hostedTarget, budget, selectors } = hosting;
   record.devicePlacement = hosting.devicePlacement;
-  writeDevicePlacement(root, slot, PLATFORM, record.devicePlacement);
+  const devicePlacement = record.devicePlacement;
+  await withWorkspaceStateLockAsync(root, () => writeDevicePlacement(root, slot, PLATFORM, devicePlacement));
   const physical = target.kind === 'physical';
   const remoteBackend = target.kind === 'remote' ? target.backend : null;
   if (hostedTarget) {
@@ -988,12 +994,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let androidPackage = appIds.androidPackage;
   record.bundleId = androidPackage;
   const registerProject = () =>
-    upsertProject(root, {
-      bundleId: appIds.bundleId ?? undefined,
-      androidPackage: androidPackage ?? undefined,
-      isExpo,
-    });
-  if (remoteBackend !== 'eas') registerProject();
+    withConfigLockAsync(() =>
+      upsertProject(root, {
+        bundleId: appIds.bundleId ?? undefined,
+        androidPackage: androidPackage ?? undefined,
+        isExpo,
+      }),
+    );
+  if (remoteBackend !== 'eas') await registerProject();
   const project = getProject(root);
   const label = projectShortcut(root, project);
 

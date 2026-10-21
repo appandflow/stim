@@ -33,7 +33,7 @@ import {
   readRemoteSessionId,
   type ManagedTunnelRecord,
 } from '../supervisor/state.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { isJsonObject, LAST_BUILD_KEYS, readMacosRecord } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
 import { macosAppPresent } from '../macos/state.ts';
@@ -138,7 +138,7 @@ async function reclaimRemoteSession(
         },
       };
     }
-    clearRemoteSession(root, sessionId);
+    await withWorkspaceStateLockAsync(root, () => clearRemoteSession(root, sessionId));
     return { stopped: sessionId, failed: null };
   }
   return {
@@ -198,7 +198,7 @@ async function reclaimMetroTunnel(
       },
     };
   }
-  if (!clearManagedMetroTunnel(root, record)) {
+  if (!(await withWorkspaceStateLockAsync(root, () => clearManagedMetroTunnel(root, record)))) {
     return {
       stopped: null,
       failed: {
@@ -504,9 +504,10 @@ async function reclaimIdleProject(
       ? inspectProcessIdentity(orphanServer)
       : null;
   if (supervisor.status === 'ours') {
-    requestDevServerStop(path, supervisor.processToken, stopRequester);
+    const processToken = supervisor.processToken;
+    await withWorkspaceStateLockAsync(path, () => requestDevServerStop(path, processToken, stopRequester));
     const signalled = await killMetroTreeAsync(supervisor.pid, supervisor.processToken, operation);
-    if (!signalled) withdrawDevServerStopRequest(path, supervisor.processToken);
+    if (!signalled) await withWorkspaceStateLockAsync(path, () => withdrawDevServerStopRequest(path, processToken));
     if (signalled && (await waitForProcessExit(supervisor, 10_000, signal))) {
       killedPid = supervisor.pid!;
     } else {
@@ -664,7 +665,7 @@ async function reclaimIdleProject(
 
   const keptEntry = supervisorHeld || failedDevices.length > 0 || failedWorkspaceDirs.length > 0;
   signal?.throwIfAborted();
-  if (project && !keptEntry && !preserveProjectRecord) removeProject(path);
+  if (project && !keptEntry && !preserveProjectRecord) await withConfigLockAsync(() => removeProject(path));
 
   return {
     path,

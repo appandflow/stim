@@ -16,7 +16,14 @@ import {
   type BuildStore,
   untrackedNativeFiles,
 } from '../../cache/build-cache.ts';
-import { getConcurrencyLimits, getProject, recordIosSchemeApprovals, upsertProject } from '../../workspace/config.ts';
+import {
+  getConcurrencyLimits,
+  getProject,
+  recordIosSchemeApprovals,
+  upsertProject,
+  withConfigLockAsync,
+  type ProjectRecord,
+} from '../../workspace/config.ts';
 import { clearOtherUserApps, installIosApp, launchIosApp } from '../../engine/app-install.ts';
 import { verifyLaunch, verifyReleaseLaunch } from '../../engine/launch-verify.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
@@ -70,7 +77,7 @@ import {
   settingsLayers,
   settingOriginScope,
 } from '../../workspace/settings.ts';
-import { writeWorkspaceLaunch } from '../../supervisor/state.ts';
+import { writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../../workspace/workspace-state.ts';
 import { gitCommonDirAsync, repoRootAsync } from '../../workspace/worktree.ts';
 import { warmMetro } from '../../engine/metro-warmup.ts';
@@ -110,7 +117,7 @@ export interface IosDeps {
   hasDevClient: typeof hasDevClient;
   devClientTakesDevMenuParams: typeof devClientTakesDevMenuParams;
   getProject: typeof getProject;
-  upsertProject: typeof upsertProject;
+  upsertProject: (...args: Parameters<typeof upsertProject>) => Promise<ProjectRecord>;
   recordIosSchemeApprovals: typeof recordIosSchemeApprovals;
   checkDeviceCapacity: typeof checkDeviceCapacity;
   budgetGate: typeof budgetGate;
@@ -179,7 +186,7 @@ export interface IosDeps {
   ensureWorkspaceStorage: typeof ensureWorkspaceStorageSafely;
   replaceCollector: typeof replaceCollector;
   stopPreviousCollector: typeof stopPreviousCollector;
-  writeWorkspaceLaunch: typeof writeWorkspaceLaunch;
+  writeWorkspaceLaunch: typeof writeWorkspaceLaunchAsync;
   writeWorkspaceState: typeof writeWorkspaceState;
   createWriter: typeof createNdjsonWriter;
   recordStats: typeof recordRunStats;
@@ -210,7 +217,7 @@ export const DEFAULT_DEPS: IosDeps = {
   hasDevClient,
   devClientTakesDevMenuParams,
   getProject,
-  upsertProject,
+  upsertProject: (...args) => withConfigLockAsync(() => upsertProject(...args)),
   recordIosSchemeApprovals,
   checkDeviceCapacity,
   budgetGate,
@@ -281,7 +288,7 @@ export const DEFAULT_DEPS: IosDeps = {
   ensureWorkspaceStorage: ensureWorkspaceStorageSafely,
   replaceCollector,
   stopPreviousCollector,
-  writeWorkspaceLaunch,
+  writeWorkspaceLaunch: writeWorkspaceLaunchAsync,
   writeWorkspaceState,
   createWriter: createNdjsonWriter,
   recordStats: recordRunStats,

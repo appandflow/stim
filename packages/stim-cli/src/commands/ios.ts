@@ -68,7 +68,7 @@ import { parseBuildMachineOption } from '../offload/selection.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import type { ReclaimedStep } from '../budget.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
-import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { recordWorkspaceUseAsync, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { ensureDevServer, isPhysicalDeviceRequest, type MobileRuntimePreparation } from './native-runtime.ts';
 import {
@@ -226,7 +226,7 @@ export function runIosOperation(
         root,
         { command: 'ios', platform: PLATFORM, slot: opts.slot ?? 'default' },
         async (claim) => {
-          recordWorkspaceUse(root, new Date(), context.env, context.cwd);
+          await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
           const progress = startBuildProgress({
             root,
             platform: PLATFORM,
@@ -657,7 +657,8 @@ async function runIos(
   const targetRefusal = iosProjectTargetRefusal(integration, { physical, placement: remoteSelection });
   if (targetRefusal) return fail(targetRefusal);
   devicePlacement = remoteSelection.devicePlacement;
-  writeDevicePlacement(root, slot, PLATFORM, devicePlacement);
+  const placement = devicePlacement;
+  await withWorkspaceStateLockAsync(root, () => writeDevicePlacement(root, slot, PLATFORM, placement));
   const { machine: hostedMachine, backend: remoteBackend } = remoteSelection;
   const viewer = resolveSimulatorAppFlag(
     opts.simulatorApp,
