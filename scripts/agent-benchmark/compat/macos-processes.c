@@ -35,6 +35,7 @@ static int list_process(int pid) {
     return gone(pid) ? SKIPPED : TRANSIENT;
   if (before.pbi_uid != getuid() || before.pbi_ruid != getuid() || before.pbi_status == SZOMB) return SKIPPED;
   char path[PROC_PIDPATHINFO_MAXSIZE] = {0};
+  errno = 0;
   if (proc_pidpath(pid, path, sizeof(path)) <= 0) {
     int unlinked = errno == ENOENT;
     if (gone(pid)) return SKIPPED;
@@ -62,8 +63,8 @@ int main(int argc, char **argv) {
   for (int i = 0; i < bytes / (int)sizeof(int) && !result; i++) {
     if (pids[i] <= 0) continue;
     int outcome = TRANSIENT;
-    for (int attempt = 0; attempt < 10 && outcome == TRANSIENT; attempt++) {
-      if (attempt) usleep(2000);
+    for (int attempt = 0; attempt < 100 && outcome == TRANSIENT; attempt++) {
+      if (attempt) usleep(5000);
       outcome = list_process(pids[i]);
     }
     if (outcome == TRANSIENT || outcome == FAILED) result = 1;
