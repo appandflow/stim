@@ -8,7 +8,7 @@ import { ambientEnv, ambientContext, type StimContext } from '@stim-cli/core';
 import { spawnDeclared } from './engine/spawn-claims.ts';
 import { operationState } from './engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
-import { processGroupAlive } from './ownership-claim.ts';
+import { groupExitBudgetMs, waitForGroupExit } from './process-group-exit.ts';
 import { debugLog } from './debug-log.ts';
 import { reportSignal, trackReportResource } from './report-runtime.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from './process-identity.ts';
@@ -64,6 +64,7 @@ export interface Executor {
 }
 
 const MAX_BUFFER = 64 * 1024 * 1024;
+const REPORT_CHILD_EXIT_CAP_MS = 15_000;
 
 function spawnReportProbe(
   file: string,
@@ -204,17 +205,19 @@ function reportChild(
         await Promise.race([
           nativeClosed,
           new Promise<void>((resolve) => {
-            timer = setTimeout(resolve, 1000);
+            timer = setTimeout(resolve, groupExitBudgetMs(REPORT_CHILD_EXIT_CAP_MS));
           }),
         ]);
         clearTimeout(timer);
+        if (!ended) await new Promise<void>((resolve) => setImmediate(resolve));
         if (!ended) refuse(`Report child ${pid} did not close within the cleanup budget.`);
       }
-      if (pid !== undefined && process.platform !== 'win32') {
-        const deadline = performance.now() + 1000;
-        while (processGroupAlive(pid) && performance.now() < deadline) await delay(25);
-        if (processGroupAlive(pid)) refuse(`Report child ${pid} still has descendants after cleanup.`);
-      }
+      if (
+        pid !== undefined &&
+        process.platform !== 'win32' &&
+        !(await waitForGroupExit(pid, groupExitBudgetMs(REPORT_CHILD_EXIT_CAP_MS)))
+      )
+        refuse(`Report child ${pid} still has descendants after cleanup.`);
     })());
   if (report) trackReportResource(context, closed, cancel, signal);
   else {

@@ -90,6 +90,7 @@ import {
 } from '../engine/tunnel.ts';
 import { budgetGate, type ReclaimedStep } from '../budget.ts';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
+import { groupExitBudgetMs, waitForGroupExit } from '../process-group-exit.ts';
 import { ambientContext, ambientEnv } from '@stim-cli/core';
 
 const DEFAULT_WAIT_SECONDS = 60;
@@ -324,12 +325,11 @@ const DEFAULT_START_DEPS: StartCommandDeps = {
         signalProcessTree(child.pid, 'SIGTERM', { group: true });
       } catch {}
     }
-    return terminateChild(child, {
-      alreadyExited: false,
-      timeoutMs: 1_000,
-      isAlive: pidExists,
-      waitForGroup: process.platform !== 'win32',
-    });
+    const stopped = await terminateChild(child, { alreadyExited: false, timeoutMs: 1_000, isAlive: pidExists });
+    return (
+      stopped &&
+      (process.platform === 'win32' || !child.pid || (await waitForGroupExit(child.pid, groupExitBudgetMs())))
+    );
   },
   withWorktreeLock: withManagedRemoteWorktreeLock,
   withTunnelLock: withManagedTunnelLock,
@@ -652,7 +652,7 @@ export async function startDevServer(
                 d.platform === 'win32'
                   ? !identity || inspectProcessIdentity(identity) !== 'gone'
                   : processGroupAlive(pid);
-              const deadline = Date.now() + 1000;
+              const deadline = Date.now() + groupExitBudgetMs();
               while (alive() && Date.now() < deadline) await cancellableSleep(25);
               if (alive())
                 throw new WorkspaceProcessCleanupError(
@@ -946,7 +946,8 @@ export async function startDevServer(
             }
             const same = spawnedIdentity && inspectProcessIdentity(spawnedIdentity) === 'same';
             const supervisorCleanup =
-              (childExit !== null && !processGroupAlive(child.pid)) ||
+              (childExit !== null &&
+                (same ? !processGroupAlive(child.pid) : await waitForGroupExit(child.pid, groupExitBudgetMs()))) ||
               Boolean(same && supervisorSignalable(child) && (await d.terminateSupervisorChild(child)));
             const publicationRacedCleanup = hasPublishedSupervisor();
             if (
@@ -979,6 +980,7 @@ export async function startDevServer(
         }
       };
 
+      let refusal: StartRefusal | undefined;
       try {
         if (remote && !tunnel && !publicUrl && tunnelMode !== 'off') {
           const available = d.providers(tunnelMode);
@@ -1448,8 +1450,17 @@ export async function startDevServer(
           });
         }
         return startFacts({ root, port, supervisor, logsDir, alreadyRunning: false });
+      } catch (error) {
+        if (error instanceof StartRefusal) refusal = error;
+        throw error;
       } finally {
-        await reconcileSpawnedSupervisor();
+        await reconcileSpawnedSupervisor().catch((cleanup: unknown) => {
+          if (refusal && cleanup instanceof WorkspaceProcessCleanupError) {
+            cleanup.message = `${refusal.message} ${cleanup.message}`;
+            cleanup.cause = refusal;
+          }
+          throw cleanup;
+        });
       }
     };
 
@@ -1535,7 +1546,7 @@ export async function startDevServer(
       return {
         ok: false,
         error: startError(error),
-        lines: [],
+        lines: error.cause instanceof StartRefusal ? (error.cause.refusal.lines ?? []) : [],
         reclaimed,
         retainedClaimRoots: [...new Set(error.claims.map((claim) => claim.root))],
       };
