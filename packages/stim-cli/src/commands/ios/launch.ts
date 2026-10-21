@@ -356,7 +356,11 @@ async function verifyIosMetroRun({
       'verify',
       `bundle loaded` +
         (verification.processAlive === true ? ', process alive' : '') +
-        (verification.readiness ? '' : ', stable for 3s -- the first screen may still be rendering') +
+        (verification.readiness
+          ? ''
+          : verification.jsRunning
+            ? ', app JavaScript running -- the first screen may still be rendering'
+            : ', stable for 3s -- the first screen may still be rendering') +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
     const hasAppErrors = reportLaunchErrors(verification.errors ?? [], note, root);

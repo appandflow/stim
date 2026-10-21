@@ -44,6 +44,7 @@ export interface VerifyLaunchResultLike {
   processAlive?: boolean | null;
   errors?: LaunchErrorRecord[];
   waitedMs?: number;
+  jsRunning?: boolean;
 }
 
 export interface FailExtra {

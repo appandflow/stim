@@ -43,6 +43,7 @@ import {
   MANIFEST_GRACE_MS,
   MANIFEST_VERIFY_TIMEOUT_MS,
   STABILITY_WINDOW_MS,
+  JS_RUNNING_SETTLE_MS,
   VERIFY_TIMEOUT_MS,
   isBundleProof,
   isBundleRequestProof,
@@ -1596,6 +1597,105 @@ describe('verifyLaunch', () => {
   });
 });
 
+describe('verifyLaunch: the stability window ends on evidence that the app JavaScript is running', () => {
+  const since = 1000;
+  const metro = (platform: 'ios' | 'android'): NdjsonRecord[] => [
+    { ts: 1500, src: 'metro', platform, event: 'bundle_response_started', requestId: 'a' },
+    { ts: 2000, src: 'metro', platform, event: 'bundle_response_finished', requestId: 'a' },
+  ];
+  const device = (platform: 'ios' | 'android', ts: number, msg: string): NdjsonRecord => ({
+    ts,
+    src: 'device',
+    platform,
+    level: 'info',
+    msg,
+  });
+  const run = (
+    platform: 'ios' | 'android',
+    records: { metro?: NdjsonRecord[]; device: NdjsonRecord[] },
+    extra: Parameters<typeof verifyLaunch>[0] = {},
+  ) => {
+    const clock = fakeClock();
+    return verifyLaunch({
+      since,
+      platform,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => (records.metro ?? metro(platform)).filter((r) => Number(r.ts) <= clock.at()),
+      readDeviceRecords: () => records.device.filter((r) => Number(r.ts) <= clock.at()),
+      readClientRecords: () => [],
+      processAlive: () => true,
+      ...extra,
+    });
+  };
+
+  test.each(['ios', 'android'] as const)(
+    '%s: Running "<app>" after the bundle response ends the window early',
+    async (platform) => {
+      const result = await run(platform, { device: [device(platform, 3000, 'Running "main" with {"rootTag":11}')] });
+      expect(result).toMatchObject({ verified: true, jsRunning: true, processAlive: true });
+      expect(result.waitedMs).toBe(3000 + JS_RUNNING_SETTLE_MS - since);
+      expect(result.waitedMs).toBeLessThan(STABILITY_WINDOW_MS + 1000);
+    },
+  );
+
+  test.each(['ios', 'android'] as const)('%s: without that evidence the window still lasts 3 s', async (platform) => {
+    const result = await run(platform, { device: [device(platform, 3000, 'some other log line')] });
+    expect(result).toMatchObject({ verified: true, waitedMs: 2000 - since + STABILITY_WINDOW_MS });
+    expect(result.jsRunning).toBeUndefined();
+  });
+
+  test('a Running line from before the bundle response finished is not evidence', async () => {
+    const result = await run('ios', { device: [device('ios', 1800, 'Running "main" with {"rootTag":1}')] });
+    expect(result.waitedMs).toBe(2000 - since + STABILITY_WINDOW_MS);
+    expect(result.jsRunning).toBeUndefined();
+  });
+
+  test('a Running line from the other platform is not evidence', async () => {
+    const result = await run('ios', { device: [device('android', 3000, 'Running "main"')] });
+    expect(result.waitedMs).toBe(2000 - since + STABILITY_WINDOW_MS);
+  });
+
+  test('an app that exits before the evidence settles still fails', async () => {
+    const result = await run(
+      'ios',
+      { device: [device('ios', 3000, 'Running "main" with {"rootTag":11}')] },
+      { processAlive: () => false },
+    );
+    expect(result).toMatchObject({ verified: false, fatal: true, processAlive: false });
+  });
+
+  test('a Metro bundle failure before the evidence still fails', async () => {
+    const result = await run('ios', {
+      metro: [...metro('ios'), { ts: 2500, src: 'metro', platform: 'ios', event: 'bundling_error' }],
+      device: [device('ios', 3000, 'Running "main" with {"rootTag":11}')],
+    });
+    expect(result).toMatchObject({ verified: false, fatal: true });
+  });
+
+  test('a launch error logged between the bundle response and the evidence is reported', async () => {
+    const result = await run('ios', {
+      device: [
+        { ...device('ios', 2500, 'TypeError: undefined is not a function'), level: 'error' },
+        device('ios', 3000, 'Running "main" with {"rootTag":11}'),
+      ],
+    });
+    expect(result.verified).toBe(true);
+    expect(result.errors).toEqual([expect.objectContaining({ msg: 'TypeError: undefined is not a function' })]);
+  });
+
+  test('a pending readiness signal keeps waiting for ready after the evidence', async () => {
+    const result = await run('ios', {
+      device: [
+        device('ios', 2600, '[stim:readiness] pending'),
+        device('ios', 3000, 'Running "main" with {"rootTag":11}'),
+        device('ios', 9000, '[stim:readiness] ready'),
+      ],
+    });
+    expect(result).toMatchObject({ verified: true, readiness: 'ready', waitedMs: 9000 - since });
+  });
+});
+
 describe('optional app readiness', () => {
   test.each(['ready', 'error', 'absent', 'stalled'] as const)(
     'Android queued evaluation must start before stability: %s',
@@ -1624,7 +1724,7 @@ describe('optional app readiness', () => {
                 platform: 'android',
                 proc: 'ReactNativeJS(123)',
                 level: 'info',
-                msg: outcome === 'absent' ? 'Running "main"' : '[stim:readiness] pending',
+                msg: outcome === 'absent' ? 'module initialized' : '[stim:readiness] pending',
               },
               outcome === 'error'
                 ? {

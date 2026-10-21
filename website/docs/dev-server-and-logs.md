@@ -173,7 +173,8 @@ client's watches.
 
 `stim ios` and `stim android` open the installed app, then check launch
 evidence. Debug runs observe Metro; when bundling finishes within the wait
-window, Stim also observes three seconds of launch logs. The summary can report
+window, Stim also observes up to three seconds of launch logs, fewer once the
+app's JavaScript reports `Running "<name>"`. The summary can report
 that bundling is still in progress or that launch is unverified. If the wait
 window closes and the app process is gone, the run fails with `the app process
 exited` and the device log's errors instead. Release runs check process
@@ -332,7 +333,10 @@ imported modules, emit `pending` from an earlier app entry module before loading
 that work. An error before `pending` still uses the default check.
 
 Without an observed `pending`, Stim keeps its default three-second stability
-window after bundle delivery. Managed Metro servers report when the native
+window after bundle delivery. The window ends early, half a second after the
+app's React Native runtime logs `Running "<name>"` for this launch on either
+platform. A fatal record or an exited process before the window ends still
+fails the launch; an error after it appears in `stim logs --errors`. Managed Metro servers report when the native
 bundle response finishes; build-complete output alone does not close an observed
 request. Without response capture, Stim falls back to the build-complete marker.
 When Android reports queued JavaScript loading, Stim waits for device JavaScript
