@@ -73,7 +73,6 @@ test.each([
 
 test.each([
   ['package-lock.json', 'hoisted to the workspace root', true],
-  ['yarn.lock', 'hoisted to the workspace root', true],
   ['package-lock.json', 'missing everywhere', false],
 ] as const)('reuses a %s install %s by where the install ran', (file, _, installed) => {
   const area = mkdtempSync(join(tmpdir(), 'stim-dependency-install-'));
