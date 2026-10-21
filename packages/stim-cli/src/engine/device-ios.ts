@@ -167,13 +167,13 @@ export async function ensureOwnedIosDevice({
       } else {
         const sim = resolved.sim as SimRecord;
         const wantedType = flags.deviceType || settings?.ios?.deviceType;
-        const deviceTypes = await listIosDeviceTypesAsync();
+        const deviceTypes = await listIosDeviceTypesAsync({ snapshot: simSnapshot });
         const mismatch = deviceTypeMismatch(sim.deviceTypeIdentifier, wantedType, deviceTypes);
         if (mismatch) {
           throw new IosDeviceMismatchError(`${mismatch}. Stim will not silently boot a different model.`);
         }
         const versionMismatch = flags.runtimeFlag
-          ? runtimeMismatch(sim.runtime, flags.runtimeFlag, await listIosRuntimesAsync())
+          ? runtimeMismatch(sim.runtime, flags.runtimeFlag, await listIosRuntimesAsync({ snapshot: simSnapshot }))
           : null;
         if (versionMismatch) {
           throw new IosDeviceMismatchError(`${versionMismatch}. Stim will not silently boot a different iOS version.`);

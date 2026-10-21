@@ -630,6 +630,7 @@ async function runIos(
   if (schemeRefusal) return fail(schemeRefusal);
   const capabilityRefusal = iosProjectTargetRefusal(integration, { physical, easProfile: opts.easProfile });
   if (capabilityRefusal) return fail(capabilityRefusal);
+  const simSnapshot = createIosSimSnapshot();
   const remoteSelection = await selectIosPlacement({
     root,
     env: context.env,
@@ -658,7 +659,9 @@ async function runIos(
         runtimeOrigin: d.settingOriginScope(d.settingsLayers(settingsContext), 'ios.runtime'),
         listRuntimes: d.listIosRuntimes,
         signal: context.signal,
+        snapshot: simSnapshot,
       }),
+    simSnapshot,
     noWait: deviceSlotWaitMs === 0,
     note,
     phase,
@@ -693,6 +696,7 @@ async function runIos(
     hosted: Boolean(hostedMachine),
     listRuntimes: d.listIosRuntimes,
     signal: context.signal,
+    snapshot: simSnapshot,
   });
   if (modelRefusal) return fail(modelRefusal);
   const selectors = hostedIosSelectors(deviceType, runtime);
@@ -700,7 +704,6 @@ async function runIos(
   if ('failure' in connected) return fail(connected.failure);
   const hostedTarget = connected.target;
   try {
-    const simSnapshot = createIosSimSnapshot();
     const budget = await iosPlacementBudget(
       d,
       root,

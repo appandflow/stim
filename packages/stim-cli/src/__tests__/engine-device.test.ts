@@ -1187,6 +1187,12 @@ function iosExecutor(devices: SimEntry[]) {
       runFileQuiet: () => '',
       run(cmd: string) {
         run.push(cmd);
+        if (/simctl list --json/.test(cmd))
+          return JSON.stringify({
+            ...JSON.parse(DEVICE_TYPES_JSON),
+            ...JSON.parse(RUNTIMES_JSON),
+            ...JSON.parse(simList(devices)),
+          });
         if (/simctl list devicetypes --json/.test(cmd)) return DEVICE_TYPES_JSON;
         if (/simctl list runtimes --json/.test(cmd)) return RUNTIMES_JSON;
         if (/simctl list devices --json/.test(cmd)) return simList(devices);
@@ -1657,7 +1663,7 @@ describe('ensureOwnedDevice: ios', () => {
     },
   );
 
-  test('the budget gate, capacity check and device setup of a cache hit share one simulator listing', async () => {
+  test('the budget gate, capacity check and device setup of a cache hit share one simctl list', async () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app (iPhone 17 Pro 26.2)' });
@@ -1697,7 +1703,7 @@ describe('ensureOwnedDevice: ios', () => {
         ok: true,
         udid: 'U1',
       });
-      expect(run.filter((cmd) => cmd.includes('simctl list devices'))).toHaveLength(1);
+      expect(run.filter((cmd) => cmd.includes('simctl list'))).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

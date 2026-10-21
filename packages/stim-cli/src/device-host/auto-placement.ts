@@ -16,6 +16,7 @@ import { peekBudget } from '../budget.ts';
 import { namedBuildMachine, resolveBuildMachine } from '../offload/selection.ts';
 import { readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
 import { peekDeviceSlots } from '../engine/device-capacity.ts';
+import type { IosSimRecord } from '../devices/ios.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
 import { hostingMachines } from './machines.ts';
 import { call, connectHost, requireHostedAppMode, type HostConnection } from './hosted-client.ts';
@@ -130,6 +131,7 @@ export async function automaticDevicePlacement(
     noWait,
     eas,
     signal,
+    localSims,
   }: {
     root: string;
     slot: string;
@@ -140,13 +142,21 @@ export async function automaticDevicePlacement(
     noWait: boolean;
     signal?: AbortSignal;
     eas?: () => Promise<EasFallbackCheck>;
+    /** Available simulators already listed by this run, so the local device count does not list again. */
+    localSims?: IosSimRecord[];
   },
   {
     machines = () => hostingMachines(undefined, signal),
     read = readHostedNative,
     write = writeHostedNativeAsync,
     resume = prepareHostedNative,
-    peek = () => peekDeviceSlots({ platform, project: getProject(root), slot }),
+    peek = () =>
+      peekDeviceSlots({
+        platform,
+        project: getProject(root),
+        slot,
+        ...(localSims ? { sources: { sims: localSims } } : {}),
+      }),
     capacity = machineCapacity,
     memory = () => readHostMemoryPressureAsync(undefined, undefined, signal),
     probe = probeHost,
