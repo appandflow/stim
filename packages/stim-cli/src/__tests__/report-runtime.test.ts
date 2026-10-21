@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -810,6 +811,13 @@ test.each(['file', 'spawn'] as const)(
       });
       expect(readClaimSet(claim.root).live).toMatchObject([{ path: claim.path, childDeclared: true, child: owned }]);
       expect(owned ? inspectProcessIdentity(owned) : null).toBe('same');
+      assert(failure instanceof Error && 'cleanupSettled' in failure && typeof failure.cleanupSettled === 'function');
+      const settled = failure.cleanupSettled;
+      expect(settled()).toBe(false);
+      reapFixtureChild(owned);
+      if (!owned) throw new Error('The controlled child did not start');
+      expect(await waitForProcessExit(owned, 2000)).toBe(true);
+      await vi.waitFor(() => expect(settled()).toBe(true));
     } finally {
       inspect.mockRestore();
       controller.abort();
@@ -849,4 +857,69 @@ test('a cleanup refusal aborts its operation before a failed probe can continue 
     reapFixtureChild(owned);
     if (owned) await waitForProcessExit(owned, 2000);
   }
+});
+
+test('a report stays unresolved until every failed cleanup resource is verified closed', async () => {
+  let firstClosed = false;
+  let secondClosed = false;
+  const first = Object.assign(new Error('first cleanup failed'), {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    reportCleanup: true,
+  });
+  const second = Object.assign(new Error('second cleanup failed'), {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    reportCleanup: true,
+  });
+  const failure = await runReport(context(new AbortController().signal), async (operation) => {
+    trackReportResource(
+      operation,
+      Promise.reject(first),
+      () => {},
+      undefined,
+      undefined,
+      () => firstClosed,
+    );
+    trackReportResource(
+      operation,
+      Promise.reject(second),
+      () => {},
+      undefined,
+      undefined,
+      () => secondClosed,
+    );
+    await new Promise<void>((resolve) => operation.signal.addEventListener('abort', () => resolve(), { once: true }));
+  }).catch((error: unknown) => error);
+  assert(failure instanceof Error && 'cleanupSettled' in failure && typeof failure.cleanupSettled === 'function');
+  expect(failure.cleanupSettled()).toBe(false);
+  firstClosed = true;
+  expect(failure.cleanupSettled()).toBe(false);
+  secondClosed = true;
+  expect(failure.cleanupSettled()).toBe(true);
+});
+
+test('a late task rejection retains its leaf proof after the aggregate cleanup deadline', async () => {
+  vi.useFakeTimers();
+  let closed = false;
+  const settled = () => closed;
+  const childFailure = Object.assign(new Error('child cleanup failed'), {
+    reportCleanup: true,
+    reportResourceSettled: settled,
+  });
+  let rejectTask: (error: Error) => void = () => {};
+  const task = new Promise<void>((_, reject) => {
+    rejectTask = reject;
+  });
+  const reading = runReport(context(new AbortController().signal), async (operation) => {
+    trackReportResource(operation, Promise.reject(childFailure), () => {}, undefined, undefined, settled);
+    trackReportResource(operation, task, () => {});
+    await new Promise<void>((resolve) => operation.signal.addEventListener('abort', () => resolve(), { once: true }));
+  }).catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(35_000);
+  const failure = await reading;
+  assert(failure instanceof Error && 'cleanupSettled' in failure && typeof failure.cleanupSettled === 'function');
+  rejectTask(childFailure);
+  await Promise.allSettled([task]);
+  expect(failure.cleanupSettled()).toBe(false);
+  closed = true;
+  expect(failure.cleanupSettled()).toBe(true);
 });

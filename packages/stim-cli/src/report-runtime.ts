@@ -3,6 +3,7 @@ import { type StimContext } from '@stim-cli/core';
 interface ReportState {
   pending: Map<Promise<void>, Error | undefined>;
   failure?: unknown;
+  recoveries: Map<Promise<void>, (() => boolean) | undefined>;
   abort: (reason: unknown) => void;
 }
 
@@ -18,21 +19,31 @@ export function trackReportResource(
   cancel: () => void | Promise<void>,
   signal: AbortSignal | undefined = context?.signal,
   cleanupFailure?: Error,
+  cleanupSettled?: () => boolean,
 ): void {
   const state = context && reports.get(context);
   if (!context || !state || !signal) return;
   const { pending } = state;
+  const failed = (error: unknown) => {
+    state.failure ??= error;
+    const resourceSettled =
+      error instanceof Error && 'reportResourceSettled' in error ? error.reportResourceSettled : undefined;
+    state.recoveries.set(
+      closed,
+      cleanupSettled ?? (typeof resourceSettled === 'function' ? () => resourceSettled() === true : undefined),
+    );
+    state.abort(error);
+  };
   const abort = () => {
     const cancelled = Promise.resolve().then(cancel);
     pending.set(cancelled, cleanupFailure);
     void cancelled.then(
       () => pending.delete(cancelled),
       (error) => {
-        state.failure ??= error;
+        failed(error);
         pending.delete(cancelled);
         pending.delete(closed);
         signal.removeEventListener('abort', abort);
-        state.abort(error);
       },
     );
   };
@@ -42,9 +53,8 @@ export function trackReportResource(
     pending.delete(closed);
   };
   void closed.then(settled, (error) => {
-    state.failure ??= error;
+    failed(error);
     settled();
-    state.abort(error);
   });
   signal.addEventListener('abort', abort, { once: true });
   if (signal.aborted) abort();
@@ -65,7 +75,7 @@ export async function runReport<T>(
     }) satisfies StimContext['output'],
   };
   const pending = new Map<Promise<void>, Error | undefined>();
-  const state: ReportState = { pending, abort: (reason) => controller.abort(reason) };
+  const state: ReportState = { pending, recoveries: new Map(), abort: (reason) => controller.abort(reason) };
   reports.set(operation, state);
   const deadline = performance.now() + timeoutMs;
   const expire = () => {
@@ -125,7 +135,15 @@ export async function runReport<T>(
       clearTimeout(cleanupTimer);
     }
   });
-  if ('failure' in state) throw state.failure;
+  if ('failure' in state) {
+    const failure = state.failure instanceof Error ? state.failure : new Error(String(state.failure));
+    Object.assign(failure, {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+      cleanupSettled: () => pending.size === 0 && [...state.recoveries.values()].every((check) => check?.() === true),
+    });
+    throw failure;
+  }
   if ('error' in outcome) throw outcome.error;
   return outcome.result;
 }

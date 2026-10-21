@@ -65,6 +65,7 @@ import { Recorder, type RecordLimits } from './recorder.ts';
 import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
 import { probeDirectories, STARTUP_PROBE_MS, STARTUP_RETRY_MS, type StartupState } from './startup.ts';
 import {
+  ClaimUnavailableError,
   claimRemoveCommand,
   exclusiveClaimDir,
   readClaimSet,
@@ -586,6 +587,7 @@ type StartOutcome = StopOutcome & {
   unresolved?: boolean;
   retainedClaimRoots?: string[];
   cleanupComplete?: Promise<void>;
+  cleanupSettled?: () => boolean;
 };
 
 function lifecycleAction(
@@ -628,6 +630,7 @@ function lifecycleAction(
       (cause: unknown): StartOutcome => {
         const details = cause instanceof StimError && isJsonObject(cause.details) ? cause.details.cause : undefined;
         const cleanup = cause instanceof StimError ? cause.cause : undefined;
+        const settled = cleanup instanceof Error && 'cleanupSettled' in cleanup ? cleanup.cleanupSettled : undefined;
         return {
           ok: false,
           message: readFailure(cause),
@@ -635,7 +638,10 @@ function lifecycleAction(
             ? {
                 code: cause.code,
                 stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
-                unresolved: cause.code === 'STIM_CLAIM_UNAVAILABLE',
+                unresolved:
+                  cause.code === 'STIM_CLAIM_UNAVAILABLE' &&
+                  !(cleanup instanceof ClaimUnavailableError && !('reportCleanup' in cleanup)),
+                ...(typeof settled === 'function' ? { cleanupSettled: () => settled() === true } : {}),
                 ...(cleanup instanceof Error &&
                 'cleanupComplete' in cleanup &&
                 cleanup.cleanupComplete instanceof Promise
@@ -3215,18 +3221,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const roots = outcome.retainedClaimRoots;
         if (outcome.unresolved) {
           const reconcile = () => {
-            if (!roots?.length) return;
+            if (!roots?.length && !outcome.cleanupSettled) return;
             if (
-              roots.some((root) => {
+              roots?.some((root) => {
                 const claims = readClaimSet(root);
                 return claims.live.length > 0 || claims.unresolved.length > 0;
               })
             )
               return;
+            if (outcome.cleanupSettled && !outcome.cleanupSettled()) return;
             release();
             retainedLifecycles.delete(reconcile);
           };
-          if (!roots?.length && outcome.cleanupComplete) {
+          if (!roots?.length && !outcome.cleanupSettled && outcome.cleanupComplete) {
             void outcome.cleanupComplete.then(release, () => {});
           } else {
             retainedLifecycles.add(reconcile);

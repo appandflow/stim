@@ -98,7 +98,7 @@ import { createRequestLog } from '../src/request-log.ts';
 import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceName, workspaceStateDir } from '@stim-cli/core';
 import { captureProcessToken, inspectProcessIdentity, processStartMicros } from '@stim-cli/core/process-identity';
-import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import { ClaimUnavailableError, readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { serviceRoot } from '../src/service-manager.ts';
 
 const registryWatch = vi.hoisted(() => ({ dropEvents: false }));
@@ -1467,6 +1467,78 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     expect(Date.parse(recorded.ios.at)).toBeGreaterThanOrEqual(started);
     expect(stimCalls()).toEqual([]);
   });
+
+  it.each(['acquisition', 'cleanup', 'claims-and-cleanup'] as const)(
+    'admits a remedy retry only after its %s refusal is resolved',
+    async (mode) => {
+      writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+      const claim =
+        mode === 'claims-and-cleanup' ? tryAcquireClaim({ root: join(root, 'remedy-claim'), mode: 'exclusive' }) : null;
+      if (claim && !claim.acquired) throw new Error('The fixture claim was not acquired');
+      const held = claim?.acquired;
+      let recovered = false;
+      let first = true;
+      const original = stim.createStim;
+      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+        const client = original(options);
+        return {
+          ...client,
+          unlockDevice: async (request) => {
+            if (!first) return client.unlockDevice(request);
+            first = false;
+            const cause =
+              mode === 'acquisition'
+                ? new ClaimUnavailableError('fixture claim store is not writable')
+                : Object.assign(new Error('Fixture report cleanup is unresolved.'), {
+                    reportCleanup: true,
+                    cleanupSettled: () => recovered,
+                  });
+            throw new stim.StimError(
+              {
+                code: 'STIM_CLAIM_UNAVAILABLE',
+                message: cause.message,
+                ...(held ? { details: { cause: { retainedClaimRoots: [held.root] } } } : {}),
+              },
+              { cause },
+            );
+          },
+        };
+      });
+      try {
+        await start();
+        const client = await desktop();
+        const request = () =>
+          client.request('desktop.remedy.subscribe', { cwd: workspace, action: 'device-unlock', platform: 'ios' });
+        const ended = async () => {
+          for (;;) {
+            const event = await client.next();
+            if ('event' in event && event.event === 'desktop-remedy-ended') return event;
+          }
+        };
+        expect(await request()).toHaveProperty('result.subscription');
+        expect(await ended()).toMatchObject({ exitCode: 1 });
+        const refusals: unknown[] = [];
+        if (mode !== 'acquisition') {
+          refusals.push(await request());
+          if (held) {
+            releaseClaim(held);
+            refusals.push(await request());
+          }
+          recovered = true;
+        }
+        expect(refusals).toEqual(
+          Array.from({ length: mode === 'acquisition' ? 0 : held ? 2 : 1 }, () =>
+            expect.objectContaining({ error: expect.objectContaining({ code: 'action-busy' }) }),
+          ),
+        );
+        expect(await request()).toHaveProperty('result.subscription');
+        expect(await ended()).toMatchObject({ exitCode: 0 });
+      } finally {
+        api.mockRestore();
+        releaseClaim(held);
+      }
+    },
+  );
 
   it('runs private doctor repairs and device unlock remedies without a CLI and rejects unsupported scopes', async () => {
     const selected = join(root, 'selected');

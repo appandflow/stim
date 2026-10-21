@@ -177,92 +177,118 @@ test('concurrent GC clients isolate homes, output and results without changing p
   }
 });
 
-test('cancelling a parked erase drains its native child and leaves the next pool entry untouched', async () => {
-  const item = fixture('parked-erase-cancel');
-  const ids = ['FIRST', 'SECOND'];
-  const pool = ids.map((udid) => ({
-    udid,
-    name: `stim-${udid}`,
-    deviceTypeIdentifier: 'iphone',
-    runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
-    parkedAt: '2026-01-01T00:00:00Z',
-    simslimManaged: false,
-    bundleId: 'fixture.app',
-    cacheKey: `cache-${udid}`,
-  }));
-  writeFileSync(
-    join(item.home, 'config.json'),
-    JSON.stringify({ version: 2, projects: {}, repos: {}, parked: { ios: pool }, maintenance: { mode: 'off' } }),
-  );
-  writeFileSync(
-    join(item.home, 'created-devices.json'),
-    JSON.stringify({ version: 1, ios: ids, android: [], web: [] }),
-  );
-  const controller = new AbortController();
-  const executor = getExecutor();
-  const run = executor.runFileAsync.bind(executor);
-  const mutations: string[] = [];
-  let owned: { pid: number; processToken: string } | undefined;
-  const found = vi.spyOn(executor, 'findExecutable').mockReturnValue(null);
-  const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
-    if (file === 'xcrun' && args.includes('devices'))
-      return Promise.resolve(
-        JSON.stringify({
-          devices: {
-            'com.apple.CoreSimulator.SimRuntime.iOS-26-5': ids.map((udid) => ({
-              udid,
-              name: `stim-${udid}`,
-              state: 'Shutdown',
-              isAvailable: true,
-              deviceTypeIdentifier: 'iphone',
-            })),
-          },
-        }),
+test.each([false, true])(
+  'a cancelled parked erase preserves cleanup refusal=%s and the next pool entry',
+  async (unavailable) => {
+    const item = fixture('parked-erase-cancel');
+    const ids = ['FIRST', 'SECOND'];
+    const pool = ids.map((udid) => ({
+      udid,
+      name: `stim-${udid}`,
+      deviceTypeIdentifier: 'iphone',
+      runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+      parkedAt: '2026-01-01T00:00:00Z',
+      simslimManaged: false,
+      bundleId: 'fixture.app',
+      cacheKey: `cache-${udid}`,
+    }));
+    writeFileSync(
+      join(item.home, 'config.json'),
+      JSON.stringify({ version: 2, projects: {}, repos: {}, parked: { ios: pool }, maintenance: { mode: 'off' } }),
+    );
+    writeFileSync(
+      join(item.home, 'created-devices.json'),
+      JSON.stringify({ version: 1, ios: ids, android: [], web: [] }),
+    );
+    const controller = new AbortController();
+    const executor = getExecutor();
+    const run = executor.runFileAsync.bind(executor);
+    const mutations: string[] = [];
+    let owned: { pid: number; processToken: string } | undefined;
+    let closed = Promise.resolve();
+    let settled: (() => unknown) | undefined;
+    const inspect = vi
+      .spyOn(identities, 'inspectProcessIdentity')
+      .mockImplementation((record) =>
+        unavailable && owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record),
       );
-    if (file === 'xcrun' && args.includes('devicetypes'))
-      return Promise.resolve(JSON.stringify({ devicetypes: [{ identifier: 'iphone', name: 'iPhone' }] }));
-    if (file !== 'xcrun' || args[1] !== 'erase') throw new Error(`Unexpected fixture command ${file}`);
-    mutations.push(args[2] ?? '<missing device>');
-    return run(process.execPath, ['-e', 'console.log("erase started"); setInterval(() => {}, 1000)'], {
-      ...options,
-      onSpawn: (child) => {
-        options.onSpawn?.(child);
-        const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-        if (child.pid === undefined || !captured?.ok) throw new Error('The fixture erase child has no identity');
-        owned = { pid: child.pid, processToken: captured.token };
-        child.stdout?.once('data', () => controller.abort());
-      },
+    const found = vi.spyOn(executor, 'findExecutable').mockReturnValue(null);
+    const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+      if (file === 'xcrun' && args.includes('devices'))
+        return Promise.resolve(
+          JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': ids.map((udid) => ({
+                udid,
+                name: `stim-${udid}`,
+                state: 'Shutdown',
+                isAvailable: true,
+                deviceTypeIdentifier: 'iphone',
+              })),
+            },
+          }),
+        );
+      if (file === 'xcrun' && args.includes('devicetypes'))
+        return Promise.resolve(JSON.stringify({ devicetypes: [{ identifier: 'iphone', name: 'iPhone' }] }));
+      if (file !== 'xcrun' || args[1] !== 'erase') throw new Error(`Unexpected fixture command ${file}`);
+      mutations.push(args[2] ?? '<missing device>');
+      return run(process.execPath, ['-e', 'console.log("erase started"); setInterval(() => {}, 1000)'], {
+        ...options,
+        onSpawn: (child) => {
+          options.onSpawn?.(child);
+          const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+          if (child.pid === undefined || !captured?.ok) throw new Error('The fixture erase child has no identity');
+          owned = { pid: child.pid, processToken: captured.token };
+          closed = new Promise<void>((resolve) => child.once('close', resolve));
+          child.stdout?.once('data', () => controller.abort());
+        },
+      });
     });
-  });
-  try {
-    await expect(
-      trackRead((signal) =>
+    try {
+      const failure = await trackRead((signal) =>
         createStim({ projectRoot: item.root, home: item.home, env: item.env }).collectGarbage({
           cache: 'parked',
           delete: true,
           signal: AbortSignal.any([signal, controller.signal]),
         }),
-      ),
-    ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
-    expect(mutations).toEqual(['FIRST']);
-    expect(owned).toBeDefined();
-    expect(owned && inspectProcessIdentity(owned)).toBe('gone');
-    const config = JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8'));
-    expect(config.parked.ios[1]).toEqual(pool[1]);
-    expect(config.parked.ios[0]).not.toHaveProperty('deletionClaim');
-    expect(config.parked.ios[0]).not.toHaveProperty('bundleId');
-    expect(readClaimSet(join(item.home, 'pool-locks', 'ios', 'first.lock')).live).toEqual([]);
-    expect(readClaimSet(join(item.home, 'maintenance', 'run.claims')).live).toEqual([]);
-  } finally {
-    controller.abort();
-    probe.mockRestore();
-    found.mockRestore();
-    if (owned && inspectProcessIdentity(owned) === 'same') {
-      killFixtureChild(owned);
-      await waitForProcessExit(owned, 2000);
+      ).catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: unavailable ? 'STIM_CLAIM_UNAVAILABLE' : 'STIM_CANCELLED' });
+      const cause = failure instanceof Error ? failure.cause : undefined;
+      if (cause instanceof Error && 'cleanupSettled' in cause && typeof cause.cleanupSettled === 'function') {
+        const check = cause.cleanupSettled;
+        settled = () => check();
+      }
+      expect(settled?.()).toBe(unavailable ? false : undefined);
+      expect(mutations).toEqual(['FIRST']);
+      expect(owned).toBeDefined();
+      expect(owned && inspectProcessIdentity(owned)).toBe(unavailable ? 'same' : 'gone');
+      const config = JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8'));
+      expect(config.parked.ios[1]).toEqual(pool[1]);
+      expect('deletionClaim' in config.parked.ios[0]).toBe(unavailable);
+      expect('bundleId' in config.parked.ios[0]).toBe(unavailable);
+      for (const root of [
+        join(item.home, 'pool-locks', 'ios', 'first.lock'),
+        join(item.home, 'maintenance', 'run.claims'),
+      ]) {
+        const claims = readClaimSet(root);
+        expect(claims.live).toHaveLength(unavailable ? 1 : 0);
+        for (const claim of claims.live) await rm(claim.path);
+      }
+      expect(settled?.()).toBe(unavailable ? false : undefined);
+    } finally {
+      controller.abort();
+      probe.mockRestore();
+      found.mockRestore();
+      inspect.mockRestore();
+      if (owned && inspectProcessIdentity(owned) === 'same') {
+        killFixtureChild(owned);
+        await waitForProcessExit(owned, 2000);
+      }
+      await closed;
     }
-  }
-});
+    expect(settled?.()).toBe(unavailable ? true : undefined);
+  },
+);
 
 test('concurrent GC mutations empty only their selected cache and keep results and progress in the calling client', async () => {
   const items = [fixture('delete-first'), fixture('delete-second')];
@@ -532,6 +558,7 @@ test.each(
     );
   });
   const scope = tempProbe ? vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false) : undefined;
+  let settled: (() => unknown) | undefined;
   try {
     const result = trackRead((signal) =>
       cli
@@ -568,6 +595,12 @@ test.each(
           (error) => error,
         ));
     expect(failure).toMatchObject({ code: unavailable ? 'STIM_CLAIM_UNAVAILABLE' : 'STIM_CANCELLED' });
+    const cause = failure instanceof Error ? failure.cause : undefined;
+    if (cause instanceof Error && 'cleanupSettled' in cause && typeof cause.cleanupSettled === 'function') {
+      const check = cause.cleanupSettled;
+      settled = () => check();
+    }
+    expect(settled?.()).toBe(unavailable && !cli ? false : undefined);
     expect(stdout).toHaveLength(cli ? 1 : 0);
     expect(process.exitCode).toBe(cli ? 130 : exitCode);
     if (!owned) throw new Error('The controlled native inventory probe did not start');
@@ -606,6 +639,7 @@ test.each(
     for (const record of targets) expect(await waitForProcessExit(record, 5000)).toBe(true);
     for (const handle of handles) releaseClaim(handle);
   }
+  expect(settled?.()).toBe(unavailable && !cli ? true : undefined);
 });
 
 test.each([

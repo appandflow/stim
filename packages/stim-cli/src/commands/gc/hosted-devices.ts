@@ -319,6 +319,7 @@ export async function deleteParkedHostedDevices(
             [...new Set([claim, ...(error instanceof WorkspaceProcessCleanupError ? error.claims : [])])],
             error.message,
             'Verify the hosted device operation and its descendants have stopped.',
+            error,
           ),
           { reportCleanup: true },
         );

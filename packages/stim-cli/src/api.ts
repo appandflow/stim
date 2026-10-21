@@ -403,7 +403,7 @@ export function createStim(options: StimOptions): StimClient {
         ).catch((cause: unknown) => {
           if (cause instanceof WorkspaceProcessCleanupError) throw cause;
           const failure = claimFailure(cause, null);
-          if (failure) throw new StimError(failure);
+          if (failure) throw new StimError(failure, { cause });
           throw cause;
         }),
       );
@@ -674,18 +674,21 @@ async function lifecycle<T>(operation: Operation, work: (context: StimContext) =
         return await work(context);
       } catch (error) {
         const failure = error as Partial<StimFailure>;
-        throw new StimError({
-          code: failure?.code ?? 'STIM_RUN_FAILED',
-          message: error instanceof Error ? error.message : String(error),
-          remedy: failure?.remedy ?? null,
-          details: {
-            logs,
-            cause:
-              error instanceof WorkspaceProcessCleanupError
-                ? { retainedClaimRoots: [...new Set(error.claims.map((claim) => claim.root))] }
-                : failure?.details,
+        throw new StimError(
+          {
+            code: failure?.code ?? 'STIM_RUN_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+            remedy: failure?.remedy ?? null,
+            details: {
+              logs,
+              cause:
+                error instanceof WorkspaceProcessCleanupError
+                  ? { retainedClaimRoots: [...new Set(error.claims.map((claim) => claim.root))] }
+                  : failure?.details,
+            },
           },
-        });
+          { cause: error instanceof StimError && !('reportCleanup' in error) ? (error.cause ?? error) : error },
+        );
       }
     });
   } finally {
