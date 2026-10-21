@@ -207,6 +207,10 @@ limits. The separate default limit of 20 error records never shortens a stack.
 Use `--source all` for all log sources, or `--json` for raw records. Text
 truncated by the runtime before capture cannot be restored.
 
+A run that builds or reuses an app and then fails before the app is running adds one
+`build` error record with event `run_failed`, the error code and the phase it failed
+in, so `stim logs --errors` lists the failure that `stim status` shows.
+
 Symbolication is best effort. In development, Stim asks the verified workspace's
 Metro `/symbolicate` endpoint to resolve captured JavaScript coordinates, with a
 short timeout and the original coordinates as fallback. Resolved launch context
@@ -389,10 +393,6 @@ records are dropped first. A file written before Stim capped it can be much
 larger. `stim gc` reports each workspace's log size, and `stim gc --delete` trims
 a file over 16 MiB to its newest 8 MiB in workspaces that are not in use. See
 [`gc`](./commands.md#gc).
-
-A run that builds or reuses an app and then fails at the device, install or launch
-step adds one `build` error record with event `run_failed`, the error code and
-the phase, so `stim logs --errors` lists the failure that `stim status` shows.
 
 Exit code 0 means the query succeeded, including when it prints errors. A clean
 `stim logs --errors` check requires exit code 0 and no matching errors in the

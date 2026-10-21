@@ -2637,6 +2637,7 @@ describe('failure output', () => {
     expect(lastBuild.fingerprint).toBe(FINGERPRINT);
     expect(lastBuild.cacheHit).toBe(false);
     expect(lastBuild.startedAt).toBeTruthy();
+    expect(await errorRecords()).toEqual([]);
   });
 
   test('a device that will not boot is refused at install, after the build has been stored', async () => {

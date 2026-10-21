@@ -150,7 +150,6 @@ export function tapBuildLog(writer: NdjsonWriter, progress: BuildProgress): Ndjs
   };
 }
 
-/** The error-level record of a run that failed after its build, so `logs --errors` lists the failure `status` shows. */
 export function runFailureRecord({
   code,
   message,
@@ -170,7 +169,6 @@ export function runFailureRecord({
   };
 }
 
-/** `runFailureRecord` for an error thrown after the build, with its string `code` when it has one. */
 export function thrownRunFailureRecord(error: unknown, phase: BuildPhase | null): Record<string, unknown> {
   return runFailureRecord({
     code:

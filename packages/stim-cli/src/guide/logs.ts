@@ -111,9 +111,7 @@ serve bounded log queries.
   event native_crash (app/device/time-correlated OS reports or fatal app console output)
   and device records with platform web (the owned page's failed requests and
   browser errors, from stim web), timestamped after the
-  marker that closes their window. A run that builds or reuses an app and then
-  fails at the device, install or launch step adds one build record with event
-  run_failed, its code and its phase. Three rules, and a field test
+  marker that closes their window. Three rules, and a field test
   caught all three wrong at once -- it returned 3,004 iOS syslog lines on a
   healthy app while hiding a real startup crash.
 
@@ -176,6 +174,10 @@ serve bounded log queries.
   sources that crash was reported as nothing at all. The cost of the rule is
   the safe direction: a client redbox that Fast Refresh already fixed keeps
   being reported until the next launch.
+
+  RUN FAILURES. A run that builds or reuses an app and then fails before the app
+  is running adds one build record with event run_failed, its code and the
+  phase it failed in, so \`status\` and \`logs --errors\` agree.
 
   OUTPUT. Every logs command, including --errors and --follow, shows full captured
   error, component and native stacks, with no frame or message-length limit.
