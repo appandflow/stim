@@ -1504,7 +1504,7 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
-  test('completing adoption clears both transient adoption fields', () => {
+  test('completing adoption clears both transient adoption fields', async () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', {
@@ -1516,7 +1516,7 @@ describe('ensureOwnedDevice: ios', () => {
         parkedCacheKey: 'fingerprint-debug-sim',
       });
 
-      clearIosAdoptionPending(root);
+      await clearIosAdoptionPending(root);
 
       expect(getProject(root)?.platforms?.ios).toEqual({
         deviceUdid: 'U1',
@@ -1532,9 +1532,9 @@ describe('ensureOwnedDevice: ios', () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
-      recordIosSchemeApprovals(root, 'OTHER', ['bridge-->app']);
+      await recordIosSchemeApprovals(root, 'OTHER', ['bridge-->app']);
       expect(getProject(root)?.platforms?.ios?.schemeApprovals).toBeUndefined();
-      recordIosSchemeApprovals(root, 'U1', ['bridge-->app']);
+      await recordIosSchemeApprovals(root, 'U1', ['bridge-->app']);
 
       setExecutor(iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]).exec);
       const device = await ensureOwnedDevice({

@@ -3,7 +3,7 @@ import { runOperationFile } from '../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { isJsonObject } from '@stim-cli/core/state';
-import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
+import { forgetCreatedDeviceAsync, recordCreatedDeviceAsync } from './created-devices.ts';
 import { isStimOwnedSim } from './device-ownership.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -606,7 +606,7 @@ export async function createOwnedIosSim(
       killSignal: 'SIGKILL',
     })
   ).trim();
-  recordCreatedDevice('ios', udid);
+  await recordCreatedDeviceAsync('ios', udid);
   return { udid, name, deviceType: choice.deviceType, runtime: choice.runtime };
 }
 
@@ -739,7 +739,7 @@ export async function deleteIosSim(udid: string, operation?: StimContext): Promi
     ...SIMCTL_OPTIONS,
     cwd: operation?.cwd,
   });
-  forgetCreatedDevice('ios', udid);
+  await forgetCreatedDeviceAsync('ios', udid);
 }
 
 const PARKED_DELETE_TIMEOUT_MS = 30000;
@@ -761,7 +761,7 @@ export async function deleteParkedIosSim(udid: string, operation?: StimContext):
     timeoutMs: PARKED_DELETE_TIMEOUT_MS,
     cwd: operation?.cwd,
   });
-  forgetCreatedDevice('ios', udid);
+  await forgetCreatedDeviceAsync('ios', udid);
 }
 
 const LIST_RUNTIMES_ARGS = ['simctl', 'list', 'runtimes', '--json'];

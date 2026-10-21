@@ -9,7 +9,6 @@ import {
   loadConfig,
   saveConfig,
   setDevice,
-  withConfigLock,
   withConfigLockAsync,
 } from '../workspace/config.ts';
 import { configuredIosSimulatorViewer, type IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
@@ -297,7 +296,9 @@ export async function ensureOwnedIosDevice({
       await listAllIosSimsAsync({ includeUnavailable: true }),
     );
     const result = await createOwnedIosSim(label, { suffix }, choice);
-    setDevice(projectPath, 'ios', { deviceUdid: result.udid, owned: true, deviceName: result.name }, slot);
+    await withConfigLockAsync(() =>
+      setDevice(projectPath, 'ios', { deviceUdid: result.udid, owned: true, deviceName: result.name }, slot),
+    );
     return result;
   });
   const newRecord = { deviceUdid: created.udid, owned: true, deviceName: created.name };
@@ -446,7 +447,7 @@ async function takeParkedIosSim({
       ...(parked.simslimManaged ? { simslimManaged: true } : {}),
       ...(parked.cacheKey ? { parkedCacheKey: parked.cacheKey } : {}),
     };
-    const adopted = adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device });
+    const adopted = await adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device });
     if (!adopted) continue;
     try {
       await renameIosSim(parked.udid, name);
@@ -458,8 +459,8 @@ async function takeParkedIosSim({
   return null;
 }
 
-export function clearIosAdoptionPending(projectPath: string, slot = 'default'): void {
-  withConfigLock(() => {
+export function clearIosAdoptionPending(projectPath: string, slot = 'default'): Promise<void> {
+  return withConfigLockAsync(() => {
     const cfg = loadConfig();
     const ios = deviceSlotPlatforms(cfg?.projects?.[projectPath], slot)?.ios;
     if (!cfg || !ios?.adoptionPending) return;
@@ -492,7 +493,7 @@ async function configureOwnedIosSim({
   const previouslyManaged = Boolean(record.simslimManaged);
   if (profile && !record.simslimManaged) {
     const pending = { ...record, simslimManaged: true };
-    setDevice(projectPath, 'ios', pending, slot);
+    await withConfigLockAsync(() => setDevice(projectPath, 'ios', pending, slot));
     record = pending;
   }
   const result = await reconcileIosSimulator({
@@ -505,7 +506,7 @@ async function configureOwnedIosSim({
   const updated = { ...record };
   if (result.managed) updated.simslimManaged = true;
   else delete updated.simslimManaged;
-  setDevice(projectPath, 'ios', updated, slot);
+  await withConfigLockAsync(() => setDevice(projectPath, 'ios', updated, slot));
   return updated;
 }
 
