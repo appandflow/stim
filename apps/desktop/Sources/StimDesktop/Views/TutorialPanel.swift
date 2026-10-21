@@ -290,7 +290,8 @@ struct TutorialPanel: View {
   private var footer: some View {
     HStack {
       Button("Restart Tutorial", action: restart)
-        .buttonStyle(.stim(.secondary))
+        .buttonStyle(.plain)
+        .foregroundStyle(Palette.primary)
       Spacer()
     }
   }
