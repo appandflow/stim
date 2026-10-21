@@ -243,7 +243,7 @@ interface RecordedArgs {
   uploadRemote: { fingerprintHash?: unknown; buildPath?: unknown };
   resolveRemote: { projectRoot?: unknown; platform?: unknown; fingerprintHash?: unknown };
   replaceCollector: { udid?: unknown; bundleId?: unknown; appName?: unknown; appExecutable?: unknown };
-  loadProjectProvider: { isExpo?: unknown };
+  loadProjectProvider: { isExpo?: unknown; sources?: unknown };
   acquireBuildLock: { root?: unknown; platform?: unknown; logFile?: unknown; key?: unknown };
   untrackedNativeFiles: { projectRoot?: unknown; iosProjectPath?: unknown };
   ensureWorkspaceStorage: unknown;
@@ -5350,6 +5350,7 @@ describe('the project cache provider', () => {
         ['resolveBuild', 'loadProjectProvider', 'acquireBuildLock', 'buildIos', 'storeBuild'].includes(c),
       ),
     ).toEqual(['resolveBuild', 'loadProjectProvider', 'acquireBuildLock', 'buildIos', 'storeBuild']);
+    expect(Array.isArray(calls.args.loadProjectProvider.sources)).toBe(true);
   });
 
   test('a fresh build uploads to the provider and the Expo provider independently', async () => {

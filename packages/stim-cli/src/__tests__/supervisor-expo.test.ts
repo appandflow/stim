@@ -7,7 +7,6 @@ import { pathToFileURL } from 'node:url';
 import { type NdjsonWriter, parseNdjsonText } from '../ndjson.ts';
 import {
   expoProxyEnv,
-  expoTelemetryEnv,
   cleanLine,
   expoBinPath,
   expoSdkMajor,
@@ -468,11 +467,6 @@ test('inferLevel classifies Expo bundling failures as errors', () => {
   expect(inferLevel('Failed to load app from http://localhost:8084')).toBe('error');
   expect(inferLevel('iOS Bundled 812ms index.js (1150 modules)')).toBe('info');
   expect(inferLevel('Bundling 100%')).toBe('info');
-});
-
-test('Expo telemetry is off for the Expo CLI unless the user set EXPO_NO_TELEMETRY', () => {
-  expect(expoTelemetryEnv({})).toEqual({ EXPO_NO_TELEMETRY: '1' });
-  expect(expoTelemetryEnv({ EXPO_NO_TELEMETRY: '0' })).toEqual({});
 });
 
 test('a workspace with no public URL sets nothing', () => {
