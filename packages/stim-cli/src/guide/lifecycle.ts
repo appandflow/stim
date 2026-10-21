@@ -2309,7 +2309,10 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
   Warm copies directly into the destination, without intermediate staging.
   Keep the source checkout and the linked worktree on the same volume to
-  retain copy-on-write cloning where supported. Cross-volume copies require
+  retain copy-on-write cloning where supported. On macOS with the Command Line
+  Tools, an ignored directory on the same APFS volume, such as node_modules or
+  ios/Pods, is cloned in one step, so a large one takes seconds; elsewhere
+  warm clones or copies file by file. Cross-volume copies require
   full file data; doctor reports that cost. STIM_TMPDIR and machine tempDir do
   not affect warming.
 

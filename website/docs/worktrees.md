@@ -41,7 +41,10 @@ names; warm refuses with the exact Git command to run when that branch has no
 worktree or `HEAD` is detached. It copies missing
 ignored entries, including installed dependencies, Pods, native build output,
 `.env`, and local configuration files. APFS clones keep copies space-efficient
-where supported; a normal byte copy is used when cloning is unavailable.
+where supported; a normal byte copy is used when cloning is unavailable. On
+macOS with the Command Line Tools, an ignored directory such as `node_modules`
+or `ios/Pods` on the same APFS volume is cloned in one step, so even a large
+one takes seconds instead of minutes.
 Copies go directly to the destination with no intermediate staging. Keep the
 source checkout and the linked worktree on the same volume to benefit from CoW;
 `STIM_TMPDIR` and `tempDir` do not affect warming.

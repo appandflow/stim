@@ -7,6 +7,7 @@ import { git, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
 import { removeTemporaryEntryAsync } from '../temporary.ts';
 import { childEnvironment } from './git-read.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { clonefileHelper } from '../clonefile.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj', '.pnpm-store']);
 
@@ -352,6 +353,8 @@ export async function cloneIgnoredEntries({
   const skipped: SkippedEntry[] = [];
   const failed: FailedEntry[] = [];
   let cloned = true;
+  let helper: Promise<string | null> | undefined;
+  const clonefile = () => (helper ??= clonefileHelper(operation));
   for (const rel of entries) {
     operation.signal.throwIfAborted();
     const from = join(root, rel);
@@ -369,13 +372,23 @@ export async function cloneIgnoredEntries({
       }
       await mkdir(dirname(to), { recursive: true });
       copying = true;
-      try {
-        await getExecutor().runFileAsync('cp', ['-Rc', from, to], options);
-      } catch (cause) {
-        if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
-          throw cause;
-        operation.signal.throwIfAborted();
-        await removeTemporaryEntryAsync(to);
+      const copiedWith = async (file: string, args: string[]): Promise<boolean> => {
+        try {
+          await getExecutor().runFileAsync(file, args, options);
+          return true;
+        } catch (cause) {
+          if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
+            throw cause;
+          operation.signal.throwIfAborted();
+          await removeTemporaryEntryAsync(to);
+          return false;
+        }
+      };
+      const directoryClone = (await lstat(from)).isDirectory() ? await clonefile() : null;
+      if (
+        !(directoryClone && (await copiedWith(directoryClone, [from, to]))) &&
+        !(await copiedWith('cp', ['-Rc', from, to]))
+      ) {
         await getExecutor().runFileAsync('cp', ['-R', from, to], options);
         cloned = false;
       }
