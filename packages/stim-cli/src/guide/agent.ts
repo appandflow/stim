@@ -189,7 +189,7 @@ RULES DURING THE LOOP
   restarts the app. An iOS app whose first bundle failed never connects to
   Metro, so reload cannot reach it and says to use the device's own Reload
   control. For a physical device that reached Metro, use agent-device metro
-  reload with the reported port. The detected iOS Local Network first-load
+  reload with the reported port, as for an EAS Simulator session. The detected iOS Local Network first-load
   remedy uses UI automation instead because that app never established a Metro
   connection.
 - A successful stim reload confirms that the request was sent, not that new

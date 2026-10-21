@@ -117,7 +117,8 @@ Refresh cannot clear the current screen, and on Android after a failed first
 bundle load. It reloads JavaScript and never restarts the app. Use \`stim
 reload ios\` or \`stim reload android\` to select a platform when both owned
 apps are live. For a physical device that reached Metro, use \`agent-device
-metro reload --metro-port <reported-port>\`. The detected iOS Local Network
+metro reload --metro-port <reported-port>\`, as for an EAS Simulator session.
+The detected iOS Local Network
 first-load remedy uses agent-device UI automation because no Metro peer exists
 yet. It never builds, installs, boots, or cold-launches. It acts only on a live
 app on this workspace's owned local simulator or emulator, and refuses release
