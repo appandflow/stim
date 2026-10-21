@@ -13,7 +13,13 @@ import {
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { withAmbientContext } from '@stim-cli/core';
-import { filesystemDevice, makeTemporaryDirectory, removeTemporaryEntryAsync, temporaryRoot } from '../temporary.ts';
+import {
+  filesystemDevice,
+  makeTemporaryDirectory,
+  removeTemporaryEntryAsync,
+  temporaryRoot,
+  withScratchTmpdir,
+} from '../temporary.ts';
 import { testContext } from './_context.ts';
 
 const volume = vi.hoisted(() => ({ path: '' }));
@@ -156,4 +162,17 @@ test('artifact cleanup yields to other work, removes read-only directories and l
   expect(responsive).toBe(true);
   expect(existsSync(staged)).toBe(false);
   expect(readFileSync(join(retained, 'keep'), 'utf8')).toBe('untouched');
+});
+
+test('a scratch TMPDIR with leftovers inside is removed when the work fails', async () => {
+  const scratch = join(base, 'scratch', 'tmp');
+  await expect(
+    withScratchTmpdir(scratch, async () => {
+      expect(existsSync(scratch)).toBe(true);
+      mkdirSync(join(scratch, 'TemporaryDirectory.AbC123'));
+      writeFileSync(join(scratch, 'TemporaryDirectory.AbC123', 'inputs-1.LinkFileList'), 'x');
+      throw new Error('swift build failed');
+    }),
+  ).rejects.toThrow('swift build failed');
+  expect(existsSync(scratch)).toBe(false);
 });

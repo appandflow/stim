@@ -340,6 +340,7 @@ describe('macOS build placement and promotion', () => {
   let localBuilds: number;
   let previousDuringBuild: string[];
   let compilerCalls: Array<{ file: string; args: string[]; cwd: string | undefined }>;
+  let swiftTmpdirs: Array<{ path: string | undefined; existed: boolean }>;
   let plist: Record<string, unknown>;
   const bundleId = 'dev.sample.stim.test';
   const choice = { machine: 'mini', offer: { capacity: {} } } as offload.OffloadChoice;
@@ -358,6 +359,7 @@ describe('macOS build placement and promotion', () => {
     localBuilds = 0;
     previousDuringBuild = [];
     compilerCalls = [];
+    swiftTmpdirs = [];
     plist = { CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' };
     buildRecord = { state: 'running', startedAt: new Date().toISOString() };
     writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
@@ -386,6 +388,8 @@ describe('macOS build placement and promotion', () => {
       },
       spawn: (file, args, options) => {
         compilerCalls.push({ file, args, cwd: options?.cwd as string | undefined });
+        const tmp = options?.env?.TMPDIR;
+        swiftTmpdirs.push({ path: tmp, existed: tmp !== undefined && existsSync(tmp) });
         const child = Object.assign(new EventEmitter(), {
           stdout: new PassThrough(),
           stderr: new PassThrough(),
@@ -884,6 +888,16 @@ describe('macOS build placement and promotion', () => {
         cwd: root,
       },
     ]);
+  });
+
+  it('runs swift with a TMPDIR of its own that the build removes, so TemporaryDirectory.* never reach the user TMPDIR', async () => {
+    await build({ buildMachine: 'local' });
+    const [first, second] = swiftTmpdirs;
+    expect(swiftTmpdirs).toHaveLength(2);
+    expect(first).toEqual({ path: expect.stringContaining(macosDir(root)), existed: true });
+    expect(second).toEqual(first);
+    expect(first?.path).not.toBe(process.env.TMPDIR);
+    expect(existsSync(first?.path ?? '')).toBe(false);
   });
 
   test.each(['invalid', 'not listed', 'not paired'])(

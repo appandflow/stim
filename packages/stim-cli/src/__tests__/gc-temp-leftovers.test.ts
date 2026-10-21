@@ -124,6 +124,46 @@ test('only recognized Stim temp directories and xctrace recordings idle for a da
   expect([existsSync(recent), existsSync(unrelated), existsSync(other)]).toEqual([true, true, true]);
 });
 
+test('SwiftPM TemporaryDirectory.* directories are listed and deleted once idle and no swift process runs', async () => {
+  const idle = oldDir('TemporaryDirectory.0Hkz40', { '.keep-directory': '', 'inputs-1.LinkFileList': 'x' });
+  const recent = oldDir('TemporaryDirectory.2kjCOS');
+  writeFileSync(join(recent, 'inputs-1.LinkFileList'), 'x');
+  const lookalike = oldDir('TemporaryDirectory.toolong1');
+  const lock = join(fakeTmp, '_Users_me_.swiftpm.lock');
+  writeFileSync(lock, '');
+  age(lock, 2 * DAY_MS);
+
+  expect((await leftovers()).map((entry) => [entry.kind, entry.path, entry.willDelete])).toEqual([
+    ['swiftpm', idle, true],
+    ['swiftpm', recent, false],
+  ]);
+  expect(await kept(recent)).toMatch(/24h/);
+
+  processes = '/usr/bin/swift\n';
+  expect(await kept(idle)).toBe('swift is running');
+  processes = '/usr/bin/xcodebuild\n';
+  expect(await kept(idle)).toBe('xcodebuild is running');
+  setExecutor({
+    ...getExecutor(),
+    runFileAsync: async () => {
+      throw new Error('ps failed');
+    },
+  });
+  expect(await kept(idle)).toBe('the running processes could not be listed');
+  expect((await deleteTempLeftovers()).count).toBe(0);
+  expect(existsSync(idle)).toBe(true);
+
+  processes = '/sbin/launchd\n';
+  setExecutor({ ...getExecutor(), runFileAsync: async () => processes });
+  expect(await deleteTempLeftovers()).toEqual({ count: 1, bytes: expect.any(Number), failures: 0 });
+  expect([existsSync(idle), existsSync(recent), existsSync(lookalike), existsSync(lock)]).toEqual([
+    false,
+    true,
+    true,
+    true,
+  ]);
+});
+
 test.skipIf(!POSIX)('a symlink is never followed, at the top level or inside a deleted directory', async () => {
   const target = join(outside, 'keep.txt');
   writeFileSync(target, 'keep');
