@@ -34,6 +34,7 @@ export interface MaintenanceSettings {
   criticalFreeDiskGb: number;
   pressureProtectMinutes: number;
   removeFinishedWorktrees: boolean;
+  removeIdleWorktrees: boolean;
   gradleVersionIdleDays: number;
 }
 

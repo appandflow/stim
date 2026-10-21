@@ -510,7 +510,19 @@ function ageWorktrees(worktrees: Record<string, string>, days: Record<string, nu
   }
 }
 
+test('the age sweep keeps an idle unmerged worktree unless maintenance.removeIdleWorktrees is on', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['idle']);
+  ageWorktrees(worktrees, { idle: 30 });
+  vi.spyOn(process, 'cwd').mockReturnValue(repo);
+
+  await runMaintenance('test');
+
+  expect(existsSync(worktrees.idle ?? '')).toBe(true);
+  expect(actionKinds()).not.toContain('remove-worktree');
+}, 60_000);
+
 test('the age sweep removes a clean pushed worktree unused for olderThanDays, and keeps dirty, unpushed and recent ones', async () => {
+  process.env.STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES = 'true';
   const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'dirty', 'unpushed', 'recent']);
   const at = (name: string) => worktrees[name] ?? '';
   const [idle, dirty, unpushed, recent] = [at('idle'), at('dirty'), at('unpushed'), at('recent')] as const;
@@ -531,6 +543,7 @@ test('the age sweep removes a clean pushed worktree unused for olderThanDays, an
 
 test('olderThanDays 0 keeps idle worktrees, outputs and cache entries while the sweep still removes orphans', async () => {
   process.env.STIM_MAINTENANCE_OLDER_THAN_DAYS = '0';
+  process.env.STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES = 'true';
   const { repo, worktrees } = gitRepoWithWorktrees(['idle']);
   ageWorktrees(worktrees, { idle: 30 });
   const old = workspace('old-outputs', { usedDaysAgo: 30 });

@@ -809,7 +809,7 @@ passed to ccache, which evicts by itself. `maintenance.sweepHours` (24) sets how
 often the age sweep runs. `maintenance.olderThanDays` (7; 0 turns these off) is how long
 something stays unused before that sweep removes it: workspace build outputs,
 shared cache entries, parked simulators and emulators, and clean, pushed linked
-worktrees (with `maintenance.removeFinishedWorktrees`); `maintenance.deviceIdleDays` sets how long a workspace stays idle
+worktrees (only with `maintenance.removeIdleWorktrees`, off by default); `maintenance.deviceIdleDays` sets how long a workspace stays idle
 before that sweep deletes its owned simulators and emulators (0 turns it off);
 `maintenance.gradleVersionIdleDays` (7) sets how long a Gradle version no project pins stays unmodified before level 3 stops the idle Gradle and Kotlin daemons that keep it and deletes it (0 turns that off);
 `maintenance.removeFinishedWorktrees` controls the worktree

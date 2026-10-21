@@ -62,10 +62,11 @@ In on mode a pass runs, cheapest to rebuild first:
      claim is unresolved; the emptying holds the exclusive claim
   5. linked worktrees whose branch or pull request finished (gc's finished
      worktree rules and gc.worktreeGraceMinutes; maintenance.removeFinishedWorktrees),
-     and in the age sweep clean, pushed ones unused for olderThanDays, as
-     gc --delete --worktrees --older-than removes them; never a dirty one, one
-     with unpushed commits, the source checkout, or one whose last use is
-     unknown
+     and, with maintenance.removeIdleWorktrees (off by default), in the age
+     sweep clean, pushed ones unused for olderThanDays, as gc --delete
+     --worktrees --older-than removes them, git-ignored files included; never
+     a dirty one, one with unpushed commits, the source checkout, or one whose
+     last use is unknown
   6. parked simulators and emulators unused for olderThanDays in the age
      sweep, through centralized teardown with ownership checked again
   7. owned simulators and emulators of a finished worktree that is kept, such

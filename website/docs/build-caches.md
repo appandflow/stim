@@ -484,9 +484,10 @@ stops the disk-driven ones once free space is back above the floor:
    on-disk content store, whose entries live inside shared database files, so
    Stim cannot remove only the entries a running build does not need.
 5. Linked worktrees whose branch or pull request finished, by the same rules as
-   `stim gc --delete` and `gc.worktreeGraceMinutes`. In the daily sweep, also
-   clean, pushed linked worktrees unused for `maintenance.olderThanDays`, as
-   `stim gc --delete --worktrees --older-than <days>` removes them. A dirty
+   `stim gc --delete` and `gc.worktreeGraceMinutes`. With
+   `maintenance.removeIdleWorktrees true` (off by default), the daily sweep also
+   removes clean, pushed linked worktrees unused for `maintenance.olderThanDays`,
+   as `stim gc --delete --worktrees --older-than <days>` removes them. A dirty
    worktree, one with unpushed commits, the source checkout and one whose last
    use is unknown are never removed. `maintenance.removeFinishedWorktrees false`
    turns off both.
