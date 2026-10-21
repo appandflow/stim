@@ -500,7 +500,7 @@ describe('ios', () => {
     expect(result.restartedPid).toBeUndefined();
   });
 
-  test('a running app is terminated before the Metro wiring and launched fresh', async () => {
+  test('a running app is restarted by the launch itself, after the Metro wiring', async () => {
     const exec = recordingExec({
       outputs: {
         'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n',
@@ -511,11 +511,9 @@ describe('ios', () => {
     expect(result).toEqual({ ok: true, mode: 'launch', pid: 5151, restartedPid: 4242, jsLocation: 'localhost:8082' });
     expect(exec.calls).toEqual([
       ['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list'],
-      ['xcrun', 'simctl', 'terminate', 'U1', 'com.example.app'],
       ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'write', 'com.example.app', 'RCT_jsLocation', 'localhost:8082'],
-      ['xcrun', 'simctl', 'launch', 'U1', 'com.example.app'],
+      ['xcrun', 'simctl', 'launch', '--terminate-running-process', 'U1', 'com.example.app'],
     ]);
-    expect(exec.options[1]?.timeoutMs).toBeGreaterThan(0);
   });
 
   test('a running Expo dev client restarts with its project URL instead of an openurl into the old process', async () => {
@@ -536,19 +534,23 @@ describe('ios', () => {
       { exec },
     );
     expect(result).toMatchObject({ ok: true, mode: 'launch', pid: 5151, restartedPid: 4242 });
-    expect(exec.calls.map((call) => call[2])).toEqual(['spawn', 'terminate', 'spawn', 'launch']);
+    expect(exec.calls.map((call) => call[2])).toEqual(['spawn', 'spawn', 'launch']);
+    expect(exec.calls.at(-1)).toContain('--terminate-running-process');
     expect(exec.calls.at(-1)).toContain('--initialUrl');
   });
 
-  test('a failed terminate refuses the launch instead of reusing the old process', async () => {
+  test('a failed terminate refuses an openurl into the old process', async () => {
     const exec = recordingExec({
       fail: 'simctl terminate',
       outputs: { 'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n' },
     });
-    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    const result = await launchIosApp(
+      { udid: 'U1', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
+      { exec },
+    );
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(result.reason).toMatch(/simctl terminate com\.example\.app failed.*pid 4242/);
-    expect(exec.calls.some((call) => call.includes('launch'))).toBe(false);
+    expect(exec.calls.some((call) => call.includes('openurl'))).toBe(false);
   });
 
   test('a no-process-handle error after a restart does not count the terminated pid as the new launch', async () => {
@@ -560,7 +562,8 @@ describe('ios', () => {
     });
     const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: null }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
-    expect(exec.calls.some((call) => call.includes('terminate'))).toBe(true);
+    expect(exec.calls.some((call) => call.includes('terminate'))).toBe(false);
+    expect(exec.calls.find((call) => call[2] === 'launch')).toContain('--terminate-running-process');
   });
 
   test('an unreadable process list launches with simctl terminating any running copy, not a separate terminate', async () => {
@@ -815,7 +818,7 @@ describe('ios', () => {
     });
     const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
-    expect(exec.calls).toHaveLength(4);
+    expect(exec.calls).toHaveLength(3);
   });
 
   test('launchIosApp with metroPort null is a plain launch: no RCT_jsLocation write, no openurl', async () => {
