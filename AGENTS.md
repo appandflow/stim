@@ -299,6 +299,11 @@ outside it moves to its own issue and pull request.
   default. Update `cache-packages.test.ts` when those rules change.
 - **Source format.** Keep files under `src/`, `bin/`, and `test/` ASCII-only.
   Markdown can use Unicode.
+- **SwiftPM TMPDIR.** Run `swift` children with the ambient `TMPDIR`. SwiftPM
+  places every cross-process lock for its shared caches there, named after the
+  protected path, and offers no separate setting, so a private `TMPDIR` lets
+  concurrent builds race on the shared repository cache. `gc` cleans the
+  `TemporaryDirectory.*` entries SwiftPM leaves.
 - **Concurrency limits.** Build and device caps are opt-in through config or
   environment variables.
 - **Settings registry.** `packages/core/state/settings-registry.ts` defines

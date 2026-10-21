@@ -283,7 +283,7 @@ export async function buildMacosBundle({
         requireLocalBuild(buildMachine);
         if (record) record.builtOn = 'here';
         progress.step('compile');
-        const bin = await recipe.compile({ scratch, temporary: join(staging, 'swift-tmp'), writer, note });
+        const bin = await recipe.compile({ scratch, writer, note });
         progress.step('install');
         const staged = join(staging, `${recipe.product}.app`);
         await recipe.stage(bin, staged, bundleId, displayName);

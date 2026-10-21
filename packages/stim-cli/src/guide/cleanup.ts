@@ -626,9 +626,9 @@ TMPDIR LEFTOVERS
   keeps a recording or SwiftPM temp directory that cannot be read, every
   recording while an xctrace or Instruments process runs, and every SwiftPM
   temp directory while a swift or xcodebuild process runs, or when the process
-  list cannot be read. Stim's own SwiftPM macOS builds run swift with a TMPDIR
-  of their own, in the workspace or the build worker's area, and remove it
-  afterwards. Jest's cache and every other entry
+  list cannot be read. Stim's own SwiftPM macOS builds run swift with the
+  ambient TMPDIR, because SwiftPM keeps the locks for its shared caches there,
+  so their temp directories land here too. Jest's cache and every other entry
   are never deleted. gc never follows a symlink and never acts outside TMPDIR.
   With STIM_HOME set it neither reports nor deletes them, because TMPDIR is
   shared by every Stim home. Automatic maintenance runs the same deletion at disk pressure
