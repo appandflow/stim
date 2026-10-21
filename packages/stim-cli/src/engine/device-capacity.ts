@@ -5,6 +5,7 @@ import {
   getConcurrencyLimits,
   getConfigDir,
   loadConfig,
+  withConfigLockAsync,
   type Config,
   type ProjectRecord,
 } from '../workspace/config.ts';
@@ -694,7 +695,10 @@ export async function withDeviceBootAdmission<T>(
       }
     } catch (error) {
       if (error instanceof DeviceAdmissionRefusal && error.code === 'STIM_AT_CAPACITY') {
-        recordCapacityRefusal({ platform: device.platform as 'ios' | 'android', max, workspace }, now());
+        const at = now();
+        await withConfigLockAsync(() =>
+          recordCapacityRefusal({ platform: device.platform as 'ios' | 'android', max, workspace }, at),
+        ).catch(() => {});
       }
       throw error;
     } finally {
@@ -702,10 +706,13 @@ export async function withDeviceBootAdmission<T>(
       if (visibleWait) waitingFor(null);
       if (started !== undefined) {
         const ms = Math.max(0, Math.round(now() - started));
-        recordCapacityWait(
-          { platform: device.platform as 'ios' | 'android', ms, max, workspace, ...(reclaimed ? { reclaimed } : {}) },
-          now(),
-        );
+        const at = now();
+        await withConfigLockAsync(() =>
+          recordCapacityWait(
+            { platform: device.platform as 'ios' | 'android', ms, max, workspace, ...(reclaimed ? { reclaimed } : {}) },
+            at,
+          ),
+        ).catch(() => {});
         onWait(ms);
       }
     }

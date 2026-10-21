@@ -5,7 +5,7 @@ import { automaticDevicePlacement } from '../../device-host/auto-placement.ts';
 import { checkEasFallback } from '../../engine/eas-fallback.ts';
 import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
 import { hostedMetroPortProbe } from '../../device-host/hosted-native.ts';
-import { readHostedIos, writeHostedIos } from '../../device-host/ios-state.ts';
+import { readHostedIos, writeHostedIosAsync } from '../../device-host/ios-state.ts';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { buildIos, discoverXcodeProject } from '../../integrations/react-native-build.ts';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
@@ -78,7 +78,7 @@ import {
   settingOriginScope,
 } from '../../workspace/settings.ts';
 import { writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../../workspace/workspace-state.ts';
+import { readWorkspaceState, writeWorkspaceStateAsync } from '../../workspace/workspace-state.ts';
 import { gitCommonDirAsync, repoRootAsync } from '../../workspace/worktree.ts';
 import { warmMetro } from '../../engine/metro-warmup.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
@@ -95,7 +95,7 @@ export interface IosDeps {
   placeHostedIos: typeof placeHostedIos;
   hostedMetroPortProbe: typeof hostedMetroPortProbe;
   readHostedIos: typeof readHostedIos;
-  writeHostedIos: typeof writeHostedIos;
+  writeHostedIos: typeof writeHostedIosAsync;
   resolveEasDevelopmentBuild: typeof resolveEasDevelopmentBuild;
   resolveRemoteContext: typeof resolveRemoteContext;
   ensureMetroReachable: typeof ensureMetroReachable;
@@ -187,7 +187,7 @@ export interface IosDeps {
   replaceCollector: typeof replaceCollector;
   stopPreviousCollector: typeof stopPreviousCollector;
   writeWorkspaceLaunch: typeof writeWorkspaceLaunchAsync;
-  writeWorkspaceState: typeof writeWorkspaceState;
+  writeWorkspaceState: typeof writeWorkspaceStateAsync;
   createWriter: typeof createNdjsonWriter;
   recordStats: typeof recordRunStats;
   recordCapacityRefusal: typeof recordCapacityRefusal;
@@ -203,7 +203,7 @@ export const DEFAULT_DEPS: IosDeps = {
   placeHostedIos,
   hostedMetroPortProbe,
   readHostedIos,
-  writeHostedIos,
+  writeHostedIos: writeHostedIosAsync,
   resolveEasDevelopmentBuild,
   findProjectRoot,
   resolveSettings,
@@ -289,7 +289,7 @@ export const DEFAULT_DEPS: IosDeps = {
   replaceCollector,
   stopPreviousCollector,
   writeWorkspaceLaunch: writeWorkspaceLaunchAsync,
-  writeWorkspaceState,
+  writeWorkspaceState: writeWorkspaceStateAsync,
   createWriter: createNdjsonWriter,
   recordStats: recordRunStats,
   recordCapacityRefusal,

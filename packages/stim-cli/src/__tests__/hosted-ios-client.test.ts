@@ -21,7 +21,7 @@ import { BuildConnection } from '../offload/client.ts';
 import { deviceHostMachinesFile, queryLogs, type HostedIosPlacement, type HostedAppOffer } from '@stim-cli/core/state';
 import { prepareHostedIos, placeHostedIos, stopHostedIos } from '../device-host/hosted-ios.ts';
 import { hostedMetroPortProbe, iosAgentRemoteConfig } from '../device-host/hosted-native.ts';
-import { readHostedIos, writeHostedIos } from '../device-host/ios-state.ts';
+import { readHostedIos, writeHostedNative } from '../device-host/ios-state.ts';
 import { applyHostedIosProbe } from '../device-host/hosted-ios-status.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { gatewayAddresses, clearHostedMetro } from '../device-host/metro-gateway.ts';
@@ -42,6 +42,9 @@ import { workspaceInUse } from '../workspace/in-use.ts';
 import { runReload } from '../commands/reload.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { agentRemoteConfig } from '../device-host/hosted-macos.ts';
+
+const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | null): void =>
+  writeHostedNative(root, slot, host, 'ios');
 
 const loopbackAvailable = await new Promise<boolean>((resolve) => {
   const probe = createServer();

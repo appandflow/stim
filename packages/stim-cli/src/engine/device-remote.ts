@@ -765,7 +765,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
             const sessionId = createdSessionId();
             if (!sessionId) return booted;
             try {
-              recordEasSessionClaim(
+              await recordEasSessionClaim(
                 {
                   sessionId,
                   name: sessionName,
@@ -777,7 +777,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
                 ledgerRoot,
               );
               const preview = webPreviewUrl();
-              writeState(root, {
+              await writeState(root, {
                 remoteDevice: {
                   platform,
                   sessionId,

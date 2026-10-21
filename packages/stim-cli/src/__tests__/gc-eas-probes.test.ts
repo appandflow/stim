@@ -148,7 +148,7 @@ test('a stalled second EAS page kills its child and refuses deletion of a partia
   mkdirSync(root);
   ensureWorkspaceStorage(root);
   const ledger = join(home, 'eas-ledger');
-  recordEasSessionClaim(
+  await recordEasSessionClaim(
     {
       sessionId: 'drs_owned',
       name: 'stim-owned',
@@ -200,7 +200,7 @@ test('asynchronous EAS verification retains both deletion locks until the stop r
   mkdirSync(root);
   ensureWorkspaceStorage(root);
   const ledger = join(home, 'eas-ledger');
-  recordEasSessionClaim(
+  await recordEasSessionClaim(
     {
       sessionId: 'drs_owned',
       name: 'stim-owned',
@@ -262,7 +262,7 @@ test('cancelling default EAS verification drains its child without stopping the 
   mkdirSync(root);
   ensureWorkspaceStorage(root);
   const ledger = join(home, 'eas-ledger');
-  recordEasSessionClaim(
+  await recordEasSessionClaim(
     {
       sessionId: 'drs_owned',
       name: 'stim-owned',
@@ -338,7 +338,7 @@ test.each(['inventory', 'get', 'stop'] as const)(
     mkdirSync(root);
     ensureWorkspaceStorage(root);
     const ledger = join(home, 'eas-ledger');
-    recordEasSessionClaim(
+    await recordEasSessionClaim(
       {
         sessionId: 'drs_owned',
         name: 'stim-owned',

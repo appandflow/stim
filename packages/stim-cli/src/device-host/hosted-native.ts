@@ -287,7 +287,7 @@ export async function placeHostedNative(
     release: boolean;
     mode?: HostedAppOffer['mode'];
     devClientScheme?: string;
-    reserved: (placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>) => void;
+    reserved: (placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>) => unknown;
     note: (line: string) => void;
     enterPhase?: (phase: 'device' | 'install' | 'launch') => void;
     metro?: typeof requestHostedMetro;
@@ -326,7 +326,7 @@ export async function placeHostedNative(
       device: platform === 'ios' ? parseHostedDevice(session.device) : parseHostedAndroidDevice(session.device),
       agent: { driver: 'none', setting: 'hosting.agentDriver' },
     };
-    reserved(placement);
+    await reserved(placement);
     session = await settle(
       host,
       session,
@@ -351,7 +351,7 @@ export async function placeHostedNative(
           : 'The reserved emulator does not match the offered architecture or selectors.',
       );
     placement = { ...placement, device };
-    reserved(placement);
+    await reserved(placement);
     if (mode === 'development') {
       const gateway = await metro(root, session.id, host.credential);
       await call(host, 'device-host.metro.open', {

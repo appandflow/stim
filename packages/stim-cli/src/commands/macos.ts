@@ -40,11 +40,7 @@ import {
 } from '../workspace/paths.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
-import {
-  recordWorkspaceUseAsync,
-  writeWorkspaceState,
-  writeWorkspaceStateAsync,
-} from '../workspace/workspace-state.ts';
+import { recordWorkspaceUseAsync, writeWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 
 /**
  * Builds the Debug app and launches it here, or with `remote` on that approved remote Mac. A named host never falls
@@ -155,7 +151,7 @@ export async function runMacos(
           }
           const connection = await connectHost(remote);
           const write = (patch: Partial<MacosAppRecord>) =>
-            writeWorkspaceState(root, { macos: { ...record, ...patch } });
+            writeWorkspaceStateAsync(root, { macos: { ...record, ...patch } });
           let placement = record.host;
           try {
             const run = await placeHostedMacos(connection, {
@@ -167,7 +163,7 @@ export async function runMacos(
               recorded: previous?.host,
               reserved: (reserved) => {
                 placement = reserved;
-                write({ host: reserved, hostLaunched: false });
+                return write({ host: reserved, hostLaunched: false });
               },
               note,
             });
@@ -178,11 +174,11 @@ export async function runMacos(
               host: run.placement,
               hostLaunched: run.launched,
             };
-            writeWorkspaceState(root, { macos: placed });
+            await writeWorkspaceStateAsync(root, { macos: placed });
             launched();
             return placed;
           } catch (error) {
-            write({ supervisor: undefined, ...(placement ? { host: placement, hostLaunched: false } : {}) });
+            await write({ supervisor: undefined, ...(placement ? { host: placement, hostLaunched: false } : {}) });
             throw error;
           } finally {
             connection.connection.close();
