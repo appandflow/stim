@@ -15,20 +15,11 @@
     "packages/stim-cli/src/engine/gradle.ts",
     "packages/stim-cli/src/engine/prebuild.ts",
     "packages/stim-cli/src/engine/xcode.ts",
-    "packages/stim-cli/src/integrations/native-gradle-artifact-inputs.ts",
-    "packages/stim-cli/src/integrations/native-gradle-inputs.ts",
-    "packages/stim-cli/src/integrations/native-xcode-inputs.ts",
-    "packages/stim-cli/src/integrations/native-xcode-project.ts",
-    "packages/stim-cli/src/integrations/react-native-build.ts",
+    "packages/stim-cli/src/integrations/",
     "packages/stim-cli/src/macos/stage.ts",
-    "packages/stim-cli/src/offload/manifest.ts",
-    "packages/stim-cli/src/offload/native-source.ts",
-    "packages/stim-cli/src/offload/react-native-artifact.ts",
-    "packages/stim-cli/src/offload/swiftpm-artifact.ts",
-    "packages/stim-cli/src/offload/toolchain.ts",
-    "packages/stim-cli/src/offload/worker.ts",
+    "packages/stim-cli/src/offload/",
     "packages/stim-cli/src/optimizations.ts",
     "packages/stim-cli/src/supervisor/project-node.ts"
   ],
-  "digest": "e478af114a004e715bca172a86f2ecd5ec4f795cff61774f0bde0c4d8d1843e7"
+  "digest": "6ed2047ed869c13c16ab43c3e10ff9c89a6d0b18655d8617d437b759673f55d5"
 }
