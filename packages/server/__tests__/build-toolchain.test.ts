@@ -86,11 +86,12 @@ test('dependency warmth requires the requested install; directories and pruned s
   const area = join(host.clientDir('client'), 'repos', 'app');
   const checkout = join(area, 'src');
   const project = 'apps/mobile';
-  const modules = join(checkout, project, 'node_modules');
+  const modules = join(checkout, 'node_modules');
   const lockfile = 'lockfile fixture';
   const sha = (text: string) => createHash('sha256').update(text).digest('hex');
   const marker = sha(lockfile + JSON.stringify(['install', '--frozen-lockfile']) + 'node path');
   mkdirSync(modules, { recursive: true });
+  mkdirSync(join(checkout, project), { recursive: true });
   mkdirSync(join(area, 'macos'), { recursive: true });
   writeFileSync(join(area, 'macos', 'unrelated'), 'not a compiler cache');
   writeFileSync(join(checkout, 'pnpm-lock.yaml'), lockfile);
@@ -115,7 +116,7 @@ test('dependency warmth requires the requested install; directories and pruned s
     return reply.result.warm;
   };
   expect(await warmth()).toEqual({ checkout: true, dependencies: true, build: false });
-  mkdirSync(join(checkout, 'apps', 'other', 'node_modules'), { recursive: true });
+  mkdirSync(join(checkout, 'apps', 'other'), { recursive: true });
   expect(await warmth({ ...params, dependencies: { project: 'apps/other', packageName: 'other' } })).toHaveProperty(
     'dependencies',
     true,
