@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const recordFile = 'scripts/build-compat.json';
-const constantFile = 'packages/core/state/stim-build.ts';
+const constantFile = 'packages/stim-cli/src/offload/toolchain.ts';
 
 /**
  * The files a record covers: each listed file, and every TypeScript source git tracks in a listed directory (an entry
@@ -61,7 +61,7 @@ function blobIds(files) {
 function main() {
   const record = JSON.parse(readFileSync(join(root, recordFile), 'utf8'));
   const compat = Number(
-    /export const STIM_BUILD_COMPAT = (\d+);/.exec(readFileSync(join(root, constantFile), 'utf8'))?.[1],
+    /^const STIM_BUILD_COMPAT = (\d+);$/m.exec(readFileSync(join(root, constantFile), 'utf8'))?.[1],
   );
   if (!Number.isSafeInteger(compat)) throw new Error(`No STIM_BUILD_COMPAT in ${constantFile}.`);
   const files = buildCompatFiles(record.files, trackedFiles());

@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { STIM_BUILD_COMPAT, stimBuildDigest } from '@stim-cli/core/state';
+import { stimBuildDigest } from '@stim-cli/core/state';
 import { androidHome } from '../devices/android.ts';
 import { getExecutor } from '../exec.ts';
 import { bundlerPin } from '../engine/bundler.ts';
@@ -62,6 +62,14 @@ export type BuildTarget =
   | { platform: 'macos'; local: MacosToolchain; runsOnWorker?: true };
 
 const distDir = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * What a client and a remote machine must agree on to build for each other: what a worker builds and how, the
+ * artifacts it returns and the build and artifact messages. It lives in the `stim` package, whose own code does the
+ * build, because `@stim-cli/core` is a ranged dependency that can resolve newer than the installed `stim`.
+ * `scripts/build-compat.json` records the files a change to which needs a bump or a recorded no-bump.
+ */
+const STIM_BUILD_COMPAT = 1;
 
 function quiet(file: string, args: string[]): string | null {
   return getExecutor().runFileQuiet(file, args, { timeoutMs: 20_000 });

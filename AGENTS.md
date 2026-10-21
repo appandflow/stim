@@ -349,7 +349,8 @@ outside it moves to its own issue and pull request.
   writes the cache. Two machines build for each other, and reuse each other's
   completed React Native and SwiftPM artifacts, when their bundled Stim
   reports the same `STIM_BUILD_COMPAT`
-  (`packages/core/state/stim-build.ts`); a machine that reports none needs
+  (`packages/stim-cli/src/offload/toolchain.ts`, in the `stim` package because
+  `@stim-cli/core` is a ranged dependency); a machine that reports none needs
   the same Stim build digest. Bump it when a machine with the same value but
   the other version of a file listed in `scripts/build-compat.json` would
   build a different artifact or read a build or artifact message
