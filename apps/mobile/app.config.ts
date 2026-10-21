@@ -78,7 +78,9 @@ const config: ExpoConfig = {
     },
   },
   owner: 'app_and_flow',
-  runtimeVersion: { policy: 'fingerprint' },
+  // @expo/cli sets EXPO_DEV_SERVER_ORIGIN in the dev server, which its runtimeversion:resolve child inherits. That child
+  // recomputes the fingerprint on every manifest request (expo/expo#46415); the dev launcher ignores the runtime.
+  runtimeVersion: process.env.EXPO_DEV_SERVER_ORIGIN ? 'dev-server' : { policy: 'fingerprint' },
   updates: {
     url: 'https://u.expo.dev/1e92e2da-38f5-415b-b82e-72f4edd2b2bc',
     requestHeaders: { 'expo-channel-name': dev ? 'development' : 'production' },
