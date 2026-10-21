@@ -408,6 +408,10 @@ export function persistLastBuild({
   return lastBuild;
 }
 
+export function logPostBuildFailure(acquired: boolean, writer: AndroidWriter, record: Record<string, unknown>): void {
+  if (acquired) writer.write(record);
+}
+
 export function persistThrownBuild({
   acquired,
   error,

@@ -237,7 +237,7 @@ export interface ServerOptions {
   /** Whether this machine can host simulators and apps for other machines; only a Mac can. Defaults to running on macOS. */
   hostsDevices?: boolean;
   port: number;
-  /** The Unix socket for this machine's own user; defaults to `$STIM_HOME/server/local.sock`, null for none. */
+  /** The Unix socket for this machine's own user; defaults to core's serverLocalSocket(), null for none. */
   localSocket?: string | null;
   stimCli: string;
   stimVersion: string;

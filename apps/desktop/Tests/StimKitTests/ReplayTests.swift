@@ -635,6 +635,30 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
 }
 
 @Suite @MainActor struct ServerClientTests {
+  @Test func doesNotCreateATransportUntilTheSharedSocketIsVerified() async {
+    let scheduler = ManualScheduler()
+    var transports: [FakeTransport] = []
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/tmp/stim-sockets-\(getuid())/missing-\(UUID().uuidString).sock"),
+      clientName: "Desktop", clientVersion: "1",
+      transport: { _, onEvent in
+        let transport = FakeTransport(onEvent: onEvent)
+        transports.append(transport)
+        return transport
+      }, scheduler: scheduler.schedule)
+    client.start()
+    defer { client.stop() }
+    await settle()
+    #expect(transports.isEmpty)
+    guard case .waiting = client.state else {
+      Issue.record("Expected an unverified shared socket to wait without connecting")
+      return
+    }
+    scheduler.fire(delay: 1)
+    await settle()
+    #expect(transports.isEmpty)
+  }
+
   private final class Box<Value>: @unchecked Sendable {
     var value: Value
     init(_ value: Value) { self.value = value }

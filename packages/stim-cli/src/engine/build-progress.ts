@@ -101,6 +101,8 @@ export interface BuildProgress {
   /** Reads one record the run writes to its build log, for the native tool's progress. */
   output(record: unknown): void;
   durations(): Record<string, number>;
+  /** The phase the run is in, or null when the run reports no progress. */
+  phase(): BuildPhase | null;
   /** The SwiftPM step total the build reported, or null when it reported none. */
   steps(): number | null;
   clear(): void;
@@ -119,6 +121,7 @@ export const NO_BUILD_PROGRESS: BuildProgress = {
   waitingFor: () => {},
   output: () => {},
   durations: () => ({}),
+  phase: () => null,
   steps: () => null,
   clear: () => {},
 };
@@ -145,6 +148,36 @@ export function tapBuildLog(writer: NdjsonWriter, progress: BuildProgress): Ndjs
       return writer.lastError;
     },
   };
+}
+
+export function runFailureRecord({
+  code,
+  message,
+  phase,
+}: {
+  code?: string | null;
+  message?: string | null;
+  phase: BuildPhase | null;
+}): Record<string, unknown> {
+  return {
+    src: 'build',
+    level: 'error',
+    event: 'run_failed',
+    ...(code ? { code } : {}),
+    ...(phase ? { phase } : {}),
+    msg: [code, message].filter(Boolean).join(': ') || 'the run failed',
+  };
+}
+
+export function thrownRunFailureRecord(error: unknown, phase: BuildPhase | null): Record<string, unknown> {
+  return runFailureRecord({
+    code:
+      typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+        ? error.code
+        : undefined,
+    message: error instanceof Error ? error.message : String(error),
+    phase,
+  });
 }
 
 const DETAIL_WRITE_MS = 2000;
@@ -334,6 +367,9 @@ export function startBuildProgress({
     },
     durations() {
       return phaseDurations(record.phases, now());
+    },
+    phase() {
+      return record.phase;
     },
     steps() {
       const detail = parser.detail('');

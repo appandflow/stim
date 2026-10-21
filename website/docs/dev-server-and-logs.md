@@ -207,6 +207,10 @@ limits. The separate default limit of 20 error records never shortens a stack.
 Use `--source all` for all log sources, or `--json` for raw records. Text
 truncated by the runtime before capture cannot be restored.
 
+A run that builds or reuses an app and then fails before the app is running adds one
+`build` error record with event `run_failed`, the error code and the phase it failed
+in, so `stim logs --errors` lists the failure that `stim status` shows.
+
 Symbolication is best effort. In development, Stim asks the verified workspace's
 Metro `/symbolicate` endpoint to resolve captured JavaScript coordinates, with a
 short timeout and the original coordinates as fallback. Resolved launch context

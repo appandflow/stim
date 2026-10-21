@@ -1015,8 +1015,10 @@ While Desktop's stim-server runs (see [stim-server](#stim-server)),
 each simulator, emulator and web page's device viewer offers a replay bar
 once the server has recorded it,
 like the phone app's device viewer. Stim Desktop connects to that server over
-its Unix socket, `server/local.sock` under the Stim home `/health` reports, with
-a WebSocket that carries the protocol's JSON in the clear. The socket is mode
+its Unix socket with a WebSocket that carries the protocol's JSON in the clear.
+The socket is normally `server/local.sock` under the Stim home `/health` reports.
+Paths longer than macOS's 103-byte limit use
+`/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock` instead. The socket is mode
 0600 in a 0700 directory, so only your user can connect, and the server gives
 that connection every local capability without pairing or a token. The app names
 itself "Stim Desktop", or "Stim Dev" for a Stim Dev build (see
@@ -1683,8 +1685,8 @@ replaces its card. With the main window closed, the link reopens it.
   `zsh -lic` once instead and logs that it did; the `login-environment` launch milestone
   marks it, where a bundled build reaches `toolchain-environment`.
   **Settings > App > Stim CLI** shows the resolved home, and the sidebar shows non-default homes.
-  Desktop refuses a local socket path longer than macOS's 103-byte limit and asks
-  for a shorter Stim home.
+  Homes whose local socket path exceeds macOS's 103-byte limit use the private
+  per-user socket directory described in [Replay](#replay).
   It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
   tells `stim` that Stim Desktop is installed without a Launch Services lookup.
   It runs `stim` and `stim-server` as their JavaScript file under the Node that

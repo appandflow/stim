@@ -4,6 +4,53 @@ import Testing
 @testable import StimKit
 
 @Suite struct StimHomeTests {
+  @Test func sharedSocketMetadataRejectsForeignOwnersOpenPermissionsAndLinks() {
+    let uid = getuid()
+    let other: uid_t = uid == 0 ? 1 : 0
+    var directory = stat()
+    directory.st_mode = S_IFDIR | 0o700
+    directory.st_uid = uid
+    var socket = stat()
+    socket.st_mode = S_IFSOCK | 0o600
+    socket.st_uid = uid
+    #expect(StimHome.isPrivateLocalSocket(directory: directory, socket: socket))
+    let invalid: [(mode_t, uid_t, mode_t, uid_t)] = [
+      (S_IFDIR | 0o700, other, S_IFSOCK | 0o600, uid),
+      (S_IFDIR | 0o700, uid, S_IFSOCK | 0o600, other),
+      (S_IFDIR | 0o777, uid, S_IFSOCK | 0o600, uid),
+      (S_IFDIR | 0o700, uid, S_IFSOCK | 0o666, uid),
+      (S_IFLNK | 0o700, uid, S_IFSOCK | 0o600, uid),
+      (S_IFDIR | 0o700, uid, S_IFLNK | 0o600, uid),
+    ]
+    for (directoryMode, directoryUID, socketMode, socketUID) in invalid {
+      directory.st_mode = directoryMode
+      directory.st_uid = directoryUID
+      socket.st_mode = socketMode
+      socket.st_uid = socketUID
+      #expect(!StimHome.isPrivateLocalSocket(directory: directory, socket: socket))
+    }
+  }
+
+  @Test func localSocketsMatchTheServerForLongHostedAndUnicodeHomes() {
+    #expect(StimHome.localSocket(home: "/tmp/short").path == "/tmp/short/server/local.sock")
+    #expect(StimHome.localSocket(home: "/tmp/a%2Fb?#").path == "/tmp/a%2Fb?#/server/local.sock")
+    let boundary = "/tmp/" + String(repeating: "a", count: 80)
+    #expect(StimHome.localSocket(home: boundary).path == boundary + "/server/local.sock")
+    #expect(StimHome.localSocket(home: boundary).path.utf8.count == 103)
+    #expect(StimHome.localSocket(home: boundary + "a").path != boundary + "a/server/local.sock")
+    let unicodeBoundary = "/tmp/" + String(repeating: "\u{00e9}", count: 40)
+    #expect(StimHome.localSocket(home: unicodeBoundary).path.utf8.count == 103)
+    let hosted = StimHome.localSocket(
+      home: "/Users/desktop-test/.stim/device-host/sessions/00000000-0000-0000-0000-000000000001/home")
+    #expect(hosted.path == "/tmp/stim-sockets-\(getuid())/9f6edf71ce2641a80365d6ee1e38df37cebd7261304e96694ce1bc2053ab1267.sock")
+    let unicode = StimHome.localSocket(home: "/tmp/" + String(repeating: "\u{00e9}", count: 45))
+    #expect(unicode.path == "/tmp/stim-sockets-\(getuid())/46b20e2924d77e53740dfa2db4d94ffaf8ea79ce0ee1dae0ac77a566b2f16748.sock")
+    #expect(unicode != hosted)
+    #expect(unicode.path.utf8.count <= 103)
+    #expect(StimHome.localSocket(home: "/tmp/./unused/../" + String(repeating: "\u{00e9}", count: 45)) == unicode)
+    #expect(StimHome.localSocket(home: "/tmp/\u{0301}foo/../" + String(repeating: "\u{00e9}", count: 45)) == unicode)
+  }
+
   @Test func launchHomeOverridesTheSettingAndTheDefaultHomeIsNeverExported() {
     let launch = Toolchain.settingsEnvironment(
       launch: ["STIM_HOME": "/tmp/launch", "PATH": "/bin"], stimHome: "/tmp/setting", overrides: nil, home: "/Users/me")

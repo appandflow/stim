@@ -16,8 +16,10 @@ import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '..
 import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import {
   NO_BUILD_PROGRESS,
+  runFailureRecord,
   startBuildProgress,
   tapBuildLog,
+  thrownRunFailureRecord,
   type BuildProgress,
   type recordFinishedBuild,
 } from '../engine/build-progress.ts';
@@ -126,7 +128,7 @@ import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
 import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './android/artifact.ts';
-import { persistLastBuild, persistThrownBuild } from './android/result.ts';
+import { logPostBuildFailure, persistLastBuild, persistThrownBuild } from './android/result.ts';
 import { finishAndroidRun, type AndroidRuntimePlan } from './android/launch.ts';
 import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
 import { planAndroid } from './android/next-build.ts';
@@ -769,6 +771,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         out,
       });
     }
+    logPostBuildFailure(artifactAcquired, writer, runFailureRecord({ code, message, phase: progress.phase() }));
     out(phaseLine('error', chalk.red(`${code}: ${message}`)));
     for (const diagnostic of diagnostics) out(phaseLine('error', chalk.red(diagnostic)));
     for (const line of lines) out(phaseLine('', chalk.dim(line)));
@@ -1527,6 +1530,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       message: 'while finishing the run',
     });
     if (cancelled) return fail(cancelled.code, cancelled.message, cancelled.remedy, { lastBuildStatus: true });
+    logPostBuildFailure(artifactAcquired, writer, thrownRunFailureRecord(error, progress.phase()));
     persistThrownBuild({
       acquired: artifactAcquired,
       error,

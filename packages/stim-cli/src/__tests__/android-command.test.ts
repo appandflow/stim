@@ -58,7 +58,7 @@ import {
   upsertProject,
   writeConfigSetting,
 } from '../workspace/config.ts';
-import { buildMachinesFile, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
+import { buildMachinesFile, openLogDir, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import {
   workspaceDir,
@@ -2414,8 +2414,36 @@ describe('the other refusals', () => {
     expect(result.error.message).toMatch(/bad app\.json/);
   });
 
+  async function errorRecords() {
+    const logDir = await openLogDir(workspaceLogsDir(root));
+    try {
+      return await logDir.query({ errorsOnly: true, sources: ['build'] });
+    } finally {
+      await logDir.close();
+    }
+  }
+
+  function phaseProgress() {
+    let phase: string | null = null;
+    return {
+      step: (next: string) => (phase = next),
+      phase: () => phase,
+      miss: () => {},
+      hit: () => {},
+      output: () => {},
+      deviceSetup: () => {},
+      deviceSetupKnown: () => undefined,
+      activity: () => {},
+      waitingOn: () => {},
+      estimate: () => {},
+      durations: () => ({}),
+      clear: () => {},
+    };
+  }
+
   test('a device that cannot be booted refuses with STIM_NO_DEVICE, after the build', async () => {
     const h = harness({
+      progress: phaseProgress(),
       ensureDeviceBooted: async () => ({ failed: true, reason: 'AVD stim-app-412 no longer exists.' }),
       install: never('the install'),
     });
@@ -2426,10 +2454,12 @@ describe('the other refusals', () => {
     const state = readWorkspaceState(root);
     expect(readLastBuilds(state).android).toMatchObject({ status: 'failed', errorCode: NO_DEVICE });
     expect(readBuildHistory(state).android?.[0]).toMatchObject({ result: 'failed', errorCode: NO_DEVICE });
+    expect(await errorRecords()).toMatchObject([{ level: 'error', code: NO_DEVICE, phase: 'device' }]);
   });
 
   test('a build that completes and then throws is recorded as failed with the error code', async () => {
     const h = harness({
+      progress: phaseProgress(),
       install: () => {
         throw Object.assign(new Error('fixture install crash'), { code: 'STIM_FIXTURE_CRASH' });
       },
@@ -2438,6 +2468,7 @@ describe('the other refusals', () => {
     const state = readWorkspaceState(root);
     expect(readLastBuilds(state).android).toMatchObject({ status: 'failed', errorCode: 'STIM_FIXTURE_CRASH' });
     expect(readBuildHistory(state).android?.[0]).toMatchObject({ result: 'failed', errorCode: 'STIM_FIXTURE_CRASH' });
+    expect(await errorRecords()).toMatchObject([{ level: 'error', code: 'STIM_FIXTURE_CRASH', phase: 'install' }]);
   });
 
   const DISK_FATAL =
