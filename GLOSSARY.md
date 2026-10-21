@@ -41,7 +41,7 @@ _Avoid_: revoke (for a request nobody answered)
 The integer `STIM_BUILD_COMPAT` of a Stim release; a build client and its remote
 machine build for each other when they share one. It changes only when what a
 worker builds, how it builds, or the build and artifact messages change.
-_Avoid_: protocol version (that is the connection's Noise protocol)
+_Avoid_: protocol version (that is the stim-server message protocol `hello` negotiates)
 
 **Stim build**:
 The digest of the installed Stim packages, shown for diagnostics; a remote machine

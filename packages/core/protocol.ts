@@ -76,7 +76,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
  * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
- * `build-compat` accepts `compat` in place of `stimBuild` in React Native and SwiftPM artifact queries.
+ * `build-compat` accepts `compat` on `build.start`, and in place of `stimBuild` in React Native and SwiftPM artifact
+ * queries.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.

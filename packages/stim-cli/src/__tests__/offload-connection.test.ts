@@ -667,7 +667,10 @@ describe('macOS artifact transfer', () => {
         'mini',
         offer(0.1),
         { result: { job: 'j1' } },
-        { artifact: { archive, digest } },
+        {
+          artifact: { archive, digest },
+          hello: () => ({ result: { capabilities: ['build'], features: kind === 'valid' ? ['build-compat'] : [] } }),
+        },
       );
       machines.push(machine);
       const choice = await chooseBuildMachine({
@@ -715,6 +718,7 @@ describe('macOS artifact transfer', () => {
         },
         fingerprint: manifestDigest(files),
         stimBuild: 'b1',
+        ...(kind === 'valid' ? { compat: 1 } : {}),
       });
       expect(outcome.ok).toBe(kind === 'valid');
       const observed = outcome.ok
