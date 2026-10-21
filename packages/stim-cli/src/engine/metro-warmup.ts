@@ -1,4 +1,7 @@
 import { request } from 'node:http';
+import { join } from 'node:path';
+import { acceptsShape, settingDefinition } from '@stim-cli/core/state';
+import { tailLines } from '../devices/activity.ts';
 
 const WARMUP_TIMEOUT_MS = 60_000;
 
@@ -32,18 +35,37 @@ async function requestLocal(url: URL, platform: string, prefetch: boolean): Prom
   });
 }
 
+function recordedBundleUrl(logsDir: string | null | undefined, platform: 'ios' | 'android'): string | null {
+  const setting = settingDefinition(`metro.warmupUrl.${platform}`);
+  if (!logsDir || !setting) return null;
+  for (const line of (tailLines(join(logsDir, 'metro.ndjson')) ?? []).toReversed()) {
+    try {
+      const record = JSON.parse(line);
+      if (
+        record?.event === 'bundle_response_started' &&
+        record.platform === platform &&
+        acceptsShape(setting, record.url)
+      )
+        return record.url;
+    } catch {}
+  }
+  return null;
+}
+
 export async function warmMetro({
   port,
   platform,
   isExpo,
   appId,
   bundleUrl,
+  logsDir,
 }: {
   port: number;
   platform: 'ios' | 'android';
   isExpo: boolean;
   appId?: string | null;
   bundleUrl?: string | null;
+  logsDir?: string | null;
 }): Promise<void> {
   try {
     const origin = `http://127.0.0.1:${port}`;
@@ -63,6 +85,7 @@ export async function warmMetro({
       sourcePaths: 'url-server',
       ...(appId ? { app: appId } : {}),
     }).toString();
+    bundleUrl ||= recordedBundleUrl(logsDir, platform);
     if (!bundleUrl && isExpo) {
       const body = await requestLocal(new URL(origin), platform, false);
       if (body === null) return;

@@ -963,6 +963,7 @@ async function runIos(
           isExpo,
           appId: proj?.bundleId,
           bundleUrl: metroWarmupUrlSetting(settings, 'ios'),
+          logsDir,
         });
       return { ok: true, prepared: { metroPort } };
     }

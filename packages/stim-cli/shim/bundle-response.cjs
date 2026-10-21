@@ -110,6 +110,7 @@ function bundleResponseMiddleware(write, { runLsof, manifests = false } = {}) {
           requestId,
           ...(progress ?? { statusCode }),
           msg: progress ? `${platform} bundle ${progress.percent}%` : `${platform} bundle ${kind} ${stage}`,
+          ...(stage === 'started' && !prefetch ? { url: `${url.pathname}${url.search}` } : {}),
           ...(pid ? { clientPid: pid } : {}),
         });
       } catch {}

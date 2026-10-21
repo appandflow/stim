@@ -1,5 +1,8 @@
 import { once } from 'node:events';
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, get, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { spawn } from 'node:child_process';
 import { warmMetro } from '../engine/metro-warmup.ts';
@@ -174,4 +177,68 @@ test('an older or external Metro without prefetch isolation is left alone', asyn
   await once(server, 'listening');
   await warmMetro({ port: (server.address() as AddressInfo).port, platform: 'ios', isExpo: false });
   expect(requests).toEqual(['/_stim/metro-warmup']);
+});
+
+describe('the bundle URL an app requested earlier', () => {
+  const APP_URL = '/apps/mobile/index.ts.bundle?platform=ios&dev=true&lazy=true&transform.routerRoot=src%2Fapp';
+  const MANIFEST = JSON.stringify({ launchAsset: { url: `http://127.0.0.1:1${APP_URL}` } });
+  let logsDir: string;
+  beforeEach(() => {
+    logsDir = mkdtempSync(join(tmpdir(), 'stim-warmup-'));
+  });
+  afterEach(() => {
+    rmSync(logsDir, { recursive: true, force: true });
+  });
+
+  const metroLog = (...lines: string[]) => writeFileSync(join(logsDir, 'metro.ndjson'), `${lines.join('\n')}\n`);
+  const started = (platform: string, url: unknown) =>
+    JSON.stringify({ ts: 1, src: 'metro', event: 'bundle_response_started', platform, requestId: 'r', url });
+
+  async function warm(platform: 'ios' | 'android' = 'ios', bundleUrl?: string) {
+    const requests: string[] = [];
+    const port = await listen((req, res) => {
+      requests.push(String(req.url));
+      res.end(req.url === '/' ? MANIFEST : '');
+    });
+    await warmMetro({ port, platform, isExpo: true, bundleUrl, logsDir });
+    return requests;
+  }
+
+  test("an app's request is recorded by the shim and prefetched without an Expo manifest request", async () => {
+    const records: Record<string, unknown>[] = [];
+    const observe = bundleResponseMiddleware((record) => records.push(record));
+    const appPort = await listen((req, res) => observe(req, res, () => res.end('bundle')));
+    await new Promise<void>((resolve) =>
+      get(`http://127.0.0.1:${appPort}${APP_URL}`, (res) => res.resume().on('end', resolve)),
+    );
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    metroLog(...records.map((record) => JSON.stringify(record)));
+
+    expect(await warm()).toEqual([APP_URL]);
+  });
+
+  test('the newest URL recorded for the platform wins', async () => {
+    const newer = APP_URL.replace('src%2Fapp', 'app');
+    metroLog(started('ios', APP_URL), started('android', '/other.bundle?platform=android'), started('ios', newer));
+    expect(await warm()).toEqual([newer]);
+  });
+
+  test('metro.warmupUrl overrides the recorded URL', async () => {
+    metroLog(started('ios', APP_URL));
+    const override = '/custom.bundle?platform=ios&dev=true';
+    expect(await warm('ios', override)).toEqual([override]);
+  });
+
+  test.each([
+    ['nothing is recorded', () => undefined],
+    ['only another platform is recorded', () => metroLog(started('android', '/a.bundle?platform=android'))],
+    ['the recorded URL is for another platform', () => metroLog(started('ios', '/a.bundle?platform=android'))],
+    ['the recorded URL is not a bundle', () => metroLog(started('ios', '/status?platform=ios'))],
+    ['the record has no URL', () => metroLog(started('ios', undefined))],
+    ['the log is malformed', () => metroLog('{not json', started('ios', 3))],
+  ])('falls back to the Expo manifest when %s', async (_name, setup) => {
+    setup();
+    expect(await warm()).toEqual(['/', APP_URL]);
+  });
 });

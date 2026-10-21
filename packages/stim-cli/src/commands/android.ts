@@ -1254,6 +1254,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         isExpo,
         appId: androidPackage,
         bundleUrl: metroWarmupUrlSetting(settings, 'android'),
+        logsDir,
       });
     const acquiredArtifact = await acquireAndroidArtifact(
       {

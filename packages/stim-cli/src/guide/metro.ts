@@ -68,9 +68,14 @@ TAILNET-ONLY METRO
 
 BUNDLE WARMUP
   After verifying Metro, \`stim ios\` and \`stim android\` prefetch the
-  platform's development bundle while native work continues. Expo supplies the
-  entry point and bundle options through its manifest; bare React Native uses
-  the standard index entry and development bundle options, including lazy loading.
+  platform's development bundle while native work continues. The prefetch
+  requests the URL of the app's most recent bundle request on that platform,
+  read from this workspace's metro log, so it matches the app's entry point
+  and options and does not ask Expo for its manifest. Expo computes the
+  runtime version fingerprint for every manifest request. Without a recorded
+  request, Expo supplies the entry point and bundle options through its
+  manifest, and bare React Native uses the standard index entry and
+  development bundle options, including lazy loading.
   Warmup is enabled by default. Set optimizations.metroWarmup=false to disable
   it on the next ios/android command, using the machine or project settings.
   For custom entry points or bundle options, set metro.warmupUrl.ios and/or
