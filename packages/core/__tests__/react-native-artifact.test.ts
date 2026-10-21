@@ -60,3 +60,19 @@ test('queries retain target, toolchain and native options while refusing release
   ])
     expect(reactNativeArtifactQuery(invalid)).toBeNull();
 });
+
+test('a query with a build compatibility version names it instead of the Stim build', () => {
+  const compat = (stimBuild: string, value: unknown) =>
+    reactNativeArtifactQuery({ ...ios, toolchain: { ...ios.toolchain, stimBuild, compat: value } });
+  expect(compat('b1', 1)?.toolchain).toEqual({
+    compat: 1,
+    arch: 'arm64',
+    xcode: 'Xcode 27',
+    simulatorSdk: '27',
+    cocoapods: '1.16.2',
+  });
+  expect(compat('b2', 1)).toEqual(compat('b1', 1));
+  expect(compat('b1', 2)).not.toEqual(compat('b1', 1));
+  expect(reactNativeArtifactQuery(ios)?.toolchain).toMatchObject({ stimBuild: 'b1' });
+  for (const invalid of [0, 1.5, '1']) expect(compat('b1', invalid)).toBeNull();
+});

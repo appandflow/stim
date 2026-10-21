@@ -11,7 +11,7 @@ import type { BuildSwiftpmArtifactQuery } from '@stim-cli/core/protocol';
 let directory: string;
 let root: string;
 let visible: string[];
-let query: BuildSwiftpmArtifactQuery;
+let query: Extract<BuildSwiftpmArtifactQuery, { compat: number }>;
 const toolchain = {
   swift: 'Swift 6.3',
   sdk: '27A266',
@@ -52,7 +52,7 @@ beforeEach(async () => {
   query = {
     project: '',
     sourceDigest: manifestDigest(await sourceManifest(root, true)),
-    stimBuild: 'verified-stim-build',
+    compat: 1,
     inputs: { complete: true, ignored: [], outputs: [], localFiles: ['private.txt'], environment: ['FLAVOR'] },
     build: { product: 'App', infoPlist: 'Development.plist', resources: { Assets: 'assets' }, assetCatalog: null },
   };
@@ -145,7 +145,7 @@ test('build choices and different source queries cannot borrow an existing recei
   const snapshot = await swiftpmWorkerArtifactSnapshot(root, query, toolchain, environment);
   for (const changed of [
     { ...query, sourceDigest: 'a'.repeat(64) },
-    { ...query, stimBuild: 'another-stim-build' },
+    { ...query, compat: 2 },
     { ...query, project: 'another-project' },
     { ...query, build: { ...query.build, product: 'Other' } },
     { ...query, inputs: { ...query.inputs, environment: [] } },
