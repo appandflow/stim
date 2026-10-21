@@ -359,6 +359,23 @@ test('a timed-out child cannot expose an incomplete redacted secret', async () =
   expect(failure.stderr).toBe('');
 });
 
+function blockEventLoop(ms: number): void {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function exitedWithoutBeingReaped(pid: number): boolean {
+  if (process.platform === 'win32') {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  }
+  const state = getExecutor().runFileQuiet('ps', ['-o', 'stat=', '-p', String(pid)], { timeoutMs: 5000 });
+  return state === null || state.startsWith('Z');
+}
+
 test('a cancelled child whose exit is seen only after a stalled event loop is not a cleanup failure', async () => {
   const controller = new AbortController();
   const reason = new Error('cancelled');
@@ -372,10 +389,16 @@ test('a cancelled child whose exit is seen only after a stalled event loop is no
       },
     })
     .catch((error: unknown) => error);
-  controller.abort(reason);
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
-  expect(await call).toBe(reason);
   const startedPid = pid;
   assert(startedPid);
+  controller.abort(reason);
+  const stallUntil = performance.now() + 1500;
+  const giveUpAt = performance.now() + 20_000;
+  while (!exitedWithoutBeingReaped(startedPid)) {
+    assert(performance.now() < giveUpAt, `child ${startedPid} survived SIGKILL`);
+    blockEventLoop(25);
+  }
+  blockEventLoop(stallUntil - performance.now());
+  expect(await call).toBe(reason);
   expect(() => process.kill(startedPid, 0)).toThrow(/ESRCH/);
 }, 30_000);
