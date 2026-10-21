@@ -86,12 +86,6 @@ final class NoticeCenter: ObservableObject {
     onDismiss?()
   }
 
-  func dismissAll() {
-    let dismissed = notices
-    removeAll()
-    for notice in dismissed { notice.onDismiss?() }
-  }
-
   func update(key: String, detail: String) {
     guard let position = notices.firstIndex(where: { $0.key == key }), notices[position].detail != detail else { return }
     notices[position].detail = detail
@@ -110,13 +104,12 @@ final class NoticeCenter: ObservableObject {
 
 struct NoticeStack: View {
   @ObservedObject var center: NoticeCenter
-  var onDismissAll: (() -> Void)? = nil
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     ZStack(alignment: .bottom) {
       if let notice = center.current {
-        NoticeCard(notice: notice, center: center, dismissAll: onDismissAll ?? center.dismissAll)
+        NoticeCard(notice: notice, center: center)
           .background(alignment: .bottom) { edges }
           .id(notice.id)
           .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
@@ -149,18 +142,10 @@ struct NoticeStack: View {
 private struct NoticeCard: View {
   var notice: Notice
   @ObservedObject var center: NoticeCenter
-  var dismissAll: () -> Void
 
   var body: some View {
     Banner(tone: notice.tone, icon: notice.icon, style: .floating, onDismiss: { center.dismiss(notice.id) }) {
-      HStack {
-        stepper
-        Spacer(minLength: Space.xs)
-        Button("Dismiss All", action: dismissAll)
-          .buttonStyle(.plain)
-          .textStyle(.caption, weight: .semibold)
-          .foregroundStyle(Palette.secondary)
-      }
+      stepper
       Text(notice.title).font(.stim(.headline)).lineLimit(2, reservesSpace: true)
       Text(notice.detail ?? " ")
         .foregroundStyle(Palette.secondary).lineLimit(1, reservesSpace: true).truncationMode(.middle)

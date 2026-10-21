@@ -47,25 +47,6 @@ import XCTest
     XCTAssertEqual(center.notices.map(\.id), [update.id])
   }
 
-  func testDismissAllIncludesQueuedNoticesAndRunsEachDismissalOnce() {
-    let center = NoticeCenter()
-    var dismissals: [Int] = []
-    for index in 0..<5 {
-      center.show(
-        Notice(
-          icon: "bell", title: "Notice \(index)", actionTitle: "Show", perform: {},
-          onDismiss: { dismissals.append(index) }))
-    }
-    center.step(2)
-
-    center.dismissAll()
-    center.dismissAll()
-
-    XCTAssertTrue(center.notices.isEmpty)
-    XCTAssertNil(center.current)
-    XCTAssertEqual(dismissals, [4, 3, 2, 1, 0])
-  }
-
   func testRemovedWorkspaceNoticesLeaveWithoutRecordingAUserDismissal() throws {
     let payload = try JSONDecoder().decode(
       StatusPayload.self,

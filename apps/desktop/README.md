@@ -162,7 +162,6 @@ While details are open, hover another resource figure to switch the contents. Cl
 CPU covers active workspace processes; memory covers the whole Mac.
 
 The bell at the top right opens **Notifications** and shows the unread count.
-**Dismiss All** on either floating card stack hides both stacks, including queued cards.
 Notifications remain available under the bell. New-workspace cards in the bottom-left stack dismiss
 after one minute. Other notices in that stack stay until acted on or dismissed. Workspace cards keep
 the same layout for short and long names.
@@ -1622,8 +1621,7 @@ News the user can act on later shows as a card at the main window's bottom
 left: a title, one line of detail, a primary action and a dismiss button. A
 new-workspace card expires after one minute; other cards stay until acted on or
 dismissed, with or without VoiceOver. Several cards stack, newest first, with a
-counter and previous and next buttons. **Dismiss All** in either notification
-stack clears both stacks, including queued cards.
+counter and previous and next buttons.
 Two things use them. When `stim status` first lists a workspace, the card reads
 "New workspace <workspace>" with **Show**, which opens the workspace and focuses
 the device of its running build. Each path gets one card per Desktop session:

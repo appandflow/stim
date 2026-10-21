@@ -155,9 +155,9 @@ struct RootView: View {
       }
       .overlay(alignment: .topTrailing) { inspectorSideControls }
       .overlay(alignment: .topTrailing) {
-        ToastStack(center: toasts, onDismissAll: dismissAllCards)
+        ToastStack(center: toasts)
       }
-      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices, onDismissAll: dismissAllCards) }
+      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
       .onGeometryChange(for: CGFloat.self) {
         $0.size.width
       } action: {
@@ -776,11 +776,6 @@ struct RootView: View {
     case .project(let project): return store.projectList.contains { $0.project == project }
     default: return true
     }
-  }
-
-  private func dismissAllCards() {
-    toasts.dismissAll()
-    notices.dismissAll()
   }
 
   private func showNewWorkspaces(in payload: StatusPayload) -> [String] {

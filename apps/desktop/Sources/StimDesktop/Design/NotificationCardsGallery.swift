@@ -46,14 +46,9 @@
       .padding(Space.xl)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       .overlay(alignment: .topTrailing) {
-        ToastStack(center: center, reduceMotionOverride: reduceMotion, onDismissAll: dismissAll)
+        ToastStack(center: center, reduceMotionOverride: reduceMotion)
       }
-      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices, onDismissAll: dismissAll) }
-    }
-
-    private func dismissAll() {
-      center.dismissAll()
-      notices.dismissAll()
+      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
     }
   }
 #endif
