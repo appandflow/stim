@@ -267,20 +267,16 @@ export function prepareIosDevices({ h, platform, targets, cleanup }) {
   if (platform !== 'ios') return;
   const script = fileURLToPath(new URL('./prepare-ios-device.mjs', import.meta.url));
   try {
-    for (const { cwd, slot = 'default', deviceType } of targets) {
+    for (const { cwd, slot = 'default' } of targets) {
       const settingsPath = join(cwd, '.stim.json');
       const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf-8')) : {};
       if (!settings.ios?.simslimProfile) continue;
       h.log(`preparing simulator ${slot} in ${cwd} before the multi-device workload`);
-      const result = h.sh(
-        process.execPath,
-        ['--experimental-strip-types', script, cwd, slot, ...(deviceType ? [deviceType] : [])],
-        {
-          cwd,
-          timeout: 25 * 60 * 1000,
-          allowFail: true,
-        },
-      );
+      const result = h.sh(process.execPath, ['--experimental-strip-types', script, cwd, slot], {
+        cwd,
+        timeout: 25 * 60 * 1000,
+        allowFail: true,
+      });
       cleanup.recordWorkspace(cwd);
       const stopped = h.cli(['stop', '--slot', slot, '--json'], { cwd, allowFail: true });
       assert(stopped.code === 0, `could not stop prepared simulator ${slot}: ${stopped.stderr}`);
