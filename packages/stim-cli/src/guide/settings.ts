@@ -1024,7 +1024,17 @@ match. Completed archives survive worker checkout changes or removal; hits
 need no source upload or build slot. Disabled remote artifact reads skip this
 lookup. Release and physical-device builds keep their existing paths.
 SwiftPM, compiler and dependency caches use their existing paths.
-For iOS the machine's Xcode and simulator SDK must match, and it needs an
+For iOS the machine's Xcode and simulator SDK must match. Its offer reports the
+developerDir xcode-select prints and the Xcode apps in /Applications (version,
+build, and license and first-launch checks while no Xcode works), so doctor's
+fix for no usable Xcode is the exact command to run there: sudo xcode-select -s
+<the Xcode with this machine's build, else the newest>/Contents/Developer when
+the Command Line Tools or another Xcode is selected, sudo xcodebuild -license
+accept and sudo xcodebuild -runFirstLaunch for the checks that fail, or xcodes
+install <version> with no Xcode app. A runtime the machine lacks gets
+xcodebuild -downloadPlatform iOS -buildVersion <version>, or a pointer to the
+Xcode problem when xcode-select is the cause. A stim-server that reports no
+developerDir keeps the prose fix. It also needs an
 iPhone simulator on the target runtime. Its project-selected CocoaPods must match too, unless
 the app's Gemfile.lock, in ios/ or the project root, pins CocoaPods: both machines then run that version through
 bundler, so the machine needs only Bundler on its stim-server PATH and

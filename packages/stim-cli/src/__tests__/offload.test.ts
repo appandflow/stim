@@ -37,6 +37,7 @@ import {
   type BuildTarget,
   type IosToolchain,
   type WorkerToolchain,
+  type XcodeApp,
 } from '../offload/toolchain.ts';
 
 const RUNTIME = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0';
@@ -347,6 +348,166 @@ describe('pickOffer', () => {
       capacity: capacity({ loadPerCore: 1.4 }),
     });
     expect(pick([unverified, offer()]).order).toEqual([1, 0]);
+  });
+});
+
+describe('pickOffer for an Xcode the worker does not select', () => {
+  const app = (name: string, version: string, build: string, checks: Partial<XcodeApp> = {}): XcodeApp => ({
+    path: `/Applications/${name}.app`,
+    version,
+    build,
+    ...checks,
+  });
+  const clt = { xcode: null, simulatorSdk: null, runtimes: [], developerDir: '/Library/Developer/CommandLineTools' };
+  const problems = (toolchain: Partial<WorkerToolchain>) => offerProblems(offer({ toolchain }), IOS);
+  const select = (name: string) => `sudo xcode-select -s /Applications/${name}.app/Contents/Developer`;
+
+  it('names xcode-select as the cause, selects the Xcode of this machine build, and says the runtime follows', () => {
+    const found = problems({
+      ...clt,
+      xcodeApps: [app('Xcode-27.1', '27.1', '27A9275'), app('Xcode-27.0', '27.0', '27A266a')],
+    });
+    expect(found).toEqual([
+      {
+        code: 'xcode',
+        reason: 'no Xcode there: xcode-select points at Command Line Tools',
+        commands: [select('Xcode-27.0')],
+        lead: 'select Xcode-27.0',
+      },
+      {
+        code: 'runtime',
+        reason: `no iPhone simulator on ${RUNTIME} there; this follows from the Xcode problem`,
+        followsFrom: 'xcode',
+      },
+    ]);
+  });
+
+  it('selects the newest Xcode when none has this machine build, and quotes a path with a space', () => {
+    const found = problems({ ...clt, xcodeApps: [app('Xcode 26.4', '26.4', 'x'), app('Xcode 26.5', '26.5', 'y')] });
+    expect(found[0]?.commands).toEqual(["sudo xcode-select -s '/Applications/Xcode 26.5.app/Contents/Developer'"]);
+  });
+
+  it('adds the license and first-launch commands only for the checks that failed', () => {
+    const commands = (checks: Partial<XcodeApp>) =>
+      problems({ ...clt, xcodeApps: [app('Xcode-27.0', '27.0', '27A266a', checks)] })[0]?.commands;
+    expect(commands({ license: true, firstLaunch: true })).toEqual([select('Xcode-27.0')]);
+    expect(commands({ license: false, firstLaunch: true })).toEqual([
+      select('Xcode-27.0'),
+      'sudo xcodebuild -license accept',
+    ]);
+    expect(commands({ license: true, firstLaunch: false })).toEqual([
+      select('Xcode-27.0'),
+      'sudo xcodebuild -runFirstLaunch',
+    ]);
+    expect(commands({ license: false, firstLaunch: false })).toEqual([
+      select('Xcode-27.0'),
+      'sudo xcodebuild -license accept && sudo xcodebuild -runFirstLaunch',
+    ]);
+    const selected = problems({
+      xcode: null,
+      simulatorSdk: null,
+      developerDir: '/Applications/Xcode-27.0.app/Contents/Developer',
+      xcodeApps: [app('Xcode-27.0', '27.0', '27A266a', { license: false, firstLaunch: true })],
+    });
+    expect(selected[0]).toMatchObject({
+      reason: 'no Xcode there: Xcode-27.0.app is selected but not set up',
+      commands: ['sudo xcodebuild -license accept'],
+    });
+  });
+
+  it('says so when the selected Xcode fails without a failed check, and when the newest one does not match', () => {
+    const selected = problems({
+      xcode: null,
+      simulatorSdk: null,
+      developerDir: '/Applications/Xcode-27.0.app/Contents/Developer',
+      xcodeApps: [app('Xcode-27.0', '27.0', '27A266a', { license: true, firstLaunch: true })],
+    });
+    expect(selected[0]).toEqual({
+      code: 'xcode',
+      reason: 'no Xcode there: Xcode-27.0.app is selected but xcodebuild fails',
+      commands: [],
+      lead: 'finish setting up Xcode-27.0',
+    });
+    const other = problems({ ...clt, xcodeApps: [app('Xcode-26.5', '26.5', 'y')] });
+    expect(other[0]?.lead).toBe('select Xcode-26.5 (this Mac has Xcode 27.0; xcodes install 27.0 matches it)');
+  });
+
+  it('points a runtime at the Xcode problem whenever the Xcode needs another command first', () => {
+    const found = problems({
+      xcode: 'Xcode 26.4 / Build version 26A1',
+      simulatorSdk: '27.0',
+      runtimes: [],
+      developerDir: '/Applications/Xcode-26.4.app/Contents/Developer',
+      xcodeApps: [app('Xcode-27.0', '27.0', '27A266a')],
+    });
+    expect(found.map((problem) => [problem.code, problem.followsFrom])).toEqual([
+      ['xcode', undefined],
+      ['runtime', 'xcode'],
+    ]);
+  });
+
+  it('diagnoses a worker that builds the macOS app itself without comparing it with this machine', () => {
+    const onWorker: BuildTarget = {
+      platform: 'macos',
+      runsOnWorker: true,
+      local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: null, macosSdk: null },
+    };
+    const found = toolchainMismatches(
+      onWorker,
+      offer({ toolchain: { ...clt, xcodeApps: [app('Xcode-26.5', '26.5', 'y')] } }).toolchain,
+    );
+    expect(found).toEqual([
+      expect.objectContaining({
+        code: 'xcode',
+        reason: 'no Xcode there: xcode-select points at Command Line Tools',
+        commands: [select('Xcode-26.5')],
+      }),
+    ]);
+  });
+
+  it('asks for the Xcode of this machine to be installed when the worker has none', () => {
+    expect(problems({ ...clt, xcodeApps: [] })).toEqual([
+      {
+        code: 'xcode',
+        reason: 'no Xcode there',
+        commands: ['xcodes install 27.0'],
+        lead: 'install Xcode 27.0 (from the App Store, or with xcodes), then run stim doctor again',
+      },
+      expect.objectContaining({ code: 'runtime', followsFrom: 'xcode' }),
+    ]);
+  });
+
+  it('selects the installed Xcode that matches when the selected one is another version', () => {
+    const found = problems({
+      xcode: 'Xcode 26.4 / Build version 26A1',
+      simulatorSdk: '27.0',
+      developerDir: '/Applications/Xcode-26.4.app/Contents/Developer',
+      xcodeApps: [app('Xcode-26.4', '26.4', '26A1'), app('Xcode-27.0', '27.0', '27A266a')],
+    });
+    expect(found).toEqual([
+      expect.objectContaining({ code: 'xcode', commands: [select('Xcode-27.0')], lead: 'select Xcode-27.0' }),
+    ]);
+  });
+
+  it('gives the download command for a runtime that is really missing, only to a worker that reports its developer directory', () => {
+    const missing = { runtimes: ['com.apple.CoreSimulator.SimRuntime.iOS-26-5'] };
+    expect(problems({ ...missing, developerDir: '/Applications/Xcode-27.0.app/Contents/Developer' })).toEqual([
+      {
+        code: 'runtime',
+        reason: `no iPhone simulator on ${RUNTIME} there`,
+        commands: ['xcodebuild -downloadPlatform iOS -buildVersion 27.0'],
+        lead: 'download the iOS 27.0 simulator runtime if it is not installed (an installed runtime also needs an iPhone simulator)',
+      },
+    ]);
+    expect(problems(missing)).toEqual([{ code: 'runtime', reason: `no iPhone simulator on ${RUNTIME} there` }]);
+  });
+
+  it('keeps today reasons and no commands for a stim-server that does not report its developer directory', () => {
+    expect(problems({ xcode: null, simulatorSdk: null, runtimes: [] })).toEqual([
+      { code: 'xcode', reason: 'no Xcode there, Xcode 27.0 / Build version 27A266a here' },
+      { code: 'simulator-sdk', reason: 'no simulator SDK there, simulator SDK 27.0 here' },
+      { code: 'runtime', reason: `no iPhone simulator on ${RUNTIME} there` },
+    ]);
   });
 });
 
