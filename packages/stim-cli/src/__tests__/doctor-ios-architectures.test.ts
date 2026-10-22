@@ -185,7 +185,7 @@ test('a slow metadata child leaves the event loop responsive while preserving it
 });
 
 test.skipIf(process.platform === 'win32')(
-  'a repeated inspection reuses the result until a project input changes (xcodebuild metadata; skipped on win32)',
+  'overlapping and repeated inspections share one result until a project input changes (xcodebuild metadata; skipped on win32)',
   async () => {
     const pbxproj = join(project, 'ios', 'App.xcodeproj', 'project.pbxproj');
     writeFileSync(pbxproj, 'one');
@@ -196,8 +196,12 @@ test.skipIf(process.platform === 'win32')(
         return JSON.stringify([target({ ONLY_ACTIVE_ARCH: 'NO' })]);
       },
     });
-    const first = await inspectIosDebugArchitectures(project);
+    const [first, overlapping] = await Promise.all([
+      inspectIosDebugArchitectures(project),
+      inspectIosDebugArchitectures(project),
+    ]);
     expect(first.map((finding) => finding.code)).toEqual(['ios-debug-architectures']);
+    expect(overlapping).toEqual(first);
     expect(await inspectIosDebugArchitectures(project)).toEqual(first);
     expect(calls).toBe(1);
     writeFileSync(pbxproj, 'changed');

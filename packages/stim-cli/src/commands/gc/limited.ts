@@ -1,3 +1,10 @@
+import type { StimContext } from '@stim-cli/core';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
+import { operationState } from '../../engine/operation-state.ts';
+
+const isCleanupFailure = (error: unknown) =>
+  error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error);
+
 export async function eachLimited<T>(
   items: readonly T[],
   limit: number,
@@ -17,8 +24,10 @@ export async function eachLimited<T>(
     }
   };
   const settled = await Promise.allSettled(Array.from({ length: Math.min(limit, items.length) }, worker));
-  const rejected = settled.find((result) => result.status === 'rejected');
-  if (rejected) throw rejected.reason;
+  const errors = settled.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
+  if (errors.length) throw errors.find(isCleanupFailure) ?? errors[0];
 }
 
-export const READ_CONCURRENCY = 6;
+export function readConcurrency(operation?: StimContext): number {
+  return operationState(operation).declaring.size ? 1 : 6;
+}

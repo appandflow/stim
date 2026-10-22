@@ -15,14 +15,23 @@ interface ArchitectureReport {
 }
 
 const INSPECTION_TTL_MS = 10 * 60_000;
-const inspections = new Map<string, { inputs: string; at: number; findings: Finding[] }>();
+const inspections = new Map<string, { inputs: string; at: number; findings: Promise<Finding[]> }>();
 
-function inspectionInputs(iosRoot: string, projects: readonly string[]): string {
+function inspectionInputs(iosRoot: string): string {
+  let names: string[];
+  try {
+    names = readdirSync(iosRoot).toSorted();
+  } catch {
+    names = [];
+  }
   return JSON.stringify(
     [
-      ...projects.map((project) => join(project, 'project.pbxproj')),
+      ...names.filter((name) => name.endsWith('.xcodeproj')).map((name) => join(iosRoot, name, 'project.pbxproj')),
+      ...names.filter((name) => name.endsWith('.xcconfig')).map((name) => join(iosRoot, name)),
+      join(iosRoot, 'Podfile'),
       join(iosRoot, 'Podfile.lock'),
       join(iosRoot, 'Pods', 'Manifest.lock'),
+      join(iosRoot, 'Pods', 'Pods.xcodeproj', 'project.pbxproj'),
     ].map((path) => {
       try {
         const stat = statSync(path);
@@ -103,6 +112,17 @@ export async function inspectIosDebugArchitectures(
   iosProjectPath: string = DEFAULT_IOS_PROJECT_PATH,
 ): Promise<Finding[]> {
   const iosRoot = join(projectRoot, iosProjectPath);
+  const key = `${projectRoot}\0${iosRoot}`;
+  const inputs = inspectionInputs(iosRoot);
+  const cached = inspections.get(key);
+  if (cached && cached.inputs === inputs && Date.now() - cached.at < INSPECTION_TTL_MS)
+    return [...(await cached.findings)];
+  const findings = inspect(projectRoot, iosRoot);
+  inspections.set(key, { inputs, at: Date.now(), findings });
+  return [...(await findings)];
+}
+
+async function inspect(projectRoot: string, iosRoot: string): Promise<Finding[]> {
   if (!existsSync(iosRoot)) return [];
   const findings: Finding[] = [];
   const unknown: string[] = [];
@@ -119,9 +139,6 @@ export async function inspectIosDebugArchitectures(
   const pods = join(iosRoot, 'Pods', 'Pods.xcodeproj');
   if (existsSync(pods)) projects.push(pods);
   else if (existsSync(join(iosRoot, 'Podfile'))) unknown.push('Pods project (not generated)');
-  const inputs = inspectionInputs(iosRoot, projects);
-  const cached = inspections.get(iosRoot);
-  if (cached && cached.inputs === inputs && Date.now() - cached.at < INSPECTION_TTL_MS) return [...cached.findings];
   const deadline = Date.now() + 60_000;
   for (const project of projects) {
     const label = relative(projectRoot, project);
@@ -167,7 +184,6 @@ export async function inspectIosDebugArchitectures(
       unknown.push(label);
     }
   }
-  if (!unknown.length) inspections.set(iosRoot, { inputs, at: Date.now(), findings: [...findings] });
   if (unknown.length)
     findings.push({
       code: 'ios-debug-architectures-unknown',

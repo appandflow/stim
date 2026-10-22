@@ -14,7 +14,7 @@ import { phase } from './progress.ts';
 import { candidateRootsAsync, type UnlistedWorktreeDir, type WorktreeSweep } from './worktrees.ts';
 import { runOperationFile } from '../../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
-import { eachLimited, READ_CONCURRENCY } from './limited.ts';
+import { eachLimited, readConcurrency } from './limited.ts';
 
 const SIZE_TIMEOUT_MS = 30_000;
 const BUILD_STATE_MAX_AGE_MS = 60 * 60_000;
@@ -114,7 +114,7 @@ export async function measureWorktreeSweep(
   const now = Date.now();
   const measured = sweep.worktrees.filter((candidate) => candidate.skipCode !== 'not-a-worktree');
   const pending: PendingWorktree[] = [];
-  await eachLimited([...measured.entries()], READ_CONCURRENCY, async ([index, candidate]) => {
+  await eachLimited([...measured.entries()], readConcurrency(operation), async ([index, candidate]) => {
     operation?.signal.throwIfAborted();
     const dirs = await buildStateDirs(candidate.path, candidate.keys, operation);
     pending[index] = {
@@ -173,7 +173,7 @@ async function unlistedWorktreeDirs(operation?: StimContext): Promise<UnlistedWo
   const options = { env: operation?.env, signal: operation?.signal, declareFor: operation };
   const roots = await candidateRootsAsync(operation);
   const resolved: Awaited<ReturnType<typeof resolveSourceCheckoutAsync>>[] = [];
-  await eachLimited([...roots.entries()], READ_CONCURRENCY, async ([index, root]) => {
+  await eachLimited([...roots.entries()], readConcurrency(operation), async ([index, root]) => {
     operation?.signal.throwIfAborted();
     resolved[index] = await resolveSourceCheckoutAsync(root, options);
   });

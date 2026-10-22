@@ -61,7 +61,7 @@ import { recordPullRequestLookup } from '../../status-measures.ts';
 import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
-import { eachLimited, READ_CONCURRENCY } from './limited.ts';
+import { eachLimited, readConcurrency } from './limited.ts';
 import { phase } from './progress.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 
@@ -652,7 +652,7 @@ async function checkMergeStates(
     // default branch, after its cached closed pull request was reopened, or inside the grace window of a pull request
     // merged or closed after its merge commit was made. Only --delete acts, and it always refreshes first.
     const fetch = refresh ? null : await staleFetch(repo, grace.now, freshMs, execution);
-    await eachLimited(entries, READ_CONCURRENCY, async ({ candidate, facts }) => {
+    await eachLimited(entries, readConcurrency(operation), async ({ candidate, facts }) => {
       operation?.signal.throwIfAborted();
       const merge: MergeState =
         'error' in target
@@ -718,7 +718,7 @@ export async function collectWorktreeSweep({
   if (candidates.length)
     phase('worktrees', `checking ${plural(candidates.length, 'project')} for merged or idle worktrees`, operation);
   const matched: ReturnType<typeof matchWorktreeEntry>[] = [];
-  await eachLimited([...candidates.entries()], READ_CONCURRENCY, async ([index, root]) => {
+  await eachLimited([...candidates.entries()], readConcurrency(operation), async ([index, root]) => {
     operation?.signal.throwIfAborted();
     matched[index] = matchWorktreeEntry(await listWorktreesAsync(root, read), root);
   });
@@ -742,7 +742,7 @@ export async function collectWorktreeSweep({
     groups.set(entry.path, [...(groups.get(entry.path) ?? []), root]);
   }
   const inspected: Inspected[] = [];
-  await eachLimited([...[...groups].entries()], READ_CONCURRENCY, async ([index, [path, roots]]) => {
+  await eachLimited([...[...groups].entries()], readConcurrency(operation), async ([index, [path, roots]]) => {
     operation?.signal.throwIfAborted();
     const { entries, ...source } = await resolveSourceCheckoutAsync(path, read);
     const entry = matchWorktreeEntry(entries, path);
