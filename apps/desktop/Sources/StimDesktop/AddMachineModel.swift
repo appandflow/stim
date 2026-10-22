@@ -56,8 +56,10 @@ final class AddMachineModel {
   private var preferredMachineID: String?
   private var prefersHostedSimulators = false
   var selectedId: String?
+  private(set) var existingId: String?
   var manualPort = ""
   var isFixture = false
+  var fixtureRegistered: ([String], [BuildMachineStatus]?)?
   private var tailscaleRead = false
   var checkingTailscale: Bool { !isFixture && !tailscaleRead }
   private let checkout: String?
@@ -140,12 +142,30 @@ final class AddMachineModel {
   }
 
   var selected: Tailnet.Peer? { peers.first { $0.id == selectedId } }
+
+  func added(_ peer: Tailnet.Peer) -> AddedMachine? {
+    let check = machines?.check(in: checkout)
+    let known = fixtureRegistered ?? (machines?.entries ?? [], check?.problem == nil ? check?.statuses : nil)
+    return OffloadMachines.added(peer.mac, entries: known.0, statuses: known.1)
+  }
+  var checkingAdded: Bool { machines?.isBusy == true }
+  private var selectablePeers: [Tailnet.Peer] { peers.filter { added($0) == nil } }
+  var existingPeer: Tailnet.Peer? { peers.first { $0.id == existingId && added($0) != nil } }
+
+  func choose(_ peer: Tailnet.Peer) {
+    if added(peer) == nil {
+      existingId = nil
+      selectedId = peer.id
+    } else {
+      existingId = peer.id
+    }
+  }
   var reachability: Tailnet.Reachability {
     Tailnet.reachability(statusJSON: statusJSON, peer: selected, install: tailscaleInstall)
   }
   enum MacList: Equatable { case empty, offlineOnly, available }
   var macList: MacList {
-    peers.isEmpty ? .empty : peers.contains(where: \.online) ? .available : .offlineOnly
+    selectablePeers.isEmpty ? .empty : selectablePeers.contains(where: \.online) ? .available : .offlineOnly
   }
   var tailscaleRunning: Bool { reachability != .tailscaleMissing && reachability != .tailscaleStopped }
   var known: SetupKnown {
@@ -255,7 +275,7 @@ final class AddMachineModel {
   }
 
   private func applyPreselection() {
-    if selectedId == nil, let preferredMachineID, peers.contains(where: { $0.id == preferredMachineID }) {
+    if selectedId == nil, let preferredMachineID, selectablePeers.contains(where: { $0.id == preferredMachineID }) {
       selectedId = preferredMachineID
     }
   }

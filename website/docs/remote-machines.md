@@ -404,6 +404,12 @@ so there is no Check again button:
    for a Mac, for Linux and for Windows; the list
    appears by itself when that machine joins. When every listed machine is
    offline, a line under the list tells you to turn on Tailscale on it.
+   A machine you already added is marked **Added** and shows the same status as
+   the Remote Machines list (**Approved**, **Unreachable**, a Tailscale or
+   stim-server problem and what to do about it) instead of Tailscale's
+   online flag. Choosing it does not start setup again; it says the machine is
+   already added and offers to close the wizard so you can use its row in
+   Remote Machines.
    `stim-server setup` on the worker Mac gives the same three answers when it
    cannot read Tailscale: install it from `https://tailscale.com/download/mac`,
    turn the app on from its menu bar icon, or run `tailscale up`.
