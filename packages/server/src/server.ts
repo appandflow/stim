@@ -1210,9 +1210,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     task = Promise.resolve()
       .then(async () => {
         const stim = createStim({ projectRoot: cwd, env: options.env });
-        return method === 'doctor'
-          ? await stim.doctor({ signal: abort.signal, platform })
-          : await stim[method]({ signal: abort.signal });
+        if (method === 'doctor') return await stim.doctor({ signal: abort.signal, platform });
+        return method === 'gc'
+          ? await stim.gc({ signal: abort.signal, measureBuildState: false })
+          : await stim.stats({ signal: abort.signal });
       })
       .then(
         (report): DetailsRead => {

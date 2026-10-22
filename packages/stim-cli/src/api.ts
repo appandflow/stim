@@ -300,14 +300,14 @@ export function createStim(options: StimOptions): StimClient {
         );
         return task;
       }),
-    gc: ({ signal, olderThan, cache, worktrees }: StimGcOptions = {}) => {
+    gc: ({ signal, olderThan, cache, worktrees, measureBuildState }: StimGcOptions = {}) => {
       if (olderThan !== undefined && !Number.isSafeInteger(olderThan))
         return Promise.reject(
           new StimError({ code: 'STIM_BAD_ARG', message: 'olderThan must be a whole number of days.' }),
         );
       return report(signal, async (context) => {
         const result = await readGcReport(
-          { olderThan, cache, worktrees },
+          { olderThan, cache, worktrees, measureBuildState },
           {
             operation: context,
             easLedgerRoot: join(context.env.HOME || context.env.USERPROFILE || homedir(), '.stim', 'machine', 'eas'),

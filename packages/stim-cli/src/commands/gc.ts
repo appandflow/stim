@@ -155,6 +155,7 @@ interface CollectGcReportOptions {
   cache?: string | null;
   worktrees?: boolean;
   refresh?: boolean;
+  measureBuildState?: boolean;
   now?: number;
   lastTouched?: (path: string) => number;
 }
@@ -166,6 +167,8 @@ interface RunGcOptions {
   delete?: boolean;
   worktrees?: boolean;
   json?: boolean;
+  /** False reports worktree build-state sizes only from the disk-usage cache: a stale one is unmeasured (null), and no `du` runs for it. */
+  measureBuildState?: boolean;
 }
 
 interface GcRefusal {
@@ -204,11 +207,17 @@ export interface GcExecutionResult {
   exitCode: 0 | 1;
 }
 
-export type GcReadOptions = Pick<RunGcOptions, 'olderThan' | 'cache' | 'worktrees'>;
+export type GcReadOptions = Pick<RunGcOptions, 'olderThan' | 'cache' | 'worktrees' | 'measureBuildState'>;
 
 export function readGcReport(options: GcReadOptions = {}, deps: GcDependencies = {}): Promise<GcPayload> {
   return sweep(
-    { olderThan: options.olderThan, cache: options.cache, worktrees: options.worktrees, json: true },
+    {
+      olderThan: options.olderThan,
+      cache: options.cache,
+      worktrees: options.worktrees,
+      measureBuildState: options.measureBuildState,
+      json: true,
+    },
     deps,
     { output: GC_OUTPUT, takeResults: () => [] },
     true,
@@ -283,6 +292,7 @@ export async function collectGcReport(
     cache = null,
     worktrees = false,
     refresh = true,
+    measureBuildState = true,
     now = Date.now(),
     lastTouched = workspaceLastUsed,
   }: CollectGcReportOptions = {},
@@ -575,6 +585,7 @@ export async function collectGcReport(
   const worktreeSweep = await measureWorktreeSweep(
     await collectWorktreeSweep({ idle: worktrees, olderThan, now, refresh, operation }),
     operation,
+    measureBuildState,
   );
 
   return {
@@ -1042,6 +1053,7 @@ async function runGcCore(
       cache,
       worktrees: Boolean(opts.worktrees),
       refresh,
+      measureBuildState: opts.measureBuildState,
     },
     deps,
   );

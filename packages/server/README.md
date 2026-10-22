@@ -275,7 +275,9 @@ reports without starting a CLI process. `desktop.reports.get` takes
 Doctor accepts a selected folder before it is registered with Stim. The result is
 `{ "pending": false, "value": { ... }, "measuredAt": "..." }`; a failed read
 returns `stim-failed`. Doctor never repairs the project or records a CLI run, and
-GC never deletes anything.
+GC never deletes anything. The GC report, here and in `machine.details`, takes
+worktree build-state sizes only from the disk-usage cache and runs no `du` for
+them; a stale size is `null`.
 
 The local-only `desktop-report-platform` feature adds an optional `"platform": "ios"`
 or `"platform": "android"` to doctor targets. Omitting it checks all selected platforms.
