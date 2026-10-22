@@ -28,6 +28,8 @@ struct BuildMachinesView: View {
   var body: some View {
     BuildMachinesContent(
       entries: model.entries, statuses: statuses, hosts: model.check(in: checkout)?.hosts, updates: model.updates,
+      installs: Dictionary(
+        uniqueKeysWithValues: (statuses ?? []).compactMap { status in model.install(for: status).map { (status.machine, $0) } }),
       working: model.working, progress: model.progress, refreshing: model.isBusy, failure: failure,
       tailscaleRunning: model.tailscaleRunning,
       settingsReadFailure: model.settingsReadFailure,
@@ -178,6 +180,7 @@ struct BuildMachinesContent<ThisMac: View>: View {
   var statuses: [BuildMachineStatus]?
   var hosts: [BuildMachineStatus]?
   var updates: [String: MachineUpdatePhase]
+  var installs: [String: StimInstall] = [:]
   var working: String?
   var progress: String?
   var refreshing: Bool
@@ -311,7 +314,7 @@ struct BuildMachinesContent<ThisMac: View>: View {
             refreshing: canAsk && refreshing && status != nil && working != entry,
             capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
             progress: working == entry ? progress : nil,
-            canAsk: canAsk, update: updates[entry], hosted: hosted(entry), ask: { ask(entry) },
+            canAsk: canAsk, update: updates[entry], install: installs[entry], hosted: hosted(entry), ask: { ask(entry) },
             startUpdate: { update(entry) }, stopHosted: { stopHosted(entry, $0) },
             remove: { remove(entry) }, toggles: poolToggles(entry))
         }
@@ -351,6 +354,7 @@ private struct BuildMachineRow<Toggles: View>: View {
   var progress: String?
   var canAsk: Bool
   var update: MachineUpdatePhase?
+  var install: StimInstall?
   var hosted: [HostedOnMachine]
   var ask: () -> Void
   var startUpdate: () -> Void
@@ -368,7 +372,8 @@ private struct BuildMachineRow<Toggles: View>: View {
           if let status {
             let listed = status.listStatus
             let updating = update.map { !$0.isDone } == true && needsStimUpdate(status)
-            Pill(updating ? "Updating" : listed.title, tone: updating ? .warning : listed.tone, size: .small)
+            let title = updating ? "Updating" : install?.block?.remoteIsNewer == true ? "Update this Mac" : listed.title
+            Pill(title, tone: updating ? .warning : listed.tone, size: .small)
               .help(status.readiness.reasons ?? status.detail)
             if refreshing { ProgressView().controlSize(.mini).help("Checking again") }
           } else if checking {
@@ -396,8 +401,7 @@ private struct BuildMachineRow<Toggles: View>: View {
           }
         }
         let problems = status?.problemLines ?? []
-        let needed = status.map(needsStimUpdate) ?? false
-        if !problems.isEmpty || update != nil || needed {
+        if !problems.isEmpty || update != nil || install != nil {
           VStack(alignment: .leading, spacing: Space.sm) {
             ForEach(Array(problems.enumerated()), id: \.offset) { _, line in
               VStack(alignment: .leading, spacing: Space.xs) {
@@ -405,13 +409,14 @@ private struct BuildMachineRow<Toggles: View>: View {
                   .textSelection(.enabled)
                 switch line.fix {
                 case .command(let command)?: CopyableCommand(command: command)
-                case .advice(let advice)? where line.code != "stim-build" || update?.isDone ?? true:
+                case .advice(let advice)?
+                where line.code != "stim-build" || (update?.isDone ?? true) && install?.block?.remoteIsNewer != true:
                   Text(verbatim: advice).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
                 default: EmptyView()
                 }
               }
             }
-            MachineUpdateLine(phase: update, needed: needed, update: startUpdate)
+            MachineUpdateLine(machine: entry, phase: update, install: install, update: startUpdate)
             if case .waiting(_, let sessions)? = update, sessions > 0 {
               WaitingSessions(machine: entry, sessions: sessions, hosted: hosted, stop: stopHosted)
             }

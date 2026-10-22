@@ -381,6 +381,14 @@ machine until the worker runs a compatible release; see [Tools](#tools).
 Hosted simulators and emulators do not compare versions: they check the
 features the host's stim-server reports.
 
+Stim Desktop's **Install This Mac's Build** only moves a worker forward. It reads
+the worker's Stim release first and disables the button, with the reason beside
+it, when the worker would refuse: it runs a newer release than this Mac (the
+fix is **Check for Updates** in Stim Desktop, or updating Stim here), this Mac
+runs a build from a checkout and the worker has `server.acceptClientBuilds` off,
+the worker's stim-server cannot update itself, or it did not answer. **Keep
+remote machines on this Mac's Stim version** never installs on such a worker.
+
 ## Use the Desktop wizard
 
 Open **Stim > Settings > Remote Machines** on your main machine. It lists your

@@ -26,6 +26,8 @@ final class BuildMachinesModel {
   private(set) var runs = 0
   private(set) var stats = Fetched<MachineStats>()
   private(set) var updates: [String: MachineUpdatePhase] = [:]
+  private(set) var localStim: LocalStim?
+  private var remoteServers: [String: MachineUpdateStatus] = [:]
   private var statusRefreshes: [String: Task<Void, Never>] = [:]
   private var refreshedEntries: [String: [String]] = [:]
   private var hostingCheckedAt: [String: Date] = [:]
@@ -39,6 +41,7 @@ final class BuildMachinesModel {
   @ObservationIgnored private var latestStatsRun = 0
   @ObservationIgnored private var autoUpdated: Set<String> = []
   private let request: @MainActor (String, [String: JSONValue]) async throws -> JSONValue
+  private let readLocalStim: @MainActor () async -> LocalStim?
   private let now: () -> Date
   private let machineAccess: @MainActor (String, Bool) async throws -> DoctorReport
   private let pollInterval: Duration
@@ -49,6 +52,7 @@ final class BuildMachinesModel {
     pollInterval: Duration = .seconds(2), unreachableLimit: Duration = .seconds(300),
     now: @escaping () -> Date = Date.init,
     machineAccess: (@MainActor (String, Bool) async throws -> DoctorReport)? = nil,
+    localStim: @escaping @MainActor () async -> LocalStim? = BuildMachinesModel.currentLocalStim,
     request: @escaping @MainActor (String, [String: JSONValue]) async throws -> JSONValue = BuildMachinesModel.localRequest
   ) {
     self.cli = cli
@@ -57,6 +61,7 @@ final class BuildMachinesModel {
     self.pollInterval = pollInterval
     self.unreachableLimit = unreachableLimit
     self.request = request
+    self.readLocalStim = localStim
     self.now = now
     let reader = MachineAccessReader(cli: cli) { ServerSession.shared.statsConnection }
     self.machineAccess = machineAccess ?? { try await reader.report(cwd: $0, ask: $1) }
@@ -69,9 +74,35 @@ final class BuildMachinesModel {
     return try await client.request(method, params)
   }
 
+  static func currentLocalStim() async -> LocalStim? {
+    guard let client = ServerSession.shared.client, case .open(let hello) = client.state else { return nil }
+    let server = await ServerController.shared.cli()
+    let script = server.launcher?.script ?? server.executable
+    return LocalStim(version: hello.server.version, isRelease: script.map(LocalStim.isInstalledPackage) ?? false)
+  }
+
+  func install(for status: BuildMachineStatus) -> StimInstall? {
+    stimInstall(for: status, remote: remoteServers[status.machine], local: localStim)
+  }
+
+  func readRemoteServers(_ statuses: [BuildMachineStatus]) async {
+    localStim = await readLocalStim()
+    for status in statuses.filter(needsStimUpdate) where updates[status.machine]?.isDone ?? true {
+      do {
+        let result = try await request("machines.update.status", ["machine": .string(status.machine)])
+        remoteServers[status.machine] = try decodeReporting(MachineUpdateStatus.self, from: result, source: .server)
+      } catch {
+        remoteServers[status.machine] = MachineUpdateStatus(unreachable: error.localizedDescription)
+      }
+    }
+  }
+
   /// Asks `entry`'s stim-server, through the local one, to update to this Mac's build, and follows it until it ends.
-  func update(_ entry: String, checkout: String?) async {
+  func update(_ entry: String, checkout: String?, status known: BuildMachineStatus? = nil) async {
     guard updates[entry]?.isDone ?? true else { return }
+    guard let status = known ?? check(in: checkout)?.statuses.first(where: { $0.machine == entry }),
+      install(for: status) == .install
+    else { return }
     updates[entry] = .sending(0)
     let expectedBuild = check(in: checkout)?.statuses.first { $0.machine == entry }.flatMap(stimBuildHere)
     let startedAt: String
@@ -135,7 +166,7 @@ final class BuildMachinesModel {
 
   private func updateAutomatically(_ statuses: [BuildMachineStatus], checkout: String?) {
     guard UserDefaults.standard.bool(forKey: AppPreferences.Key.updatesBuildMachines) else { return }
-    for status in statuses where needsStimUpdate(status) {
+    for status in statuses where install(for: status) == .install {
       let key = ([status.machine] + (status.reasons ?? [])).joined(separator: "\n")
       guard !autoUpdated.contains(key), updates[status.machine]?.isDone ?? true else { continue }
       autoUpdated.insert(key)
@@ -317,6 +348,8 @@ final class BuildMachinesModel {
       checks[checkout] = Check(
         statuses: report.remoteMachines ?? [], hosts: report.deviceHosts,
         problem: report.remoteMachines == nil ? .unsupported : nil)
+      await readRemoteServers(report.remoteMachines ?? [])
+      guard !Task.isCancelled else { return }
       updateAutomatically(report.remoteMachines ?? [], checkout: checkout)
     case .failure(let error):
       checks[checkout] = Check(

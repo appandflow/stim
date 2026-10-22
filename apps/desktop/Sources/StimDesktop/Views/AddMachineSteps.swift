@@ -44,9 +44,14 @@ struct AddMachineSteps: View {
             }
           }
           if tool.id == "stim-build" {
-            MachineUpdateLine(phase: model.machineEntry.flatMap { model.machines?.updates[$0] }, needed: tool.state.fix != nil) {
+            MachineUpdateLine(
+              machine: model.machineEntry ?? name, phase: model.machineEntry.flatMap { model.machines?.updates[$0] },
+              install: model.installStatus.flatMap { model.machines?.install(for: $0) }
+            ) {
               Task {
-                if let entry = model.machineEntry { await model.machines?.update(entry, checkout: model.doctorPath) }
+                if let entry = model.machineEntry {
+                  await model.machines?.update(entry, checkout: model.doctorPath, status: model.installStatus)
+                }
                 await model.refreshTools()
               }
             }

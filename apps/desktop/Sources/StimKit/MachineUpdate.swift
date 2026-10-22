@@ -10,6 +10,8 @@ public struct MachineUpdateStatus: Decodable, Equatable, Sendable {
     }
 
     public var server: Server?
+    /// The stim-server service label it runs under; nil when it does not run as a service and cannot update itself.
+    public var service: String?
     public var running: Running?
     public var last: Outcome?
     public var acceptsClientBuilds: Bool
@@ -36,6 +38,12 @@ public struct MachineUpdateStatus: Decodable, Equatable, Sendable {
   public var remote: Remote?
   public var unreachable: String?
   public var upload: Upload?
+
+  public init(remote: Remote? = nil, unreachable: String? = nil, upload: Upload? = nil) {
+    self.remote = remote
+    self.unreachable = unreachable
+    self.upload = upload
+  }
 }
 
 /// The phase Desktop shows for one update it asked for.
@@ -112,6 +120,99 @@ public func stimBuildHere(_ status: BuildMachineStatus) -> String? {
 /// Whether `status` says the remote Mac runs another Stim build than this Mac, the case an update fixes.
 public func needsStimUpdate(_ status: BuildMachineStatus) -> Bool {
   status.state == .approved && status.problems?.contains { $0.code == "stim-build" } == true
+}
+
+/// This Mac's stim-server, whose build an install sends to a remote Mac.
+public struct LocalStim: Equatable, Sendable {
+  public var version: String
+  /// Whether it runs from an installed npm release. A remote Mac installs a release without
+  /// `server.acceptClientBuilds`, and a build from a checkout only with it.
+  public var isRelease: Bool
+
+  public init(version: String, isRelease: Bool) {
+    self.version = version
+    self.isRelease = isRelease
+  }
+
+  /// Whether `path`, a stim-server script, sits in an installed package, as stim-server tells a release from a
+  /// checkout.
+  public static func isInstalledPackage(_ path: String) -> Bool {
+    URL(fileURLWithPath: path).resolvingSymlinksInPath().pathComponents.contains("node_modules")
+  }
+}
+
+/// Why this Mac cannot install its Stim build on a remote Mac now, and what the person does about it.
+public struct StimInstallBlock: Equatable, Sendable {
+  public enum Action: Equatable, Sendable {
+    /// This Mac is older than the remote Mac: update Stim Desktop.
+    case checkForUpdates
+    /// A command the person runs on the remote Mac.
+    case runOnRemote(String)
+  }
+
+  public var reason: String
+  public var action: Action?
+
+  public init(reason: String, action: Action? = nil) {
+    self.reason = reason
+    self.action = action
+  }
+
+  /// Whether the remote Mac runs a newer Stim than this Mac, which only an update of Stim Desktop fixes.
+  public var remoteIsNewer: Bool { action == .checkForUpdates }
+}
+
+/// Whether Install This Mac's Build would be accepted by the remote Mac.
+public enum StimInstall: Equatable, Sendable {
+  case install
+  case blocked(StimInstallBlock)
+
+  public var block: StimInstallBlock? {
+    if case .blocked(let block) = self { return block }
+    return nil
+  }
+}
+
+/// The command in the first backtick span of `message` that starts with `stim`, such as the one a stim-server refusal
+/// tells the person to run on its machine.
+public func commandToRun(in message: String) -> String? {
+  message.split(separator: "`", omittingEmptySubsequences: false).enumerated()
+    .first { $0.offset % 2 == 1 && $0.element.hasPrefix("stim") }
+    .map { String($0.element) }
+}
+
+/// Whether `machine`, which runs another Stim build, would take this Mac's build, from what its stim-server reports
+/// about itself (`remote`, nil before it has been read) and this Mac's stim-server (`local`). nil when the machine
+/// needs no install. An install only moves a remote Mac forward, so a remote Mac on a newer release is never offered
+/// one: the person updates Stim Desktop instead. Nothing here asks the remote Mac to install.
+public func stimInstall(for machine: BuildMachineStatus, remote: MachineUpdateStatus?, local: LocalStim?) -> StimInstall? {
+  guard needsStimUpdate(machine) else { return nil }
+  let name = machine.machine
+  func blocked(_ reason: String, _ action: StimInstallBlock.Action? = nil) -> StimInstall {
+    .blocked(StimInstallBlock(reason: reason, action: action))
+  }
+  guard let local else { return blocked("Waiting for this Mac's stim-server to connect\u{2026}") }
+  guard let remote else { return blocked("Checking whether \(name) can take this Mac's build\u{2026}") }
+  guard let server = remote.remote else {
+    let reason = remote.unreachable ?? "\(name) did not answer."
+    return blocked(reason, commandToRun(in: reason).map { .runOnRemote($0) })
+  }
+  if let there = SemanticVersion(server.server?.version ?? ""), let here = SemanticVersion(local.version), here < there {
+    return blocked(
+      "\(name) runs Stim \(there), newer than this Mac (\(here)). Update Stim Desktop to match.", .checkForUpdates)
+  }
+  if server.service == nil {
+    return blocked(
+      "stim-server on \(name) was not started by `stim-server service install`, so it cannot update itself. Update it on \(name)."
+    )
+  }
+  if !local.isRelease, !server.acceptsClientBuilds {
+    let command = "stim settings set server.acceptClientBuilds true"
+    return blocked(
+      "\(name) installs only Stim releases from npm, and this Mac runs a build from a checkout. To take it, run `\(command)` on \(name).",
+      .runOnRemote(command))
+  }
+  return .install
 }
 
 /// A device one of this Mac's workspaces runs on a remote machine, and the `stim stop` that ends its session there.
