@@ -1668,6 +1668,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-plan',
                 'desktop-reports',
                 'desktop-report-platform',
+                'desktop-report-invalidate-target',
                 'desktop-settings',
                 'desktop-settings-schema',
                 'desktop-settings-write',
@@ -3939,9 +3940,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function desktopReport(id: RequestId, method: string, params: unknown): void {
-      if (method === 'desktop.reports.invalidate') {
-        if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length))
-          return error(id, 'bad-request', 'desktop.reports.invalidate takes no parameters.');
+      if (
+        method === 'desktop.reports.invalidate' &&
+        (params === undefined || (isJsonObject(params) && !Object.keys(params).length))
+      ) {
         desktopReports.invalidate();
         return send(socket, { id, result: {} });
       }
@@ -3970,6 +3972,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               cwd: resolvePath(String(params.cwd)),
               ...(params.platform === 'ios' || params.platform === 'android' ? { platform: params.platform } : {}),
             };
+      if (method === 'desktop.reports.invalidate') {
+        desktopReports.invalidate(target);
+        return send(socket, { id, result: {} });
+      }
       if (method === 'desktop.reports.get') {
         return void inProcessRead<'desktop.reports.get'>(
           id,
@@ -4373,8 +4379,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       subscriptions.clear();
       for (const cancel of [...commands, ...reportWaits]) {
         if (persistentActions.has(cancel)) continue;
-        releaseSlot(cancel);
-        reportWaits.delete(cancel);
         running.delete(cancel);
         void cancelling.track(cancel());
       }

@@ -1329,6 +1329,9 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     const hello = await remote.request('hello', { client: CLIENT });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
+    expect(hello).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-report-invalidate-target']) },
+    });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-full-logs']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-doctor-run']) } });
@@ -1336,7 +1339,13 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.arrayContaining(['desktop-reports', 'desktop-report-platform']) },
+      result: {
+        features: expect.arrayContaining([
+          'desktop-reports',
+          'desktop-report-platform',
+          'desktop-report-invalidate-target',
+        ]),
+      },
     });
     for (const client of [remote, plain]) {
       for (const method of [
@@ -1367,7 +1376,14 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     const subscribed = await client.request('desktop.reports.subscribe', { report: 'gc' });
     expect(subscribed).toHaveProperty('result.subscription');
     expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: first.result });
-    expect(await client.request('desktop.reports.invalidate')).toHaveProperty('result');
+    expect(await client.request('desktop.reports.invalidate', { report: 'doctor', cwd: root })).toHaveProperty(
+      'result',
+    );
+    expect(await client.request('desktop.reports.invalidate', { report: 'doctor' })).toHaveProperty(
+      'error.code',
+      'bad-request',
+    );
+    expect(await client.request('desktop.reports.invalidate', { report: 'gc' })).toHaveProperty('result');
     expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
     expect(await client.next()).toMatchObject({
       event: 'desktop-report',

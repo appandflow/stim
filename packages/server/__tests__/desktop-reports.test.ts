@@ -238,3 +238,18 @@ test('invalidation aborts the stale load so a waiting get takes only the fresh o
   fresh.resolve({ ok: true, report: { version: 2 } });
   expect((await waiting).value).toEqual({ version: 2 });
 });
+
+test('a targeted invalidation leaves other targets loading', async () => {
+  const signals = new Map<string, AbortSignal>();
+  const cache = new DesktopReports((target, signal) => {
+    signals.set(target.report, signal);
+    return new Promise<DetailsRead>(() => {});
+  });
+  caches.push(cache);
+  void cache.get({ report: 'gc' });
+  void cache.get(TARGET);
+  await vi.waitFor(() => expect(signals.size).toBe(2));
+  cache.invalidate(TARGET);
+  expect(signals.get('doctor')?.aborted).toBe(true);
+  expect(signals.get('gc')?.aborted).toBe(false);
+});

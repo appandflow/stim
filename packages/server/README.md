@@ -291,9 +291,11 @@ Active subscriptions refresh after 60 seconds; no refresh timer runs without
 subscribers. `unsubscribe` and disconnect remove the subscription. Cancelling a
 get request does not cancel another reader's shared work.
 
-After changing settings, running an action, or explicitly refreshing a view,
-Desktop calls `desktop.reports.invalidate` without parameters. This invalidates
-all report targets and refreshes active subscriptions. Results started before
+`desktop.reports.invalidate` without parameters invalidates all report targets
+and refreshes active subscriptions. With the local-only
+`desktop-report-invalidate-target` feature it also takes a report target, as
+`desktop.reports.get` does, and invalidates only that target, so a fresh read
+of one report does not restart the others. Results started before
 invalidation cannot replace a newer result or satisfy a waiting get; invalidation
 aborts such a probe, so a waiting get waits only for the fresh one. A waiting get
 does not use one of the connection's request slots: a connection can wait for 16

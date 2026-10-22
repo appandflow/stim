@@ -3,6 +3,9 @@ import type { DetailsRead } from './machine-details.ts';
 
 const MAX_REPORT_READS = 4;
 
+const reportKey = (target: DesktopReportTarget) =>
+  target.report === 'gc' ? 'gc' : `doctor:${target.platform ?? 'all'}:${target.cwd}`;
+
 interface Entry {
   target: DesktopReportTarget;
   generation: number;
@@ -80,8 +83,11 @@ export class DesktopReports {
     };
   }
 
-  invalidate(): void {
-    for (const entry of this.entries.values()) {
+  /** Invalidates `target`, or every target without one. */
+  invalidate(target?: DesktopReportTarget): void {
+    const only = target && this.entries.get(reportKey(target));
+    if (target && !only) return;
+    for (const entry of only ? [only] : this.entries.values()) {
       entry.generation++;
       entry.pending?.abort.abort();
       clearTimeout(entry.timer);
@@ -109,7 +115,7 @@ export class DesktopReports {
       )
         this.entries.delete(key);
     }
-    const key = target.report === 'gc' ? 'gc' : `doctor:${target.platform ?? 'all'}:${target.cwd}`;
+    const key = reportKey(target);
     let entry = this.entries.get(key);
     if (!entry) {
       entry = { target, generation: 0, readers: 0, listeners: new Set() };

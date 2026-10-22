@@ -1561,7 +1561,9 @@ export function protocolJsonSchema(): JsonSchema {
           optionalParams('route.setup', { type: 'object', maxProperties: 0 }),
           request('desktop.reports.get', { $ref: '#/$defs/DesktopReportTarget' }),
           request('desktop.reports.subscribe', { $ref: '#/$defs/DesktopReportTarget' }),
-          optionalParams('desktop.reports.invalidate', { type: 'object', maxProperties: 0 }),
+          optionalParams('desktop.reports.invalidate', {
+            oneOf: [{ type: 'object', maxProperties: 0 }, { $ref: '#/$defs/DesktopReportTarget' }],
+          }),
           optionalParams('desktop.settings.schema', { type: 'object', maxProperties: 0 }),
           request('desktop.settings.get', {
             type: 'object',
