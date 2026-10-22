@@ -1697,7 +1697,7 @@ export async function detectFingerprintParity(
         : undefined);
   const unsafe = coldFingerprintRunsProjectCode(projectRoot, platform);
   if (unsafe) return unsafe;
-  // @expo/fingerprint 0.20 spawns `npx react-native config` unless this is true or expo-modules-autolinking >= 1.12 resolves.
+  // @expo/fingerprint spawns `npx react-native config` unless this is true or expo-modules-autolinking >= 1.12 resolves.
   const coldFingerprint: typeof createFingerprint = (root, options) =>
     createFingerprint(root, { ...options, useRNCoreAutolinkingFromExpo: true });
 

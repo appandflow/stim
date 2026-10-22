@@ -69,7 +69,7 @@ const distDir = dirname(fileURLToPath(import.meta.url));
  * build, because `@stim-cli/core` is a ranged dependency that can resolve newer than the installed `stim`.
  * `scripts/build-compat.json` records the files a change to which needs a bump or a recorded no-bump.
  */
-const STIM_BUILD_COMPAT = 1;
+const STIM_BUILD_COMPAT = 2;
 
 function quiet(file: string, args: string[]): string | null {
   return getExecutor().runFileQuiet(file, args, { timeoutMs: 20_000 });

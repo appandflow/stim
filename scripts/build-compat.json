@@ -1,5 +1,5 @@
 {
-  "compat": 1,
+  "compat": 2,
   "files": [
     "packages/core/dependency-install.ts",
     "packages/core/react-native-artifact.ts",
@@ -34,5 +34,5 @@
     "packages/stim-cli/src/optimizations.ts",
     "packages/stim-cli/src/supervisor/project-node.ts"
   ],
-  "digest": "19db0340e2466ef5ac39282a4ee63f233ef79f2a17af74551f0a5a300b6337eb"
+  "digest": "f3996ef9745dd1d960858939d5cad8503f87d7f8d0a5e4147ec582ab79aae7aa"
 }
