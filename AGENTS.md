@@ -534,7 +534,10 @@ use, leased, driven, locked or pinned by `maintenance.keep`. Parking keeps the d
 record names the installed app and its cache key. Parked devices are
 Stim-owned and listed in the pool record. Adoption removes other third-party
 apps and clears the adopting app's data before launch, on every adoption, and
-skips the install only after verifying the installed bytes. Android adoption
+skips the install only after verifying the installed bytes. On Android that proof is the installed
+APK's size and the SHA-256 of its tail, from the v2 or v3 signing block through the end of the file,
+matching the values recorded after one `apksigner verify` of the local APK; any other case compares
+the SHA-256 of the whole APK. Android adoption
 matches the system image and recorded AVD creation settings and keeps the AVD
 name. When an adopted emulator lacks room on `/data` for the install, trim app
 caches, then wipe its user data through centralized teardown. Delete parked

@@ -108,6 +108,7 @@ import { PREBUILD_ERROR } from '../engine/prebuild.ts';
 import type { recordCapacityRefusal as recordRefusal, RecordStatsResult, StatsRun } from '../engine/stats.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor, writeCasToolchain } from './_factories.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import { writeSignedApk } from './_signed-apk.ts';
 
 const IMAGES = [
   { api: 36, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-36;google_apis;arm64-v8a' },
@@ -748,6 +749,56 @@ describe('adopted Android installs', () => {
       expect(loadConfig()?.projects[root]?.platforms?.android?.adoptionPending).toBe(failed ? true : undefined);
     },
   );
+});
+
+describe('adopted Android installs with a recorded signed tail', () => {
+  afterEach(() => resetExecutor());
+
+  test.each([
+    ['the installed APK has the same size and tail', 'same', 0],
+    ['the installed APK has a different tail', 'different', 1],
+  ] as const)('%s', async (_label, mode, expectedInstalls) => {
+    const apkPath = fakeApk();
+    const apk = writeSignedApk(apkPath);
+    const device = { avdName: 'stim-adopted', consolePort: 5584, owned: true, adoptionPending: true, adopted: true };
+    upsertProject(root, { platforms: { android: device } });
+    const commands: string[] = [];
+    let installs = 0;
+    setExecutor(
+      makeExecutor({
+        run(cmd) {
+          if (cmd.includes('-list-avds')) return 'stim-adopted';
+          if (cmd.endsWith('adb devices') || cmd.endsWith('adb" devices'))
+            return 'List of devices attached\nemulator-5584\tdevice';
+          if (cmd.includes('emu avd name')) return 'stim-adopted\nOK';
+          throw new Error(`Unexpected run: ${cmd}`);
+        },
+        runFileQuiet: (_file, args = []) => (args.join(' ').includes('emu avd name') ? 'stim-adopted\nOK' : null),
+        runFile(file, args = []) {
+          if (args[0] === '-list-avds') return 'stim-adopted';
+          if (args[0] === 'devices') return 'List of devices attached\nemulator-5584\tdevice';
+          commands.push([file, ...args].join(' '));
+          if (args.includes('list')) return 'package:com.example.app';
+          if (args.includes('clear')) return 'Success';
+          if (args.join(' ').includes('tail -c'))
+            return `path /data/app/base.apk\nsize ${apk.size}\n${mode === 'same' ? apk.tailSha256 : '0'.repeat(64)}  -\n`;
+          if (args.includes('install')) {
+            installs++;
+            return 'Success';
+          }
+          throw new Error(`Unexpected runFile: ${commands.at(-1)}`);
+        },
+      }),
+    );
+    const h = harness({ ensureDevice: async () => device, resolveCached: () => apkPath, install: installAndroidApp });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(installs).toBe(expectedInstalls);
+    expect(
+      commands.some((command) => command.includes('shell sha256sum') || command.endsWith('pm path com.example.app')),
+    ).toBe(false);
+    expect(h.stderr.some((line) => line.includes('already has this build'))).toBe(mode === 'same');
+  });
 });
 
 const DF_ROOMY =
