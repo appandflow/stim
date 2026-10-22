@@ -68,11 +68,21 @@ final class AddMachineModelTests: XCTestCase {
           "deviceHosts": statuses(hosts, id: "h"),
         ]))
     }
+    func machinesModel() -> BuildMachinesModel {
+      let cli = Task { StimCLI(environment: [:], override: "/usr/bin/false") }
+      return BuildMachinesModel(
+        cli: cli,
+        settings: MachineSettingsStore(
+          read: { try await self.payload() },
+          write: { _, _, _, _ in throw Failure.refused }),
+        statsReader: StatsReader(cli: cli, server: { nil }),
+        machineAccess: { _, _ in try self.report() })
+    }
     var version = "1.21.0"
     var health: Tailnet.Health?
 
-    func make(workspace: Bool = true, sample: SampleBuildModel? = nil) -> AddMachineModel {
-      AddMachineModel(
+    func make(workspace: Bool = true, sample: SampleBuildModel? = nil, machines: BuildMachinesModel? = nil) -> AddMachineModel {
+      let model = AddMachineModel(
         checkout: workspace ? "/fixture" : nil,
         dependencies: .init(
           status: { self.status }, health: { _, _ in self.health },
@@ -113,6 +123,8 @@ final class AddMachineModelTests: XCTestCase {
             return try self.report(platform: platform)
           }, now: { self.now },
           ticket: { SetupTicket.generate(now: $0) }), sample: sample)
+      model.machines = machines
+      return model
     }
     private enum Failure: Error { case refused }
   }
@@ -140,6 +152,75 @@ final class AddMachineModelTests: XCTestCase {
       await model.refreshPeers()
       XCTAssertEqual(model.macList, expected, peers)
     }
+  }
+
+  @MainActor func testAMachineAlreadyInRemoteMachinesShowsItsDoctorStateAndIsNotASetupTarget() async throws {
+    let harness = Harness()
+    harness.grantReady = true
+    harness.builds = ["mini"]
+    harness.peers =
+      #""m":{"ID":"nMini","HostName":"Mini","DNSName":"mini.tail.test.","OS":"macOS","Online":false},"#
+      + #""o":{"ID":"nOther","HostName":"Other","DNSName":"other.tail.test.","OS":"macOS","Online":true}"#
+    let machines = harness.machinesModel()
+    await machines.refresh(checkout: "/fixture")
+    let model = harness.make(machines: machines)
+    await model.refreshPeers()
+    let mini = try XCTUnwrap(model.peers.first { $0.id == "nMini" })
+    let other = try XCTUnwrap(model.peers.first { $0.id == "nOther" })
+
+    XCTAssertFalse(mini.online)
+    XCTAssertEqual(model.added(mini)?.status?.title, "Approved")
+    XCTAssertNil(model.added(other))
+
+    model.choose(other)
+    XCTAssertEqual(model.selectedId, "nOther")
+    model.choose(mini)
+    XCTAssertEqual(model.selectedId, "nOther")
+    XCTAssertEqual(model.existingPeer?.id, "nMini")
+    model.choose(other)
+    XCTAssertNil(model.existingPeer)
+  }
+
+  @MainActor func testMacListIgnoresAddedMachinesAndOnlyNamesMachinesThatCanStillBeAdded() async {
+    let harness = Harness()
+    harness.builds = ["mini"]
+    let off = #""o":{"ID":"nOld","HostName":"Old","DNSName":"old.tail.test.","OS":"macOS","Online":false}"#
+    let mini = #""m":{"ID":"nMini","HostName":"Mini","DNSName":"mini.tail.test.","OS":"macOS","Online":true}"#
+    let machines = harness.machinesModel()
+    await machines.refresh(checkout: "/fixture")
+    let model = harness.make(machines: machines)
+    for (peers, expected) in [(mini, AddMachineModel.MacList.empty), ("\(off),\(mini)", .offlineOnly)] {
+      harness.peers = peers
+      await model.refreshPeers()
+      XCTAssertEqual(model.macList, expected, peers)
+    }
+  }
+
+  @MainActor func testDiscoveryNeverPreselectsAMachineAlreadyInRemoteMachines() async {
+    let harness = Harness()
+    harness.builds = ["mini"]
+    let machines = harness.machinesModel()
+    await machines.refresh(checkout: "/fixture")
+    let model = harness.make(machines: machines)
+    model.preselect(machineID: "nMini", hostedSimulators: false)
+    await model.refreshPeers()
+    XCTAssertNil(model.selectedId)
+  }
+
+  @MainActor func testTheEntryThisWizardWroteDoesNotMakeItsMachineCountAsAlreadyAdded() async {
+    let harness = Harness()
+    let machines = harness.machinesModel()
+    let model = harness.make(machines: machines)
+    await model.start()
+    defer { model.stop() }
+    model.choose(model.peers[0])
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    XCTAssertEqual(harness.builds, ["mini:7447"])
+    await machines.refresh(checkout: "/fixture")
+    XCTAssertEqual(machines.entries, ["mini:7447"])
+    XCTAssertNil(model.added(model.peers[0]))
   }
 
   @MainActor func testDiscoveryPreselectionWaitsForPeersAndRequiresTheUserToPick() async {

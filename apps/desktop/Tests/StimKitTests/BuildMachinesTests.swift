@@ -226,6 +226,38 @@ import Testing
     #expect(older.detail == "stim-server did not answer on its tailscale serve route.")
   }
 
+  @Test func marksATailnetMachineInRemoteMachinesWithItsDoctorStateNotTheTailscaleFlag() throws {
+    func status(_ json: String) throws -> BuildMachineStatus {
+      try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
+    }
+    let mini = TailnetMac(id: "n1", hostName: "Mini", dnsName: "janics-mac-mini.tail.ts.net")
+    let second = TailnetMac(id: "n2", hostName: "Mini (2)", dnsName: "janics-mac-mini-2.tail.ts.net")
+
+    #expect(OffloadMachines.added(mini, entries: [], statuses: nil) == nil)
+    #expect(OffloadMachines.added(second, entries: ["janics-mac-mini"], statuses: nil) == nil)
+    #expect(OffloadMachines.added(mini, entries: ["janics-mac-mini"], statuses: nil) == AddedMachine(entry: "janics-mac-mini"))
+    #expect(
+      OffloadMachines.added(mini, entries: ["Janics-Mac-Mini.tail.ts.net:7444"], statuses: nil)?.entry
+        == "Janics-Mac-Mini.tail.ts.net:7444")
+
+    let healthy = try status(
+      #"{"machine":"janics-mac-mini","state":"approved","offloadable":true,"dnsName":"janics-mac-mini.tail.ts.net"}"#)
+    #expect(
+      OffloadMachines.added(mini, entries: ["janics-mac-mini"], statuses: [healthy])
+        == AddedMachine(entry: "janics-mac-mini", status: MachineListStatus(title: "Approved", tone: .success), detail: nil))
+
+    let stopped = try status(
+      #"""
+      {"machine":"janics-mac-mini","state":"unreachable","dnsName":"janics-mac-mini.tail.ts.net","diagnosis":{"layer":"server","code":"server-not-running","title":"Server not running","message":"stim-server is not running on janics-mac-mini.","remedy":"Start it there."}}
+      """#)
+    let added = try #require(OffloadMachines.added(mini, entries: ["janics-mac-mini"], statuses: [stopped]))
+    #expect(added.status == MachineListStatus(title: "Server not running", tone: .warning))
+    #expect(added.detail == "stim-server is not running on janics-mac-mini. Start it there.")
+
+    let otherMachine = try status(#"{"machine":"janics-mac-mini","state":"approved","dnsName":"another.tail.ts.net"}"#)
+    #expect(OffloadMachines.added(mini, entries: ["janics-mac-mini"], statuses: [otherMachine])?.status == nil)
+  }
+
   @Test func showsOneListPillPerMachine() throws {
     func status(_ json: String) throws -> BuildMachineStatus {
       try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))

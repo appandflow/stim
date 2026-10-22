@@ -1252,6 +1252,13 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
      **Windows · Android builds only**. Other peers are left out. It does not show stim-server state, which setup
      installs later. With no such peer, the step links to the Tailscale
      downloads for a Mac, for Linux and for Windows.
+     A peer already in `remote.machines` (`OffloadMachines.added`) is marked
+     **Added** and shows the pill the Remote Machines list shows for it
+     (`BuildMachineStatus.listStatus`, with the doctor diagnosis text when it is
+     not healthy), not Tailscale's `Online` flag, which can read false while the
+     machine answers. It is not a setup target: choosing it only says it is
+     already added and offers **Show in Remote Machines**. Next and the
+     offline-only hint consider the other peers.
 2. **What it does.** Builds and Hosted simulators checkboxes and the animated
    preview of what setup will do. Both can be off. Then Next is disabled and
    the preview holds only `$ stim-server setup` and a cursor. A Linux or Windows machine

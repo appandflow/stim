@@ -566,6 +566,16 @@ private func formatLoad(_ value: Double) -> String {
   value == value.rounded() ? String(Int(value)) : String(value)
 }
 
+/// A tailnet machine that is already in `remote.machines`, with the state `stim doctor` found for it.
+public struct AddedMachine: Equatable, Sendable {
+  /// The `remote.machines` entry that names it.
+  public var entry: String
+  /// The pill the Remote Machines list shows for it; nil until `stim doctor` has reported.
+  public var status: MachineListStatus?
+  /// What stops it and what to do about it; nil when it is healthy or not yet checked.
+  public var detail: String?
+}
+
 /// `remote.machines` edits, as the JSON text `stim settings set` takes.
 public enum OffloadMachines {
   /// The name part of an entry, without its port.
@@ -577,6 +587,17 @@ public enum OffloadMachines {
   public static func names(_ entry: String, _ mac: TailnetMac) -> Bool {
     let name = name(entry)
     return name == mac.machine || name == mac.dnsName
+  }
+
+  /// `mac` as the Remote Machines list knows it, or nil when no entry names it. Its state is the doctor status for that
+  /// entry, never Tailscale's `Online` flag, which can read false while the machine answers.
+  public static func added(_ mac: TailnetMac, entries: [String], statuses: [BuildMachineStatus]?) -> AddedMachine? {
+    guard let entry = entries.first(where: { names($0, mac) }) else { return nil }
+    guard let status = statuses?.first(where: { $0.machine == entry && ($0.dnsName ?? mac.dnsName) == mac.dnsName }) else {
+      return AddedMachine(entry: entry)
+    }
+    let listed = status.listStatus
+    return AddedMachine(entry: entry, status: listed, detail: listed.tone == .success ? nil : status.detail)
   }
 
   /// The list with `entry` added, as JSON text.
