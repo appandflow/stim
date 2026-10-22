@@ -351,7 +351,7 @@ describe('inspectBuildMachines', () => {
     it('names an online peer that does not answer', async () => {
       await approvedCredential();
       const online = status();
-      Object.assign(online.Peer.key1, { Online: true, CurAddr: '', Relay: 'nyc' });
+      Object.assign(online.Peer.key1, { Online: true });
       const { machines } = await inspectBuildMachines(
         { fix: false },
         { ...fakeIo([{ failed: 'no reply in time', transport: { kind: 'silent' } }]).io, status: () => online },

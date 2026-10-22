@@ -21,7 +21,6 @@ export type TailscaleCode = 'tailscale-unavailable' | 'tailscale-stopped' | 'tai
 
 const SILENT_ERRORS = new Set(['ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'EHOSTDOWN']);
 
-/** Sorts a failed `ws` connection into the layer it stopped at. `status` is the HTTP status of a refused upgrade. */
 export function classifyTransport(error: Error & { code?: string }, status?: number): Transport {
   if (status !== undefined) return { kind: 'http', status };
   const code = error.code ?? '';
@@ -151,13 +150,11 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
     };
   }
   if (transport?.kind === 'silent') {
-    const path =
-      peer.direct === false && peer.relay ? ` Tailscale only reaches it through the ${peer.relay} relay.` : '';
     return {
       layer: 'peer',
       code: 'peer-no-answer',
       title: 'Mac not answering',
-      message: `${entry} shows as online on Tailscale but did not answer.${path}`,
+      message: `${entry} did not answer the connection, and Tailscale does not list it as offline.`,
       remedy: `Check that ${entry} is awake and its network is up; \`tailscale ping ${entry}\` on this Mac tests the path.`,
     };
   }

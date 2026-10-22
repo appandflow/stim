@@ -16,19 +16,13 @@ export interface TailnetPeer {
   online?: boolean;
   /** When Tailscale last saw the node, as an ISO timestamp; absent when it never did or the status omits it. */
   lastSeen?: string;
-  /** The DERP relay the node's traffic goes through while no direct path is established. */
-  relay?: string;
-  /** Whether Tailscale has a direct path to the node (`CurAddr` is set). Absent when the status does not say. */
-  direct?: boolean;
 }
 
-function peerPresence(peer: Record<string, unknown>): Pick<TailnetPeer, 'online' | 'lastSeen' | 'relay' | 'direct'> {
+function peerPresence(peer: Record<string, unknown>): Pick<TailnetPeer, 'online' | 'lastSeen'> {
   const lastSeen = typeof peer.LastSeen === 'string' ? peer.LastSeen : '';
   return {
     ...(typeof peer.Online === 'boolean' ? { online: peer.Online } : {}),
     ...(lastSeen && Date.parse(lastSeen) > 0 ? { lastSeen } : {}),
-    ...(typeof peer.Relay === 'string' && peer.Relay ? { relay: peer.Relay } : {}),
-    ...(typeof peer.CurAddr === 'string' ? { direct: peer.CurAddr !== '' } : {}),
   };
 }
 

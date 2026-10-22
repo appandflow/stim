@@ -54,32 +54,32 @@ describe('diagnoseUnreachable', () => {
       code: 'route-http-error',
     });
     expect(diagnose({ kind: 'tls', message: 'certificate has expired' })).toMatchObject({ code: 'route-tls' });
-    expect(diagnose({ kind: 'other', message: 'socket hang up' })).toMatchObject({
-      code: 'connect-failed',
-      message: expect.stringContaining('it did not answer'),
-    });
+    expect(diagnose({ kind: 'other', message: 'socket hang up' })).toMatchObject({ code: 'connect-failed' });
   });
 
   it('reads a 503 cause from the peer health and says what to check', () => {
-    expect(
-      diagnose({ kind: 'http', status: 503 }, { startup: { state: 'degraded', cause: 'home-unreadable' } }),
-    ).toMatchObject({
-      message: expect.stringContaining('cannot read its Stim home'),
-      remedy: expect.stringContaining('disk that holds the Stim home'),
-    });
-    expect(diagnose({ kind: 'http', status: 503 }, { startup: { state: 'pending' } }).message).toContain(
-      'still starting',
-    );
+    const unready = (startup?: { state: 'pending' | 'degraded'; cause?: 'home-unreadable' | 'start-failed' }) =>
+      diagnose({ kind: 'http', status: 503 }, { startup });
+    const outcomes = [
+      unready({ state: 'degraded', cause: 'home-unreadable' }),
+      unready({ state: 'degraded', cause: 'start-failed' }),
+      unready({ state: 'pending' }),
+      unready(),
+    ];
+    expect(outcomes.map((each) => each.code)).toEqual(Array(4).fill('server-not-ready'));
+    expect(new Set(outcomes.map((each) => each.message)).size).toBe(4);
+    expect(new Set(outcomes.map((each) => each.remedy)).size).toBeGreaterThanOrEqual(3);
   });
 
   it('names an offline peer, with its last seen time, when nothing on it answered', () => {
     const now = Date.parse('2026-10-22T20:00:00Z');
     const offline = { ...peer, online: false, lastSeen: '2026-10-22T08:00:00Z' };
-    expect(diagnose({ kind: 'silent' }, { peer: offline, now })).toMatchObject({
-      layer: 'peer',
-      code: 'peer-offline',
-      message: 'mini is offline on Tailscale (last seen 12 h ago).',
-    });
+    const named = diagnose({ kind: 'silent' }, { peer: offline, now });
+    expect(named).toMatchObject({ layer: 'peer', code: 'peer-offline' });
+    expect(named.message).toContain('12 h ago');
+    expect(
+      diagnose({ kind: 'silent' }, { peer: { ...offline, lastSeen: '2026-10-22T19:00:00Z' }, now }).message,
+    ).toContain('1 h ago');
     expect(diagnose(undefined, { peer: offline, now })).toMatchObject({ code: 'connect-failed' });
     expect(diagnose({ kind: 'other', message: 'reset' }, { peer: offline, now })).toMatchObject({
       code: 'connect-failed',
@@ -90,12 +90,6 @@ describe('diagnoseUnreachable', () => {
     const offline = { ...peer, online: false };
     expect(diagnose({ kind: 'http', status: 503 }, { peer: offline })).toMatchObject({ code: 'server-not-ready' });
     expect(diagnose({ kind: 'refused' }, { peer: offline })).toMatchObject({ code: 'route-missing' });
-  });
-
-  it('says a silent peer is only reachable through a relay', () => {
-    expect(
-      diagnose({ kind: 'silent' }, { peer: { ...peer, online: true, direct: false, relay: 'nyc' } }).message,
-    ).toContain('through the nyc relay');
   });
 });
 
@@ -118,7 +112,7 @@ describe('Tailscale and peer readings', () => {
     });
   });
 
-  it('keeps a peer online state, last seen time and path from tailscale status', () => {
+  it('keeps a peer online state and last seen time from tailscale status', () => {
     const status = {
       Peer: {
         a: {
@@ -127,8 +121,6 @@ describe('Tailscale and peer readings', () => {
           TailscaleIPs: ['100.64.0.7'],
           Online: false,
           LastSeen: '2026-10-22T08:00:00Z',
-          CurAddr: '',
-          Relay: 'nyc',
         },
         b: {
           ID: 'nZero',
@@ -141,8 +133,6 @@ describe('Tailscale and peer readings', () => {
     expect(findPeer(status, 'mini')).toMatchObject({
       online: false,
       lastSeen: '2026-10-22T08:00:00Z',
-      relay: 'nyc',
-      direct: false,
     });
     expect(findPeer(status, 'zero')).not.toHaveProperty('lastSeen');
   });

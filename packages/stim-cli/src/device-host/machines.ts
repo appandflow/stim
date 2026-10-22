@@ -53,7 +53,6 @@ interface MachineReport {
     | 'unreachable'
     | 'credentials-unavailable'
     | 'busy';
-  /** The layer this machine stopped at, for `tailscale-off`, `not-on-tailnet`, `outdated` and `unreachable`. */
   diagnosis?: RemoteDiagnosis;
   dnsName?: string;
   deviceId?: string;
