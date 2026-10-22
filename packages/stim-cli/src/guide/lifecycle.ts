@@ -1046,7 +1046,10 @@ Only exact standalone info/debug messages captured from this app's device log
 for this platform and current launch are accepted. Stale, other-platform,
 error-level, and embedded example messages are ignored. Unlabelled shared
 Metro output cannot identify a platform. If pending is not captured in time,
-including when device logs are unavailable, the default check applies.
+including when device logs are unavailable, the default check applies. On a
+device hosted on another Mac (--remote <machine>), the device log is the copy
+pulled from that Mac during the launch check, and each window waits up to 10
+seconds for the copy to cover it.
 
 The app declares readiness; Stim does not inspect a rendered frame. This does
 not change launched JSON semantics or the need to inspect the expected UI and

@@ -10,7 +10,8 @@ import {
 } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
 import { readHostedIos, readHostedAndroid } from './ios-state.ts';
-import { pullHostedNativeLogs, pullHostedMacosLogs } from './hosted-logs.ts';
+import { pullHostedNativeLogs, pullHostedMacosLogs, readHostedNativeLogs } from './hosted-logs.ts';
+import type { NdjsonRecord } from '../ndjson.ts';
 import { connectHost, type HostConnection } from './hosted-macos.ts';
 
 const WATCH_RECHECK_MS = 100;
@@ -81,6 +82,8 @@ export function followHostedMacosLogs(
     slot,
     platform = 'ios',
     context,
+    onPulled,
+    onFailed,
   }: {
     context?: ReadContext;
     platform?: 'ios' | 'android';
@@ -88,6 +91,8 @@ export function followHostedMacosLogs(
     intervalMs?: number;
     retryMs?: number;
     slot?: string;
+    onPulled?: (through: number | undefined) => void;
+    onFailed?: () => void;
   } = {},
 ): () => void {
   let host: HostConnection | undefined;
@@ -112,22 +117,25 @@ export function followHostedMacosLogs(
         return;
       }
       host ??= await connectHost(placement.machine, undefined, false, signal);
-      if (slot !== undefined)
-        await pullHostedNativeLogs(
-          root,
-          slot,
-          placement as HostedIosPlacement | HostedAndroidPlacement,
-          host,
-          false,
-          platform,
-          signal,
-        );
-      else await pullHostedMacosLogs(root, placement, host, undefined, undefined, false, signal);
+      const through =
+        slot !== undefined
+          ? await pullHostedNativeLogs(
+              root,
+              slot,
+              placement as HostedIosPlacement | HostedAndroidPlacement,
+              host,
+              false,
+              platform,
+              signal,
+            )
+          : await pullHostedMacosLogs(root, placement, host, undefined, undefined, false, signal);
       failing = false;
+      onPulled?.(through);
     } catch (error) {
       host?.connection.close();
       host = undefined;
       if (signal.aborted) return;
+      onFailed?.();
       if (!failing)
         warn(
           context,
@@ -150,6 +158,45 @@ export function followHostedMacosLogs(
     signal.removeEventListener('abort', cancel);
     clearInterval(timer);
     host?.connection.close();
+  };
+}
+
+export interface HostedLaunchLogs {
+  readDeviceRecords: () => NdjsonRecord[];
+  readNativeCrashes: () => NdjsonRecord[];
+  deviceLogsThrough: () => number | null;
+  stop: () => void;
+}
+
+/** Copies a hosted slot's native logs while its launch is verified; a failed copy stops holding the launch windows. */
+export function followHostedLaunchLogs(
+  root: string,
+  slot: string,
+  platform: 'ios' | 'android',
+  since: number,
+  context?: ReadContext,
+): HostedLaunchLogs {
+  let through: number | null = null;
+  let failed = false;
+  const stop = followHostedMacosLogs(root, {
+    slot,
+    platform,
+    context,
+    onPulled: (covered) => {
+      failed = false;
+      if (covered !== undefined) through = Math.max(through ?? covered, covered);
+    },
+    onFailed: () => {
+      failed = true;
+    },
+  });
+  const records = () => readHostedNativeLogs(root, platform, slot);
+  return {
+    readDeviceRecords: records,
+    readNativeCrashes: () =>
+      records().filter((record) => record.event === 'native_crash' && Number(record.ts) >= since),
+    deviceLogsThrough: () => (failed ? Number.POSITIVE_INFINITY : through),
+    stop,
   };
 }
 

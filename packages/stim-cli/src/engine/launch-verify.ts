@@ -96,6 +96,7 @@ export const MANIFEST_VERIFY_TIMEOUT_MS = 60000;
 export const STABILITY_WINDOW_MS = 3000;
 const JS_RUNNING_SETTLE_MS = 500;
 const VERIFY_POLL_MS = 500;
+const DEVICE_LOG_LAG_LIMIT_MS = 10_000;
 
 const BUNDLE_EVENTS = new Set([
   'bundle_build_started',
@@ -247,6 +248,7 @@ export async function verifyLaunch({
   processAlive = null,
   onReadinessPending = null,
   onActivity,
+  deviceLogsThrough,
   now = Date.now,
   sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
 }: {
@@ -274,6 +276,11 @@ export async function verifyLaunch({
    * record time.
    */
   onActivity?: ((name: 'bundling' | 'waiting-ready' | null, at: number) => void) | null;
+  /**
+   * The time through which the device records are complete, for a device log copied from another machine. The
+   * stability and readiness windows end only once the copy covers them, or `DEVICE_LOG_LAG_LIMIT_MS` after they end.
+   */
+  deviceLogsThrough?: (() => number | null) | null;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
 } = {}): Promise<VerifyLaunchResult> {
@@ -281,6 +288,12 @@ export async function verifyLaunch({
   const read = readRecords || (() => readMetroRecords(logsDir));
   const readDevice = readDeviceRecords || (() => readNdjson(logsDir, 'device.ndjson'));
   const readClient = readClientRecords || (() => readNdjson(logsDir, 'client.ndjson'));
+  const deviceNow = () => {
+    const at = now();
+    return deviceLogsThrough
+      ? Math.max(Math.min(at, deviceLogsThrough() ?? -Infinity), at - DEVICE_LOG_LAG_LIMIT_MS)
+      : at;
+  };
   const startedAt = now();
   const baseTimeoutMs = Math.max(0, timeoutMs);
   let bundleDeadline = startedAt + baseTimeoutMs;
@@ -432,7 +445,7 @@ export async function verifyLaunch({
       };
     }
 
-    if (proof && windowEnd !== null && (pendingAt !== null || now() >= windowEnd)) {
+    if (proof && windowEnd !== null && (pendingAt !== null || deviceNow() >= windowEnd)) {
       const errorSince = pendingAt === null ? Number(proof.ts ?? since ?? 0) : Number(since ?? 0);
       const errors = [
         ...metroRecords.filter((record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform)),
@@ -455,7 +468,7 @@ export async function verifyLaunch({
       }
       const actionableErrors = errors.filter((record) => !isIosConnectionRefusal(record, platform));
       const appErrors = actionableErrors.some(isAppLaunchError);
-      if ((!runtimeWaiting && pendingAt === null) || appErrors || ready || now() >= readinessDeadline) {
+      if ((!runtimeWaiting && pendingAt === null) || appErrors || ready || deviceNow() >= readinessDeadline) {
         return {
           verified: true,
           record: proof,
@@ -491,7 +504,7 @@ export async function verifyLaunch({
       : proof && pendingAt !== null
         ? readinessDeadline
         : (windowEnd ?? bundleDeadline);
-    await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
+    await sleep(Math.min(pollMs, Math.max(0, deadline - deviceNow())));
   }
 }
 

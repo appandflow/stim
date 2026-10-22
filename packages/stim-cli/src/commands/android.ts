@@ -5,6 +5,7 @@ import { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-
 import { readHostedAndroid, writeDevicePlacementAsync, writeHostedAndroidAsync } from '../device-host/ios-state.ts';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
+import { followHostedLaunchLogs } from '../device-host/hosted-logs-sync.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
 import { parseMachine } from '@stim-cli/core/state';
@@ -317,6 +318,7 @@ interface RunAndroidOptions {
   placeHostedAndroid?: typeof placeHostedAndroid;
   readHostedAndroid?: typeof readHostedAndroid;
   writeHostedAndroid?: typeof writeHostedAndroidAsync;
+  followHostedLaunchLogs?: typeof followHostedLaunchLogs;
   buildMachine?: string;
   progress?: BuildProgress;
   easProfile?: string;
@@ -1351,6 +1353,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         place: options.placeHostedAndroid ?? placeHostedAndroid,
         writePlacement: options.writeHostedAndroid ?? writeHostedAndroidAsync,
         verifyLaunch: verifyLaunched,
+        followLogs: options.followHostedLaunchLogs ?? followHostedLaunchLogs,
         writeLaunch,
         readApkPackage,
         resolveDevClientScheme,
@@ -1361,6 +1364,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         fail,
         phase,
         enterPhase: progress.step,
+        enterActivity: progress.activity,
         out,
         json,
         useBuildCache,

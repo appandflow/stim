@@ -5,7 +5,7 @@ import { isJsonObject, parseHostedLogsCursor, type HostedLogsCursor } from '@sti
 import { deviceSlotFileKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { macosDir } from '../macos/state.ts';
 import { androidLogGroups, isAndroidCrashText } from '../collector/android.ts';
-import { createNdjsonWriter, type NdjsonRecord } from '../ndjson.ts';
+import { createNdjsonWriter, readNdjsonGenerations, type NdjsonRecord } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { call, type HostConnection } from './hosted-client.ts';
 
@@ -103,7 +103,7 @@ export async function pullHostedMacosLogs(
   maxPages: number = MAX_PAGES,
   final = false,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<number | undefined> {
   const deadline = Date.now() + (final ? 30_000 : 120_000);
   let checkpoint: number | undefined;
   let progressAt = 0;
@@ -134,10 +134,10 @@ export async function pullHostedMacosLogs(
       throw new Error(`${host.machine} answered device-host.logs.query with an unexpected result.`);
     signal?.throwIfAborted();
     await commitPage(root, placement.session, before, result.records, cursor, target);
-    if (!result.more) return;
     const nextCheckpoint = typeof result.checkpoint === 'number' ? result.checkpoint : undefined;
+    if (!result.more) return nextCheckpoint;
     if (sameCursor(cursor, before) && nextCheckpoint === checkpoint) {
-      if (target.platform === 'macos' && !final) return;
+      if (target.platform === 'macos' && !final) return undefined;
       throw new Error('Hosted native logs made no progress; keeping the logs already copied here.');
     }
     checkpoint = nextCheckpoint;
@@ -148,6 +148,7 @@ export async function pullHostedMacosLogs(
         ? 'Final native log copy reached its time or page bound; the host keeps collected logs after stop.'
         : 'Hosted native logs still have unread pages; run stim logs again.',
     );
+  return undefined;
 }
 
 export async function pullHostedNativeLogs(
@@ -158,10 +159,14 @@ export async function pullHostedNativeLogs(
   final = false,
   platform: 'ios' | 'android' = 'ios',
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<number | undefined> {
   if (!host.connection.supports(platform === 'ios' ? 'hosted-ios-data' : 'hosted-android-data'))
     throw new Error(
       `${host.machine} needs a newer stim-server to collect hosted ${platform === 'ios' ? 'iOS' : 'Android'} native logs.`,
     );
-  await pullHostedMacosLogs(root, placement, host, { platform, slot }, final ? 1024 : MAX_PAGES, final, signal);
+  return await pullHostedMacosLogs(root, placement, host, { platform, slot }, final ? 1024 : MAX_PAGES, final, signal);
+}
+
+export function readHostedNativeLogs(root: string, platform: 'ios' | 'android', slot: string): NdjsonRecord[] {
+  return readNdjsonGenerations(hostLogFile(root, { platform, slot }));
 }

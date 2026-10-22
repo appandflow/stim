@@ -4,10 +4,9 @@ import type { IosDeps } from './dependencies.ts';
 import type { PreparedIosArtifact } from './artifact.ts';
 import { reportIosResult, type ReportIosResultArgs } from './result.ts';
 import type { FailArgs } from './types.ts';
-import type { BuildPhase } from '../../engine/build-progress.ts';
-import type { IosRunCompletion } from './launch.ts';
-import { launchSlotScope, siblingPlatformSlots } from '../../engine/slot-launch.ts';
-import { workspaceDevServerMode } from '../../supervisor/state.ts';
+import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
+import { verifyIosMetroRun, type IosRunCompletion } from './launch.ts';
+import { LAUNCH_BUNDLING, LAUNCH_FATAL } from '../../engine/launch-verify.ts';
 
 export async function finishHostedIosRun({
   target,
@@ -23,7 +22,9 @@ export async function finishHostedIosRun({
   logsDir,
   fail,
   note,
+  phase,
   enterPhase,
+  enterActivity,
   selectors,
   projectBundleId,
   ...report
@@ -55,12 +56,16 @@ export async function finishHostedIosRun({
   slot: string;
   fail: (failure: FailArgs) => null;
   note: (line: string) => void;
+  phase: (name: unknown, text: string) => void;
   enterPhase: (phase: BuildPhase) => void;
+  enterActivity?: BuildProgress['activity'];
   selectors: HostedDeviceSelectors;
   projectBundleId: () => string | null | Promise<string | null>;
 }): Promise<IosRunCompletion | null> {
   const bundleId = artifact.bundleId ?? ((await d.readBundleId(artifact.path)) || (await projectBundleId()));
   if (!bundleId) return fail({ code: 'STIM_INSTALL_FAILED', message: 'The built app has no bundle identifier.' });
+  const devClientScheme =
+    appMode === 'development' && isExpo ? (d.devClientScheme(root, artifact.path) ?? undefined) : undefined;
   const launchedAt = d.now();
   let run;
   try {
@@ -73,9 +78,7 @@ export async function finishHostedIosRun({
       selectors,
       release,
       mode: appMode,
-      ...(appMode === 'development' && isExpo
-        ? { devClientScheme: d.devClientScheme(root, artifact.path) ?? undefined }
-        : {}),
+      ...(appMode === 'development' && isExpo ? { devClientScheme } : {}),
       metroPort,
       reserved: (placement) => d.writeHostedIos(root, slot, placement),
       note,
@@ -106,24 +109,49 @@ export async function finishHostedIosRun({
     slot,
   );
   let launched: true | 'unverified' | 'bundling' = run.launched;
-  if (appMode === 'development' && metroCheck) {
-    const evidence = await d.verifyLaunch({
-      requireBundleResponse: true,
-      platform: 'ios',
-      logsDir,
-      since: launchedAt,
-      metroPort,
-      mode: workspaceDevServerMode(root, isExpo),
-      slot: launchSlotScope(root, slot),
-      platformShared: (await siblingPlatformSlots(root, 'ios', slot)).length > 0,
-    });
-    if (evidence.fatal)
+  let launchWarning: string | undefined;
+  if (appMode === 'development') {
+    const hostedLogs = d.followHostedLaunchLogs(root, slot, 'ios', launchedAt);
+    let verification;
+    try {
+      verification = await verifyIosMetroRun({
+        root,
+        slot,
+        appPath: artifact.path,
+        d,
+        launched: {},
+        configuration: report.configuration,
+        phase,
+        note,
+        metroCheck,
+        logsDir,
+        launchedAt,
+        metroPort,
+        isExpo,
+        bundleId,
+        udid: run.placement.device?.udid ?? '',
+        scheme: devClientScheme,
+        physical: false,
+        appName: null,
+        lanAddress: null,
+        lanOrigin: null,
+        remoteDevice: true,
+        metroOrigin: null,
+        enterActivity,
+        hostedLogs,
+      });
+    } finally {
+      hostedLogs.stop();
+    }
+    if (verification.state === LAUNCH_FATAL)
       return fail({
         code: 'STIM_LAUNCH_FAILED',
-        message: 'Metro could not deliver the hosted app bundle.',
-        remedy: 'Run stim logs --errors and fix the bundle error.',
+        message: 'The app failed its launch readiness check.',
+        remedy: `Read the launch error above or run \`stim logs --errors\`. The full timeline is in ${logsDir}.`,
+        logPath: logsDir,
       });
-    launched = evidence.verified ? true : evidence.requested ? 'bundling' : 'unverified';
+    launched = verification.state === true ? true : verification.state === LAUNCH_BUNDLING ? 'bundling' : 'unverified';
+    launchWarning = verification.warning;
   }
   if (launched === 'unverified')
     note(
@@ -155,6 +183,7 @@ export async function finishHostedIosRun({
     useBuildCache: cache.readEnabled,
     waitedForBuild: cache.waitedForBuild,
     launchState: launched,
+    launchWarning,
     providerName: cache.providerName,
     buildMachine: cache.buildMachine,
     builtOn: cache.builtOn,

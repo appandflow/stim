@@ -95,7 +95,7 @@ import {
   readBundleExecutable,
   type BuildIosResult,
 } from '../engine/xcode.ts';
-import { RELEASE_VERIFY_WAIT_MS } from '../engine/launch-verify.ts';
+import { RELEASE_VERIFY_WAIT_MS, verifyLaunch } from '../engine/launch-verify.ts';
 import { iosProcessRuntime } from '../commands/ios/launch.ts';
 import {
   DEVICECTL_INSTALL_TIMEOUT_MS,
@@ -446,6 +446,12 @@ function harness(overrides: LooseDeps = {}) {
       record('verifyReleaseLaunch', args);
       return { verified: true, waitedMs: 3000 };
     },
+    followHostedLaunchLogs: () => ({
+      readDeviceRecords: () => [],
+      readNativeCrashes: () => [],
+      deviceLogsThrough: () => null,
+      stop: () => {},
+    }),
     hostLanCandidates: () => [{ interfaceName: 'en0', address: '192.168.1.5' }],
     ensureLanReachable: async (args) => {
       record('ensureLanReachable', args);
@@ -8631,6 +8637,58 @@ describe('iOS placement on a hosting Mac', () => {
     );
     expect(logs.join('\n') + stderr).toContain('(iOS 27.0) on mini');
     expect(logs.join('\n') + stderr).not.toContain('(iOS iOS');
+  });
+
+  test("a hosted Debug launch waits for the app's readiness in the host's copied device log", async () => {
+    reserve();
+    let at = 1000;
+    const copied = () => at - 3000;
+    const stop = vi.fn<() => void>();
+    const readiness = (ts: number, state: string) => ({
+      ts,
+      src: 'device',
+      platform: 'ios',
+      level: 'info',
+      msg: `[stim:readiness] ${state}`,
+    });
+    const { logs, stderr } = await run(
+      { remote: 'mini', json: true },
+      {
+        prepareHostedIos: async () => ({
+          host: { machine: 'mini', connection: { close() {} } },
+          choice: hostedDevice,
+          session: null,
+        }),
+        placeHostedIos: async (_target, args) => {
+          args.reserved(placement);
+          return { placement, launched: 'unverified' };
+        },
+        followHostedLaunchLogs: () => ({
+          readDeviceRecords: () =>
+            [readiness(1500, 'pending'), readiness(6000, 'ready')].filter((r) => r.ts <= copied()),
+          readNativeCrashes: () => [],
+          deviceLogsThrough: copied,
+          stop,
+        }),
+        verifyLaunch: (args) =>
+          verifyLaunch({
+            ...args,
+            since: 1000,
+            now: () => at,
+            sleep: async (ms) => {
+              at += ms;
+            },
+            readRecords: () => [
+              { ts: 1000, src: 'metro', platform: 'ios', event: 'bundle_response_started', requestId: 'app' },
+              { ts: 1200, src: 'metro', platform: 'ios', event: 'bundle_response_finished', requestId: 'app' },
+            ],
+          }),
+      },
+    );
+    expect(stderr).toContain('waiting for app readiness');
+    expect(stderr).toContain('app reported ready');
+    expect(parseFirst(logs).launched).toBe(true);
+    expect(stop).toHaveBeenCalledOnce();
   });
 
   test('hosted intent starts Metro locally even when tunnel settings are configured', async () => {

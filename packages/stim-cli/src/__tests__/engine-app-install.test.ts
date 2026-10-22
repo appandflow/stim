@@ -1919,6 +1919,26 @@ describe('optional app readiness', () => {
     ]);
   });
 
+  test.each([
+    ['copied 4s behind', (at: number) => at - 4000, 'ready', 8000],
+    ['never copied', () => null, undefined, 13000],
+  ] as const)(
+    'a device log %s holds the windows until it covers them, within a bound',
+    async (_, copied, readiness, waitedMs) => {
+      const clock = fakeClock();
+      const through = () => copied(clock.at());
+      const { result } = await run([], {
+        readDeviceRecords: () =>
+          [signal(2000, 'pending'), signal(5000, 'ready')].filter((record) => Number(record.ts) <= (through() ?? 0)),
+        deviceLogsThrough: through,
+        now: clock.now,
+        sleep: clock.sleep,
+      });
+      expect(result).toMatchObject({ verified: true, waitedMs });
+      expect(result.readiness).toBe(readiness);
+    },
+  );
+
   test('a fast ready replaces the default stability delay', async () => {
     const { result } = await run([signal(1000, 'pending'), signal(1500, 'ready', { msg: "'[stim:readiness] ready'" })]);
     expect(result).toMatchObject({ readiness: 'ready', waitedMs: 500 });
