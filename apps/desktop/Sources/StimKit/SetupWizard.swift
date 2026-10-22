@@ -567,8 +567,11 @@ public enum SetupRefresh: Hashable, Sendable {
 }
 
 extension SetupWizard {
+  /// How long after the ticket expires the doctor read continues, so an approval recorded just before expiry shows.
+  static let readGraceAfterExpiry: TimeInterval = 30
+
   /// The reads that keep `page` current. Nothing refreshes once the test starts or setup is cancelled.
-  public func refreshes(page: SetupPage) -> [SetupRefresh] {
+  public func refreshes(page: SetupPage, now: Date) -> [SetupRefresh] {
     switch page {
     case .tools: return [.tools]
     case .test, .summary: return []
@@ -580,7 +583,8 @@ extension SetupWizard {
     case .cancelled: return []
     case .command, .running, .approved, .expiredCommand:
       var reads: [SetupRefresh] = phase == .expiredCommand ? [] : [.journal]
-      if journal != nil, entriesWritten { reads.append(.doctor) }
+      let graceOver = ticket.map { now >= $0.expiresAt.addingTimeInterval(Self.readGraceAfterExpiry) } ?? false
+      if journal != nil, entriesWritten, !graceOver { reads.append(.doctor) }
       return reads
     }
   }

@@ -451,23 +451,26 @@ final class SetupWizardTests: XCTestCase {
 
   func testBackgroundRefreshFollowsTheStepInPlaceOfACheckAgainButton() {
     var wizard = SetupWizard()
-    XCTAssertEqual(wizard.refreshes(page: .setup), [.peers])
+    XCTAssertEqual(wizard.refreshes(page: .setup, now: now), [.peers])
     _ = wizard.apply(.macChosen(mac), now: now)
-    XCTAssertEqual(wizard.refreshes(page: .setup), [.approvals])
+    XCTAssertEqual(wizard.refreshes(page: .setup, now: now), [.approvals])
     _ = wizard.apply(.next(ticket), now: now)
-    XCTAssertEqual(wizard.refreshes(page: .setup), [.journal])
+    XCTAssertEqual(wizard.refreshes(page: .setup, now: now), [.journal])
     _ = wizard.apply(.journalAnswered(port: 7443, journal: journal()), now: now)
     _ = wizard.apply(.entriesWritten, now: now)
-    XCTAssertEqual(wizard.refreshes(page: .setup), [.journal, .doctor])
-    XCTAssertEqual(wizard.refreshes(page: .tools), [.tools])
-    XCTAssertEqual(wizard.refreshes(page: .summary), [])
+    XCTAssertEqual(wizard.refreshes(page: .setup, now: now), [.journal, .doctor])
+    XCTAssertEqual(wizard.refreshes(page: .tools, now: now), [.tools])
+    XCTAssertEqual(wizard.refreshes(page: .summary, now: now), [])
     _ = wizard.apply(.tick, now: ticket.expiresAt)
     XCTAssertEqual(wizard.phase, .expiredCommand)
     XCTAssertEqual(
-      wizard.refreshes(page: .setup), [.doctor],
+      wizard.refreshes(page: .setup, now: ticket.expiresAt.addingTimeInterval(29)), [.doctor],
       "An expired ticket has no journal to read, but a grant recorded just before expiry still needs its doctor read")
+    XCTAssertEqual(
+      wizard.refreshes(page: .setup, now: ticket.expiresAt.addingTimeInterval(30)), [], "The grace window is over")
     _ = wizard.apply(.cancel, now: now)
-    XCTAssertEqual(wizard.refreshes(page: .setup), [], "A cancelled setup reads nothing; a failed undo waits for Retry undo")
+    XCTAssertEqual(
+      wizard.refreshes(page: .setup, now: now), [], "A cancelled setup reads nothing; a failed undo waits for Retry undo")
 
     var clock = SetupRefreshClock()
     XCTAssertEqual(clock.due([.journal, .doctor], now: now), [.journal, .doctor])

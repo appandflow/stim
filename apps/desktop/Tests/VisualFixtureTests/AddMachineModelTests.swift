@@ -20,6 +20,9 @@ final class AddMachineModelTests: XCTestCase {
     var modeOrigin: String? = "default"
     var grantReady = false
     var journalDone = false
+    var doctorDelay: Duration = .zero
+    var doctorInFlight = 0
+    var doctorMaxInFlight = 0
     var journalSteps: [SetupJournal.Step] = []
     var journalExpiryOffset: TimeInterval = 0
     var peerId = "nMini"
@@ -84,6 +87,10 @@ final class AddMachineModelTests: XCTestCase {
             self.doctorPaths.append(cwd)
             self.asks.append((ask, ticket))
             self.steps.append(ask ? "ask" : "readDoctor")
+            self.doctorInFlight += 1
+            self.doctorMaxInFlight = max(self.doctorMaxInFlight, self.doctorInFlight)
+            defer { self.doctorInFlight -= 1 }
+            if self.doctorDelay != .zero { try? await Task.sleep(for: self.doctorDelay) }
             if self.shouldFailDoctor { throw Failure.refused }
             return try self.report()
           }, readSettings: { try self.payload() },
@@ -225,6 +232,23 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(asked(), before + 1)
     await model.refresh()
     XCTAssertEqual(asked(), before + 1, "one request per signal, not one per poll")
+  }
+
+  @MainActor func testADoctorRunNeverOverlapsAnotherOne() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    harness.doctorDelay = .milliseconds(300)
+    async let poll: Void = model.refresh()
+    try? await Task.sleep(for: .milliseconds(100))
+    await model.send(.cancel)
+    await poll
+    XCTAssertEqual(harness.doctorMaxInFlight, 1, "a button press during a poll read waits for it")
   }
 
   @MainActor func testExpiredTicketSendsNoMoreRequestsAndAsksForANewCommand() async {
