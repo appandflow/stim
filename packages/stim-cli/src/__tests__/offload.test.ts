@@ -19,6 +19,7 @@ import {
   BuildConnection,
   chooseBuildMachine,
   offloadBuild,
+  machineNotes,
   machineProblems,
   offerProblems,
   offloadPlacement,
@@ -396,6 +397,24 @@ describe('pickOffer for Android', () => {
         'compile-sdk',
       ]);
       expect(offerProblems(everything, ANDROID)).toEqual([]);
+    });
+
+    it('reports a note only for a machine that would take the build', () => {
+      const accepted = offer({ toolchain: { ...missingNdk, androidLicenses: true } });
+      expect(machineNotes(accepted, [ANDROID])).toHaveLength(1);
+      expect(
+        machineNotes(offer({ toolchain: { ...missingNdk, androidLicenses: true, jdk: '21' } }), [ANDROID]),
+      ).toEqual([]);
+    });
+
+    it('quotes an SDK path the shell would split', () => {
+      const spaced = offer({
+        toolchain: { ...missingNdk, androidLicenses: false, androidHome: "/Users/First Last/O'Neil/sdk" },
+      });
+      expect(offerProblems(spaced, ANDROID)[0]?.commands).toEqual([
+        "'/Users/First Last/O'\\''Neil/sdk/cmdline-tools/latest/bin/sdkmanager' --licenses",
+        "'/Users/First Last/O'\\''Neil/sdk/cmdline-tools/latest/bin/sdkmanager' \"ndk;27.1.12297006\"",
+      ]);
     });
 
     it('stays a blocker with the license command when the licenses are not accepted', () => {

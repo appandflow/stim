@@ -209,7 +209,13 @@ public func wizardFixIsCommand(_ fix: String) -> Bool {
   let commands = [
     "sudo", "brew", "gem", "bundle", "xcodebuild", "xcode-select", "sdkmanager", "stim", "stim-server", "npx", "npm",
   ]
-  let program = String(fix.split(separator: " ").first ?? "")
-  return !fix.contains("\n") && !fix.contains("`") && !fix.contains("<")
-    && commands.contains(String(program.split(separator: "/").last ?? ""))
+  let program: Substring
+  if let quote = fix.first, quote == "\"" || quote == "'" {
+    program = fix.dropFirst().prefix { $0 != quote }
+  } else {
+    program = fix.prefix { $0 != " " }
+  }
+  var name = String(program.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last ?? "")
+  if name.hasSuffix(".bat") { name.removeLast(4) }
+  return !fix.contains("\n") && !fix.contains("`") && !fix.contains("<") && commands.contains(name)
 }

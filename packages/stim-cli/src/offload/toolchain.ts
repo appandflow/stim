@@ -246,7 +246,6 @@ export function parseAndroidRequirements(catalog: string): AndroidRequirements {
   return { ndk: value('ndkVersion'), buildTools: value('buildTools'), compileSdk: value('compileSdk') };
 }
 
-/** Whether `android.builder.sdkDownload=false` is set in a `gradle.properties` file's text. */
 export function sdkDownloadDisabled(properties: string): boolean {
   return /^\s*android\.builder\.sdkDownload\s*[=:]\s*false\s*$/im.test(properties);
 }
@@ -382,10 +381,8 @@ export interface OffloadProblem {
   commands?: string[];
 }
 
-/** One SDK package the project needs and the worker lacks. */
 interface SdkGap {
   code: 'ndk' | 'build-tools' | 'compile-sdk';
-  /** How a sentence names it, such as `NDK 27.1.12297006`. */
   label: string;
   /** Its `sdkmanager` package id. */
   id: string;
@@ -420,11 +417,19 @@ function gradleDownloads(requires: AndroidRequirements, worker: WorkerToolchain)
   return worker.androidLicenses === true && requires.sdkDownload !== false;
 }
 
+function shellQuote(path: string, os: string | undefined): string {
+  if (/^[\w@%+=:,./\\~-]+$/.test(path)) return path;
+  return os === 'win32' ? `"${path}"` : `'${path.replaceAll("'", "'\\''")}'`;
+}
+
 function sdkManagerPath(worker: WorkerToolchain): string {
   if (!worker.androidHome) return 'sdkmanager';
-  return worker.os === 'win32'
-    ? `${worker.androidHome}\\cmdline-tools\\latest\\bin\\sdkmanager.bat`
-    : `${worker.androidHome}/cmdline-tools/latest/bin/sdkmanager`;
+  return shellQuote(
+    worker.os === 'win32'
+      ? `${worker.androidHome}\\cmdline-tools\\latest\\bin\\sdkmanager.bat`
+      : `${worker.androidHome}/cmdline-tools/latest/bin/sdkmanager`,
+    worker.os,
+  );
 }
 
 function androidMismatches(

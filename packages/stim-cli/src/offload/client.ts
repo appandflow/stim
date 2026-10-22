@@ -1864,9 +1864,10 @@ export function machineProblems(offer: BuildOffer, targets: BuildTarget[]): Offl
   return problems;
 }
 
-/** What a build on the machine does beyond the match, for each of `targets`, labeled like `machineProblems`. */
+/** What a build on a machine that would take it does beyond the match, for each of `targets`, labeled like `machineProblems`. */
 export function machineNotes(offer: BuildOffer, targets: BuildTarget[]): OffloadProblem[] {
   const notes: OffloadProblem[] = [];
+  if (machineProblems(offer, targets).length) return notes;
   for (const target of targets) {
     for (const note of toolchainNotes(target, offer.toolchain)) {
       notes.push(targets.length > 1 ? { ...note, reason: `${PLATFORM_LABEL[target.platform]}: ${note.reason}` } : note);
