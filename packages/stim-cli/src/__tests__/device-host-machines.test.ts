@@ -182,6 +182,27 @@ test('a build-only grant, an uncertain answer and a revocation keep the hosting 
   expect(readDeviceHostMachines()[0]).toMatchObject({ state: 'approved', serverKey: SERVER_KEY });
 });
 
+test('names the same layer for hosting as for builds, so doctor prints one finding', async () => {
+  await approvedHosting();
+  const unready: TailnetMachineIo = {
+    ...fakeIo([
+      {
+        failed: 'stim-server answers behind its tailscale serve route but is not serving clients (HTTP 503)',
+        transport: { kind: 'http', status: 503 },
+      },
+    ]).io,
+    startup: async () => ({ state: 'degraded', cause: 'home-unreadable' }),
+  };
+  const { findings, machines } = await inspectDeviceHostMachines({ fix: false }, unready, ['mini']);
+  expect(machines).toEqual([
+    expect.objectContaining({
+      state: 'unreachable',
+      diagnosis: expect.objectContaining({ layer: 'server', code: 'server-not-ready' }),
+    }),
+  ]);
+  expect(findings).toEqual([expect.objectContaining({ title: 'Remote machine mini: Server not ready' })]);
+});
+
 test('only a definite refusal and fix make a new ticket', async () => {
   await approvedHosting();
   const { io, calls } = fakeIo([{ error: { code: 'unauthorized', message: 'revoked' } }, notYet]);

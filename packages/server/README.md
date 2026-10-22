@@ -1360,7 +1360,10 @@ event loop. Until that read returns, `/health` answers HTTP 503 with
 requests get 503, and no status follower, native helper, file watcher or
 recorder starts. A read that does not return within 10 seconds, plus up to one
 second to stop the child, leaves the server listening with
-`startup: { "state": "degraded", "reason": "..." }` and HTTP 503 on `/health`,
+`startup: { "state": "degraded", "reason": "...", "cause": "home-unreadable" }`
+(`start-failed` when starting failed after the read returned) and HTTP 503 on
+`/health` (a tailnet peer sees only `{ "version", "startup": { "state",
+"cause" } }`, because the reason names the Stim home path),
 logs the reason once, and reads again every 30 seconds. When a read returns,
 the server starts its watchers and recorder, `/health` answers 200 with
 `startup: { "state": "ready" }`, and no restart is needed. `service status`

@@ -1328,10 +1328,25 @@ export interface BuildClientSummary {
   lastAt: string;
 }
 
+/**
+ * The first layer that stops this machine from using a remote machine, as `stim doctor --json` reports it under
+ * `diagnosis`. `code` is stable; `title` is a short label for a status pill; `message` says what failed and
+ * `remedy` what to do. `guide remote` lists the codes.
+ */
+export interface RemoteDiagnosis {
+  layer: 'tailscale' | 'peer' | 'route' | 'server' | 'compat';
+  code: string;
+  title: string;
+  message: string;
+  remedy: string;
+}
+
 /** One `remote.machines` entry as `stim doctor --json` reports it; `guide facts doctor` defines the fields. */
 export interface BuildMachineReport {
   machine: string;
   state: string;
+  /** Present for a state that stops at a layer below approval (`tailscale-off`, `not-on-tailnet`, `unreachable`, `outdated`). */
+  diagnosis?: RemoteDiagnosis;
   dnsName?: string;
   deviceId?: string;
   requestedAt?: string;

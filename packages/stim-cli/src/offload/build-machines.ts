@@ -2,7 +2,7 @@ import { withDirLockAsync, type StimContext } from '@stim-cli/core';
 import { reportSignal } from '../report-runtime.ts';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import type { HelloResult } from '@stim-cli/core/protocol';
+import type { HelloResult, RemoteDiagnosis } from '@stim-cli/core/protocol';
 import {
   buildMachinesFile,
   buildMachinesLock,
@@ -19,7 +19,10 @@ import { withDirLock } from '../dir-lock.ts';
 import { getConfigDir } from '../workspace/config.ts';
 import { configuredMachines } from '../device-host/machines.ts';
 import { readHostPermissions } from './access-ticket.ts';
+import { diagnosisFinding, notOnTailnetDiagnosis } from './diagnosis.ts';
 import {
+  diagnoseOutcome,
+  diagnoseTailscale,
   endpoint,
   findPeer,
   outdatedServer,
@@ -88,6 +91,8 @@ interface BuildMachineReport {
     | 'lapsed'
     | 'outdated'
     | 'unreachable';
+  /** The layer this machine stopped at, for `tailscale-off`, `not-on-tailnet`, `outdated` and `unreachable`. */
+  diagnosis?: RemoteDiagnosis;
   dnsName?: string;
   deviceId?: string;
   requestedAt?: string;
@@ -207,10 +212,10 @@ async function inspectMachine(
   }
   const peer = findPeer(status, parsed.name);
   if (peer === 'missing' || peer === 'ambiguous') {
-    const detail = peer === 'missing' ? 'No peer on this tailnet has that name.' : 'Several peers match that name.';
+    const diagnosis = notOnTailnetDiagnosis(entry, peer === 'ambiguous');
     return {
-      report: { machine: entry, state: 'not-on-tailnet' },
-      finding: note(`Remote machine ${entry} is not on this tailnet`, detail),
+      report: { machine: entry, state: 'not-on-tailnet', diagnosis },
+      finding: diagnosisFinding('build-machine', entry, diagnosis),
     };
   }
   const credential = readBuildMachines().find((each) => each.machine === entry);
@@ -306,17 +311,32 @@ async function inspectMachine(
       };
     case 'outdated': {
       const outdated = outdatedServer(entry, version, outcome.command);
-      return { report: { ...paired, state: 'outdated' }, finding: note(outdated.title, outdated.detail, outdated.fix) };
-    }
-    case 'unreachable':
-      return {
-        report: { ...paired, state: 'unreachable' },
-        finding: note(
-          `Could not reach remote machine ${entry}`,
-          outcome.reason,
-          `Check that stim-server runs on ${entry}. To keep it running there, run \`stim-server service install --serve\` on ${entry}.`,
-        ),
+      const diagnosis: RemoteDiagnosis = {
+        layer: 'compat',
+        code: 'server-outdated',
+        title: 'Server is outdated',
+        message: outdated.detail,
+        remedy: outdated.fix,
       };
+      return {
+        report: { ...paired, state: 'outdated', diagnosis },
+        finding: note(outdated.title, outdated.detail, outdated.fix),
+      };
+    }
+    case 'unreachable': {
+      const diagnosis = await diagnoseOutcome(io, {
+        entry,
+        peer,
+        port: parsed.port,
+        target: endpoint(peer, parsed.port),
+        reason: outcome.reason,
+        transport: outcome.transport,
+      });
+      return {
+        report: { ...paired, state: 'unreachable', diagnosis },
+        finding: diagnosisFinding('build-machine', entry, diagnosis),
+      };
+    }
   }
   const permissions = readHostPermissions(outcome.result.host);
   const host = permissions ? { host: permissions } : {};
@@ -380,11 +400,16 @@ export async function inspectBuildMachines(
   if (entries.length === 0) return { findings: [], machines: [] };
   const status = await io.status();
   if (!isJsonObject(status)) {
+    const diagnosis = await diagnoseTailscale(io);
     return {
       findings: [
-        note('Remote machines are unreachable', 'remote.machines names remote machines, but Tailscale is not running.'),
+        note(
+          'Remote machines are unreachable',
+          `remote.machines names remote machines. ${diagnosis.message}`,
+          diagnosis.remedy,
+        ),
       ],
-      machines: entries.map((machine) => ({ machine, state: 'tailscale-off' })),
+      machines: entries.map((machine) => ({ machine, state: 'tailscale-off', diagnosis })),
     };
   }
   const self = isJsonObject(status.Self) ? status.Self : {};
