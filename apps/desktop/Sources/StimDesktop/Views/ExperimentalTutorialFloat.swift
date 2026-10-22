@@ -57,7 +57,7 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
       if hosting == nil {
         let hosting = NSHostingView(rootView: AnyView(EmptyView()))
         let panel = NSPanel(
-          contentRect: NSRect(x: 0, y: 0, width: WorkspaceDetail.inspectorWidth, height: 640),
+          contentRect: NSRect(x: 0, y: 0, width: WorkspaceDetail.inspectorWidth, height: 800),
           styleMask: [.titled, .resizable, .utilityWindow, .nonactivatingPanel, .fullSizeContentView],
           backing: .buffered, defer: false)
         panel.title = "Stim Tutorial"
@@ -73,15 +73,16 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
           panel.standardWindowButton(button)?.isHidden = true
         }
-        if let owner = ownerWindow, let screen = owner.screen?.visibleFrame {
+        if let screen = (ownerWindow?.screen ?? NSScreen.main)?.visibleFrame {
           let width = panel.frame.width
-          let height = panel.frame.height
-          let right = owner.frame.maxX + 12
-          let left = owner.frame.minX - width - 12
+          let height = min(800, screen.height)
+          let ownerFrame = ownerWindow?.frame ?? screen
+          let right = ownerFrame.maxX + 12
+          let left = ownerFrame.minX - width - 12
           let preferredX = right + width <= screen.maxX ? right : left
           let x = max(screen.minX, min(preferredX, screen.maxX - width))
-          let y = max(screen.minY, min(owner.frame.maxY - height, screen.maxY - height))
-          panel.setFrameOrigin(NSPoint(x: x, y: y))
+          let y = max(screen.minY, min(ownerFrame.maxY - height, screen.maxY - height))
+          panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: false)
         }
         self.panel = panel
         self.hosting = hosting
