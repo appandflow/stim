@@ -387,7 +387,7 @@ export interface OffloadProblem {
 interface SdkGap {
   code: 'ndk' | 'build-tools' | 'compile-sdk';
   label: string;
-  /** Its `sdkmanager` package id. */
+  /** The `sdkmanager` package id. */
   id: string;
   /** What Gradle's download costs on the first build, for the packages worth a warning. */
   size?: string;

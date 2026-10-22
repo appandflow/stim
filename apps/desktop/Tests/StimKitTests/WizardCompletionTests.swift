@@ -84,6 +84,7 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertTrue(wizardFixIsCommand("~/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager \"ndk;27.1.12297006\""))
     XCTAssertTrue(wizardFixIsCommand("'/Users/First Last/Android/sdk/cmdline-tools/latest/bin/sdkmanager' --licenses"))
     XCTAssertTrue(wizardFixIsCommand("\"C:\\Users\\First Last\\sdk\\cmdline-tools\\latest\\bin\\sdkmanager.bat\" --licenses"))
+    XCTAssertTrue(wizardFixIsCommand("'/Users/First Last/O'\\''Neil/sdk/cmdline-tools/latest/bin/sdkmanager' --licenses"))
     XCTAssertFalse(wizardFixIsCommand("On mini, install the package into its Android SDK:"))
     XCTAssertFalse(wizardFixIsCommand("/usr/bin/rm -rf x"))
   }

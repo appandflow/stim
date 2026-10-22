@@ -211,7 +211,8 @@ public func wizardFixIsCommand(_ fix: String) -> Bool {
   ]
   let program: Substring
   if let quote = fix.first, quote == "\"" || quote == "'" {
-    program = fix.dropFirst().prefix { $0 != quote }
+    let rest = fix.dropFirst()
+    program = rest.range(of: "\(quote) ").map { rest[..<$0.lowerBound] } ?? rest
   } else {
     program = fix.prefix { $0 != " " }
   }
