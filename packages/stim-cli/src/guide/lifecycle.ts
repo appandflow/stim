@@ -1801,8 +1801,10 @@ THE BUILD CACHE HAS THREE LEVELS
   require or import, process.env used other than by literal name, file,
   process or network access while it is evaluated, a dotenv import, a
   fileHookTransform, or a preset that hashes package files. A local config
-  plugin counts as evaluated, except for file access in a plugin that applies
-  mods. So does a project outside git or on Yarn Plug'n'Play. The record is
+  plugin counts as evaluated too, with one exception: the digest does not
+  track the files a plugin that applies mods reads, assuming it reads them in
+  its mods at prebuild. A plugin that also puts what it reads into the config
+  is a gap only the background check catches. So does a project outside git or on Yarn Plug'n'Play. The record is
   never consulted after prebuild or pod install, by a build worker, by doctor,
   or with --no-build-cache; ios --plan and android --plan read one without
   writing. Records are 0600, at most 256 per platform, and gc prunes them by

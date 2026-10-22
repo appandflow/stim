@@ -387,6 +387,14 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
       "const fs = require('fs');\nmodule.exports = (config) => ({ ...config, extra: { key: fs.readFileSync('key.txt', 'utf8') } });\n",
     ],
     [
+      'a named local plugin function that reads a file and applies no mods',
+      "const fs = require('fs');\nfunction withKey(config) {\n  return { ...config, extra: { key: fs.readFileSync('key.txt', 'utf8') } };\n}\nmodule.exports = withKey;\n",
+    ],
+    [
+      'a local plugin that builds an environment variable name',
+      "module.exports = (config) => ({ ...config, extra: { a: process.env['EXPO_PUBLIC_' + 'A'] } });\n",
+    ],
+    [
       'a local plugin that runs a process',
       "const { execSync } = require('child_process');\nmodule.exports = (config) => ({ ...config, extra: { sha: String(execSync('git rev-parse HEAD')) } });\n",
     ],
@@ -401,6 +409,16 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
     expect((await lookup(app)).hit).toBe(false);
     expect((await lookup(app)).hit).toBe(false);
     expect(full).toBe(2);
+  });
+
+  test('a local plugin that reads files only for its mods keeps the memo', async () => {
+    app = fixture('npm');
+    write(
+      join(app, 'plugins/native.js'),
+      "const { readFileSync } = require('fs');\nconst { withDangerousMod } = require('expo/config-plugins');\nfunction withNative(config) {\n  return withDangerousMod(config, ['ios', (mod) => { readFileSync('Podfile'); return mod; }]);\n}\nmodule.exports = withNative;\n",
+    );
+    await lookup(app);
+    expect((await lookup(app)).hit).toBe(true);
   });
 
   test('a config the static check cannot follow always takes the full fingerprint', async () => {

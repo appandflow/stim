@@ -174,7 +174,10 @@ current tree.
 
 A config that the digest cannot follow always gets a full fingerprint. That
 includes dynamic imports, `process.env` used other than by literal name, file,
-process or network access while the config is evaluated, and `dotenv`. The
+process or network access while the config is evaluated, and `dotenv`. Local
+config plugins count as evaluated, except that the files a plugin reads are not
+tracked when it applies mods; Stim assumes it reads them at prebuild, and the
+background check catches one that puts them in the config. The
 record is never used after `expo prebuild` or `pod install`, on a build machine,
 in `stim doctor`, or with `--no-build-cache`.
 

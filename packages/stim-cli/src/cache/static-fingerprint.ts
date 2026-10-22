@@ -243,7 +243,38 @@ function addNamedPath(file: string, spec: string, scan: ConfigScan, root: string
 }
 
 /** Every `process.env` that is not followed by a literal name: the config passes the environment on as a value. */
-const ENV_VALUE = /process\.env\b(?!\s*(?:\??\.\s*[A-Za-z_$]|\[\s*['"]))/;
+const ENV_VALUE = /process\.env\b(?!\s*(?:\??\.\s*[A-Za-z_$]|\[\s*(['"])[^'"]+\1\s*\]))/;
+
+/** Whether a plugin applies mods: it calls a `with...` helper it takes from the config-plugins package. */
+function appliesMods(source: string): boolean {
+  const pkg = String.raw`['"](?:@expo\/config-plugins|expo\/config-plugins)['"]`;
+  const named = [
+    ...source.matchAll(new RegExp(String.raw`\{([^}]*)\}\s*=\s*require\s*\(\s*${pkg}\s*\)`, 'g')),
+    ...source.matchAll(new RegExp(String.raw`import\s*\{([^}]*)\}\s*from\s*${pkg}`, 'g')),
+  ].flatMap((match) =>
+    String(match[1])
+      .split(',')
+      .map(
+        (part) =>
+          part
+            .split(/\s+as\s+|:/)
+            .at(-1)
+            ?.trim() ?? '',
+      )
+      .filter((name) => /^with[A-Z]\w*$/.test(name)),
+  );
+  const spaces = [
+    ...source.matchAll(new RegExp(String.raw`(?:const|let|var)\s+(\w+)\s*=\s*require\s*\(\s*${pkg}\s*\)`, 'g')),
+    ...source.matchAll(new RegExp(String.raw`import\s+(?:\*\s+as\s+)?(\w+)\s+from\s*${pkg}`, 'g')),
+  ].map((match) => String(match[1]));
+  return (
+    named.some((name) =>
+      new RegExp(String.raw`(?<![\w.])${name}\s*\(`).test(
+        source.replace(new RegExp(String.raw`function\s+${name}\b`, 'g'), ''),
+      ),
+    ) || spaces.some((name) => new RegExp(String.raw`\b${name}\.with[A-Z]\w*\s*\(`).test(source))
+  );
+}
 
 /**
  * What a config module evaluates, found by reading its source: the local modules, assets and directories it names,
@@ -264,12 +295,14 @@ function scanConfigSource(file: string, scan: ConfigScan, mode: ScanMode, root: 
   const uncertain = (reason: string): never => {
     throw new Uncertain(`${reason} in ${where}`);
   };
-  const usesMods = /\bwith[A-Z]\w*\s*\(/.test(source);
-  const fileAccess = mode === 'evaluated' || !usesMods;
+  const fileAccess = mode === 'evaluated' || !appliesMods(source);
   if (/\brequire\s*\(\s*[^'"\s)]/.test(source) || /\bimport\s*\(\s*[^'"\s)]/.test(source))
     uncertain('a dynamic require or import');
   if (ENV_VALUE.test(source)) uncertain('process.env read without a literal name');
-  if (/\b(execSync|execFileSync|spawnSync|exec|execFile|spawn|fetch)\s*\(/.test(source))
+  if (
+    /\b(execSync|execFileSync|spawnSync|fetch)\s*\(/.test(source) ||
+    /(?<!\.)\b(exec|execFile|spawn)\s*\(/.test(source)
+  )
     uncertain('process or network access');
   if (
     fileAccess &&
