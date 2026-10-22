@@ -1782,7 +1782,9 @@ test.skipIf(process.platform === 'win32')(
       expect(git('git worktree list --porcelain')).not.toContain(wt);
       expect(git('git status --porcelain')).toBe('');
       expect(readFileSync(join(outside, 'keep.txt'), 'utf-8')).toBe('outside the worktree');
-      expect(errs.join('\n')).toMatch(/deleting 2 ignored directories in the background/);
+      expect(errs.join('\n')).toMatch(
+        /(deleting 2 ignored directories in the background|deleted 2 ignored directories)/,
+      );
       const deadline = Date.now() + 20_000;
       while (readdirSync(join(tmpHome, 'trash')).length && Date.now() < deadline)
         await new Promise((r) => setTimeout(r, 100));

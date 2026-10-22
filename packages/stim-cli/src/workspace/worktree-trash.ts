@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, rename, rm, rmdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
@@ -176,7 +177,7 @@ export async function deleteTrashEntry(dir: string, operation?: StimContext): Pr
   await removeTemporaryEntryAsync(dir, operation?.signal);
 }
 
-function deleteInBackground(trash: WorktreeTrash): boolean {
+function deleteInBackground(trash: WorktreeTrash): 'background' | 'deleted' | 'left' {
   try {
     markClaimChildPending(trash.claim);
     const child = getExecutor().spawn(
@@ -187,15 +188,20 @@ function deleteInBackground(trash: WorktreeTrash): boolean {
     child.on?.('error', () => {});
     child.unref?.();
     const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+    if (captured?.ok === false && captured.reason.startsWith('NOT_FOUND')) {
+      clearClaimChild(trash.claim);
+      releaseClaim(trash.claim);
+      return existsSync(trash.dir) ? 'left' : 'deleted';
+    }
     if (!captured?.ok || child.pid === undefined) throw new Error('the trash deletion process was not recorded');
     setClaimChild(trash.claim, { pid: child.pid, processToken: captured.token });
-    return true;
+    return 'background';
   } catch {
     try {
       clearClaimChild(trash.claim);
     } catch {}
     releaseClaim(trash.claim);
-    return false;
+    return 'left';
   }
 }
 
@@ -209,7 +215,7 @@ export async function disposeTrash(
   trash: WorktreeTrash,
   operation?: StimContext,
 ): Promise<'background' | 'deleted' | 'left'> {
-  if (!getExecutor().reportSignal?.()) return deleteInBackground(trash) ? 'background' : 'left';
+  if (!getExecutor().reportSignal?.()) return deleteInBackground(trash);
   try {
     await deleteTrashEntry(trash.dir, operation);
     return 'deleted';
