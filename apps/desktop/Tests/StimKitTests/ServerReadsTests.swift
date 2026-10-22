@@ -61,6 +61,25 @@ import Testing
       ])
   }
 
+  @Test func aFailedSharedReadReachesEveryCallerAndTheNextReadIsSentAgain() async throws {
+    let server = BusyServer(refusals: [:], holdReports: true)
+    let client = await open(server)
+    defer { client.stop() }
+    let target: [String: JSONValue] = ["report": .string("gc")]
+    async let first = Result.awaiting { try await client.report(target) }
+    async let second = Result.awaiting { try await client.report(target) }
+    for _ in 0..<400 where server.heldReports.isEmpty { try? await Task.sleep(for: .milliseconds(5)) }
+    server.failReports()
+    for result in await [first, second] {
+      #expect(throws: ServerError.self) { try result.get() }
+    }
+    async let third = client.report(target)
+    for _ in 0..<400 where server.heldReports.isEmpty { try? await Task.sleep(for: .milliseconds(5)) }
+    server.releaseReports()
+    _ = try await third
+    #expect(server.sent.filter { $0.method == "desktop.reports.get" }.count == 2)
+  }
+
   @Test func anOlderServerGetsTheWholeInvalidation() async throws {
     let server = BusyServer(refusals: [:], features: ["desktop-reports"])
     let client = await open(server)
@@ -133,6 +152,13 @@ import Testing
     default:
       reply(id, .object([:]))
     }
+  }
+
+  func failReports() {
+    for id in heldReports {
+      answer(["id": id, "error": .object(["code": .string("stim-failed"), "message": .string("stim gc failed.")])])
+    }
+    heldReports = []
   }
 
   func releaseReports() {

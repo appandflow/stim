@@ -22,14 +22,15 @@ server refuses with `limit-exceeded` retry after 0.25, 0.5, 1, 2 and 4 seconds, 
 that the local stim-server is busy. The shared
 GC report store keeps its existing demand-driven refreshes, coalesces callers, and retains its last
 good report and measurement age when a read fails. An older server shows an update error. Reads
-never retry through the CLI. Cancelling stops waiting without disconnecting the shared session;
+never retry through the CLI. Cancelling does not disconnect the shared session, and a cancelled
+caller of a shared report read stops once that read answers;
 the server report can continue within its execution and cleanup limits (up to 150 seconds at the
 request boundary). The same 16 MiB response limit applies.
 
 Sidebar setup findings also use the matching local server's doctor report. Desktop checks setup-file
 changes and the server's Stim version at its existing 60-second cadence; a successful report stays
 current for seven days unless those inputs change or a Desktop action invalidates it. Reads invalidate
-the server report before measuring, including one already in flight for that project, retain the last good findings on failure, and retry a failed report
+the server report before measuring and send a new read even while one for that project is in flight, retain the last good findings on failure, and retry a failed report
 at the next check. They do not subscribe to periodic report refreshes or retry through the CLI.
 
 The setup guide's explicit project check runs through `desktop.doctor.run` on the
