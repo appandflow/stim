@@ -574,13 +574,27 @@ leased until <time>" for each one.`,
                   pins Node (bin, version and match are null when no install
                   fits the pin; match is "exact", or "major" for the newest
                   install of the pinned major not older than the pin), else null
-  remoteMachines  one { machine, state, dnsName?, deviceId?, requestedAt?,
+  remoteMachines  one { machine, state, diagnosis?, dnsName?, deviceId?, requestedAt?,
                   expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
                   remote.machines entry, for its build approval; state is "approved", "pending", "not-asked",
                   "revoked" (revoked or denied), "lapsed" (the request lapsed
                   before approval), "key-changed", "outdated",
                   "not-on-tailnet", "tailscale-off", "unreachable" or
-                  "invalid". host has the same shape and presence rule as in
+                  "invalid". diagnosis is { layer, code, title, message, remedy }
+                  for the first layer that stopped this machine, present for
+                  "tailscale-off", "not-on-tailnet", "outdated" and "unreachable"
+                  (deviceHosts carries it too); the codes are
+                  tailscale-stopped, tailscale-logged-out, tailscale-unavailable
+                  (this machine's Tailscale), peer-not-found, peer-ambiguous,
+                  peer-offline (with last seen), peer-no-answer (the connection
+                  got no reply and tailscale ping fails), route-missing (nothing accepts
+                  connections on the serve port), route-tls, route-http-error
+                  (any HTTP status but 502 and 503), server-not-running (502:
+                  nothing behind the route), server-not-ready (503: running but
+                  not serving; its message gives the cause the server reports),
+                  server-no-answer (silent route while tailscale ping reaches the Mac), server-outdated and connect-failed (none of the above).
+                  Tailscale's own "offline" flag lags a reachable peer, so an
+                  answer from the machine outranks it. host has the same shape and presence rule as in
                   deviceHosts, as do expiresAt (a pending request's lapse
                   time) and "lapsed" (--fix asks again). An approved machine also carries offloadable,
                   true when it would take this app's builds now (iOS

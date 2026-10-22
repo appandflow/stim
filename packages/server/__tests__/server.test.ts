@@ -752,10 +752,20 @@ syncBuiltinESMExports();
         expect(settled).toEqual({
           state: 'degraded',
           reason: expect.stringContaining('did not finish within 0.4 s'),
+          cause: 'home-unreadable',
         });
         const degraded = await fetch(`http://127.0.0.1:${port}/health`);
         expect(degraded.status).toBe(503);
         expect(await degraded.json()).toMatchObject({ startup: settled });
+
+        const forwarded = await fetch(`http://127.0.0.1:${port}/health`, {
+          headers: { 'x-forwarded-for': '100.64.0.2' },
+        });
+        expect(forwarded.status).toBe(503);
+        expect(await forwarded.json()).toEqual({
+          version: expect.any(String),
+          startup: { state: 'degraded', cause: 'home-unreadable' },
+        });
 
         await expect(
           new Promise((resolve, reject) => {

@@ -63,7 +63,13 @@ import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
 import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
-import { probeDirectories, STARTUP_PROBE_MS, STARTUP_RETRY_MS, type StartupState } from './startup.ts';
+import {
+  probeDirectories,
+  STARTUP_PROBE_MS,
+  STARTUP_RETRY_MS,
+  type StartupCause,
+  type StartupState,
+} from './startup.ts';
 import {
   claimRemoveCommand,
   exclusiveClaimDir,
@@ -4551,7 +4557,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         request.headers.origin === undefined &&
         request.headers['sec-fetch-site'] === undefined
       ) {
-        const peerHealth = { version: health.version };
+        const peerHealth = {
+          version: health.version,
+          ...(startup.state === 'ready'
+            ? {}
+            : {
+                startup:
+                  startup.state === 'degraded' ? { state: 'degraded', cause: startup.cause } : { state: 'pending' },
+              }),
+        };
         response
           .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
           .end(JSON.stringify(peerHealth));
@@ -4721,6 +4735,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     startupProbe = probeDirectories(directories, options.env, options.startupProbeMs ?? STARTUP_PROBE_MS, configDir());
     let reason = await startupProbe.result;
+    let cause: StartupCause = 'home-unreadable';
     startupProbe = null;
     if (closing) return settle(startup);
     if (reason === null) {
@@ -4730,6 +4745,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         becomeReady();
       } catch (error) {
         reason = (error as Error).message;
+        cause = 'start-failed';
       }
     }
     if (reason === null) {
@@ -4755,7 +4771,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (startup.state !== 'degraded' || startup.reason !== reason) {
       console.error(`stim-server: listening, but not serving clients until the Stim home answers. ${reason}`);
     }
-    startup = { state: 'degraded', reason };
+    startup = { state: 'degraded', reason, cause };
     settle(startup);
     startupRetry = setTimeout(() => void checkHome(), options.startupRetryMs ?? STARTUP_RETRY_MS);
   };

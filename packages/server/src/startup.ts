@@ -1,7 +1,13 @@
 import { homedir } from 'node:os';
 import { runNodeCommand } from './stim-command.ts';
 
-export type StartupState = { state: 'pending' } | { state: 'ready' } | { state: 'degraded'; reason: string };
+/** Why a degraded server does not serve: the Stim home did not answer, or starting failed after it did. Peers read it from `/health`. */
+export type StartupCause = 'home-unreadable' | 'start-failed';
+
+export type StartupState =
+  | { state: 'pending' }
+  | { state: 'ready' }
+  | { state: 'degraded'; reason: string; cause?: StartupCause };
 
 export const STARTUP_PROBE_MS = 10_000;
 export const STARTUP_RETRY_MS = 30_000;
