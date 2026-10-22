@@ -803,8 +803,8 @@ struct RootView: View {
     }
     notices.show(
       Notice(
-        icon: "arrow.down.circle", title: "stim \(latest.description) available",
-        detail: "You have \(installed.description)", actionTitle: "Update",
+        icon: "arrow.down.circle", title: "Stim \(latest.description)",
+        detail: "Installed: \(installed.description)", actionTitle: "Update",
         perform: onboarding.installStim,
         onDismiss: { dismissedStimUpdate = latest.description }, key: "stim-update"))
   }
