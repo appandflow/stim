@@ -413,7 +413,7 @@ function reactNativeAndroidArtifact(
       target: async () => ({
         platform: 'android',
         local: await androidToolchainAsync(operation?.env),
-        requires: androidRequirements(root),
+        requires: androidRequirements(root, layout.gradleRoot),
       }),
       request: {
         platform: 'android',

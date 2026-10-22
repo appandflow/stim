@@ -327,7 +327,10 @@ must match (see [Stim versions](#stim-versions)), and so must the CPU architectu
 project's `Gemfile.lock`, in `ios/` or the project root, pins it; then both
 machines use Bundler and the pinned version. For macOS, Xcode and the macOS SDK must match, except when `stim macos --remote <machine> --remote-build <machine>` builds and runs the app on the same Mac; then only the Stim build compatibility version must match (see [Run it on another Mac](./macos.md#run-it-on-another-mac)). For Android, JDK major
 versions must match, and the worker needs the project's NDK, build-tools and
-compile SDK. An Android worker can have another CPU architecture, and it can
+compile SDK, or the Android SDK licenses accepted so Gradle downloads what is
+missing on the first build there (the NDK is about 1-2 GB). The project can
+turn that download off with `android.builder.sdkDownload=false` in
+the `gradle.properties` of the Android project. An Android worker can have another CPU architecture, and it can
 be an x86_64 Linux or Windows machine; see [Linux worker](#linux-worker) and
 [Windows worker](#windows-worker). See [machine settings](./settings.md#machine-settings) for the
 full toolchain and placement rules.
@@ -456,7 +459,11 @@ so there is no Check again button:
    there, since no build could offload. The other problems are warnings that name what
    they cost:
    - A different Xcode or runtime version.
-   - Missing Android tools: Android builds stay on this machine.
+   - Missing Android tools (NDK, build-tools or compile SDK): a note when the
+     worker's SDK licenses are accepted, since Gradle downloads the package on
+     the first build there. Otherwise Android builds stay on this machine, and
+     the row shows the `sdkmanager` commands to run on the worker, each with a
+     **Copy** button; `sdkmanager --licenses` accepts the licenses.
    - A different project-selected CocoaPods. Projects whose `Gemfile.lock` pins
      CocoaPods run that version through Bundler on both machines. Other projects
      build on this machine until the selected versions match. Pin it with

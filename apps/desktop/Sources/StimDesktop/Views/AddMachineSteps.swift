@@ -238,7 +238,7 @@ struct AddMachineSteps: View {
   }
   private func icon(_ tool: WizardTool) -> String {
     switch tool.state {
-    case .ok: return "checkmark.circle.fill"
+    case .ok: return tool.warns ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
     case .missing, .mismatch: return tool.blocks ? "xmark.circle.fill" : "exclamationmark.triangle.fill"
     case .checking: return "clock"
     case .busy, .notNeeded: return "minus.circle"
@@ -246,7 +246,7 @@ struct AddMachineSteps: View {
   }
   private func color(_ tool: WizardTool) -> Color {
     switch tool.state {
-    case .ok: return Palette.success
+    case .ok: return tool.warns ? Palette.warning : Palette.success
     case .missing, .mismatch: return tool.blocks ? Palette.error : Palette.warning
     default: return Palette.secondary
     }

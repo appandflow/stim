@@ -19,6 +19,7 @@ import {
   BuildConnection,
   chooseBuildMachine,
   offloadBuild,
+  machineNotes,
   machineProblems,
   offerProblems,
   offloadPlacement,
@@ -29,7 +30,10 @@ import {
   toolchainMismatches,
   iphoneRuntimes,
   jdkMajor,
+  androidRequirements,
   parseAndroidRequirements,
+  sdkDownloadDisabled,
+  toolchainNotes,
   type BuildTarget,
   type IosToolchain,
   type WorkerToolchain,
@@ -368,6 +372,117 @@ describe('pickOffer for Android', () => {
     ] as const) {
       expect(pickAndroid(refused)).toBeNull();
       expect(offerProblems(refused, ANDROID).map((problem) => problem.code)).toEqual([code]);
+    }
+  });
+
+  describe('a package the worker lacks', () => {
+    const missingNdk = { androidSdk: { ...SDK, ndk: ['27.0.12077973'] } };
+
+    it('is a note, and the build goes there, when its SDK licenses are accepted', () => {
+      const accepted = offer({ toolchain: { ...missingNdk, androidLicenses: true } });
+      expect(pickAndroid(accepted)).toBe(0);
+      expect(offerProblems(accepted, ANDROID)).toEqual([]);
+      expect(toolchainNotes(ANDROID, accepted.toolchain)).toEqual([
+        {
+          code: 'ndk',
+          reason: 'NDK 27.1.12297006 is not installed there; Gradle downloads it on the first build (about 1-2 GB)',
+        },
+      ]);
+      const everything = offer({
+        toolchain: { androidSdk: { ndk: [], buildTools: [], platforms: [] }, androidLicenses: true },
+      });
+      expect(toolchainNotes(ANDROID, everything.toolchain).map((note) => note.code)).toEqual([
+        'ndk',
+        'build-tools',
+        'compile-sdk',
+      ]);
+      expect(offerProblems(everything, ANDROID)).toEqual([]);
+    });
+
+    it('reports a note only for a machine that would take the build', () => {
+      const accepted = offer({ toolchain: { ...missingNdk, androidLicenses: true } });
+      expect(machineNotes(accepted, [ANDROID])).toHaveLength(1);
+      expect(
+        machineNotes(offer({ toolchain: { ...missingNdk, androidLicenses: true, jdk: '21' } }), [ANDROID]),
+      ).toEqual([]);
+    });
+
+    it('quotes an SDK path the shell would split', () => {
+      const spaced = offer({
+        toolchain: { ...missingNdk, androidLicenses: false, androidHome: "/Users/First Last/O'Neil/sdk" },
+      });
+      expect(offerProblems(spaced, ANDROID)[0]?.commands).toEqual([
+        "'/Users/First Last/O'\\''Neil/sdk/cmdline-tools/latest/bin/sdkmanager' --licenses",
+        "'/Users/First Last/O'\\''Neil/sdk/cmdline-tools/latest/bin/sdkmanager' \"ndk;27.1.12297006\"",
+      ]);
+    });
+
+    it('stays a blocker with the license command when the licenses are not accepted', () => {
+      const refused = offer({
+        toolchain: { ...missingNdk, androidLicenses: false, androidHome: '/Users/x/Library/Android/sdk' },
+      });
+      expect(pickAndroid(refused)).toBeNull();
+      expect(offerProblems(refused, ANDROID)).toEqual([
+        {
+          code: 'ndk',
+          reason: 'no NDK 27.1.12297006 there, and its SDK licenses are not accepted',
+          commands: [
+            '/Users/x/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses',
+            '/Users/x/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager "ndk;27.1.12297006"',
+          ],
+        },
+      ]);
+      expect(toolchainNotes(ANDROID, refused.toolchain)).toEqual([]);
+    });
+
+    it('stays a blocker when the project turns the SDK download off', () => {
+      const off = { ...ANDROID, requires: { ...ANDROID.requires, sdkDownload: false } };
+      const accepted = offer({ toolchain: { ...missingNdk, androidLicenses: true } });
+      expect(offerProblems(accepted, off)).toEqual([
+        {
+          code: 'ndk',
+          reason: 'no NDK 27.1.12297006 there, and the project sets android.builder.sdkDownload=false',
+          commands: ['sdkmanager "ndk;27.1.12297006"'],
+        },
+      ]);
+      expect(toolchainNotes(off, accepted.toolchain)).toEqual([]);
+    });
+
+    it('keeps the strict rule for a stim-server that does not report its licenses', () => {
+      const old = offer({ toolchain: missingNdk });
+      expect(offerProblems(old, ANDROID)).toEqual([
+        { code: 'ndk', reason: 'no NDK 27.1.12297006 there', commands: ['sdkmanager "ndk;27.1.12297006"'] },
+      ]);
+      expect(toolchainNotes(ANDROID, old.toolchain)).toEqual([]);
+    });
+
+    it('names the downloads in the placement of the machine that takes the build', () => {
+      const { candidates } = pickOffer({
+        mode: 'force',
+        here: IDLE,
+        target: ANDROID,
+        offers: [{ machine: 'mac0', offer: offer({ toolchain: { ...missingNdk, androidLicenses: true } }) }],
+      });
+      expect(candidates).toEqual([
+        expect.objectContaining({ code: 'accepted', msg: expect.stringContaining('Gradle downloads it') }),
+      ]);
+    });
+  });
+
+  it('reads android.builder.sdkDownload=false from the project gradle.properties', () => {
+    expect(sdkDownloadDisabled('org.gradle.jvmargs=-Xmx2g\nandroid.builder.sdkDownload=false\n')).toBe(true);
+    expect(sdkDownloadDisabled('android.builder.sdkDownload = FALSE')).toBe(true);
+    expect(sdkDownloadDisabled('android.builder.sdkDownload=true')).toBe(false);
+    expect(sdkDownloadDisabled('# android.builder.sdkDownload=false')).toBe(false);
+    const project = mkdtempSync(join(tmpdir(), 'stim-sdk-download-'));
+    try {
+      expect(androidRequirements(project).sdkDownload).toBeUndefined();
+      mkdirSync(join(project, 'android'));
+      writeFileSync(join(project, 'android', 'gradle.properties'), 'android.builder.sdkDownload=false\n');
+      expect(androidRequirements(project).sdkDownload).toBe(false);
+      expect(androidRequirements(project, join(project, 'elsewhere')).sdkDownload).toBeUndefined();
+    } finally {
+      rmSync(project, { recursive: true, force: true });
     }
   });
 

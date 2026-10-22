@@ -496,7 +496,9 @@ in that order:
 - For Android, its CPU architecture may differ, so an x86_64 Linux or Windows machine
   running stim-server can build for an Apple silicon Mac. Its JDK major version must match (the vendor may differ), and
   its Android SDK must hold the NDK, build-tools and compile platform that the
-  project's React Native version names in `gradle/libs.versions.toml`. Gradle
+  project's React Native version names in `gradle/libs.versions.toml`, or have
+  its licenses accepted so Gradle downloads what is missing on the first build
+  (unless the project sets `android.builder.sdkDownload=false`). Gradle
   and the Android Gradle plugin come from the synced project. It builds with
   this machine's variant, target ABI, Gradle build cache, PCH and compiler cache
   choices, so the APK matches the ABI-narrowed cache key.

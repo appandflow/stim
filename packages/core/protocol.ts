@@ -1075,6 +1075,10 @@ export interface BuildToolchain {
   jdk: string | null;
   /** The NDK, build-tools and platform directories of its Android SDK; null without an SDK. */
   androidSdk: { ndk: string[]; buildTools: string[]; platforms: string[] } | null;
+  /** Whether that SDK has its licenses accepted, so Gradle downloads a missing package; absent from a stim-server older than this field. */
+  androidLicenses?: boolean;
+  /** The SDK directory `androidSdk` was read from; absent from a stim-server older than this field. */
+  androidHome?: string;
 }
 
 /**

@@ -573,7 +573,7 @@ function toolChecks(
     ],
     [
       'Android SDK',
-      !!tools.androidSdk?.platforms.length && !!tools.androidSdk.buildTools.length && !!tools.androidSdk.ndk.length,
+      !!tools.androidSdk,
       tools.androidSdk ? JSON.stringify(tools.androidSdk) : 'Missing Android SDK',
       platform === 'linux'
         ? 'Install the Android SDK in ~/Android/Sdk, or rerun setup with --env ANDROID_HOME=<sdk>'

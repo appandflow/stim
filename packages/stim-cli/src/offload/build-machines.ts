@@ -102,6 +102,8 @@ interface BuildMachineReport {
   reasons?: string[];
   /** The same reasons with the code of each, in the same order. */
   problems?: OffloadProblem[];
+  /** What a build there does beyond the match, such as downloading an SDK package; none of it stops the build. */
+  notes?: OffloadProblem[];
   /** The machine's reported capacity, when it answered an offer. */
   capacity?: Record<string, unknown>;
 }
@@ -109,7 +111,7 @@ interface BuildMachineReport {
 /** Asks one approved machine for an offer the way placement does, and returns every reason it would not build. */
 export type OffloadCheck = (
   credential: BuildMachineCredential,
-) => Promise<{ capacity: Record<string, unknown> | null; problems: OffloadProblem[] }>;
+) => Promise<{ capacity: Record<string, unknown> | null; problems: OffloadProblem[]; notes?: OffloadProblem[] }>;
 
 export interface BuildMachinesInspection {
   findings: Finding[];
@@ -143,7 +145,23 @@ const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   platform: 'cannot build this platform',
 };
 
-function problemFix(code: OffloadProblem['code'], entry: string): string {
+const NOTE_TITLES: Partial<Record<OffloadProblem['code'], string>> = {
+  ndk: "downloads this project's NDK on its first Android build",
+  'build-tools': "downloads this project's Android build-tools on its first Android build",
+  'compile-sdk': "downloads this project's Android compile platform on its first Android build",
+};
+
+function commandFix(problem: OffloadProblem, entry: string): string | null {
+  const [first, ...rest] = problem.commands ?? [];
+  if (!first) return null;
+  const lead = first.endsWith(' --licenses')
+    ? `On ${entry}, accept the SDK licenses so Gradle downloads the package, or install it:`
+    : `On ${entry}, install the package into its Android SDK:`;
+  return [lead, first, ...rest].join('\n');
+}
+
+function problemFix(problem: OffloadProblem, entry: string): string {
+  const { code } = problem;
   switch (code) {
     case 'unreachable':
       return `Check that stim-server runs on ${entry} and that its tailscale serve route answers, then run \`stim doctor\` again. To keep it running there, run \`stim-server service install --serve\` on ${entry}.`;
@@ -169,7 +187,10 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
     case 'ndk':
     case 'build-tools':
     case 'compile-sdk':
-      return `Install the missing package with sdkmanager in the Android SDK stim-server on ${entry} uses (its ANDROID_HOME, else ~/Library/Android/sdk on macOS or ~/Android/Sdk on Linux).`;
+      return (
+        commandFix(problem, entry) ??
+        `Install the missing package with sdkmanager in the Android SDK stim-server on ${entry} uses (its ANDROID_HOME, else ~/Library/Android/sdk on macOS or ~/Android/Sdk on Linux).`
+      );
     case 'disk':
       return `Free space on ${entry}'s worker root (server.workerRoot there).`;
     case 'platform':
@@ -181,14 +202,23 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
 
 const TRANSIENT: ReadonlySet<OffloadProblem['code']> = new Set(['unreachable', 'busy']);
 
-function offloadFindings(entry: string, problems: OffloadProblem[]): Finding[] {
-  return problems.map((problem) => ({
-    code: `build-machine-${problem.code}`,
-    level: TRANSIENT.has(problem.code) ? 'note' : 'cost',
-    title: `Remote machine ${entry} ${PROBLEM_TITLES[problem.code]}`,
-    detail: `Builds fall back to this machine: ${problem.reason}.`,
-    fix: problemFix(problem.code, entry),
-  }));
+function offloadFindings(entry: string, problems: OffloadProblem[], notes: OffloadProblem[]): Finding[] {
+  return [
+    ...problems.map((problem) => ({
+      code: `build-machine-${problem.code}`,
+      level: TRANSIENT.has(problem.code) ? ('note' as const) : ('cost' as const),
+      title: `Remote machine ${entry} ${PROBLEM_TITLES[problem.code]}`,
+      detail: `Builds fall back to this machine: ${problem.reason}.`,
+      fix: problemFix(problem, entry),
+    })),
+    ...notes.map((each) => ({
+      code: `build-machine-${each.code}`,
+      level: 'note' as const,
+      title: `Remote machine ${entry} ${NOTE_TITLES[each.code] ?? 'needs a first-build download'}`,
+      detail: `The build goes there anyway: ${each.reason}.`,
+      fix: null,
+    })),
+  ];
 }
 
 async function inspectMachine(
@@ -340,7 +370,7 @@ async function inspectMachine(
   const permissions = readHostPermissions(outcome.result.host);
   const host = permissions ? { host: permissions } : {};
   if (!check) return { report: { ...paired, state: 'approved', ...host }, finding: null };
-  const { capacity, problems } = await check(outcome.credential);
+  const { capacity, problems, notes = [] } = await check(outcome.credential);
   return {
     report: {
       ...paired,
@@ -349,10 +379,11 @@ async function inspectMachine(
       offloadable: problems.length === 0,
       reasons: problems.map((problem) => problem.reason),
       problems,
+      ...(notes.length ? { notes } : {}),
       ...(capacity ? { capacity } : {}),
     },
     finding: null,
-    extra: offloadFindings(entry, problems),
+    extra: offloadFindings(entry, problems, notes),
   };
 }
 

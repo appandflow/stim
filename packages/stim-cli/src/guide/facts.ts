@@ -610,7 +610,13 @@ leased until <time>" for each one.`,
                   checkout, stim-build, arch, xcode, simulator-sdk, macos-sdk,
                   cocoapods, bundler, runtime, jdk, android-sdk, ndk,
                   build-tools, compile-sdk, disk, busy or platform). problems lists the same
-                  reasons as { code, reason } with that code. capacity
+                  reasons as { code, reason } with that code; an ndk, build-tools or
+                  compile-sdk problem also carries commands, the sdkmanager lines to run
+                  on that machine. notes lists what a build there does without stopping:
+                  { code, reason } for an ndk, build-tools or compile-sdk package its
+                  Android SDK lacks and Gradle downloads on the first build (licenses
+                  accepted there, no android.builder.sdkDownload=false in the app), each
+                  also a build-machine-<code> finding at level note. capacity
                   is the machine's offer: { running, max, diskFreeBytes,
                   minDiskFreeBytes, cpus?, loadPerCore?, builds?, maxBuilds?,
                   maxLoadPerCore?, memoryUsedBytes?, memoryTotalBytes?, declined? }; an older stim-server omits the

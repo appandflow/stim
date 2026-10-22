@@ -338,6 +338,8 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public var offloadable: Bool?
   public var reasons: [String]?
   public var problems: [Problem]?
+  /// What a build there does without stopping, such as downloading an SDK package on its first build.
+  public var notes: [Problem]?
   public var capacity: Capacity?
 
   public var id: String { machine }

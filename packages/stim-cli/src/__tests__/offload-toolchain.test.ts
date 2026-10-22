@@ -243,3 +243,19 @@ test('native Gradle discovery reads JDK and SDK facts without Apple or Ruby prob
     runtimes: [],
   });
 });
+
+test('the Gradle offer reports the SDK directory and whether its licenses are accepted', () => {
+  const sdk = join(root, 'android-sdk');
+  mkdirSync(join(sdk, 'platforms', 'android-35'), { recursive: true });
+  vi.stubEnv('ANDROID_HOME', sdk);
+  setExecutor(makeExecutor({ runFileQuiet: () => null }));
+  expect(workerToolchain(null, 'gradle')).toMatchObject({ androidLicenses: false, androidHome: sdk });
+  mkdirSync(join(sdk, 'licenses'));
+  writeFileSync(join(sdk, 'licenses', 'android-sdk-license'), '\n');
+  expect(workerToolchain(null, 'gradle').androidLicenses).toBe(false);
+  writeFileSync(join(sdk, 'licenses', 'android-sdk-license'), '\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n');
+  expect(workerToolchain(null, 'gradle').androidLicenses).toBe(true);
+  rmSync(join(sdk, 'platforms'), { recursive: true });
+  expect(workerToolchain(null, 'gradle')).toMatchObject({ androidSdk: null });
+  expect(workerToolchain(null, 'gradle')).not.toHaveProperty('androidLicenses');
+});
