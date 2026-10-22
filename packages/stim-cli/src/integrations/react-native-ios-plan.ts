@@ -1,6 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
+import { memoizedFingerprint } from '../cache/fingerprint-memo.ts';
 import { reportSignal } from '../report-runtime.ts';
 import chalk from 'chalk';
 import { buildCacheKey } from '../cache/build-cache.ts';
@@ -140,10 +141,25 @@ export async function planReactNativeIos(
 
   let fingerprint;
   try {
-    fingerprint =
-      operation && reportSignal(operation)
-        ? await readDoctorFingerprint(operation, { root, platform: PLATFORM, iosProjectPath: iosProject.relative })
-        : await d.fingerprintProject(root, { platform: PLATFORM, iosProjectPath: iosProject.relative });
+    fingerprint = (
+      await memoizedFingerprint(
+        root,
+        { platform: PLATFORM, iosProjectPath: iosProject.relative },
+        {
+          consult: cachePolicy.read,
+          operation: operation && reportSignal(operation) ? undefined : operation,
+          record: false,
+          fingerprint: (projectRoot, fingerprintTarget) =>
+            operation && reportSignal(operation)
+              ? readDoctorFingerprint(operation, {
+                  root: projectRoot,
+                  platform: PLATFORM,
+                  iosProjectPath: iosProject.relative,
+                })
+              : d.fingerprintProject(projectRoot, fingerprintTarget),
+        },
+      )
+    ).fingerprint;
   } catch (error) {
     operation?.signal.throwIfAborted();
     note(chalk.dim(`Fingerprinting failed: ${(error as Error)?.message || error}`));

@@ -17,6 +17,7 @@ import {
   type ProviderCallResult,
 } from '@stim-cli/cache';
 import { prepareProviderDownloadDir, providerDownloadPath, type storedAppId } from '../../cache/build-cache.ts';
+import type { FingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
@@ -124,6 +125,8 @@ export interface PreparedAndroidArtifact {
   androidPackage: string | null;
   /** The package read from the APK when its cache entry was stored, for an APK that entry provided. */
   apkPackage: string | null;
+  /** The background check of a memoized fingerprint this artifact was looked up with. */
+  fingerprintCheck: FingerprintCheck | null;
   /** Waits for cache uploads that read temporary copies before removing them; repeated calls are safe. */
   release(): void | Promise<void>;
   waitedForBuild: WaitedForBuild | null;
@@ -955,7 +958,10 @@ export async function acquireAndroidArtifact(
       },
     },
   );
-  if (!acquired.ok) return { ok: false, failure: acquired.failure, ccache: ccacheActivity };
+  if (!acquired.ok) {
+    recipe.fingerprintCheck?.()?.cancel();
+    return { ok: false, failure: acquired.failure, ccache: ccacheActivity };
+  }
 
   return {
     ok: true,
@@ -964,7 +970,9 @@ export async function acquireAndroidArtifact(
       handoff,
       androidPackage,
       apkPackage: record.cacheHit && storeKey ? entryAppId(PLATFORM, storeKey) : null,
+      fingerprintCheck: recipe.fingerprintCheck?.() ?? null,
       release: async () => {
+        recipe.fingerprintCheck?.()?.cancel();
         await settleArtifactUploads(providerUpload, uploadPending);
         acquired.release();
       },

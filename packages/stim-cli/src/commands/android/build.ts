@@ -1,3 +1,4 @@
+import chalk from 'chalk';
 import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import type { PlatformBuildOptions } from '@stim-cli/core/protocol';
 import type { StimContext } from '@stim-cli/core';
@@ -5,6 +6,7 @@ import { constants, promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { providerUploadOutcome, storedAppId } from '../../cache/build-cache.ts';
+import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { phaseLine } from '../../command-output.ts';
 import { hostSystemImageArch } from '../../devices/android.ts';
 import { workspaceShareURL } from '../../devices/stim-desktop.ts';
@@ -230,6 +232,12 @@ export async function buildAndroidOperation(
             context.env,
           );
           if (uploaded) phase('cache', uploaded.line);
+          await settleFingerprintCheck(
+            artifact.fingerprintCheck,
+            'android',
+            (line) => phase('fingerprint', chalk.yellow(line)),
+            (entry) => writer.write(entry),
+          );
           const links = {
             workspace: await workspaceShareURL(
               root,
