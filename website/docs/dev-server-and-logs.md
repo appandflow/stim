@@ -286,7 +286,7 @@ Stim does not resymbolicate an older error after a recorded Metro rebuild.
 Historical unsymbolicated JS coordinates require
 the matching bundle/source maps, not an unrelated rebuilt Metro bundle.
 
-### Optional app-declared readiness
+### Recommended app-declared readiness
 
 No package or monitoring SDK is required. In a debug app, emit this once at
 startup, before initialization that can block the first screen:
@@ -372,7 +372,7 @@ instructions, run `stim guide lifecycle readiness`.
 Copy this prompt into your coding agent:
 
 ```text
-Add optional Stim app-readiness logs to this app. Read `stim guide agent`,
+Add the recommended Stim app-readiness logs to this app. Read `stim guide agent`,
 then follow `stim guide lifecycle readiness` from the installed CLI. If Stim
 is not installed globally, use `npx stim` instead of `stim`.
 

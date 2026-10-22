@@ -387,7 +387,7 @@ FULL TOPIC LIST
   stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit
   stim guide lifecycle            # the ordered flow, consent rules, and capacity
   stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof
-  stim guide lifecycle readiness  # add optional app readiness logs; no package required
+  stim guide lifecycle readiness  # add recommended app readiness logs; no package required
   stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints
   stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits
   stim guide lifecycle budget     # disk and memory budgets, automatic reclaim

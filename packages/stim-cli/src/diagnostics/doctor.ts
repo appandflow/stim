@@ -1283,7 +1283,7 @@ export async function reactNativeDoctorFindings({
   );
 
   return [
-    checkAppProject(projectRoot),
+    checkAppProject(projectRoot) ?? checkReadinessMarkers(projectRoot),
     checkIosHost(platform, host),
     checkXcodeEnvLineEndings(projectRoot, platform, host),
     ...checkStorageLayout(projectRoot, {
@@ -1405,6 +1405,62 @@ function checkAppProject(projectRoot: string): Finding | null {
   );
   if (problem.kind === 'not-an-app') result.code = 'not-an-app';
   return result;
+}
+
+const READINESS_MARKER = '[stim:readiness]';
+const READINESS_SCAN_LIMIT = 5000;
+const READINESS_SKIPPED_DIRS = new Set([
+  'node_modules',
+  'ios',
+  'android',
+  'macos',
+  'windows',
+  'Pods',
+  'build',
+  'dist',
+  'web-build',
+  'coverage',
+]);
+const JS_SOURCE = /\.[cm]?[jt]sx?$/;
+
+function hasReadinessMarker(projectRoot: string): boolean | null {
+  const dirs = [projectRoot];
+  let scanned = 0;
+  for (let dir = dirs.pop(); dir !== undefined; dir = dirs.pop()) {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!READINESS_SKIPPED_DIRS.has(entry.name)) dirs.push(path);
+        continue;
+      }
+      if (!entry.isFile() || !JS_SOURCE.test(entry.name)) continue;
+      if (++scanned > READINESS_SCAN_LIMIT) return null;
+      try {
+        if (readFileSync(path, 'utf-8').includes(READINESS_MARKER)) return true;
+      } catch {}
+    }
+  }
+  return false;
+}
+
+function checkReadinessMarkers(projectRoot: string): Finding | null {
+  if (hasReadinessMarker(projectRoot) !== false) return null;
+  return {
+    code: 'readiness-markers-missing',
+    ...finding(
+      'note',
+      'The app does not report readiness to Stim',
+      `No \`${READINESS_MARKER}\` marker appears in this app's JavaScript or TypeScript sources outside node_modules. A debug \`stim ios\` or \`stim android\` launch then ends shortly after the app's JavaScript starts running, before the app is usable, and a later startup error shows only in \`stim logs --errors\`.`,
+      "Log `[stim:readiness] pending` at the top level of the app's JS entry file and `[stim:readiness] ready` once the app is usable. Run `stim guide lifecycle readiness`.",
+    ),
+  };
 }
 
 function agentDeviceIsOnPath(): boolean {

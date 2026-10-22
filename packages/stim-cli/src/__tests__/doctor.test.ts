@@ -1525,6 +1525,32 @@ describe('a directory that is not an app', () => {
   });
 });
 
+test('doctor notes an app whose sources carry no readiness marker until the entry file logs one', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-readiness-'));
+  try {
+    writeFileSync(
+      join(project, 'package.json'),
+      JSON.stringify({ main: 'index.js', dependencies: { 'react-native': '0.81.0' } }),
+    );
+    writeFileSync(join(project, 'index.js'), "AppRegistry.registerComponent('main', () => App);\n");
+    mkdirSync(join(project, 'node_modules', 'some-lib'), { recursive: true });
+    writeFileSync(join(project, 'node_modules', 'some-lib', 'index.js'), "console.info('[stim:readiness] pending');\n");
+    const options = { concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }) };
+    const missing = (await runDoctor(project, options)).find((f) => f.code === 'readiness-markers-missing');
+    assert(missing);
+    expect(missing.level).toBe('note');
+    expect(missing.fix).toContain('stim guide lifecycle readiness');
+
+    writeFileSync(
+      join(project, 'index.js'),
+      "if (__DEV__) console.info('[stim:readiness] pending');\nAppRegistry.registerComponent('main', () => App);\n",
+    );
+    expect((await runDoctor(project, options)).some((f) => f.code === 'readiness-markers-missing')).toBe(false);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('runDoctor stays silent about concurrency when nothing is set', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-conc-'));
   writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));

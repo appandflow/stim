@@ -607,6 +607,7 @@ leased until <time>" for each one.`,
                   with an abnormally large footprint and, when it is safe to
                   restart, the command
                   offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Remote Machines > Add
+                  readiness-markers-missing is a note when no JS or TS source in the app outside node_modules contains [stim:readiness]; see stim guide lifecycle readiness
 
 ON FAILURE
   \`start\`, \`ios\`, \`android\` and \`web\` all print the error contract instead,

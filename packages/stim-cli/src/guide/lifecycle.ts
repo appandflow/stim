@@ -984,8 +984,8 @@ If another run holds the artifact claim, wait for it to finish and retry.`,
     },
 
     readiness: {
-      summary: 'implement optional pending/ready app logs, deadlines, errors, and platform isolation',
-      body: () => `OPTIONAL APP READINESS
+      summary: 'implement recommended pending/ready app logs, deadlines, errors, and platform isolation',
+      body: () => `RECOMMENDED APP READINESS
 
 No package or SDK is needed. This applies to debug ios/android launches with
 Metro verification enabled, not release builds or --no-metro-check.
