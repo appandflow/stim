@@ -24,6 +24,8 @@ struct TutorialPanel: View {
   var pairPhone: () -> Void = {}
   var updateCLI: () -> Void = {}
   @State private var viewed: String?
+  @State private var displayedStep: String?
+  @State private var movingForward = true
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.isEnabled) private var isEnabled
   @ObservedObject private var updater = AppUpdater.shared
@@ -57,8 +59,14 @@ struct TutorialPanel: View {
       illustration
         .padding(.horizontal, Space.lg)
         .padding(.bottom, Space.md)
+        .fixedSize(horizontal: false, vertical: true)
       Divider()
-      panelContent
+      ZStack {
+        panelContent
+          .id(shown)
+          .transition(reduceMotion ? .opacity : .push(from: movingForward ? .trailing : .leading))
+      }
+      .clipped()
       Divider()
       footer.padding(Space.lg)
     }
@@ -82,10 +90,10 @@ struct TutorialPanel: View {
       view(id)
       return .handled
     }
-    .onChange(of: slides.current) { old, _ in
-      withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
-        viewed = slides.viewed(viewed, afterProgressFrom: old)
-      }
+    .onAppear { displayedStep = slides.shown(viewed) }
+    .onChange(of: slides) { old, _ in
+      viewed = slides.viewed(viewed, afterProgressFrom: old.current)
+      display(slides.shown(viewed))
     }
   }
 
@@ -93,11 +101,19 @@ struct TutorialPanel: View {
     TutorialSlides(steps: steps.map(\.id), currentStep: snapshot.currentStep, finished: snapshot.isFinished)
   }
 
-  private var shown: String { slides.shown(viewed) }
+  private var shown: String { displayedStep ?? slides.shown(viewed) }
 
   private func view(_ id: String) {
+    viewed = id == slides.current ? nil : id
+    display(slides.shown(viewed))
+  }
+
+  private func display(_ id: String) {
+    guard id != shown else { return }
+    let order = steps.map(\.id) + [TutorialSlides.completion]
+    movingForward = (order.firstIndex(of: id) ?? 0) > (order.firstIndex(of: shown) ?? 0)
     withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
-      viewed = id == slides.current ? nil : id
+      displayedStep = id
     }
   }
 
@@ -170,9 +186,8 @@ struct TutorialPanel: View {
           .accessibilityHint(ahead ? "A later step, read-only until you reach it" : "")
       }
     }
-    .id(shown)
-    .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .trailing), removal: .opacity))
     .padding(Space.xl)
+    .fixedSize(horizontal: false, vertical: true)
   }
 
   private var position: Int {
