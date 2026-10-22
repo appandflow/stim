@@ -118,9 +118,10 @@ project's own Expo uses:
   package, a `link:` dependency, or a local Expo module. A `file:` dependency
   that the package manager copies into `node_modules` counts by version.
 - `patches/`, a committed `ios/` or `android/`, the evaluated app config, its
-  local config plugins and the files it names count by their contents. In a
-  monorepo, Stim also hashes the `patches/` and `.yarn/patches/` directories
-  next to the lockfile.
+  local config plugins and the files it names count by their contents. Stim also
+  hashes the `patches/` and `.yarn/patches/` directories next to a monorepo's
+  lockfile, and the patch hashes `pnpm-lock.yaml` records, wherever the patch
+  files live.
 - The app's `version`, `ios.buildNumber` and `android.versionCode`, `eas.json`,
   `.easignore` and the path overrides in `react-native.config.js` are left out.
   A Release cache hit keeps the version it was built with.

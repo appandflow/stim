@@ -1755,8 +1755,9 @@ THE BUILD CACHE HAS THREE LEVELS
   and version, not by its files. A package whose real path is outside
   node_modules -- a workspace package, a link: dependency, a local Expo module
   -- counts by its files, and so do patches/, the app's committed ios/ or
-  android/, the evaluated app config and its local plugins. In a monorepo,
-  patches/ and .yarn/patches/ next to the lockfile count too. The app's
+  android/, the evaluated app config and its local plugins. patches/ and
+  .yarn/patches/ next to a monorepo's lockfile count too, and so do the patch
+  hashes pnpm-lock.yaml records, wherever the patch files live. The app's
   version, ios.buildNumber and android.versionCode, eas.json, .easignore and
   the path overrides of react-native.config.js are left out, so a Release
   cache hit keeps the version it was built with. A project that wants native
