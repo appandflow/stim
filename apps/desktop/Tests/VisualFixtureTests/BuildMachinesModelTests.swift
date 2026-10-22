@@ -308,4 +308,16 @@ final class BuildMachinesModelTests: XCTestCase {
     await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
     XCTAssertEqual(harness.calls.count, 3)
   }
+
+  @MainActor func testAFailingDoctorDoesNotCancelTheAutomaticCheckThrottle() async {
+    let harness = Harness()
+    harness.machines = "[\"mini\"]"
+    harness.fails = true
+    harness.local = nil
+    let model = harness.make()
+    await model.settings.refresh()
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    XCTAssertEqual(harness.calls.count, 1)
+  }
 }

@@ -1426,8 +1426,8 @@ A remote Mac whose Stim build is incompatible with this Mac's (doctor's
 **Install This Mac's Build**, here and on its **Machines** page. For each such
 Mac Desktop first reads `machines.update.status`, a read that never installs, and
 compares the Stim release it reports with this Mac's stim-server. An install only
-moves a remote Mac forward, so the button is disabled, with the reason beside it,
-when the Mac would refuse:
+moves a remote Mac forward, so the button is disabled, with the reason beside it, while
+the read or this Mac's stim-server connection is pending and when the Mac would refuse:
 
 - this Mac runs an npm release and the Mac runs a newer Stim: the button gives way to "<machine> runs
   Stim 1.25.0, newer than this Mac (1.24.0). Update Stim Desktop to match.", the pill reads

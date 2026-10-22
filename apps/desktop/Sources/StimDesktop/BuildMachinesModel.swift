@@ -33,6 +33,7 @@ final class BuildMachinesModel {
   private var hostingCheckedAt: [String: Date] = [:]
   private var checks: [String: Check] = [:]
   @ObservationIgnored private var lastMachineCheck: BuildMachineCheck?
+  @ObservationIgnored private var localMissing = false
   @ObservationIgnored private var settingsReadAt: Date?
 
   let settings: MachineSettingsStore
@@ -90,6 +91,7 @@ final class BuildMachinesModel {
 
   func readRemoteServers(_ statuses: [BuildMachineStatus]) async {
     localStim = await readLocalStim()
+    localMissing = localStim == nil
     for status in statuses.filter(needsStimUpdate) where updates[status.machine]?.isDone ?? true {
       do {
         let result = try await request("machines.update.status", ["machine": .string(status.machine)])
@@ -223,7 +225,7 @@ final class BuildMachinesModel {
     guard due else { return }
     lastMachineCheck = BuildMachineCheck(at: now(), identity: identity, entries: entries ?? [])
     await refreshStatuses(checkout: checkout, ask: false)
-    if localStim == nil { lastMachineCheck = nil }
+    if localMissing { lastMachineCheck = nil }
   }
 
   var entries: [String]? {
@@ -342,6 +344,7 @@ final class BuildMachinesModel {
   private func fetchStatuses(checkout: String, ask: Bool) async {
     runs += 1
     defer { runs -= 1 }
+    localMissing = false
     var result = await Result.awaiting { try await machineAccess(checkout, ask) }
     if ask, case .success(let asked) = result, let refreshed = try? await machineAccess(checkout, false) {
       result = .success(asked.refreshingApproved(from: refreshed))
