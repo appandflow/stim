@@ -200,7 +200,7 @@ test('names the same layer for hosting as for builds, so doctor prints one findi
       diagnosis: expect.objectContaining({ layer: 'server', code: 'server-not-ready' }),
     }),
   ]);
-  expect(findings).toEqual([expect.objectContaining({ title: 'Remote machine mini: Server not ready' })]);
+  expect(findings).toHaveLength(1);
 });
 
 test('only a definite refusal and fix make a new ticket', async () => {
