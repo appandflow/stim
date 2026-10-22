@@ -703,8 +703,8 @@ Builds without Hosted simulators. For Linux its command first runs the two
 `sudo` steps a [Linux worker](./remote-machines.md#linux-worker) needs; for
 Windows it is a PowerShell command that needs no administrator rights.
 
-Only a problem that stops the chosen capability blocks the Tools step. A Stim
-build mismatch, which **Install This Mac's Build** fixes, is one. Other tool
+No tool result disables **Next** on the Tools step; the machine stays added. A Stim
+build mismatch, which **Install This Mac's Build** fixes, is shown in red. Other tool
 differences, such as a different project-selected CocoaPods or missing Android tools, are
 warnings that say what they cost and offer copyable fixes.
 

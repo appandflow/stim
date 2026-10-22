@@ -1276,12 +1276,13 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    - Needs no Next press. Once the remote machine's journal shows the command
      started, Desktop sends this Mac's build and hosted-simulator requests with
      the ticket and keeps reading `stim doctor` every 5 seconds, one read at a
-     time, until the ticket expires. When the journal says the remote machine
+     time. When the journal says the remote machine
      approved and waits for this Mac, Desktop sends the request at once and the
      status line reads "<machine> approved this Mac. Stim is connecting to it". The
      reads only deliver the ticket; approval stays the Y/n on the remote
-     machine. After the ticket expires Desktop stops asking, says so, and offers
-     New Command.
+     machine. After the ticket expires Desktop sends no more requests, says so, and
+     offers New Command; the read continues so an approval recorded just
+     before expiry still shows.
    - When setup finishes with no failed step and every chosen capability is
      approved, the wizard moves to Tools by itself ("Approved. Waiting for
      <machine> to finish setup..." shows until the journal is done). A skipped

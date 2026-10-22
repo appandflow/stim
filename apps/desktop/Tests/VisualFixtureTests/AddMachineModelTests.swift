@@ -227,7 +227,7 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(asked(), before + 1, "one request per signal, not one per poll")
   }
 
-  @MainActor func testExpiredTicketStopsReadingAndAsksForANewCommand() async {
+  @MainActor func testExpiredTicketSendsNoMoreRequestsAndAsksForANewCommand() async {
     let harness = Harness()
     let model = harness.make()
     await model.start()
