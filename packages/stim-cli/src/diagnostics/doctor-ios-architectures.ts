@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { Finding } from './doctor.ts';
 import { getExecutor } from '../exec.ts';
@@ -12,6 +12,26 @@ interface ArchitectureTarget {
 interface ArchitectureReport {
   affected: ArchitectureTarget[];
   unknown: boolean;
+}
+
+const INSPECTION_TTL_MS = 10 * 60_000;
+const inspections = new Map<string, { inputs: string; at: number; findings: Finding[] }>();
+
+function inspectionInputs(iosRoot: string, projects: readonly string[]): string {
+  return JSON.stringify(
+    [
+      ...projects.map((project) => join(project, 'project.pbxproj')),
+      join(iosRoot, 'Podfile.lock'),
+      join(iosRoot, 'Pods', 'Manifest.lock'),
+    ].map((path) => {
+      try {
+        const stat = statSync(path);
+        return [path, stat.mtimeMs, stat.size];
+      } catch {
+        return [path, null];
+      }
+    }),
+  );
 }
 
 const COMPILED_PRODUCTS = new Set([
@@ -99,6 +119,9 @@ export async function inspectIosDebugArchitectures(
   const pods = join(iosRoot, 'Pods', 'Pods.xcodeproj');
   if (existsSync(pods)) projects.push(pods);
   else if (existsSync(join(iosRoot, 'Podfile'))) unknown.push('Pods project (not generated)');
+  const inputs = inspectionInputs(iosRoot, projects);
+  const cached = inspections.get(iosRoot);
+  if (cached && cached.inputs === inputs && Date.now() - cached.at < INSPECTION_TTL_MS) return [...cached.findings];
   const deadline = Date.now() + 60_000;
   for (const project of projects) {
     const label = relative(projectRoot, project);
@@ -144,6 +167,7 @@ export async function inspectIosDebugArchitectures(
       unknown.push(label);
     }
   }
+  if (!unknown.length) inspections.set(iosRoot, { inputs, at: Date.now(), findings: [...findings] });
   if (unknown.length)
     findings.push({
       code: 'ios-debug-architectures-unknown',
