@@ -2034,6 +2034,11 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 
 ## Tutorial panel
 
+Longer steps show a short instruction with an expandable **Why this step?**
+explanation. Waiting messages name the next action. Completed stepper segments
+are green; skipped segments stay gray. Prompt buttons briefly show **Copied**.
+The summary includes a copyable prompt to try Stim with your own app.
+
 **Help > Stim Tutorial…** and the setup guide's **Take the Tutorial** button open
 a floating window beside the main app window, kept within the screen and on the
 same desktop Space as that window. It stays

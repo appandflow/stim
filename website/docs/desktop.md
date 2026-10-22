@@ -111,6 +111,11 @@ lists every field. Every release is listed under
 
 ## Tutorial
 
+Longer steps show a short instruction with an expandable **Why this step?**
+explanation. Waiting messages name the next action. Completed stepper segments
+are green; skipped segments stay gray. Prompt buttons briefly show **Copied**.
+The summary includes a copyable prompt to try Stim with your own app.
+
 Open **Help > Stim Tutorial…**, or choose **Take the Tutorial** on the setup
 guide's last screen. The tutorial opens in its own floating window.
 Starting the tutorial with your agent also

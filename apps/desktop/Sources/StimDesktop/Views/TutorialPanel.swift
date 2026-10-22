@@ -207,10 +207,19 @@ struct TutorialPanel: View {
       .accessibilityLabel("\(step.title), \(current ? message?.text ?? stateLabel(state.state) : stateLabel(state.state))")
       .accessibilityAddTraits(.isHeader)
       VStack(alignment: .leading, spacing: Space.md) {
-        Text(explanation(step.id)).foregroundStyle(Palette.secondary)
+        Text(instruction(step.id)).foregroundStyle(Palette.secondary)
+        if instruction(step.id) != explanation(step.id) {
+          DisclosureGroup("Why this step?") {
+            Text(explanation(step.id))
+              .foregroundStyle(Palette.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+          .disclosureGroupStyle(TutorialExplanationStyle())
+          .font(.stim(.footnote))
+        }
         if step.id == "begin" {
           Text(
-            "Stim detects your progress and moves to the next step automatically. Use Skip step to move on without completing it."
+            "Steps advance automatically. Use Skip step to move on without completing a step."
           )
           .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -242,10 +251,7 @@ struct TutorialPanel: View {
         let notice = (current ? message : nil) ?? TutorialNotice(state.detail, action: state.action)
         let detail = notice.text
         if current, state.state == .current, notice.action == nil, message == nil {
-          let waitingText =
-            detail == "Waiting for the tutorial workspace..."
-            ? "Waiting for your agent to clone the app..."
-            : detail.isEmpty ? "Waiting for this step to finish..." : detail
+          let waitingText = waitingInstruction(detail)
           HStack(alignment: .top, spacing: Space.sm) {
             switch state.activity {
             case .waiting:
@@ -352,6 +358,30 @@ struct TutorialPanel: View {
     }
   }
 
+  private func waitingInstruction(_ detail: String) -> String {
+    switch detail {
+    case "Waiting for the tutorial workspace...":
+      return "Waiting for the tutorial workspace. Paste the prompt into your agent to get started."
+    case "Waiting for the iOS build":
+      return "Waiting for the iOS build. Send the prompt to your agent; Stim will continue when the build starts."
+    case "Waiting for the second workspace":
+      return "Waiting for the second workspace. Send the prompt to your second agent."
+    case "": return "Complete the action above. Stim will advance automatically."
+    default: return detail
+    }
+  }
+
+  private func instruction(_ id: String) -> String {
+    switch id {
+    case "begin": return "Copy this prompt into your agent to clone the test app."
+    case "build": return "Ask your agent to change the title in a new worktree and check it on a simulator."
+    case "parallel": return "Ask a second agent to change the button in a separate worktree."
+    case "share": return "Ask your agent to open a public pull request with screenshots. You need GitHub access."
+    case "finish": return "Stop both apps and discard the experimental worktrees. Keep the test app's clone."
+    default: return explanation(id)
+    }
+  }
+
   private func explanation(_ id: String) -> String {
     switch id {
     case "begin":
@@ -395,6 +425,34 @@ struct TutorialPanel: View {
     case "pr": return "Pull request opened"
     case "logs": return "Logs opened"
     default: return PhaseStep.name(id)
+    }
+  }
+}
+
+private struct TutorialExplanationStyle: DisclosureGroupStyle {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  func makeBody(configuration: Configuration) -> some View {
+    VStack(alignment: .leading, spacing: Space.sm) {
+      Button {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+          configuration.isExpanded.toggle()
+        }
+      } label: {
+        HStack(spacing: Space.sm) {
+          Image(systemName: configuration.isExpanded ? "chevron.down" : "chevron.right")
+            .foregroundStyle(Palette.tertiary)
+            .accessibilityHidden(true)
+          configuration.label
+          Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
+      if configuration.isExpanded {
+        configuration.content
+      }
     }
   }
 }

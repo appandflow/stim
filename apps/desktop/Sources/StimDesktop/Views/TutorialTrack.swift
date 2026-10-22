@@ -21,7 +21,7 @@ struct TutorialTrack: View {
           node(step, state: state)
         }
         if index < steps.count - 1 || finished {
-          segment(filled: state == .done || state == .skipped)
+          segment(filled: state == .done)
         }
       }
       if finished {
