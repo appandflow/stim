@@ -203,6 +203,7 @@ import Testing
       {"machine":"mini","state":"unreachable","diagnosis":{"layer":"server","code":"server-not-ready","title":"Server not ready","message":"stim-server on mini is running but is not serving clients (HTTP 503).","remedy":"Check the disk that holds the Stim home on mini."}}
       """#)
     #expect(notReady.listStatus == MachineListStatus(title: "Server not ready", tone: .warning))
+    #expect(notReady.readiness.title == "Server not ready")
     #expect(notReady.diagnosis?.code == "server-not-ready")
     #expect(notReady.rowDetail.hasPrefix("stim-server on mini is running but is not serving clients"))
     #expect(notReady.detail.hasSuffix("Check the disk that holds the Stim home on mini."))

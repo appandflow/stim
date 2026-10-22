@@ -355,6 +355,10 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public var readiness: MachineReadiness {
     let all = reasons.flatMap { $0.isEmpty ? nil : $0.joined(separator: "\n") }
     guard state == .approved, let offloadable else {
+      if let diagnosed {
+        return MachineReadiness(
+          title: diagnosed.title, remedy: nil, tone: state == .unknown ? .warning : state.readinessTone, reasons: all)
+      }
       return MachineReadiness(title: state.title, remedy: nil, tone: state.readinessTone, reasons: all)
     }
     if offloadable { return MachineReadiness(title: "Ready", remedy: nil, tone: .success, reasons: nil) }

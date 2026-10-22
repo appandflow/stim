@@ -684,7 +684,7 @@ least one local or configured, approved remote member. Explicit placement is unc
 See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for CLI controls.
 
 **Settings > Remote Machines** lists your remote machines with a status
-(**Approved**, **Waiting for approval**, **Unreachable**, **Needs update** or the reason it is not offloading),
+(**Approved**, **Waiting for approval**, the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading),
 a line with its running builds and free disk, any problem that keeps builds on
 this Mac with its fix, what each does (**Builds**, **Simulators**) and **Remove...**. It updates itself; there is no Refresh button. With none, it
 offers **Add Remote Machine…**, which guides you through five steps:
