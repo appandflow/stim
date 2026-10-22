@@ -157,20 +157,26 @@ result. Two matching misses use one build through a single-flight lock.
 
 Computing the fingerprint evaluates the app config and runs autolinking. After a
 full fingerprint, Stim records it under a static digest of the tree in
-`~/.stim/fingerprint-memo`, shared by every worktree. The digest covers the git
-blob ids of the tracked native inputs, the contents of untracked, modified and
-ignored ones, the app config's sources and the files they name, installed
-package versions, the lockfile, and the environment variables the config reads.
+`$STIM_HOME/fingerprint-memo` (`~/.stim` by default), shared by every worktree.
+The digest covers several inputs:
+
+- the git blob ids of the tracked native inputs, and the contents of untracked,
+  modified and ignored ones;
+- the app config's sources and the files and directories they name;
+- each installed package's path and version, and the lockfile;
+- the environment variables the config and its `.env` files read.
+
 A later run whose tree has the same digest, in any worktree, uses the record and
 prints `matches a recorded fingerprint of this tree`. A full fingerprint then
 runs in the background at low priority. If it disagrees, Stim drops the record
-and ends the run with a warning; run the command again to use the current tree.
+and prints a warning at the end of the run; run the command again to use the
+current tree.
 
 A config that the digest cannot follow always gets a full fingerprint. That
-includes dynamic imports, `process.env` read without a literal name, file,
-process or network access, and `dotenv`. The record is never used after
-`expo prebuild` or `pod install`, on a build machine, in `stim doctor`, or with
-`--no-build-cache`.
+includes dynamic imports, `process.env` used other than by literal name, file,
+process or network access while the config is evaluated, and `dotenv`. The
+record is never used after `expo prebuild` or `pod install`, on a build machine,
+in `stim doctor`, or with `--no-build-cache`.
 
 After local and configured-provider misses, development builds can reuse an
 exact completed archive from an enabled paired build worker with

@@ -26,6 +26,8 @@ export interface FingerprintMemoRecord {
   recordedAt: number;
   hash: string;
   sources: unknown[];
+  /** The packages the static check counted as native, to name the ones a disagreeing check found it missed. */
+  nativePackages: string[];
 }
 
 export function readFingerprintMemo(platform: string, digest: string): FingerprintMemoRecord | null {
@@ -39,7 +41,9 @@ export function readFingerprintMemo(platform: string, digest: string): Fingerpri
     typeof record.hash !== 'string' ||
     !record.hash ||
     !Array.isArray(record.sources) ||
-    !record.sources.every(isJsonObject)
+    !record.sources.every(isJsonObject) ||
+    !Array.isArray(record.nativePackages) ||
+    !record.nativePackages.every((name) => typeof name === 'string')
   )
     return null;
   return {
@@ -49,5 +53,6 @@ export function readFingerprintMemo(platform: string, digest: string): Fingerpri
     recordedAt: record.recordedAt,
     hash: record.hash,
     sources: record.sources,
+    nativePackages: record.nativePackages,
   };
 }

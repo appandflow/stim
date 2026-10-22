@@ -1778,29 +1778,35 @@ THE BUILD CACHE HAS THREE LEVELS
 
   A KNOWN TREE SKIPS THE FULL FINGERPRINT. After a full fingerprint at the
   first lookup of a React Native or Expo run, Stim records it in
-  ~/.stim/fingerprint-memo under a static digest of the tree: git blob ids of
-  the native inputs git tracks, the contents of the untracked, modified and
-  ignored ones, the app config's sources and the files it names, each
-  installed package's version and native markers, the lockfile, and the
-  environment variables the config reads. Any worktree whose tree has the same
-  digest, a fresh one included, reuses the record instead of evaluating the
-  config and running autolinking:
+  $STIM_HOME/fingerprint-memo (~/.stim by default) under a static digest of
+  the tree: git blob ids of the native inputs git tracks, the contents of the
+  untracked, modified and ignored ones, the app config's sources and the files
+  and directories it names, each installed package's path, version and native
+  markers, the lockfile, and the environment variables the config and its
+  .env files read. Any worktree whose tree has the same digest, a fresh one
+  included, reuses the record instead of evaluating the config and running
+  autolinking:
 
     fingerprint matches a recorded fingerprint of this tree; confirming it in the background
 
   A full fingerprint then runs at low priority while the app installs and
-  launches. The record is put back only when it agrees. If the run ends first,
-  it waits up to 3 seconds and then drops the check, and the next run
-  fingerprints in full. A disagreement ends the run with a warning naming both
-  hashes and a fingerprint_memo_stale record in the build log; run the command
-  again to use the current tree. A config the digest cannot follow always
-  fingerprints in full: a dynamic require or import, process.env read without
-  a literal name, file, process or network access, a dotenv import, a
-  fileHookTransform, or a preset that hashes package files. So do a project
-  outside git and Yarn Plug'n'Play. The record is never consulted after
-  prebuild or pod install, by a build worker, by doctor, or with
-  --no-build-cache; --plan reads one without writing. Records are 0600, at
-  most 256 per platform, and gc prunes them by age with the other caches.
+  launches. The record is put back only when it agrees. If the run reaches its
+  end first, it waits up to 3 seconds more, then gives the check up and leaves
+  no record, so the next run fingerprints in full. A disagreement prints a
+  warning naming both hashes at the end of the run and writes a
+  fingerprint_memo_stale record to the build log; run the command again to use
+  the current tree.
+
+  A config the digest cannot follow always fingerprints in full: a dynamic
+  require or import, process.env used other than by literal name, file,
+  process or network access while it is evaluated, a dotenv import, a
+  fileHookTransform, or a preset that hashes package files. A local config
+  plugin counts as evaluated, except for file access in a plugin that applies
+  mods. So does a project outside git or on Yarn Plug'n'Play. The record is
+  never consulted after prebuild or pod install, by a build worker, by doctor,
+  or with --no-build-cache; ios --plan and android --plan read one without
+  writing. Records are 0600, at most 256 per platform, and gc prunes them by
+  age with the other caches.
 
   A MISS EXPLAINS ITSELF. Each local cache entry keeps the per-source hashes
   of its fingerprint (hashes only, pruned with the entry). Before compiling,

@@ -30,7 +30,11 @@ interface FingerprintCheckResult {
   status: 'confirmed' | 'stale' | 'failed' | 'abandoned';
   recorded: string;
   current: string | null;
+  /** Autolinked packages the current fingerprint lists that the static check did not count as native. */
+  unmodeled?: string[];
 }
+
+const AUTOLINKED = /^(expo|rncore)Autolinking(Ios|Android)$/;
 
 /** The full fingerprint a memo hit runs in the background; settle() puts the record back only when it agrees. */
 export interface FingerprintCheck {
@@ -112,12 +116,17 @@ function startCheck(
   const controller = new AbortController();
   const signal = AbortSignal.any([operation.signal, controller.signal]);
   let done = false;
+  let abandoned = false;
   const result = background(operation, projectRoot, target, signal)
     .then(
-      (computed) => ({ hash: computed?.hash ?? null, failure: computed?.hash ? null : 'no hash' }),
-      (error: unknown) => ({ hash: null, failure: errorMessage(error) }),
+      (computed) => ({
+        hash: computed?.hash ?? null,
+        sources: computed?.sources ?? [],
+        failure: computed?.hash ? null : 'no hash',
+      }),
+      (error: unknown) => ({ hash: null, sources: [], failure: errorMessage(error) }),
     )
-    .then(({ hash, failure }): FingerprintCheckResult => {
+    .then(({ hash, sources, failure }): FingerprintCheckResult => {
       done = true;
       const status = hash === stored.hash ? 'confirmed' : hash === null ? 'failed' : 'stale';
       if (status === 'confirmed') {
@@ -125,12 +134,21 @@ function startCheck(
           writeRecord(stored, { onlyIfAbsent: true });
         } catch {}
       }
-      debugLog.log('fingerprint_memo_check', {
-        platform: target.platform,
-        status,
-        ...(failure && !controller.signal.aborted ? { failure } : {}),
-      });
-      return { status, recorded: stored.hash, current: hash };
+      if (!abandoned)
+        debugLog.log('fingerprint_memo_check', {
+          platform: target.platform,
+          status,
+          ...(failure && !controller.signal.aborted ? { failure } : {}),
+        });
+      const modeled = new Set(stored.nativePackages);
+      const unmodeled = sources.flatMap((source) =>
+        source.type === 'package' &&
+        source.reasons.some((reason) => AUTOLINKED.test(reason)) &&
+        !modeled.has(source.name)
+          ? [source.name]
+          : [],
+      );
+      return { status, recorded: stored.hash, current: hash, ...(status === 'stale' ? { unmodeled } : {}) };
     });
   return {
     settle: async (graceMs = FINGERPRINT_CHECK_GRACE_MS) => {
@@ -142,6 +160,7 @@ function startCheck(
       const settled = await Promise.race([result, late]);
       clearTimeout(timer);
       if (settled) return settled;
+      abandoned = true;
       controller.abort();
       debugLog.log('fingerprint_memo_check', { platform: target.platform, status: 'abandoned' });
       return { status: 'abandoned', recorded: stored.hash, current: null };
@@ -188,11 +207,14 @@ export async function memoizedFingerprint(
   const full = (): Promise<ProjectFingerprint | null> => fingerprint(projectRoot, target);
   const skip = (reason: string): void => debugLog.log('fingerprint_memo_skip', { platform: target.platform, reason });
   if (!operation || !(consult || record)) return { fingerprint: await full(), memoHit: false, check: null };
-  const digestNow = async (): Promise<string | null> => {
+  const digestNow = async (): Promise<{ digest: string; nativePackages: string[] } | null> => {
     try {
       const result = await staticDigest(projectRoot, target, { env: operation.env, signal: operation.signal });
-      if (result.uncertain !== null) skip(result.uncertain);
-      return result.digest;
+      if (result.uncertain !== null) {
+        skip(result.uncertain);
+        return null;
+      }
+      return result;
     } catch (error) {
       operation.signal.throwIfAborted();
       skip(errorMessage(error));
@@ -204,11 +226,11 @@ export async function memoizedFingerprint(
 
   if (consult) {
     try {
-      const stored = readFingerprintMemo(target.platform, before);
+      const stored = readFingerprintMemo(target.platform, before.digest);
       if (!stored) skip('no record');
       else if (!isSourceList(stored.sources)) skip('the record has unknown sources');
       else {
-        if (record) dropRecord(target.platform, before);
+        if (record) dropRecord(target.platform, before.digest);
         debugLog.log('fingerprint_memo_hit', { platform: target.platform });
         return {
           fingerprint: { hash: stored.hash, sources: stored.sources },
@@ -224,16 +246,17 @@ export async function memoizedFingerprint(
   const computed = await full();
   if (!record || !computed?.hash) return { fingerprint: computed, memoHit: false, check: null };
   const after = await digestNow();
-  if (after !== before) skip('an input changed while it was fingerprinted');
+  if (after?.digest !== before.digest) skip('an input changed while it was fingerprinted');
   else {
     try {
       writeRecord({
         schema: FINGERPRINT_MEMO_SCHEMA,
         platform: target.platform,
-        digest: before,
+        digest: before.digest,
         recordedAt: startedAt,
         hash: computed.hash,
         sources: computed.sources,
+        nativePackages: before.nativePackages,
       });
     } catch (error) {
       skip(errorMessage(error));
@@ -250,11 +273,19 @@ export async function settleFingerprintCheck(
   log?: (record: Record<string, unknown>) => void,
 ): Promise<void> {
   if (!check) return;
-  const { status, recorded, current } = await check.settle();
+  const { status, recorded, current, unmodeled } = await check.settle();
   if (status !== 'stale' || !current) return;
   const line =
     `the recorded fingerprint ${shortHash(recorded)} no longer matches the tree (${shortHash(current)}), ` +
     `so this run looked up the build cache with a stale key; run stim ${platform} again to use the current tree`;
   warn(line);
-  log?.({ src: 'build', level: 'warn', event: 'fingerprint_memo_stale', msg: line, recorded, current });
+  log?.({
+    src: 'build',
+    level: 'warn',
+    event: 'fingerprint_memo_stale',
+    msg: line,
+    recorded,
+    current,
+    ...(unmodeled?.length ? { unmodeled } : {}),
+  });
 }

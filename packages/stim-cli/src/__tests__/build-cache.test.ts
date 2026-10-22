@@ -808,6 +808,11 @@ describe('gitignored fingerprint inputs', () => {
     expect(
       await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: { EXPO_NO_DOTENV: '1' } }),
     ).toEqual([join(real, 'creds/google-services.json'), join(real, 'ios/GoogleService-Info.plist')]);
+    write('.env.development');
+    expect(
+      await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: { NODE_ENV: 'production' } }),
+    ).toEqual(expect.arrayContaining([join(real, '.env.development'), join(real, '.env.local')]));
+    rmSync(join(root, '.env.development'));
     expect(await gitignoredFingerprintInputs(real, sources.slice(0, 2), { platform: 'ios' }, { env: {} })).toEqual([
       join(real, 'ios/GoogleService-Info.plist'),
     ]);

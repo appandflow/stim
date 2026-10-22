@@ -7,7 +7,7 @@ import { normalizeOptionsAsync } from '@expo/fingerprint/build/Options.js';
 import { isIgnoredPathWithMatchObjects } from '@expo/fingerprint/build/utils/Path.js';
 import { gitAsync } from '../workspace/git.ts';
 import { STIM_VERSION } from '../stim-version.ts';
-import { fingerprintOptions, type FingerprintTarget } from './build-cache.ts';
+import { expoEnvFiles, fingerprintOptions, type FingerprintTarget } from './build-cache.ts';
 
 const STATIC_SCHEMA = 1;
 
@@ -126,9 +126,9 @@ function resolvePackage(from: string, name: string): string | null {
 
 /**
  * The installed packages, keyed by real path: every package reachable from the app's manifest, and every entry of a
- * node_modules directory on the way up to the repository, which older autolinking scans.
+ * node_modules directory above the app, which older autolinking scans.
  */
-function packageGraph(root: string, top: string, manifest: unknown): Map<string, PackageInfo> {
+function packageGraph(root: string, manifest: unknown): Map<string, PackageInfo> {
   const packages = new Map<string, PackageInfo>();
   const read = (dir: string): PackageInfo | null => {
     const known = packages.get(dir);
@@ -200,7 +200,7 @@ function packageGraph(root: string, top: string, manifest: unknown): Map<string,
       });
     } catch {}
     hoisted.push([dir, names]);
-    if (dir === top || dirname(dir) === dir) break;
+    if (dirname(dir) === dir) break;
   }
   while (queue.length) {
     const dir = queue.shift();
@@ -213,6 +213,7 @@ function packageGraph(root: string, top: string, manifest: unknown): Map<string,
 
 interface ConfigScan {
   files: Set<string>;
+  dirs: Set<string>;
   packages: Set<string>;
   env: Set<string>;
 }
@@ -228,13 +229,30 @@ function resolveRelative(from: string, spec: string): string | null {
   return null;
 }
 
+type ScanMode = 'evaluated' | 'plugin';
+
+const isDirectory = (path: string) => statSync(path, { throwIfNoEntry: false })?.isDirectory() ?? false;
+const isFile = (path: string) => statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+
+/** A string a config names relative to itself: a module it loads, a file it reads at prebuild, or a directory. */
+function addNamedPath(file: string, spec: string, scan: ConfigScan, root: string): void {
+  const found = resolveRelative(file, spec);
+  if (found && /\.[cm]?[jt]sx?$/.test(found)) scanConfigSource(found, scan, 'plugin', root);
+  else if (found) scan.files.add(found);
+  else if (isDirectory(resolve(dirname(file), spec))) scan.dirs.add(resolve(dirname(file), spec));
+}
+
+/** Every `process.env` that is not followed by a literal name: the config passes the environment on as a value. */
+const ENV_VALUE = /process\.env\b(?!\s*(?:\??\.\s*[A-Za-z_$]|\[\s*['"]))/;
+
 /**
- * What a config module evaluates, found by reading its source: the local modules and assets it names, the packages it
- * imports and the environment variables it reads. Anything the scan cannot follow throws `Uncertain` when the module
- * runs at evaluation; a local plugin named by a path string runs its native edits at prebuild, so its own file and
- * process access does not count.
+ * What a config module evaluates, found by reading its source: the local modules, assets and directories it names,
+ * the packages it imports and the environment variables it reads. Anything the scan cannot follow throws `Uncertain`.
+ * A local plugin named by a path string also runs while the config is evaluated, but its file access normally sits in
+ * mods that run at prebuild: its file access counts only when it calls no `with...` mod helper, and its process and
+ * network access always counts.
  */
-function scanConfigSource(file: string, scan: ConfigScan, evaluated: boolean, root: string): void {
+function scanConfigSource(file: string, scan: ConfigScan, mode: ScanMode, root: string): void {
   if (scan.files.has(file)) return;
   scan.files.add(file);
   if (file.endsWith('.json')) {
@@ -243,22 +261,24 @@ function scanConfigSource(file: string, scan: ConfigScan, evaluated: boolean, ro
   }
   const source = readFileSync(file, 'utf8');
   const where = relative(root, file);
-  const flag = (reason: string) => {
-    if (evaluated) throw new Uncertain(`${reason} in ${where}`);
+  const uncertain = (reason: string): never => {
+    throw new Uncertain(`${reason} in ${where}`);
   };
+  const usesMods = /\bwith[A-Z]\w*\s*\(/.test(source);
+  const fileAccess = mode === 'evaluated' || !usesMods;
   if (/\brequire\s*\(\s*[^'"\s)]/.test(source) || /\bimport\s*\(\s*[^'"\s)]/.test(source))
-    flag('a dynamic require or import');
+    uncertain('a dynamic require or import');
+  if (ENV_VALUE.test(source)) uncertain('process.env read without a literal name');
+  if (/\b(execSync|execFileSync|spawnSync|exec|execFile|spawn|fetch)\s*\(/.test(source))
+    uncertain('process or network access');
   if (
-    /process\.env\s*\[\s*[^'"\s]/.test(source) ||
-    /=\s*process\.env\b(?!\s*\.)/.test(source) ||
-    /\.\.\.\s*process\.env\b/.test(source)
+    fileAccess &&
+    /\b(readFileSync|readFile|readdirSync|readdir|existsSync|statSync|createReadStream)\s*\(/.test(source)
   )
-    throw new Uncertain(`process.env read without a literal name in ${where}`);
-  if (/\b(readFileSync|readFile|readdirSync|existsSync|execSync|execFileSync|spawnSync|fetch)\s*\(/.test(source))
-    flag('file, process or network access');
+    uncertain('file access');
   if (/[`]\s*\.{1,2}\/[^`]*\$\{/.test(source) || /\$\{[^}]*\}[^`]*\.(?:png|jpe?g|webp|json|plist)`/.test(source))
-    flag('an asset path built at evaluation');
-  for (const match of source.matchAll(/process\.env\.([A-Za-z_][A-Za-z0-9_]*)/g)) scan.env.add(String(match[1]));
+    uncertain('an asset path built at evaluation');
+  for (const match of source.matchAll(/process\.env\s*\??\.\s*([A-Za-z_$][\w$]*)/g)) scan.env.add(String(match[1]));
   for (const match of source.matchAll(/process\.env\s*\[\s*['"]([^'"]+)['"]\s*\]/g)) scan.env.add(String(match[1]));
   const imports = new Set<string>();
   for (const pattern of [
@@ -268,32 +288,37 @@ function scanConfigSource(file: string, scan: ConfigScan, evaluated: boolean, ro
     /\bimport\s+['"]([^'"]+)['"]/g,
   ])
     for (const match of source.matchAll(pattern)) imports.add(String(match[1]));
-  const named = new Set<string>();
-  for (const match of source.matchAll(/['"](\.{1,2}\/[^'"\n]+)['"]/g)) named.add(String(match[1]));
-  for (const match of source.matchAll(/['"]((?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(?:\/[\w.-]+)*)['"]/g))
-    named.add(String(match[1]));
-  for (const spec of new Set([...imports, ...named])) {
+  for (const spec of imports) {
     const bare = spec.replace(/^node:/, '');
-    if (imports.has(spec) && (RISKY_IMPORTS.has(bare) || bare.startsWith('dotenv'))) {
-      flag(`an import of ${spec}`);
-      continue;
-    }
-    if (spec.startsWith('.')) {
+    if (RISKY_IMPORTS.has(bare) || bare.startsWith('dotenv')) {
+      const fsOnly = bare === 'fs' || bare === 'fs/promises';
+      if (!fsOnly || fileAccess) uncertain(`an import of ${spec}`);
+    } else if (spec.startsWith('.')) {
       const found = resolveRelative(file, spec);
-      if (found) scanConfigSource(found, scan, evaluated && imports.has(spec), root);
+      if (!found) throw new Uncertain(`an import of ${spec} that does not resolve in ${where}`);
+      scanConfigSource(found, scan, mode, root);
     } else if (!spec.startsWith('node:') && !BUILTINS.has(bare)) {
       scan.packages.add(spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : (spec.split('/')[0] ?? spec));
     }
   }
+  for (const match of source.matchAll(/['"](\.{1,2}\/[^'"\n]+)['"]/g)) {
+    const spec = String(match[1]);
+    if (!imports.has(spec)) addNamedPath(file, spec, scan, root);
+  }
+  for (const match of source.matchAll(/['"]((?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(?:\/[\w.-]+)*)['"]/g)) {
+    const spec = String(match[1]);
+    scan.packages.add(spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : (spec.split('/')[0] ?? spec));
+  }
   for (const match of source.matchAll(ASSET)) {
     const path = resolve(dirname(file), String(match[1]));
-    if (statSync(path, { throwIfNoEntry: false })?.isFile()) scan.files.add(path);
+    if (isFile(path)) scan.files.add(path);
   }
 }
 
 /**
- * The local files a static config names: every string value that is a path to a file, such as an icon, a splash
- * image, a google services file or a local plugin, and the packages its plugins name.
+ * The local files a static config names: every string value that is a path to a file or, written relative, to a
+ * directory, such as an icon, a splash image, a google services file, a fonts directory or a local plugin, and the
+ * packages its plugins name.
  */
 function scanJsonConfig(file: string, scan: ConfigScan, root: string): void {
   let json: unknown;
@@ -306,11 +331,9 @@ function scanJsonConfig(file: string, scan: ConfigScan, root: string): void {
     if (Array.isArray(value)) value.forEach(visit);
     else if (value && typeof value === 'object') Object.values(value).forEach(visit);
     else if (typeof value === 'string' && value && value.length < 512 && !value.includes('\n')) {
-      const found = value.startsWith('.') ? resolveRelative(file, value) : null;
       const plain = resolve(dirname(file), value);
-      if (found && /\.[cm]?[jt]s$/.test(found)) scanConfigSource(found, scan, false, root);
-      else if (found) scan.files.add(found);
-      else if (statSync(plain, { throwIfNoEntry: false })?.isFile()) scan.files.add(plain);
+      if (value.startsWith('.')) addNamedPath(file, value, scan, root);
+      else if (isFile(plain)) scan.files.add(plain);
       else if (/^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(\/[\w.-]+)*$/.test(value))
         scan.packages.add(
           value.startsWith('@') ? value.split('/').slice(0, 2).join('/') : (value.split('/')[0] ?? value),
@@ -318,12 +341,6 @@ function scanJsonConfig(file: string, scan: ConfigScan, root: string): void {
     }
   };
   visit(json);
-}
-
-/** The env files @expo/env loads for the config: @expo/fingerprint 0.21 evaluates it in development mode. */
-function expoEnvFiles(env: NodeJS.ProcessEnv): string[] {
-  if (/^(1|true)$/i.test(env.EXPO_NO_DOTENV ?? '')) return [];
-  return ['.env.development.local', '.env.local', '.env.development', '.env'];
 }
 
 function lockfileDigest(root: string, top: string): unknown {
@@ -406,11 +423,11 @@ async function computeDigest(
     throw new Uncertain('package.json cannot be read');
   }
 
-  const packages = packageGraph(root, top, manifest);
-  const scan: ConfigScan = { files: new Set(), packages: new Set(), env: new Set(['EXPO_NO_DOTENV']) };
+  const packages = packageGraph(root, manifest);
+  const scan: ConfigScan = { files: new Set(), dirs: new Set(), packages: new Set(), env: new Set(['EXPO_NO_DOTENV']) };
   for (const name of [...CONFIG_FILES, ...FINGERPRINT_CONFIGS, ...RN_CONFIGS]) {
     const path = join(root, name);
-    if (existsSync(path)) scanConfigSource(path, scan, true, root);
+    if (existsSync(path)) scanConfigSource(path, scan, 'evaluated', root);
   }
 
   const specs = new Set<string>([...ROOT_FILES, ...ROOT_DIRS]);
@@ -482,6 +499,7 @@ async function computeDigest(
     if (entry.endsWith('/')) walk(entry.slice(0, -1));
     else if (!isIgnored(entry, false)) hashed.push(entry);
   }
+  for (const dir of scan.dirs) walk(toPosix(relative(root, dir)));
   for (const spec of outsideRepo) {
     const stat = statSync(join(root, spec), { throwIfNoEntry: false });
     if (stat?.isDirectory()) walk(toPosix(spec));
@@ -506,8 +524,8 @@ async function computeDigest(
     }),
   );
 
-  const packageRows = [...packages.values()]
-    .map((info) => [info.name, info.version, info.native, info.platforms])
+  const packageRows = [...packages]
+    .map(([dir, info]) => [toPosix(relative(root, dir)), info.name, info.version, info.native, info.platforms])
     .toSorted((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));
   const { ignorePathMatchObjects, ignoreDirMatchObjects: _dirs, fileHookTransform: _hook, ...options } = normalized;
   const require = createRequire(import.meta.url);

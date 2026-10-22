@@ -13,7 +13,7 @@ import {
 } from 'node:fs';
 import assert from 'node:assert';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { fingerprintMemoDir } from '@stim-cli/core/state';
 import { fingerprintProject, type ProjectFingerprint } from '../cache/build-cache.ts';
@@ -95,12 +95,12 @@ function fixture(layout: 'npm' | 'pnpm'): string {
       layout === 'npm' ? join(modules, name) : join(modules, '.pnpm', `${name}@${version}`, 'node_modules', name);
     if (native) nativePackage(dir, name, version);
     else write(join(dir, 'package.json'), JSON.stringify({ name, version }));
-    if (layout === 'pnpm') symlinkSync(dir, join(modules, name));
+    if (layout === 'pnpm') symlinkSync(relative(modules, dir), join(modules, name));
   };
   mkdirSync(modules, { recursive: true });
   install('native-lib', '1.0.0', true);
   install('js-lib', '1.0.0', false);
-  symlinkSync(join(repo, 'packages', 'ws-lib'), join(modules, 'ws-lib'));
+  symlinkSync(relative(modules, join(repo, 'packages', 'ws-lib')), join(modules, 'ws-lib'));
   git(base, 'init', '--quiet', repo);
   git(repo, 'add', '.');
   git(repo, 'commit', '--quiet', '-m', 'init');
@@ -273,8 +273,6 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
     git(join(base, 'repo'), 'worktree', 'add', '--quiet', '--detach', worktree, 'HEAD');
     const copy = join(worktree, 'app');
     cpSync(join(app, 'node_modules'), join(copy, 'node_modules'), { recursive: true, verbatimSymlinks: true });
-    rmSync(join(copy, 'node_modules', 'ws-lib'));
-    symlinkSync(join(worktree, 'packages', 'ws-lib'), join(copy, 'node_modules', 'ws-lib'));
     full = 0;
     expect(await lookup(realpathSync(copy))).toMatchObject({ hit: true, hash: 'h1' });
     expect(full).toBe(0);
@@ -311,7 +309,27 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
         record: true,
         operation: operation(),
         fingerprint: computed,
-        background: async () => ({ hash: 'h2', sources: [] }),
+        background: async () => ({
+          hash: 'h2',
+          sources: [
+            {
+              type: 'package',
+              name: 'unseen-lib',
+              version: '1.0.0',
+              filePath: 'node_modules/unseen-lib/package.json',
+              reasons: ['expoAutolinkingIos'],
+              hash: 'x',
+            },
+            {
+              type: 'package',
+              name: 'native-lib',
+              version: '1.0.0',
+              filePath: 'node_modules/native-lib/package.json',
+              reasons: ['expoAutolinkingIos'],
+              hash: 'y',
+            },
+          ],
+        }),
       },
     );
     expect(result.memoHit).toBe(true);
@@ -324,10 +342,65 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
       (record) => records.push(record),
     );
     expect(lines.join('\n')).toMatch(/no longer matches the tree/);
-    expect(records[0]).toMatchObject({ event: 'fingerprint_memo_stale', recorded: 'h1', current: 'h2' });
+    expect(records[0]).toMatchObject({
+      event: 'fingerprint_memo_stale',
+      recorded: 'h1',
+      current: 'h2',
+      unmodeled: ['unseen-lib'],
+    });
     full = 0;
     expect((await lookup(app)).hit).toBe(false);
     expect(full).toBe(1);
+  });
+
+  test('a file added to a directory the config names misses', async () => {
+    app = fixture('npm');
+    write(join(app, 'assets/fonts/A.ttf'), 'font a');
+    write(
+      join(app, 'app.json'),
+      JSON.stringify({ expo: { name: 'App', plugins: [['expo-font', { fonts: ['./assets/fonts'] }]] } }),
+    );
+    await lookup(app);
+    expect((await lookup(app)).hit).toBe(true);
+    write(join(app, 'assets/fonts/B.ttf'), 'font b');
+    expect((await lookup(app)).hit).toBe(false);
+  });
+
+  test('swapping a hoisted and a nested copy of a native package misses', async () => {
+    app = fixture('npm');
+    const nested = join(app, 'node_modules/js-lib/node_modules/native-lib');
+    write(
+      join(app, 'node_modules/js-lib/package.json'),
+      JSON.stringify({ name: 'js-lib', version: '1.0.0', dependencies: { 'native-lib': '2.0.0' } }),
+    );
+    nativePackage(nested, 'native-lib', '2.0.0');
+    await lookup(app);
+    expect((await lookup(app)).hit).toBe(true);
+    write(join(nested, 'package.json'), JSON.stringify({ name: 'native-lib', version: '1.0.0' }));
+    write(join(app, 'node_modules/native-lib/package.json'), JSON.stringify({ name: 'native-lib', version: '2.0.0' }));
+    expect((await lookup(app)).hit).toBe(false);
+  });
+
+  test.each([
+    [
+      'a local plugin that reads a file while the config is evaluated',
+      "const fs = require('fs');\nmodule.exports = (config) => ({ ...config, extra: { key: fs.readFileSync('key.txt', 'utf8') } });\n",
+    ],
+    [
+      'a local plugin that runs a process',
+      "const { execSync } = require('child_process');\nmodule.exports = (config) => ({ ...config, extra: { sha: String(execSync('git rev-parse HEAD')) } });\n",
+    ],
+    [
+      'a local plugin that passes the environment on',
+      'module.exports = (config) => ({ ...config, extra: Object.fromEntries(Object.entries(process.env)) });\n',
+    ],
+  ])('%s always takes the full fingerprint', async (_case, plugin) => {
+    app = fixture('npm');
+    write(join(app, 'plugins/native.js'), plugin);
+    write(join(app, 'key.txt'), 'k');
+    expect((await lookup(app)).hit).toBe(false);
+    expect((await lookup(app)).hit).toBe(false);
+    expect(full).toBe(2);
   });
 
   test('a config the static check cannot follow always takes the full fingerprint', async () => {
