@@ -252,6 +252,26 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
     expect(full).toBe(0);
   });
 
+  test('a real fingerprint recorded in one process is reused by the next lookup in the same process', async () => {
+    app = fixture('pnpm');
+    write(join(base, 'repo/patches/native-lib+1.0.0.patch'), '--- a/ios/Lib.m');
+    write(
+      join(app, 'fingerprint.config.js'),
+      "module.exports = { extraSources: [{ type: 'dir', filePath: '../patches', reasons: ['patches'] }] };",
+    );
+    git(join(base, 'repo'), 'add', '.');
+    git(join(base, 'repo'), 'commit', '--quiet', '-m', 'patches');
+    const recorded = await memoizedFingerprint(
+      app,
+      { platform: 'ios' },
+      { consult: true, record: true, operation: operation() },
+    );
+    expect(recorded.memoHit).toBe(false);
+    expect(
+      await memoizedFingerprint(app, { platform: 'ios' }, { consult: true, record: false, operation: operation() }),
+    ).toMatchObject({ memoHit: true, fingerprint: { hash: recorded.fingerprint?.hash } });
+  }, 60_000);
+
   test('a background check that disagrees drops the record and says so', async () => {
     app = fixture('npm');
     await lookup(app);

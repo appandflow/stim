@@ -395,7 +395,7 @@ async function computeDigest(
   }
   const extraContents: unknown[] = [];
   for (const source of normalized.extraSources ?? []) {
-    if (source.type === 'contents') extraContents.push(source);
+    if (source.type === 'contents') extraContents.push([source.id, source.contents]);
     else specs.add(source.filePath);
   }
   for (const [dir, info] of packages) if (local(dir) && info.native) specs.add(relative(root, dir));
@@ -485,6 +485,7 @@ async function computeDigest(
       silent: null,
       debug: null,
       ignorePaths: ignorePathMatchObjects.map((match) => match.pattern),
+      extraSources: (options.extraSources ?? []).map(({ reasons: _reasons, ...source }) => source),
     },
   };
   const nativePackages = [
