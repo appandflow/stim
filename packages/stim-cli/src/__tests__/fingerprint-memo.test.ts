@@ -395,6 +395,14 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
       "module.exports = (config) => ({ ...config, extra: { a: process.env['EXPO_PUBLIC_' + 'A'] } });\n",
     ],
     [
+      'a local plugin that takes the environment from process',
+      'const { env } = process;\nmodule.exports = (config) => ({ ...config, extra: { a: env.FOO } });\n',
+    ],
+    [
+      'a local plugin that imports process',
+      "const p = require('node:process');\nmodule.exports = (config) => ({ ...config, extra: { a: p.env.FOO } });\n",
+    ],
+    [
       'a local plugin that runs a process',
       "const { execSync } = require('child_process');\nmodule.exports = (config) => ({ ...config, extra: { sha: String(execSync('git rev-parse HEAD')) } });\n",
     ],

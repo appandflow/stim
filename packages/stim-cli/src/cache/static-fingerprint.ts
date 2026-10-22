@@ -53,10 +53,21 @@ const RISKY_IMPORTS = new Set([
   'net',
   'dgram',
   'worker_threads',
+  'process',
   'dotenv',
   'dotenv/config',
   '@dotenvx/dotenvx',
+  'fs-extra',
+  'graceful-fs',
+  'execa',
+  'shelljs',
+  'cross-spawn',
+  'node-fetch',
+  'undici',
+  'axios',
+  'got',
 ]);
+const FILE_IMPORTS = new Set(['fs', 'fs/promises', 'fs-extra', 'graceful-fs']);
 const BUILTINS = new Set(['path', 'os', 'url', 'util', 'crypto', 'module', 'assert', 'events']);
 const ASSET =
   /['"`]([^'"`\n]+\.(?:png|jpe?g|webp|gif|svg|ttf|otf|json|plist|xml|mp3|wav|caf|lottie|p8|mobileprovision))['"`]/g;
@@ -254,14 +265,10 @@ function appliesMods(source: string): boolean {
   ].flatMap((match) =>
     String(match[1])
       .split(',')
-      .map(
-        (part) =>
-          part
-            .split(/\s+as\s+|:/)
-            .at(-1)
-            ?.trim() ?? '',
-      )
-      .filter((name) => /^with[A-Z]\w*$/.test(name)),
+      .flatMap((part) => {
+        const [imported = '', alias = imported] = part.split(/\s+as\s+|:/).map((name) => name.trim());
+        return /^with[A-Z]\w*$/.test(imported) && /^\w+$/.test(alias) ? [alias] : [];
+      }),
   );
   const spaces = [
     ...source.matchAll(new RegExp(String.raw`(?:const|let|var)\s+(\w+)\s*=\s*require\s*\(\s*${pkg}\s*\)`, 'g')),
@@ -298,7 +305,8 @@ function scanConfigSource(file: string, scan: ConfigScan, mode: ScanMode, root: 
   const fileAccess = mode === 'evaluated' || !appliesMods(source);
   if (/\brequire\s*\(\s*[^'"\s)]/.test(source) || /\bimport\s*\(\s*[^'"\s)]/.test(source))
     uncertain('a dynamic require or import');
-  if (ENV_VALUE.test(source)) uncertain('process.env read without a literal name');
+  if (ENV_VALUE.test(source) || /=\s*process\b(?!\s*\??\.)/.test(source) || /\(\s*process\s*[,)]/.test(source))
+    uncertain('process.env read without a literal name');
   if (
     /\b(execSync|execFileSync|spawnSync|fetch)\s*\(/.test(source) ||
     /(?<!\.)\b(exec|execFile|spawn)\s*\(/.test(source)
@@ -324,7 +332,7 @@ function scanConfigSource(file: string, scan: ConfigScan, mode: ScanMode, root: 
   for (const spec of imports) {
     const bare = spec.replace(/^node:/, '');
     if (RISKY_IMPORTS.has(bare) || bare.startsWith('dotenv')) {
-      const fsOnly = bare === 'fs' || bare === 'fs/promises';
+      const fsOnly = FILE_IMPORTS.has(bare);
       if (!fsOnly || fileAccess) uncertain(`an import of ${spec}`);
     } else if (spec.startsWith('.')) {
       const found = resolveRelative(file, spec);
