@@ -69,7 +69,10 @@ struct MachineBuildMachines: View {
         icon: "desktopcomputer", title: machineName(machine.machine),
         subtitle: machine.capacity?.line.nilIfEmpty ?? machine.dnsName
       ) {
-        Pill(ready.title, tone: ready.tone, size: .small).help(ready.reasons ?? machine.detail)
+        Pill(
+          model.install(for: machine)?.block?.remoteIsNewer == true ? "Update this Mac" : ready.title, tone: ready.tone,
+          size: .small
+        ).help(ready.reasons ?? machine.detail)
       }
       let install = model.install(for: machine)
       if (ready.remedy != nil || machine.state != .approved) && install?.block?.remoteIsNewer != true {

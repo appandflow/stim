@@ -1422,7 +1422,8 @@ While a `--fix` run goes, the row shows "Asking <machine>…" or "Removing
 plain check after 30 seconds, and the tab shows that stim did not answer.
 
 A remote Mac whose Stim build is incompatible with this Mac's (doctor's
-`stim-build` reason, raised only when the build compatibility versions differ) offers
+`stim-build` reason, raised when the build compatibility versions differ, or the build digests
+differ for a Mac that reports no version) offers
 **Install This Mac's Build**, here and on its **Machines** page. For each such
 Mac Desktop first reads `machines.update.status`, a read that never installs, and
 compares the Stim release it reports with this Mac's stim-server. An install only

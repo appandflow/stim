@@ -91,7 +91,7 @@ final class BuildMachinesModel {
 
   func readRemoteServers(_ statuses: [BuildMachineStatus]) async {
     localStim = await readLocalStim()
-    localMissing = localStim == nil
+    localMissing = localStim == nil && statuses.contains(where: needsStimUpdate)
     for status in statuses.filter(needsStimUpdate) where updates[status.machine]?.isDone ?? true {
       do {
         let result = try await request("machines.update.status", ["machine": .string(status.machine)])
