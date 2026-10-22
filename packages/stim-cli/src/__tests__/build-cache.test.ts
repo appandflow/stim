@@ -724,6 +724,32 @@ test('the real @expo/fingerprint differ reports additions and removals with thei
   expect(changes).toHaveLength(2);
 });
 
+test.each([
+  ['a hoisted install', 'node_modules/bar/package.json', 'node_modules/bar/package.json'],
+  [
+    'a pnpm store',
+    'node_modules/.pnpm/bar@1.0.0/node_modules/bar/package.json',
+    'node_modules/.pnpm/bar@1.1.0/node_modules/bar/package.json',
+  ],
+])('the real differ reports a native dependency version bump in %s as one change', (_layout, before, after) => {
+  const source = (filePath: string, version: string): FingerprintSource => ({
+    type: 'package',
+    name: 'bar',
+    version,
+    filePath,
+    reasons: ['expoAutolinkingIos'],
+    hash: version,
+  });
+  expect(
+    diffFingerprintSources({
+      previous: [source(before, '1.0.0')],
+      previousHash: 'h1',
+      current: { hash: 'h2', sources: [source(after, '1.1.0')] },
+      differ: expoFingerprint.diffFingerprints,
+    }),
+  ).toEqual([{ name: after, change: 'changed', reasons: ['expoAutolinkingIos'] }]);
+});
+
 describe('gitignored fingerprint inputs', () => {
   const write = (path: string, content = path) => {
     mkdirSync(join(root, path, '..'), { recursive: true });

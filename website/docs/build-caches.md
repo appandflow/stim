@@ -112,12 +112,15 @@ the project lists and has no suffix.
 Stim runs `@expo/fingerprint` with its default `balanced` preset, the one the
 project's own Expo uses:
 
-- An installed dependency counts by its name and version, not by its files.
-- A package whose real path is outside `node_modules` counts by its files: a
-  workspace package, a `file:` or `link:` dependency, or a local Expo module.
-- `patches/`, a committed `ios/` or `android/`, the app config and the config
-  plugins it loads count by their contents. In a monorepo, Stim also hashes the
-  `patches/` and `.yarn/patches/` directories next to the lockfile.
+- An installed dependency counts by its name and version, not by its files. So
+  does a config plugin loaded from `node_modules`.
+- A package linked from outside `node_modules` counts by its files: a workspace
+  package, a `link:` dependency, or a local Expo module. A `file:` dependency
+  that the package manager copies into `node_modules` counts by version.
+- `patches/`, a committed `ios/` or `android/`, the evaluated app config, its
+  local config plugins and the files it names count by their contents. In a
+  monorepo, Stim also hashes the `patches/` and `.yarn/patches/` directories
+  next to the lockfile.
 - The app's `version`, `ios.buildNumber` and `android.versionCode`, `eas.json`,
   `.easignore` and the path overrides in `react-native.config.js` are left out.
   A Release cache hit keeps the version it was built with.
@@ -140,9 +143,10 @@ stim android --no-build-cache --remote-build local`}
 
 `--no-build-cache` alone can place the build on a paired build machine. That
 machine installs dependencies from the lockfile, so its build does not include
-your edit. The fresh build is stored under the same key, so later runs reuse
-it, edit included, until the dependency's version or patches change. Undo the
-edit with another `--no-build-cache` build.
+your edit. The fresh build is stored under the same key in the machine-wide
+cache, and handed to a configured cache provider, so every worktree reuses it,
+edit included, until the dependency's version or patches change. Undo the edit
+with another `--no-build-cache` build.
 
 :::
 

@@ -1751,15 +1751,17 @@ THE BUILD CACHE HAS THREE LEVELS
 
   WHAT THE KEY COUNTS. Stim runs @expo/fingerprint with its default
   \`balanced\` preset, the one the project's own Expo uses. An installed
-  dependency counts by its name and version, not by its files. A package whose
-  real path is outside node_modules -- a workspace package, a file: or link:
-  dependency, a local Expo module -- counts by its files, and so do patches/
-  and the app's committed ios/ or android/. The app's version, ios.buildNumber
-  and android.versionCode, eas.json, .easignore and the path overrides of
-  react-native.config.js are left out, so a Release cache hit keeps the version
-  it was built with. A project that wants native package files hashed sets
-  \`preset: 'strict'\` in fingerprint.config.js, at about twice the
-  fingerprint's CPU.
+  dependency, and a config plugin loaded from node_modules, counts by its name
+  and version, not by its files. A package whose real path is outside
+  node_modules -- a workspace package, a link: dependency, a local Expo module
+  -- counts by its files, and so do patches/, the app's committed ios/ or
+  android/, the evaluated app config and its local plugins. In a monorepo,
+  patches/ and .yarn/patches/ next to the lockfile count too. The app's
+  version, ios.buildNumber and android.versionCode, eas.json, .easignore and
+  the path overrides of react-native.config.js are left out, so a Release
+  cache hit keeps the version it was built with. A project that wants native
+  package files hashed sets \`preset: 'strict'\` in fingerprint.config.js, at
+  about twice the fingerprint's CPU.
 
   AN EDIT INSIDE node_modules/ IS NOT SEEN. Editing a dependency's native file
   in place (node_modules/<pkg>/ios, android, cpp, a podspec or build.gradle)
@@ -1768,9 +1770,10 @@ THE BUILD CACHE HAS THREE LEVELS
   whose patches the fingerprint hashes), or build it with
   \`--no-build-cache --remote-build local\`. --no-build-cache alone can still
   place the build on another machine, which installs dependencies from the
-  lockfile and so builds without the edit. That build is stored under the
-  unchanged key, so every later run reuses it until the dependency's version
-  or patch changes.
+  lockfile and so builds without the edit. The fresh build is stored under the
+  unchanged key in the machine-wide cache and handed to any cache provider, so
+  every worktree reuses it, edit included, until the dependency's version or
+  patches change; undo the edit with another --no-build-cache build.
 
   A MISS EXPLAINS ITSELF. Each local cache entry keeps the per-source hashes
   of its fingerprint (hashes only, pruned with the entry). Before compiling,

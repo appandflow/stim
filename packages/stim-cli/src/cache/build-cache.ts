@@ -177,19 +177,16 @@ const LOCKFILES = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json', 'bun.lock
  * app's own `patches/`, and its default preset hashes an installed package by name and version, so a patch applied
  * from the workspace root would leave the key unchanged.
  */
-export function workspacePatchSources(
-  projectRoot: string,
-  exists: (path: string) => boolean = existsSync,
-): NonNullable<FingerprintOptions['extraSources']> {
+function workspacePatchSources(projectRoot: string): NonNullable<FingerprintOptions['extraSources']> {
   let dir = resolvePath(projectRoot);
   for (;;) {
-    if (LOCKFILES.some((name) => exists(join(dir, name)))) break;
+    if (LOCKFILES.some((name) => existsSync(join(dir, name)))) break;
     const parent = resolvePath(dir, '..');
-    if (parent === dir || exists(join(dir, '.git'))) return [];
+    if (parent === dir || existsSync(join(dir, '.git'))) return [];
     dir = parent;
   }
   return ['patches', '.yarn/patches']
-    .filter((name) => (name === 'patches' ? dir !== resolvePath(projectRoot) : true) && exists(join(dir, name)))
+    .filter((name) => (name === 'patches' ? dir !== resolvePath(projectRoot) : true) && existsSync(join(dir, name)))
     .map((name) => ({
       type: 'dir' as const,
       filePath: relative(projectRoot, join(dir, name)).split(sep).join('/'),
@@ -630,6 +627,31 @@ function diffItemChange(item: unknown): SourceChange | null {
   return name === null ? null : { name, change, reasons: sourceReasons(source) };
 }
 
+/** The installed package a source path lies in: the name after its last `node_modules/`. */
+export function packageIn(path: string): string | null {
+  const matches = [...path.matchAll(/(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/g)];
+  return matches.at(-1)?.[1] ?? null;
+}
+
+/** A package that moved, such as a version bump of a pnpm store directory, is one change rather than a removal and an addition. */
+function mergeMovedPackages(changes: SourceChange[]): SourceChange[] {
+  const added = new Map<string, SourceChange>();
+  for (const change of changes) {
+    const pkg = change.change === 'added' ? packageIn(change.name) : null;
+    if (pkg && !added.has(pkg)) added.set(pkg, change);
+  }
+  const moved = new Set<SourceChange>();
+  const kept = changes.filter((change) => {
+    const pkg = change.change === 'removed' ? packageIn(change.name) : null;
+    const counterpart = pkg ? added.get(pkg) : undefined;
+    if (!counterpart || moved.has(counterpart)) return true;
+    moved.add(counterpart);
+    return false;
+  });
+  for (const change of moved) change.change = 'changed';
+  return kept;
+}
+
 export function compareSourceLists(previous: unknown[], current: unknown[]): SourceChange[] {
   const previousByName = new Map<string, { hash: string | null; reasons: string[] }>();
   for (const source of previous) {
@@ -655,7 +677,7 @@ export function compareSourceLists(previous: unknown[], current: unknown[]): Sou
   for (const [name, before] of previousByName) {
     if (!seen.has(name)) changes.push({ name, change: 'removed', reasons: before.reasons });
   }
-  return changes;
+  return mergeMovedPackages(changes);
 }
 
 export function diffFingerprintSources({
@@ -676,16 +698,10 @@ export function diffFingerprintSources({
         { sources: current.sources, hash: current.hash },
       );
       if (Array.isArray(items)) {
-        const changes: SourceChange[] = [];
         const seen = new Set<string>();
-        for (const item of items) {
-          const change = diffItemChange(item);
-          if (change !== null && !seen.has(change.name)) {
-            seen.add(change.name);
-            changes.push(change);
-          }
-        }
-        return changes;
+        return mergeMovedPackages(
+          items.map(diffItemChange).filter((change): change is SourceChange => change !== null),
+        ).filter((change) => !seen.has(change.name) && Boolean(seen.add(change.name)));
       }
     } catch {}
   }
