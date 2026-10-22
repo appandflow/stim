@@ -17,8 +17,10 @@ struct AddMachineSteps: View {
   private var tools: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
       Text("Tools on \(name)").font(.stim(.title))
-      Text("Compared with this Mac. Only a red row stops Next; an amber row says what it costs.")
-        .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      Text(
+        "Compared with this Mac. A red row means that capability will not work there yet; an amber row says what it costs. None of them stops Next, and Settings lists the problems on the machine's row."
+      )
+      .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       ForEach(model.tools) { tool in
         VStack(alignment: .leading, spacing: Space.xs) {
           Label(tool.title, systemImage: icon(tool)).font(.stim(.body, weight: .semibold))

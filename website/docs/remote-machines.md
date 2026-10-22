@@ -432,11 +432,13 @@ so there is no Check again button:
    Android SDK there; if the first `node.exe` on `PATH` is a version manager's
    shim, such as pnpm's, add `--path-prepend` with the real Node's folder.
 4. **Tools.** Compare the worker's tools with this machine, including the Android
-   tools when **Builds** is chosen. Only a problem that stops the chosen
-   capability blocks **Next**: an incompatible Stim build or no Xcode for Builds, and
-   no iOS simulator runtime for Hosted simulators. **Install This Mac's Build**
+   tools when **Builds** is chosen. A problem that stops the chosen
+   capability is shown in red and never disables **Next**; the machine stays added,
+   builds that cannot run there stay on this machine, and Settings > Remote Machines
+   keeps listing the problem on its row. Red problems are an incompatible Stim build
+   or no Xcode for Builds, and no iOS simulator runtime for Hosted simulators. **Install This Mac's Build**
    fixes an incompatible Stim build. A Linux or Windows machine shows only the Stim build and
-   Android rows, and a missing Android SDK or any JDK difference blocks **Next**
+   Android rows, and a missing Android SDK or any JDK difference is red
    there, since no build could offload. The other problems are warnings that name what
    they cost:
    - A different Xcode or runtime version.
@@ -696,8 +698,8 @@ allow that app. Setup does not change macOS permission settings itself.
 
 Setup checks installed tools and prints fixes; it does not install Xcode,
 runtimes, CocoaPods, Java or the Android SDK. Desktop's Tools step compares
-them against the client. Missing or mismatched iOS tools block the next step;
-Android checks and a busy worker do not. Hosting alone does not need CocoaPods
+them against the client. No tool result blocks the next step: problems are
+shown, and the machine stays added. Hosting alone does not need CocoaPods
 or Android tools.
 
 **Install This Mac's Build** can update an approved worker over the tailnet.

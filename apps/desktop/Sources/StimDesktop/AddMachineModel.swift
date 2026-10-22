@@ -479,7 +479,6 @@ final class AddMachineModel {
     }
     return rows
   }
-  var toolsBlock: Bool { tools.contains { $0.blocks } }
 
   func openTools() async {
     guard wizard.phase == .approved else { return }

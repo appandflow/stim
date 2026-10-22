@@ -1296,12 +1296,13 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    unavailable server is reported without a CLI fallback. Cancelling a check leaves
    the shared connection open; reports retain the server's execution and cleanup
    budget of up to 150 seconds. When Builds is chosen, Android tools are always compared
-   and never block Next. Only a problem that stops the chosen capability blocks
-   Next (red): a Stim build mismatch, no Xcode, a different CPU or an
+   and are amber. Next is never disabled by a tool row: approval is finished, a
+   failed offload falls back to a local build, and the machine stays added.
+   A problem that stops the chosen capability is red: a Stim build mismatch, no Xcode, a different CPU or an
    unreachable or unapproved Mac for Builds, and no iOS simulator runtime for
    Hosted simulators when doctor reports it. With only Hosted simulators, setup
    records no tool checks, so rows without data read "Checked when a hosted
-   simulator starts" and never block. **Install This Mac's Build** updates a mismatched Stim build
+   simulator starts". **Install This Mac's Build** updates a mismatched Stim build
    through the existing machine update action. Every other problem is an amber
    warning that names its cost, such as a different Xcode or runtime, missing
    Android tools or a different global CocoaPods. Doctor compares the global
@@ -1311,8 +1312,9 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    machine. Shell commands have Copy buttons; prose fixes appear as text. Desktop
    never runs these fixes. A Linux or Windows machine is compared with
    `stim doctor --platform android` only: it shows the Stim build and Android
-   rows, and a missing Android SDK or any JDK difference blocks Next, since no
-   build could offload there.
+   rows, and a missing Android SDK or any JDK difference is red, since no
+   build could offload there. Settings > Remote Machines lists the same doctor
+   problems on that machine's row.
 5. **Done.**
    - The approvals.
    - A **Try it** card with a copyable agent prompt and

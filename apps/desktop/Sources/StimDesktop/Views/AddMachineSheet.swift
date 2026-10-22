@@ -516,7 +516,7 @@ struct AddMachineSheet: View {
         .keyboardShortcut(.cancelAction)
         .disabled((model.busy && !model.preparingSample) || model.cancelling)
         if step == 3 {
-          forward("Next", disabled: model.busy || model.toolsBlock) { Task { await model.openSummary() } }
+          forward("Next", disabled: model.busy) { Task { await model.openSummary() } }
         } else if model.page == .test {
           forward("Back to Summary", disabled: model.sample?.running == true) { Task { await model.closeTest() } }
         } else if step == 4 {

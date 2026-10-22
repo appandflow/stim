@@ -730,7 +730,7 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertTrue(harness.toolCalls.contains("android"), "Builds covers Android, so its tools are checked without asking")
     XCTAssertNotNil(model.tools.first { $0.id == "jdk" }?.state.fix)
     XCTAssertFalse(model.tools.contains { $0.detail?.contains("Android builds off") == true })
-    XCTAssertFalse(model.toolsBlock)
+    XCTAssertFalse(model.tools.contains { $0.blocks })
     await model.openSummary()
     XCTAssertEqual(model.page, .summary)
   }
@@ -791,7 +791,12 @@ final class AddMachineModelTests: XCTestCase {
     await model.openTools()
     XCTAssertEqual(Set(harness.toolCalls), ["android"])
     XCTAssertFalse(model.tools.contains { ["xcode", "runtime", "cocoapods"].contains($0.id) })
-    XCTAssertTrue(model.toolsBlock, "a \(os) machine without a JDK cannot take any build")
+    XCTAssertTrue(model.tools.contains { $0.blocks }, "a \(os) machine without a JDK cannot take any build")
+    await model.openSummary()
+    XCTAssertEqual(model.page, .summary, "a red tool row never stops the wizard")
+    await model.finish()
+    XCTAssertTrue(model.finished)
+    XCTAssertEqual(harness.builds, ["mini"], "the machine stays added")
     XCTAssertEqual(model.testPlatform, "android")
   }
 
