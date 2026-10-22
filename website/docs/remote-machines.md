@@ -112,7 +112,8 @@ Desktop control connection. Stop uses the existing cleanup path; remote
 clients keep their own-session-only `device-host.stop` access.
 
 The host boots its owned simulator headless and mutes it, as a local boot does,
-so the host Mac stays quiet. An Android emulator's media volume is set to zero
+so the host Mac stays quiet. The mute is best effort and a failure is not
+reported to the client. An Android emulator's media volume is set to zero
 the same way; neither changes the host's own volume. Debug keeps Metro on this machine
 and connects it through a private tailnet bridge; no `stim start --remote` is
 needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.

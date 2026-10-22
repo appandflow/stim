@@ -111,7 +111,8 @@ for one device with Sound (iOS) or Media sound (Android) in its Stim Desktop
 options; the choice lasts until that device next boots. Android 14 and older images have no shell command that can
 set media volume, so startup warns, as it does whenever a mute is not
 confirmed. A hosted simulator or emulator on a named Mac is muted the same way
-after the host boots or adopts it, and Stim Desktop's Sound options do not reach
+after the host boots or adopts it (best effort; a failed mute is not reported
+to the client), and Stim Desktop's Sound options do not reach
 it. Host volume, Android alarm and ringtone volumes and physical devices are
 unchanged.
 
