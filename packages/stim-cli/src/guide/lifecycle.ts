@@ -1776,6 +1776,32 @@ THE BUILD CACHE HAS THREE LEVELS
   every worktree reuses it, edit included, until the dependency's version or
   patches change; undo the edit with another --no-build-cache build.
 
+  A KNOWN TREE SKIPS THE FULL FINGERPRINT. After a full fingerprint at the
+  first lookup of a React Native or Expo run, Stim records it in
+  ~/.stim/fingerprint-memo under a static digest of the tree: git blob ids of
+  the native inputs git tracks, the contents of the untracked, modified and
+  ignored ones, the app config's sources and the files it names, each
+  installed package's version and native markers, the lockfile, and the
+  environment variables the config reads. Any worktree whose tree has the same
+  digest, a fresh one included, reuses the record instead of evaluating the
+  config and running autolinking:
+
+    fingerprint matches a recorded fingerprint of this tree; confirming it in the background
+
+  A full fingerprint then runs at low priority while the app installs and
+  launches. The record is put back only when it agrees. If the run ends first,
+  it waits up to 3 seconds and then drops the check, and the next run
+  fingerprints in full. A disagreement ends the run with a warning naming both
+  hashes and a fingerprint_memo_stale record in the build log; run the command
+  again to use the current tree. A config the digest cannot follow always
+  fingerprints in full: a dynamic require or import, process.env read without
+  a literal name, file, process or network access, a dotenv import, a
+  fileHookTransform, or a preset that hashes package files. So do a project
+  outside git and Yarn Plug'n'Play. The record is never consulted after
+  prebuild or pod install, by a build worker, by doctor, or with
+  --no-build-cache; --plan reads one without writing. Records are 0600, at
+  most 256 per platform, and gc prunes them by age with the other caches.
+
   A MISS EXPLAINS ITSELF. Each local cache entry keeps the per-source hashes
   of its fingerprint (hashes only, pruned with the entry). Before compiling,
   Stim compares the sources it is about to store with a baseline: the entry

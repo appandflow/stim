@@ -683,7 +683,10 @@ tool at least once. Use a timeout around `simctl`.
 initial lookup and single-flight lock on the pre-mutation key. After a mutation,
 fingerprint again and resolve once under the new key before compiling. Store
 the artifact, `lastBuild`, and remote upload only under the post-mutation key.
-Do not store the same artifact under both keys.
+Do not store the same artifact under both keys. A recorded fingerprint from
+`$STIM_HOME/fingerprint-memo` may stand in only for the pre-mutation lookup.
+The post-mutation fingerprint, the build worker and `doctor` always compute it
+in full. Write a record only from a full fingerprint, never from a recorded one.
 
 ### 11. Preserve launch status semantics
 
