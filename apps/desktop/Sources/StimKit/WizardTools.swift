@@ -207,7 +207,7 @@ private func cocoapodsAdvice(problems: [BuildMachineStatus.Problem], machine: St
 
 public func wizardFixIsCommand(_ fix: String) -> Bool {
   let commands = [
-    "sudo", "brew", "gem", "bundle", "xcodebuild", "xcode-select", "sdkmanager", "stim", "stim-server", "npx", "npm",
+    "sudo", "brew", "gem", "bundle", "xcodebuild", "xcode-select", "sdkmanager", "stim", "stim-server", "npx", "npm", "winget",
   ]
   let program: Substring
   if let quote = fix.first, quote == "\"" || quote == "'" {

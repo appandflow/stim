@@ -85,6 +85,7 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertTrue(wizardFixIsCommand("'/Users/First Last/Android/sdk/cmdline-tools/latest/bin/sdkmanager' --licenses"))
     XCTAssertTrue(wizardFixIsCommand("\"C:\\Users\\First Last\\sdk\\cmdline-tools\\latest\\bin\\sdkmanager.bat\" --licenses"))
     XCTAssertTrue(wizardFixIsCommand("'/Users/First Last/O'\\''Neil/sdk/cmdline-tools/latest/bin/sdkmanager' --licenses"))
+    XCTAssertTrue(wizardFixIsCommand("winget install EclipseAdoptium.Temurin.17.JDK"))
     XCTAssertFalse(wizardFixIsCommand("On mini, install the package into its Android SDK:"))
     XCTAssertFalse(wizardFixIsCommand("/usr/bin/rm -rf x"))
   }

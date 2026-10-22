@@ -596,9 +596,10 @@ leased until <time>" for each one.`,
                   checkout, stim-build, arch, xcode, simulator-sdk, macos-sdk,
                   cocoapods, bundler, runtime, jdk, android-sdk, ndk,
                   build-tools, compile-sdk, disk, busy or platform). problems lists the same
-                  reasons as { code, reason } with that code; an ndk, build-tools or
-                  compile-sdk problem also carries commands, the sdkmanager lines to run
-                  on that machine. notes lists what a build there does without stopping:
+                  reasons as { code, reason } with that code; an ndk, build-tools,
+                  compile-sdk or jdk problem also carries commands and a lead, the lines
+                  to run on that machine (sdkmanager, or the JDK install for its OS) and
+                  what they do. notes lists what a build there does without stopping:
                   { code, reason } for an ndk, build-tools or compile-sdk package its
                   Android SDK lacks and Gradle downloads on the first build (licenses
                   accepted there, no android.builder.sdkDownload=false in the app), each

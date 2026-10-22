@@ -1621,7 +1621,8 @@ connected since stim-server started keeps its directory when revoked.
   `arch`; `xcode`; `simulatorSdk`; `macosSdk` (from
   `xcrun --sdk macosx --show-sdk-version`); `cocoapods`; `runtimes`, the simulator
   runtimes with an iPhone simulator to build for; `jdk`, the major version of
-  the JDK in `JAVA_HOME` or the macOS default; and `androidSdk`, the `ndk`,
+  the JDK in `JAVA_HOME` or the macOS default; `jdks`, the majors of every JDK it finds
+  (`JAVA_HOME`, the system JVM directories, Homebrew, Android Studio's JBR, SDKMAN), the default included; and `androidSdk`, the `ndk`,
   `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME`, else `~/Library/Android/sdk` on macOS or
   `~/Android/Sdk` on Linux, null without one), `androidHome` (that directory) and
   `androidLicenses` (whether `licenses/android-sdk-license` in it has content, so
@@ -1718,7 +1719,9 @@ connected since stim-server started keeps its directory when revoked.
   simulator runtime identifier, required for `ios`, null for `android`),
   `fingerprint`, `packageName`, `isExpo`, `optimizations`, `android` (for
   `android`: `variant`, `abi`, `gradleBuildCache`, `pch` and `compilerCache`,
-  `ccache` or `none`), `stimBuild` and, from a caller that saw `build-compat`, `compat`, after the whole manifest of `repo` was
+  `ccache` or `none`), `stimBuild` and, from a caller that saw `build-compat`, `compat`, and, for Android from a caller
+  that saw `build-jdk`, `jdk` (the JDK major its Gradle runs on; the build runs with `JAVA_HOME` at an installed JDK of
+  that major, and fails if there is none), after the whole manifest of `repo` was
   synced on this connection. A peer-cache-capable React Native caller can set
   `cacheArtifact: true` to retain a completed development archive when its cache
   write and remote policies allow it. With the `fingerprint-sources` feature, a

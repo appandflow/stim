@@ -1042,6 +1042,13 @@ export type BuildRequest =
       assetCatalog?: string | null;
     };
 
+function startJdk(choice: OffloadChoice): { jdk?: string } {
+  const { target, connection } = choice;
+  return target.platform === 'android' && target.local.jdk && connection.supports('build-jdk')
+    ? { jdk: target.local.jdk }
+    : {};
+}
+
 function startCompat(choice: OffloadChoice): { compat?: number } {
   return choice.connection.supports('build-compat') ? { compat: choice.target.local.compat } : {};
 }
@@ -1681,6 +1688,7 @@ export async function offloadBuild(
             }),
         stimBuild: choice.target.local.stimBuild,
         ...startCompat(choice),
+        ...startJdk(choice),
       });
       checkCancelled();
       if ('result' in reply) {

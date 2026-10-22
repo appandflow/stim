@@ -326,7 +326,12 @@ an iPhone simulator on the target runtime. The Stim build compatibility version
 must match (see [Stim versions](#stim-versions)), and so must the CPU architecture for iOS and macOS builds (macOS builds that run on the same worker excepted). Project-selected CocoaPods versions must match unless the
 project's `Gemfile.lock`, in `ios/` or the project root, pins it; then both
 machines use Bundler and the pinned version. For macOS, Xcode and the macOS SDK must match, except when `stim macos --remote <machine> --remote-build <machine>` builds and runs the app on the same Mac; then only the Stim build compatibility version must match (see [Run it on another Mac](./macos.md#run-it-on-another-mac)). For Android, JDK major
-versions must match, and the worker needs the project's NDK, build-tools and
+versions must match: the worker builds on an installed JDK of this machine's major
+when its default JDK is another one, so no restart is needed, and the fix for a
+missing major is the install command for the worker's OS (for example
+`brew install --cask zulu@17`). Gradle, AGP and Kotlin support only some JDK
+majors and the build cache and artifacts assume one JDK, so a nearby major does
+not count. Also, the worker needs the project's NDK, build-tools and
 compile SDK, or the Android SDK licenses accepted so Gradle downloads what is
 missing on the first build there (the NDK is about 1-2 GB). The project can
 turn that download off with `android.builder.sdkDownload=false` in

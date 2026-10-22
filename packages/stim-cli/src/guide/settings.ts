@@ -1033,7 +1033,12 @@ comparison runs \`pod --version\` in the directory pod install runs in. The comp
 the app's .ruby-version when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the GEM_HOME, GEM_PATH and Ruby-related PATH entries of the machine's login shell (read once with $SHELL -lic), unless the caller already sets GEM_HOME, with pod install's UTF-8 locale defaults. pod install, including the Bundler run, uses the same environment.
 For Android its CPU may differ, since the APK's ABIs come from the NDK, so an
 x86_64 Linux or Windows machine running stim-server can build for an Apple silicon Mac. Its JDK major
-version must match, and its Android SDK must hold the NDK, build-tools and
+version must match this machine's, which can be an installed JDK that is not the
+worker's default: its offer lists \`jdks\`, and a build sent with the build-jdk
+feature runs with JAVA_HOME at the one of that major. A major no installed JDK
+has gets the install command for the worker's OS as doctor's fix. A nearby major
+never counts (Gradle, AGP and Kotlin support and the shared build cache assume
+one JDK). Also, its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in
 gradle/libs.versions.toml; Gradle and AGP come from the synced project. A
 package the SDK lacks is a note, not a blocker, when its offer reports the SDK

@@ -375,6 +375,36 @@ describe('pickOffer for Android', () => {
     }
   });
 
+  describe('a JDK of another major than the worker default', () => {
+    const jdkProblems = (toolchain: Partial<WorkerToolchain>) => offerProblems(offer({ toolchain }), ANDROID);
+
+    it('is taken when the worker has a JDK of this machine major installed', () => {
+      expect(jdkProblems({ jdk: '25', jdks: ['17', '25'] })).toEqual([]);
+      expect(pickAndroid(offer({ toolchain: { jdk: null, jdks: ['17'] } }))).toBe(0);
+    });
+
+    it('is refused with the install command of the worker OS when no installed JDK matches', () => {
+      for (const [os, command] of [
+        ['darwin', 'brew install --cask zulu@17'],
+        ['linux', 'sudo apt install openjdk-17-jdk-headless'],
+        ['win32', 'winget install EclipseAdoptium.Temurin.17.JDK'],
+      ] as const) {
+        expect(jdkProblems({ jdk: '25', jdks: ['25'], os })).toEqual([
+          {
+            code: 'jdk',
+            reason: 'JDK 25 there, 17 here',
+            commands: [command],
+            lead: 'install JDK 17; Stim uses it automatically, no restart needed',
+          },
+        ]);
+      }
+    });
+
+    it('keeps the strict rule and no install command for a stim-server that does not list its JDKs', () => {
+      expect(jdkProblems({ jdk: '25' })).toEqual([{ code: 'jdk', reason: 'JDK 25 there, 17 here' }]);
+    });
+  });
+
   describe('a package the worker lacks', () => {
     const missingNdk = { androidSdk: { ...SDK, ndk: ['27.0.12077973'] } };
 
@@ -430,6 +460,7 @@ describe('pickOffer for Android', () => {
             '/Users/x/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses',
             '/Users/x/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager "ndk;27.1.12297006"',
           ],
+          lead: 'accept the SDK licenses so Gradle downloads the package, or install it',
         },
       ]);
       expect(toolchainNotes(ANDROID, refused.toolchain)).toEqual([]);
@@ -443,6 +474,7 @@ describe('pickOffer for Android', () => {
           code: 'ndk',
           reason: 'no NDK 27.1.12297006 there, and the project sets android.builder.sdkDownload=false',
           commands: ['sdkmanager "ndk;27.1.12297006"'],
+          lead: 'install the package into the Android SDK stim-server uses (its ANDROID_HOME, else the default SDK location)',
         },
       ]);
       expect(toolchainNotes(off, accepted.toolchain)).toEqual([]);
@@ -451,7 +483,12 @@ describe('pickOffer for Android', () => {
     it('keeps the strict rule for a stim-server that does not report its licenses', () => {
       const old = offer({ toolchain: missingNdk });
       expect(offerProblems(old, ANDROID)).toEqual([
-        { code: 'ndk', reason: 'no NDK 27.1.12297006 there', commands: ['sdkmanager "ndk;27.1.12297006"'] },
+        {
+          code: 'ndk',
+          reason: 'no NDK 27.1.12297006 there',
+          commands: ['sdkmanager "ndk;27.1.12297006"'],
+          lead: 'install the package into the Android SDK stim-server uses (its ANDROID_HOME, else the default SDK location)',
+        },
       ]);
       expect(toolchainNotes(ANDROID, old.toolchain)).toEqual([]);
     });

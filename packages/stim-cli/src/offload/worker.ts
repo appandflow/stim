@@ -51,7 +51,7 @@ import { parseNdjsonText, type NdjsonWriter } from '../ndjson.ts';
 import type { Optimizations } from '../optimizations.ts';
 import { podAction } from '../commands/ios/support.ts';
 import type { AndroidBuildOptions } from './client.ts';
-import { availableIphone, workerToolchain } from './toolchain.ts';
+import { availableIphone, useJdkMajor, workerToolchain } from './toolchain.ts';
 import { verifyNativeTransfer } from './native-source.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
@@ -136,6 +136,8 @@ export interface WorkerJob {
   cacheArtifact?: boolean;
   stimBuild?: string;
   compat?: number;
+  /** The JDK major the client builds on; the build runs on an installed JDK of it when the default differs. */
+  jdk?: string;
   native?: BuildStartParams['native'];
   optimizations: Optimizations['ios'] | null;
   /** How long the client's Gradle daemon stays warm after an Android build; 0 or absent stops it when the build ends. */
@@ -1348,6 +1350,10 @@ async function main(): Promise<void> {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
     const job = JSON.parse(Buffer.concat(chunks).toString('utf8')) as WorkerJob;
+    if (job.platform === 'android' && job.jdk) {
+      const unavailable = useJdkMajor(job.jdk);
+      if (unavailable) return emit({ type: 'result', ok: false, code: 'build-refused', message: unavailable });
+    }
     return emit({ type: 'result', ...(await build(job)) });
   }
   process.stderr.write(
