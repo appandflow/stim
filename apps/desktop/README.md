@@ -1273,11 +1273,22 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
      needs no administrator rights and installs a scheduled task.
    - A live mirror in the preview's wording: no node or request ids, and no
      tool details or JSON. It shows skipped and failed steps as recorded.
+   - Needs no Next press. Once the remote machine's journal shows the command
+     started, Desktop sends this Mac's build and hosted-simulator requests with
+     the ticket and keeps reading `stim doctor` every 5 seconds, one read at a
+     time, until the ticket expires. When the journal says the remote machine
+     approved and waits for this Mac, Desktop sends the request at once and the
+     status line reads "<machine> approved this Mac. Stim is connecting to it". The
+     reads only deliver the ticket; approval stays the Y/n on the remote
+     machine. After the ticket expires Desktop stops asking, says so, and offers
+     New Command.
    - When setup finishes with no failed step and every chosen capability is
-     approved, a success view replaces the mirror; a failed step keeps the
-     mirror and its fix. It lists the approvals and the current
-     Screen recording and Device control permissions (with the fix for a
-     skipped one); it has no log. The expiry line shows only until the
+     approved, the wizard moves to Tools by itself ("Approved. Waiting for
+     <machine> to finish setup..." shows until the journal is done). A skipped
+     permission or a failed step keeps this step and its Next button, so the
+     warning and its fix are read first. The success view lists the approvals
+     and the current Screen recording and Device control permissions (with the
+     fix for a skipped one); it has no log. The expiry line shows only until the
      command starts.
 4. **Tools.** The remote machine's tools compared with this Mac, from doctor and
    the setup journal. Read-only checks use fresh, platform-filtered reports from

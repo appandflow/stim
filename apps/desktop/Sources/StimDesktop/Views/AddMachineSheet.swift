@@ -380,7 +380,7 @@ struct AddMachineSheet: View {
       return "The wizard's settings have been removed. Approval on the remote machine stays until you revoke it there."
     }
     if wizard.phase == .approved {
-      return "Approved. \(name) is finishing its checks; Next checks its tools."
+      return wizard.journal?.done == false ? "Approved. Waiting for \(name) to finish setup\u{2026}" : "Approved."
     }
     if wizard.failure(now: model.now) == .noWorkspace {
       return "Preparing the sample app for setup requests. If preparation fails, retry from the test below."
@@ -388,6 +388,9 @@ struct AddMachineSheet: View {
     if wizard.journal == nil {
       return model.serverNotReady
         ? "stim-server on \(name) is not ready. Waiting for it to start." : "Waiting for \(name) to start stim-server"
+    }
+    if wizard.journal?.waitsForConnection == true {
+      return "\(name) approved this Mac. Stim is connecting to it\u{2026}"
     }
     if wizard.journal?.steps.contains(where: { $0.id.hasPrefix("permissions.") && $0.state == .running }) == true {
       return
@@ -422,7 +425,7 @@ struct AddMachineSheet: View {
         .overlay(RoundedRectangle(cornerRadius: Radius.small).strokeBorder(Palette.tertiary.opacity(0.4)))
         Button("Use Port") { Task { await model.useManualPort() } }.disabled(model.busy)
       }
-    case .expired: Text("The ticket expired before approval. Generate a New command.")
+    case .expired: Text("The ticket expired before approval, so Stim stopped asking. Generate a New command.")
     case .stepFailed(let step, let detail, let fix):
       Text([step, detail].compactMap { $0 }.joined(separator: ": ")).foregroundStyle(Palette.error)
       if let fix { CopyableCommand(command: fix) }

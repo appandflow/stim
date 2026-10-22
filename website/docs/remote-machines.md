@@ -414,10 +414,14 @@ so there is no Check again button:
 3. **Set it up.** Copy the generated command and run it in Terminal while
    signed in at the worker Mac. It needs Node 22.12 or later there. Answer Y/n
    for each new capability grant there; Yes is the default, so Enter lets the
-   client machine build here, or run its app code in hosted simulators here. Desktop mirrors
-   setup progress live and checks the selected approvals. Already approved
-   capabilities are omitted from the command. When setup finishes, the step
-   shows the approved capabilities, and any skipped permission with its fix. There is no SSH option.
+   client machine build here, or run its app code in hosted simulators here. After
+   the last answer, setup prints "Waiting for the requesting machine to connect.
+   Stim Desktop sends this automatically." and confirms each approval when
+   Desktop's request arrives; you do not press anything in Desktop. Desktop
+   mirrors setup progress live and sends the requests by itself until the
+   command's ticket expires. Already approved capabilities are omitted from the
+   command. When every chosen capability is approved and setup finished, Desktop moves to Tools by itself.
+   A skipped permission keeps this step open and shows its fix. There is no SSH option.
    For a Linux machine the command first runs `sudo tailscale set --operator=$USER`
    and `sudo loginctl enable-linger $USER` (see [Linux worker](#linux-worker)),
    and setup installs a systemd user service instead of a LaunchAgent and Stim

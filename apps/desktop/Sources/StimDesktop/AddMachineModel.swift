@@ -212,6 +212,7 @@ final class AddMachineModel {
       }
     }
     if page == .setup, wizard.ticket != nil, wizard.phase != .cancelled { await send(.tick) }
+    if page == .setup, wizard.advancesToTools(now: now) { await openTools() }
   }
 
   private func refresh(_ read: SetupRefresh) async {

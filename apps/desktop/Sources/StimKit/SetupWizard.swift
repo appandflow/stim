@@ -93,6 +93,18 @@ public struct SetupJournal: Decodable, Equatable, Sendable {
   }
 }
 
+extension SetupJournal {
+  /// Whether the chosen machine approved the requests and now waits for this Mac to connect with the ticket.
+  public var waitsForConnection: Bool { steps.contains { $0.waitsForConnection } }
+}
+
+extension SetupJournal.Step {
+  /// The approval step while `stim-server setup` waits for the requesting machine to spend the ticket.
+  public var waitsForConnection: Bool {
+    id == "approve" && state == .running && detail?.hasPrefix("Waiting for the requesting machine") == true
+  }
+}
+
 public struct SetupKnown: Equatable, Sendable {
   public var serverVersion: String?
   public var buildApproved: Bool
@@ -215,7 +227,11 @@ public func setupStepLine(_ step: SetupJournal.Step, clientName: String, os: Tai
     text = running ? "checking the tailnet route" : port.map { "tailnet route https \($0) (no Funnel)" } ?? "tailnet route"
   case "approve":
     if step.state == .ok { return nil }
-    text = running ? "waiting for approval in \(os == .windows ? "PowerShell" : "Terminal")" : "approval missing"
+    if step.waitsForConnection {
+      text = "waiting for \(clientName) to connect"
+    } else {
+      text = running ? "waiting for approval in \(os == .windows ? "PowerShell" : "Terminal")" : "approval missing"
+    }
   case "approve.build", "approve.device-host":
     let what = step.id == "approve.build" ? "builds" : "hosted simulators"
     switch step.state {
@@ -330,6 +346,7 @@ public struct SetupWizard: Sendable {
   public var settings: Settings
   public var hasWorkspace: Bool
   private var writeRequested = false
+  private var connectAsked = false
   private var lastAsk: Date?
   private var existingIds: [SetupCapability: String] = [:]
   private var preStateKnown = false
@@ -363,6 +380,7 @@ public struct SetupWizard: Sendable {
       commandIssuedAt = now
       journal = nil
       lastAsk = nil
+      connectAsked = false
       phase = .command
       for capability in capabilities {
         let status = status(for: capability)
@@ -375,6 +393,11 @@ public struct SetupWizard: Sendable {
       revokeIds.formUnion(journal.granted.map(\.id))
       phase = .running
       if !hasWorkspace { return [] }
+      if entriesWritten, journal.waitsForConnection, !connectAsked, !allApproved, let ticket, now < ticket.expiresAt {
+        connectAsked = true
+        lastAsk = now
+        return [.askDoctor(ticket: ticket.value)]
+      }
       if entriesWritten, lastAsk == nil, let ticket {
         lastAsk = now
         return [.askDoctor(ticket: ticket.value)]
@@ -389,6 +412,7 @@ public struct SetupWizard: Sendable {
     case .entriesWritten:
       entriesWritten = true
       lastAsk = now
+      if journal?.waitsForConnection == true { connectAsked = true }
       if let ticket { return [.askDoctor(ticket: ticket.value)] }
     case .doctorReported(let build, let host):
       self.build = build
@@ -421,6 +445,7 @@ public struct SetupWizard: Sendable {
         commandIssuedAt = nil
         port = nil
         lastAsk = nil
+        connectAsked = false
         existingIds = [:]
       }
     }
@@ -461,6 +486,12 @@ public struct SetupWizard: Sendable {
         let state = status(for: capability)?.state
         return state == .notAsked || state == .revoked || state == .lapsed
       }
+  }
+
+  /// Whether the wizard moves to Tools by itself: every chosen capability is approved and the chosen machine finished
+  /// setup with no failed step and no skipped permission, which keep their page and its Next button.
+  public func advancesToTools(now: Date) -> Bool {
+    phase == .approved && journal?.done == true && failure(now: now) == nil
   }
 
   /// Going back writes nothing and asks nothing of the remote Mac only while no setup journal has arrived and no
@@ -548,7 +579,8 @@ extension SetupWizard {
     case .choose: return [.approvals]
     case .cancelled: return []
     case .command, .running, .approved, .expiredCommand:
-      var reads: [SetupRefresh] = phase == .expiredCommand ? [] : [.journal]
+      if phase == .expiredCommand { return [] }
+      var reads: [SetupRefresh] = [.journal]
       if journal != nil, entriesWritten { reads.append(.doctor) }
       return reads
     }

@@ -19,6 +19,8 @@ final class AddMachineModelTests: XCTestCase {
     var mode: String?
     var modeOrigin: String? = "default"
     var grantReady = false
+    var journalDone = false
+    var journalSteps: [SetupJournal.Step] = []
     var journalExpiryOffset: TimeInterval = 0
     var peerId = "nMini"
     var peers: String?
@@ -74,8 +76,9 @@ final class AddMachineModelTests: XCTestCase {
             return .journal(
               SetupJournal(
                 ticket: SetupTicket.generate(now: self.now.addingTimeInterval(self.journalExpiryOffset)),
-                capabilities: [.build, .deviceHost], steps: [],
-                granted: self.grantReady ? [.init(capability: .build, id: "b"), .init(capability: .deviceHost, id: "h")] : []))
+                capabilities: [.build, .deviceHost], steps: self.journalSteps,
+                granted: self.grantReady ? [.init(capability: .build, id: "b"), .init(capability: .deviceHost, id: "h")] : [],
+                done: self.journalDone))
           },
           doctor: { cwd, ask, ticket in
             self.doctorPaths.append(cwd)
@@ -180,6 +183,67 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertNil(harness.mode)
     XCTAssertEqual(harness.asks.last?.0, true)
     XCTAssertNil(harness.asks.last?.1)
+  }
+
+  @MainActor func testWizardSendsTheRequestsAndMovesToToolsWithoutAnotherNextPress() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    XCTAssertEqual(harness.builds, ["mini:7447"])
+    XCTAssertNotNil(harness.asks.first(where: { $0.0 })?.1, "the ticket's request went out with no further action")
+    harness.grantReady = true
+    await checkUntilApproved(model)
+    XCTAssertEqual(model.page, .setup, "approved, but the machine is still finishing setup")
+    harness.journalDone = true
+    await model.refresh()
+    XCTAssertEqual(model.page, .tools)
+    XCTAssertEqual(model.wizard.phase, .approved)
+  }
+
+  @MainActor func testRequestGoesOutAtOnceWhenTheMachineStartsWaitingForThisMac() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    let asked = { harness.asks.filter { $0.0 && $0.1 != nil }.count }
+    let before = asked()
+    harness.journalSteps = [
+      .init(
+        id: "approve", state: .running, title: "Access approval",
+        detail: "Waiting for the requesting machine to connect. Stim Desktop sends this automatically.")
+    ]
+    await model.refresh()
+    XCTAssertEqual(asked(), before + 1)
+    await model.refresh()
+    XCTAssertEqual(asked(), before + 1, "one request per signal, not one per poll")
+  }
+
+  @MainActor func testExpiredTicketStopsReadingAndAsksForANewCommand() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    harness.now = harness.now.addingTimeInterval(31 * 60)
+    await model.refresh()
+    XCTAssertEqual(model.wizard.phase, .expiredCommand)
+    XCTAssertEqual(model.wizard.failure(now: harness.now), .expired)
+    let calls = harness.steps.count
+    await model.refresh()
+    await model.refresh()
+    XCTAssertEqual(harness.steps.count, calls, "no request or read after the ticket expired")
   }
 
   @MainActor func testBackgroundPollReadsDoctorDuringSetupBesideTheJournal() async throws {
