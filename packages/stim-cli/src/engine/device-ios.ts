@@ -553,7 +553,7 @@ async function configureOwnedIosSim({
   if (result.managed) updated.simslimManaged = true;
   else delete updated.simslimManaged;
   const springBoardAfter = slimConfigured ? await readSpringBoardPid(record.deviceUdid) : null;
-  if (result.managed && identity !== null && springBoardAfter !== null) {
+  if (result.managed && !result.notInstalled && identity !== null && springBoardAfter !== null) {
     updated.simslimApplied = { profile: identity, springBoardPid: springBoardAfter };
   }
   await withConfigLockAsync(() => setDevice(projectPath, 'ios', updated, slot));

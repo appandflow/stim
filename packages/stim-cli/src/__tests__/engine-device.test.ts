@@ -2220,6 +2220,65 @@ describe('ensureOwnedDevice: ios', () => {
       }
     });
 
+    test('reconciles a shut-down simulator even when its record matches the pid it will report', async () => {
+      const root = projectDir();
+      try {
+        setDevice(root, 'ios', {
+          deviceUdid: 'U1',
+          owned: true,
+          deviceName: 'stim-app',
+          simslimManaged: true,
+          simslimApplied: { profile: 'default', springBoardPid: 4242 },
+        });
+        const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
+        setExecutor({
+          ...exec,
+          runFile(file, args = []) {
+            if (file === 'xcrun' && args[0] === 'devicectl') {
+              return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+            }
+            if (file === 'xcrun' && args.includes('notifyutil')) return 'com.apple.springboard.finishedstartup 4242';
+            return exec.runFile(file, args);
+          },
+        });
+        const reconciled: string[] = [];
+        const result = await ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: { ios: { simslim: 'on' } },
+          reconcileIosSimulator: async (args) => {
+            reconciled.push(args.udid);
+            return { managed: true, profile: null };
+          },
+        });
+        await result.booting?.done;
+        expect(reconciled).toEqual(['U1']);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('does not record a profile when SimSlim is not installed', async () => {
+      const { root } = prepareRunning([4242]);
+      try {
+        setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app', simslimManaged: true });
+        await ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: { ios: { simslim: 'on' } },
+          reconcileIosSimulator: async () => ({ managed: true, profile: null, notInstalled: true }),
+        });
+        expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+        expect(getProject(root)?.platforms?.ios?.simslimApplied).toBeUndefined();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     test('forgets the applied profile while a reconcile is in flight', async () => {
       const { root, run } = prepareRunning([4242]);
       try {
