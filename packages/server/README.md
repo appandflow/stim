@@ -359,7 +359,10 @@ person approves does setup store the ticket's derived PSK and lookup in
 gets `unknown-secret`, and its `stim doctor` reports the machine as pending and
 tries again on every run. The requester's next first-contact handshake with the
 ticket records its public key once per approved capability, which spends the
-ticket. From then on the ticket admits only that key, until it expires, so a
+ticket. While it waits, setup says so ("Waiting for the requesting machine to
+connect. Stim Desktop sends this automatically.", or the `stim doctor`
+instruction for a Doctor-made command) and confirms each approval when it
+arrives. From then on the ticket admits only that key, until it expires, so a
 requester that lost the reply can retry; setup deletes an unspent secret when it
 ends. Build and
 device-host approvals are separate records. A build grant carries no `read` or

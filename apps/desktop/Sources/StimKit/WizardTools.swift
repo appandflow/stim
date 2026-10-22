@@ -1,7 +1,7 @@
 import Foundation
 
-/// One row of the wizard's Tools step. A row blocks Next only when the chosen capability cannot work at all;
-/// every other problem is a warning that names its consequence.
+/// One row of the wizard's Tools step. A blocking row is shown in red when the chosen capability cannot work at all;
+/// every other problem is a warning that names its consequence. Neither disables Next.
 public struct WizardTool: Equatable, Identifiable, Sendable {
   public enum State: Equatable, Sendable {
     case checking, ok
@@ -27,8 +27,8 @@ public struct WizardTool: Equatable, Identifiable, Sendable {
 private let androidCodes: Set<String> = ["jdk", "android-sdk", "ndk", "build-tools", "compile-sdk"]
 
 /// The Tools step's rows. A Linux or Windows machine (`androidOnly`) builds Android only, so it gets no Xcode, iOS runtime or
-/// CocoaPods rows, and a missing Android SDK or any JDK problem doctor reports blocks Next there, since no build could
-/// offload. Setup's own tool check, used until doctor compares, never blocks.
+/// CocoaPods rows, and a missing Android SDK or any JDK problem doctor reports is red there, since no build could
+/// offload. Setup's own tool check, used until doctor compares, is never red.
 public func toolsReport(
   journal: SetupJournal?, status: BuildMachineStatus?, capabilities: Set<SetupCapability>, android: Bool = false,
   findings: [DoctorReport.Finding] = [], androidOnly: Bool = false

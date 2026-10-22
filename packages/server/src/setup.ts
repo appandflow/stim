@@ -1013,9 +1013,10 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       try {
         deps.storeSecret(opts.ticket, approved, opts.expiresAt, deps.now());
         secretStored = true;
-        if (deps.fromDoctor) {
-          printer.line('Waiting for the requesting machine to reconnect. Run `stim doctor` on that machine to finish.');
-        }
+        const waiting = deps.fromDoctor
+          ? 'Waiting for the requesting machine to reconnect. Run `stim doctor` on that machine to finish.'
+          : 'Waiting for the requesting machine to connect. Stim Desktop sends this automatically.';
+        step('approve', 'running', 'Access approval', waiting, undefined, { running: waiting });
         while (deps.now() < Date.parse(opts.expiresAt)) {
           changed = false;
           for (const grant of recorded(approved)) note(grant, false);

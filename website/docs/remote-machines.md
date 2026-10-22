@@ -414,10 +414,14 @@ so there is no Check again button:
 3. **Set it up.** Copy the generated command and run it in Terminal while
    signed in at the worker Mac. It needs Node 22.12 or later there. Answer Y/n
    for each new capability grant there; Yes is the default, so Enter lets the
-   client machine build here, or run its app code in hosted simulators here. Desktop mirrors
-   setup progress live and checks the selected approvals. Already approved
-   capabilities are omitted from the command. When setup finishes, the step
-   shows the approved capabilities, and any skipped permission with its fix. There is no SSH option.
+   client machine build here, or run its app code in hosted simulators here. After
+   the last answer, setup prints "Waiting for the requesting machine to connect.
+   Stim Desktop sends this automatically." and confirms each approval when
+   Desktop's request arrives; you do not press anything in Desktop. Desktop
+   mirrors setup progress live and sends the requests by itself until the
+   command's ticket expires. Already approved capabilities are omitted from the
+   command. When every chosen capability is approved and setup finished, Desktop moves to Tools by itself.
+   A skipped permission keeps this step open and shows its fix. There is no SSH option.
    For a Linux machine the command first runs `sudo tailscale set --operator=$USER`
    and `sudo loginctl enable-linger $USER` (see [Linux worker](#linux-worker)),
    and setup installs a systemd user service instead of a LaunchAgent and Stim
@@ -428,11 +432,13 @@ so there is no Check again button:
    Android SDK there; if the first `node.exe` on `PATH` is a version manager's
    shim, such as pnpm's, add `--path-prepend` with the real Node's folder.
 4. **Tools.** Compare the worker's tools with this machine, including the Android
-   tools when **Builds** is chosen. Only a problem that stops the chosen
-   capability blocks **Next**: an incompatible Stim build or no Xcode for Builds, and
-   no iOS simulator runtime for Hosted simulators. **Install This Mac's Build**
+   tools when **Builds** is chosen. A problem that stops the chosen
+   capability is shown in red and never disables **Next**; the machine stays added,
+   builds that cannot run there stay on this machine, and Settings > Remote Machines
+   lists the iOS tool problems on its row (Android-only ones are shown only here). Red problems are an incompatible Stim build
+   or no Xcode for Builds, and no iOS simulator runtime for Hosted simulators. **Install This Mac's Build**
    fixes an incompatible Stim build. A Linux or Windows machine shows only the Stim build and
-   Android rows, and a missing Android SDK or any JDK difference blocks **Next**
+   Android rows, and a missing Android SDK or any JDK difference is red
    there, since no build could offload. The other problems are warnings that name what
    they cost:
    - A different Xcode or runtime version.
@@ -692,8 +698,8 @@ allow that app. Setup does not change macOS permission settings itself.
 
 Setup checks installed tools and prints fixes; it does not install Xcode,
 runtimes, CocoaPods, Java or the Android SDK. Desktop's Tools step compares
-them against the client. Missing or mismatched iOS tools block the next step;
-Android checks and a busy worker do not. Hosting alone does not need CocoaPods
+them against the client. No tool result blocks the next step: problems are
+shown, and the machine stays added. Hosting alone does not need CocoaPods
 or Android tools.
 
 **Install This Mac's Build** can update an approved worker over the tailnet.

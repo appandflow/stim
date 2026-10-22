@@ -67,6 +67,7 @@ final class AddMachineModel {
   @ObservationIgnored private var modeWritten = false
   @ObservationIgnored private var stopped = false
   @ObservationIgnored private var checkingJournal = false
+  @ObservationIgnored private var doctorRunning = false
   @ObservationIgnored private var checkingTools = false
   @ObservationIgnored private var clock = SetupRefreshClock()
 
@@ -202,16 +203,17 @@ final class AddMachineModel {
     guard !busy else { return }
     if doctorPath != nil, wizard.ticket != nil { wizard.hasWorkspace = true }
     if dueOnly {
-      for read in clock.due(wizard.refreshes(page: page), now: now) { await refresh(read) }
+      for read in clock.due(wizard.refreshes(page: page, now: now), now: now) { await refresh(read) }
     } else {
       var done: Set<SetupRefresh> = []
-      while let read = wizard.refreshes(page: page).first(where: { !done.contains($0) }) {
+      while let read = wizard.refreshes(page: page, now: now).first(where: { !done.contains($0) }) {
         done.insert(read)
         clock.ran(read, now: now)
         await refresh(read)
       }
     }
     if page == .setup, wizard.ticket != nil, wizard.phase != .cancelled { await send(.tick) }
+    if page == .setup, wizard.advancesToTools(now: now) { await openTools() }
   }
 
   private func refresh(_ read: SetupRefresh) async {
@@ -423,7 +425,16 @@ final class AddMachineModel {
 
   @discardableResult private func runDoctor(ask: Bool, ticket: String? = nil) async throws -> Bool {
     guard !isFixture, let checkout = doctorPath else { return false }
-    let report = try await dependencies.doctor(checkout, ask, ticket)
+    while doctorRunning { try await Task.sleep(for: .milliseconds(50)) }
+    doctorRunning = true
+    let report: DoctorReport
+    do {
+      report = try await dependencies.doctor(checkout, ask, ticket)
+      doctorRunning = false
+    } catch {
+      doctorRunning = false
+      throw error
+    }
     await send(.doctorReported(build: match(report.remoteMachines), host: match(report.deviceHosts)))
     return true
   }
@@ -478,7 +489,6 @@ final class AddMachineModel {
     }
     return rows
   }
-  var toolsBlock: Bool { tools.contains { $0.blocks } }
 
   func openTools() async {
     guard wizard.phase == .approved else { return }

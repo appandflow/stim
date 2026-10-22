@@ -19,6 +19,12 @@ final class AddMachineModelTests: XCTestCase {
     var mode: String?
     var modeOrigin: String? = "default"
     var grantReady = false
+    var journalDone = false
+    var statusState: String?
+    var doctorDelay: Duration = .zero
+    var doctorInFlight = 0
+    var doctorMaxInFlight = 0
+    var journalSteps: [SetupJournal.Step] = []
     var journalExpiryOffset: TimeInterval = 0
     var peerId = "nMini"
     var peers: String?
@@ -49,7 +55,8 @@ final class AddMachineModelTests: XCTestCase {
       func statuses(_ entries: [String], id: String) -> [[String: Any]] {
         entries.map {
           [
-            "machine": $0, "state": grantReady ? "approved" : "pending", "deviceId": id, "dnsName": "mini.tail.test",
+            "machine": $0, "state": statusState ?? (grantReady ? "approved" : "pending"), "deviceId": id,
+            "dnsName": "mini.tail.test",
             "offloadable": true, "problems": toolProblems[platform ?? ""] ?? [],
           ]
         }
@@ -74,13 +81,18 @@ final class AddMachineModelTests: XCTestCase {
             return .journal(
               SetupJournal(
                 ticket: SetupTicket.generate(now: self.now.addingTimeInterval(self.journalExpiryOffset)),
-                capabilities: [.build, .deviceHost], steps: [],
-                granted: self.grantReady ? [.init(capability: .build, id: "b"), .init(capability: .deviceHost, id: "h")] : []))
+                capabilities: [.build, .deviceHost], steps: self.journalSteps,
+                granted: self.grantReady ? [.init(capability: .build, id: "b"), .init(capability: .deviceHost, id: "h")] : [],
+                done: self.journalDone))
           },
           doctor: { cwd, ask, ticket in
             self.doctorPaths.append(cwd)
             self.asks.append((ask, ticket))
             self.steps.append(ask ? "ask" : "readDoctor")
+            self.doctorInFlight += 1
+            self.doctorMaxInFlight = max(self.doctorMaxInFlight, self.doctorInFlight)
+            defer { self.doctorInFlight -= 1 }
+            if self.doctorDelay != .zero { try? await Task.sleep(for: self.doctorDelay) }
             if self.shouldFailDoctor { throw Failure.refused }
             return try self.report()
           }, readSettings: { try self.payload() },
@@ -180,6 +192,108 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertNil(harness.mode)
     XCTAssertEqual(harness.asks.last?.0, true)
     XCTAssertNil(harness.asks.last?.1)
+  }
+
+  @MainActor func testWizardSendsTheRequestsAndMovesToToolsWithoutAnotherNextPress() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    XCTAssertEqual(harness.builds, ["mini:7447"])
+    XCTAssertNotNil(harness.asks.first(where: { $0.0 })?.1, "the ticket's request went out with no further action")
+    harness.grantReady = true
+    await checkUntilApproved(model)
+    XCTAssertEqual(model.page, .setup, "approved, but the machine is still finishing setup")
+    harness.journalDone = true
+    await model.refresh()
+    XCTAssertEqual(model.page, .tools)
+    XCTAssertEqual(model.wizard.phase, .approved)
+  }
+
+  @MainActor func testRequestGoesOutAtOnceWhenTheMachineStartsWaitingForThisMac() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    let asked = { harness.asks.filter { $0.0 && $0.1 != nil }.count }
+    let before = asked()
+    harness.journalSteps = [
+      .init(
+        id: "approve", state: .running, title: "Access approval",
+        detail: "Waiting for the requesting machine to connect. Stim Desktop sends this automatically.")
+    ]
+    await model.refresh()
+    XCTAssertEqual(asked(), before + 1)
+    await model.refresh()
+    XCTAssertEqual(asked(), before + 1, "one request per signal, not one per poll")
+  }
+
+  @MainActor func testALapsedRequestIsAskedAgainFromAPollReadWithoutHangingTheWizard() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    let asks = { harness.asks.filter { $0.0 && $0.1 != nil }.count }
+    let before = asks()
+    harness.statusState = "lapsed"
+    harness.now = harness.now.addingTimeInterval(31)
+    var finished = false
+    Task {
+      await model.refresh()
+      finished = true
+    }
+    await waitUntil { finished }
+    XCTAssertTrue(finished, "the re-ask a poll read triggers must not wait for that read to end")
+    XCTAssertGreaterThan(asks(), before)
+    XCTAssertFalse(model.busy)
+  }
+
+  @MainActor func testADoctorRunNeverOverlapsAnotherOne() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    harness.doctorDelay = .milliseconds(300)
+    async let poll: Void = model.refresh()
+    try? await Task.sleep(for: .milliseconds(100))
+    await model.send(.cancel)
+    await poll
+    XCTAssertEqual(harness.doctorMaxInFlight, 1, "a button press during a poll read waits for it")
+  }
+
+  @MainActor func testExpiredTicketSendsNoMoreRequestsAndAsksForANewCommand() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    harness.now = harness.now.addingTimeInterval(31 * 60)
+    await model.refresh()
+    XCTAssertEqual(model.wizard.phase, .expiredCommand)
+    XCTAssertEqual(model.wizard.failure(now: harness.now), .expired)
+    let asks = harness.asks.filter { $0.0 }.count
+    await model.refresh()
+    await model.refresh()
+    XCTAssertEqual(harness.asks.filter { $0.0 }.count, asks, "no request is sent after the ticket expired")
   }
 
   @MainActor func testBackgroundPollReadsDoctorDuringSetupBesideTheJournal() async throws {
@@ -666,7 +780,7 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertTrue(harness.toolCalls.contains("android"), "Builds covers Android, so its tools are checked without asking")
     XCTAssertNotNil(model.tools.first { $0.id == "jdk" }?.state.fix)
     XCTAssertFalse(model.tools.contains { $0.detail?.contains("Android builds off") == true })
-    XCTAssertFalse(model.toolsBlock)
+    XCTAssertFalse(model.tools.contains { $0.blocks })
     await model.openSummary()
     XCTAssertEqual(model.page, .summary)
   }
@@ -727,7 +841,12 @@ final class AddMachineModelTests: XCTestCase {
     await model.openTools()
     XCTAssertEqual(Set(harness.toolCalls), ["android"])
     XCTAssertFalse(model.tools.contains { ["xcode", "runtime", "cocoapods"].contains($0.id) })
-    XCTAssertTrue(model.toolsBlock, "a \(os) machine without a JDK cannot take any build")
+    XCTAssertTrue(model.tools.contains { $0.blocks }, "a \(os) machine without a JDK cannot take any build")
+    await model.openSummary()
+    XCTAssertEqual(model.page, .summary, "a red tool row never stops the wizard")
+    await model.finish()
+    XCTAssertTrue(model.finished)
+    XCTAssertEqual(harness.builds, ["mini"], "the machine stays added")
     XCTAssertEqual(model.testPlatform, "android")
   }
 
