@@ -108,6 +108,12 @@ describe('signedTailFor', () => {
     expect(readdirSync(entryDir('android', 'k1'))).toEqual(['app-debug.apk']);
   });
 
+  test('apksigner output with Windows line endings is read the same way', async () => {
+    const path = entryApk();
+    writeSignedApk(path, {}, false);
+    expect(await signedTailFor(path, recordingRun(VERIFIED_V2.replaceAll('\n', '\r\n')).run, signer)).not.toBe(null);
+  });
+
   test('no apksigner means no tail', async () => {
     const path = entryApk();
     writeSignedApk(path, {}, false);

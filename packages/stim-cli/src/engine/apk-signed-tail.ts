@@ -24,7 +24,7 @@ const SIGNING_BLOCK_FOOTER_BYTES = 24;
 const SIGNING_BLOCK_MAGIC = 'APK Sig Block 42';
 const SIGNATURE_SCHEME_IDS = new Set([0x7109871a, 0xf05368c0]);
 const SHA256_HEX = /^[0-9a-f]{64}$/;
-const VERIFIED_V2_OR_V3 = /^Verified using v[23] scheme \(APK Signature Scheme v[23]\): true$/m;
+const VERIFIED_V2_OR_V3 = /^Verified using v[23] scheme \(APK Signature Scheme v[23]\): true\s*$/m;
 
 export interface SignedTail {
   file: string;
