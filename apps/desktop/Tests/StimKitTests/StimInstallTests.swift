@@ -55,6 +55,10 @@ import Testing
     #expect(
       stimInstall(for: try machine(), remote: try remote(version: "1.24.0", acceptsClientBuilds: true), local: checkout)
         == .install)
+    let olderCheckout = LocalStim(version: "1.24.0", isRelease: false)
+    #expect(
+      stimInstall(for: try machine(), remote: try remote(version: "1.25.0", acceptsClientBuilds: true), local: olderCheckout)
+        == .install)
   }
 
   @Test func blocksARemoteMacWhoseStimServerCannotUpdateItself() throws {

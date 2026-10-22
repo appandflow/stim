@@ -1429,10 +1429,11 @@ compares the Stim release it reports with this Mac's stim-server. An install onl
 moves a remote Mac forward, so the button is disabled, with the reason beside it,
 when the Mac would refuse:
 
-- the Mac runs a newer Stim than this Mac: the button gives way to "<machine> runs
+- this Mac runs an npm release and the Mac runs a newer Stim: the button gives way to "<machine> runs
   Stim 1.25.0, newer than this Mac (1.24.0). Update Stim Desktop to match.", the pill reads
   **Update this Mac**, and **Check for Updates...** starts Sparkle (builds without
-  an update key, such as Stim Dev, show only the message);
+  an update key, such as Stim Dev, show only the message). A build from a checkout is
+  not blocked by version, since stim-server checks versions only for releases;
 - this Mac runs a build from a checkout and the Mac has `server.acceptClientBuilds`
   off: the row shows `stim settings set server.acceptClientBuilds true`, with a
   copy button labeled for running it on that Mac;
@@ -1440,8 +1441,9 @@ when the Mac would refuse:
 - it did not answer the read (not approved for builds or device hosting, no update
   capability, unreachable): the row shows the reason its stim-server gave.
 
-Keeping remote machines on this Mac's version never installs on a Mac that is
-disabled this way.
+Desktop takes the connected stim-server for an npm release unless Desktop started
+it from a path outside `node_modules`. Keeping remote machines on this Mac's
+version never installs on a Mac that is disabled this way.
 
 An install asks the local stim-server, over its local control connection,
 to update that machine with `machines.update.start`. The local server connects
@@ -1460,8 +1462,7 @@ follows `machines.update.status` every 2 seconds:
 - the outcome, or the refusal (for example, the setting the machine needs, or
   another update already running there).
 
-A failure shows its full text, selectable. When the text names a `stim` command to
-run on that machine, the row shows it with a copy button labeled for that machine.
+A failure shows its full text, selectable.
 
 While the update waits for hosted simulators that this Mac's workspaces run on
 that machine, the row offers **Stop and Update...**. After a confirmation that

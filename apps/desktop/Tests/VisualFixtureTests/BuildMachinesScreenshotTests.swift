@@ -179,7 +179,7 @@
                 "janics-mac-mini": .blocked(
                   StimInstallBlock(
                     reason:
-                      "janics-mac-mini installs only Stim releases from npm, and this Mac runs a build from a checkout. To take it, run `stim settings set server.acceptClientBuilds true` on janics-mac-mini.",
+                      "janics-mac-mini takes only npm releases, and this Mac runs a checkout build. To allow it, run `stim settings set server.acceptClientBuilds true` on janics-mac-mini.",
                     action: .runOnRemote("stim settings set server.acceptClientBuilds true")))
               ], poolDisabled: pools))
         ),

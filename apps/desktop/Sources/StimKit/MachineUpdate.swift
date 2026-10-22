@@ -197,7 +197,9 @@ public func stimInstall(for machine: BuildMachineStatus, remote: MachineUpdateSt
     let reason = remote.unreachable ?? "\(name) did not answer."
     return blocked(reason, commandToRun(in: reason).map { .runOnRemote($0) })
   }
-  if let there = SemanticVersion(server.server?.version ?? ""), let here = SemanticVersion(local.version), here < there {
+  if local.isRelease, let there = SemanticVersion(server.server?.version ?? ""), let here = SemanticVersion(local.version),
+    here < there
+  {
     return blocked(
       "\(name) runs Stim \(there), newer than this Mac (\(here)). Update Stim Desktop to match.", .checkForUpdates)
   }
@@ -209,7 +211,7 @@ public func stimInstall(for machine: BuildMachineStatus, remote: MachineUpdateSt
   if !local.isRelease, !server.acceptsClientBuilds {
     let command = "stim settings set server.acceptClientBuilds true"
     return blocked(
-      "\(name) installs only Stim releases from npm, and this Mac runs a build from a checkout. To take it, run `\(command)` on \(name).",
+      "\(name) takes only npm releases, and this Mac runs a checkout build. To allow it, run `\(command)` on \(name).",
       .runOnRemote(command))
   }
   return .install

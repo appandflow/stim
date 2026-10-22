@@ -278,4 +278,34 @@ final class BuildMachinesModelTests: XCTestCase {
     await model.update("mini", checkout: "/w")
     XCTAssertEqual(harness.requests.filter { $0 == "machines.update.start" }.count, 1)
   }
+
+  @MainActor func testTheWizardInstallsOnAMachineTheSettingsPageHasNotChecked() async throws {
+    let harness = Harness()
+    harness.remoteServer = Harness.remote(version: "1.24.0", finished: true)
+    let model = harness.make()
+    let status = try JSONDecoder().decode(
+      [BuildMachineStatus].self, from: Data(Harness.needsUpdate.utf8))[0]
+    await model.update("mini", checkout: "/w", status: status)
+    XCTAssertTrue(harness.requests.isEmpty)
+    await model.readRemoteServers([status])
+    await model.update("mini", checkout: "/w", status: status)
+    XCTAssertEqual(harness.requests.filter { $0 == "machines.update.start" }.count, 1)
+  }
+
+  @MainActor func testAutomaticCheckRunsAgainWhenThisMacsServerWasNotConnected() async {
+    let harness = Harness()
+    harness.machines = "[\"mini\"]"
+    harness.remoteMachines = Harness.needsUpdate
+    harness.remoteServer = Harness.remote(version: "1.24.0")
+    harness.local = nil
+    let model = harness.make()
+    await model.settings.refresh()
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    XCTAssertEqual(harness.calls.count, 2)
+    harness.local = LocalStim(version: "1.25.0", isRelease: true)
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    XCTAssertEqual(harness.calls.count, 3)
+  }
 }

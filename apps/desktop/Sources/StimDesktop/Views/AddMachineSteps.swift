@@ -37,7 +37,7 @@ struct AddMachineSteps: View {
               .font(.stim(.footnote, weight: .semibold))
             ForEach(Array(fix.split(separator: "\n").map(String.init).enumerated()), id: \.offset) { _, line in
               if wizardFixIsCommand(line) {
-                CopyableCommand(command: line)
+                CopyableCommand(command: line, runsOn: tool.onThisMac ? nil : name)
               } else {
                 Text(line).font(.stim(.footnote)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
               }

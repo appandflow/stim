@@ -156,7 +156,6 @@ struct MachineUpdateLine: View {
             .foregroundStyle(Palette.error)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
-          if let command = commandToRun(in: message) { CopyableCommand(command: command, runsOn: machine) }
         }
       }
     }

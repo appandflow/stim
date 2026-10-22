@@ -29,7 +29,8 @@ struct BuildMachinesView: View {
     BuildMachinesContent(
       entries: model.entries, statuses: statuses, hosts: model.check(in: checkout)?.hosts, updates: model.updates,
       installs: Dictionary(
-        uniqueKeysWithValues: (statuses ?? []).compactMap { status in model.install(for: status).map { (status.machine, $0) } }),
+        (statuses ?? []).compactMap { status in model.install(for: status).map { (status.machine, $0) } },
+        uniquingKeysWith: { first, _ in first }),
       working: model.working, progress: model.progress, refreshing: model.isBusy, failure: failure,
       tailscaleRunning: model.tailscaleRunning,
       settingsReadFailure: model.settingsReadFailure,
@@ -408,7 +409,7 @@ private struct BuildMachineRow<Toggles: View>: View {
                 Text(verbatim: line.reason).font(.stim(.footnote)).foregroundStyle(Palette.warning)
                   .textSelection(.enabled)
                 switch line.fix {
-                case .command(let command)?: CopyableCommand(command: command)
+                case .command(let command)?: CopyableCommand(command: command, runsOn: entry)
                 case .advice(let advice)?
                 where line.code != "stim-build" || (update?.isDone ?? true) && install?.block?.remoteIsNewer != true:
                   Text(verbatim: advice).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
