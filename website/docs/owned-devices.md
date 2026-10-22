@@ -338,8 +338,9 @@ and `ios.simslim` set to `off` in a project opts that app out. The first slim of
 a simulator reboots it once; an already slim simulator is left alone. A running
 simulator is slimmed on the next `stim ios`, without a boot first, and Stim mutes
 it again after that reboot. A parked simulator is slimmed when Stim adopts it.
-Hosted simulators on a named Mac are never changed. If `simslim` is not
-installed, `doctor` reports it and `stim ios` boots without it.
+Hosted simulators on a named Mac are muted like local ones but never slimmed.
+If `simslim` is not installed, `doctor` reports it and `stim ios` boots without
+it.
 
 A simulator can report Booted and show SpringBoard while process startup is
 stalled. Stim checks a bounded process spawn before installation and bounds

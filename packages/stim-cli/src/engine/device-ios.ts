@@ -87,7 +87,7 @@ const SPRINGBOARD_MUTE_WAIT_MS = 60000;
 // SpringBoard publishes the default volume, 60, every time it starts, and SimSlim
 // reboots the simulator when it applies or removes a profile (#4229). Mute last,
 // once SpringBoard is running again.
-async function muteBootedSimulator(udid: string, out: Notify): Promise<void> {
+export async function muteBootedSimulator(udid: string, out: Notify): Promise<void> {
   try {
     const springBoard = await waitForSpringBoard(udid, Date.now() + SPRINGBOARD_MUTE_WAIT_MS);
     if (springBoard.state === 'unreadable') throw new Error(springBoard.reason);

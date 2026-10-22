@@ -110,8 +110,10 @@ SpringBoard is back; an already slim simulator is not touched. Turn sound on
 for one device with Sound (iOS) or Media sound (Android) in its Stim Desktop
 options; the choice lasts until that device next boots. Android 14 and older images have no shell command that can
 set media volume, so startup warns, as it does whenever a mute is not
-confirmed. Host volume, Android alarm and ringtone volumes, hosted devices and
-physical devices are unchanged.
+confirmed. A hosted simulator or emulator on a named Mac is muted the same way
+after the host boots or adopts it, and Stim Desktop's Sound options do not reach
+it. Host volume, Android alarm and ringtone volumes and physical devices are
+unchanged.
 
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for. \`stim reload\` is

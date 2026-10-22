@@ -158,7 +158,7 @@ KEYS STIM READS
                         when Stim applied the profile. Absolute paths, root or
                         symlink escapes, and missing files are refused before
                         simulator creation. Remote and unowned simulators are
-                        never changed.
+                        never slimmed.
   ios.signingIdentity   e.g. "Apple Development: Jane (TEAMID5678)" -- the
                         keychain identity to re-seal a \`--device\` build with,
                         overriding the one Stim derives from the artifact's own
