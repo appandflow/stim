@@ -193,7 +193,7 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertTrue(try OffloadResult.localPassed(Data("{\"launched\":\"bundling\"}".utf8), exit: 0))
   }
 
-  func testFixesUseTheSelectedMachinesDoctorFindingBeforeTheJournal() throws {
+  func testFixesUseTheSelectedMachinesDoctorFindingAndPreferTheJournalUnlessTheFindingHasCommands() throws {
     let report = try JSONDecoder().decode(
       DoctorReport.self,
       from: Data(
@@ -215,10 +215,17 @@ final class WizardCompletionTests: XCTestCase {
     let journal = journal([.init(id: "tools.JDK", state: .pending, title: "JDK", fix: "journal fix")])
     XCTAssertEqual(
       toolsReport(journal: journal, status: status, capabilities: [.build], android: true, findings: report.findings)
-        .first { $0.id == "jdk" }?.state.fix, "selected fix")
-    XCTAssertEqual(
-      toolsReport(journal: journal, status: status, capabilities: [.build], android: true, findings: [])
         .first { $0.id == "jdk" }?.state.fix, "journal fix")
+    let withCommands = try JSONDecoder().decode(
+      DoctorReport.self,
+      from: Data(
+        """
+        {"project":"/fixture","findings":[
+        {"code":"build-machine-jdk","level":"cost","title":"Remote machine mini JDK","detail":"mismatch","fix":"On mini, install JDK 17:\\nbrew install --cask zulu@17"}]}
+        """.utf8))
+    XCTAssertEqual(
+      toolsReport(journal: journal, status: status, capabilities: [.build], android: true, findings: withCommands.findings)
+        .first { $0.id == "jdk" }?.state.fix, "On mini, install JDK 17:\nbrew install --cask zulu@17")
   }
 
   func testProseFixesAndCommandExamplesAreNotCopyableShellCommands() {

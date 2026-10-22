@@ -45,7 +45,8 @@ public func toolsReport(
           && ["Remote machine", "Remote Mac"].contains { finding.title.hasPrefix("\($0) \(status.machine) ") }
       }
     }
-    return finding?.fix ?? step?.fix
+    if let commands = finding?.fix, commands.contains("\n") { return commands }
+    return step?.fix ?? finding?.fix
       ?? (isLocal(code, reason) ? "Check this problem on this Mac." : "Check this problem on the remote machine.")
   }
   func isLocal(_ code: String, _ reason: String) -> Bool {
