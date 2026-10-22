@@ -335,7 +335,10 @@ and profile setup; `doctor` recommends it without applying it automatically.
 To slim every Stim-owned simulator on a Mac without a profile per app, run
 `stim settings set ios.simslim on --scope machine`. A project profile still wins,
 and `ios.simslim` set to `off` in a project opts that app out. The first slim of
-a simulator reboots it once; an already slim simulator is left alone. A running
+a simulator reboots it once; an already slim simulator is left alone, and a
+rerun on the same boot with an unchanged profile skips SimSlim entirely. A manual
+`simslim off` on a running simulator is not noticed until it reboots or the
+profile changes. A running
 simulator is slimmed on the next `stim ios`, without a boot first, and Stim mutes
 it again after that reboot. A parked simulator is slimmed when Stim adopts it.
 Hosted simulators on a named Mac are never changed. If `simslim` is not

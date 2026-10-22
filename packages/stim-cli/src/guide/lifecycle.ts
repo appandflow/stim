@@ -2921,8 +2921,13 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
 
   SimSlim 0.8 requires iOS 18.5 or newer. On each local \`stim ios\`,
   Stim reconciles that profile on the owned simulator before the app build.
-  The first change can update services and reboot the simulator. A matching
-  profile is a fast no-op on later launches. The settings persist across normal
+  The first change can update services and reboot the simulator. Stim records
+  the applied profile (the default categories, or a hash of the profile file)
+  and the boot of the simulator it was applied on, so a later launch on the
+  same boot with the same profile skips the \`simslim\` call. A changed
+  profile, a reboot, or a missing record reconciles again. A manual
+  \`simslim off\` on a running simulator is not noticed until the simulator
+  reboots or the profile changes. The settings persist across normal
   shutdowns and reboots. Removing the setting restores stock services when
   Stim applied the profile. Stim never changes an unowned or remote simulator.
   Each SimSlim operation has a 12-minute outer deadline, including discovery.
