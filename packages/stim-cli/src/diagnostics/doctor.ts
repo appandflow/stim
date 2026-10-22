@@ -1282,8 +1282,9 @@ export async function reactNativeDoctorFindings({
     options.operation,
   );
 
+  const appProjectFinding = checkAppProject(projectRoot);
   return [
-    checkAppProject(projectRoot) ?? checkReadinessMarkers(projectRoot),
+    appProjectFinding,
     checkIosHost(platform, host),
     checkXcodeEnvLineEndings(projectRoot, platform, host),
     ...checkStorageLayout(projectRoot, {
@@ -1315,6 +1316,7 @@ export async function reactNativeDoctorFindings({
     easBuildDownloadFinding,
     await readOffloadCandidate(tailnetStatus, now(), host),
     ...remoteFindings,
+    appProjectFinding ? null : checkReadinessMarkers(projectRoot),
   ].filter((value): value is Finding => Boolean(value));
 }
 
