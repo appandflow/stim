@@ -411,7 +411,9 @@ outer padding. A tile is a preview: the device's name and state, its activity, i
 CPU, memory and disk (from the machine owner matched by slot and kind, and the
 device's `disk`) and its screen, which takes no input. A device whose build is
 running shows "Waiting for the iOS build" over its frame with the phase, a
-thin bar and the elapsed time over the estimate. One whose app process is gone
+thin bar and the elapsed time over the estimate until its app is running.
+An already-running app stays visible during later builds, so you can open
+**Control** and keep using it while the next build compiles. One whose app process is gone
 shows **App not running**, and one whose platform never built here and last
 failed shows **No app installed** over its frame instead. A workspace that is
 warming with no device yet shows a warming placeholder. Stopped-device cards use a
