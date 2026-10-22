@@ -321,7 +321,17 @@ answer its permission prompts. A reused server must speak protocol 2 (stim-serve
 Setup refuses an older Desktop-run server with an update remedy and never
 downgrades a newer server.
 
-For iOS builds, Xcode and the simulator SDK must match, and the worker needs
+For iOS builds, Xcode and the simulator SDK must match. When the worker has no
+usable Xcode, `stim doctor` and the Tools step say why and give the command to
+run on the worker: `sudo xcode-select -s /Applications/<Xcode>.app/Contents/Developer`
+when an Xcode is installed but the Command Line Tools (which Homebrew selects)
+or another Xcode is selected (it prefers the Xcode of this machine's version,
+else the newest), `sudo xcodebuild -license accept` and `sudo xcodebuild -runFirstLaunch`
+when those checks fail, or `xcodes install <version>` when no Xcode is installed.
+A missing simulator runtime on a working Xcode gets
+`xcodebuild -downloadPlatform iOS -buildVersion <version>`; when the cause is
+`xcode-select`, the runtime row says it follows from the Xcode row. The worker
+also needs
 an iPhone simulator on the target runtime. The Stim build compatibility version
 must match (see [Stim versions](#stim-versions)), and so must the CPU architecture for iOS and macOS builds (macOS builds that run on the same worker excepted). Project-selected CocoaPods versions must match unless the
 project's `Gemfile.lock`, in `ios/` or the project root, pins it; then both

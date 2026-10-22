@@ -86,6 +86,7 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertTrue(wizardFixIsCommand("\"C:\\Users\\First Last\\sdk\\cmdline-tools\\latest\\bin\\sdkmanager.bat\" --licenses"))
     XCTAssertTrue(wizardFixIsCommand("'/Users/First Last/O'\\''Neil/sdk/cmdline-tools/latest/bin/sdkmanager' --licenses"))
     XCTAssertTrue(wizardFixIsCommand("winget install EclipseAdoptium.Temurin.17.JDK"))
+    XCTAssertTrue(wizardFixIsCommand("xcodes install 27.1"))
     XCTAssertFalse(wizardFixIsCommand("On mini, install the package into its Android SDK:"))
     XCTAssertFalse(wizardFixIsCommand("/usr/bin/rm -rf x"))
   }
@@ -192,7 +193,7 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertTrue(try OffloadResult.localPassed(Data("{\"launched\":\"bundling\"}".utf8), exit: 0))
   }
 
-  func testFixesUseTheSelectedMachinesDoctorFindingAndPreferTheJournal() throws {
+  func testFixesUseTheSelectedMachinesDoctorFindingAndPreferTheJournalUnlessTheFindingHasCommands() throws {
     let report = try JSONDecoder().decode(
       DoctorReport.self,
       from: Data(
@@ -215,6 +216,16 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertEqual(
       toolsReport(journal: journal, status: status, capabilities: [.build], android: true, findings: report.findings)
         .first { $0.id == "jdk" }?.state.fix, "journal fix")
+    let withCommands = try JSONDecoder().decode(
+      DoctorReport.self,
+      from: Data(
+        """
+        {"project":"/fixture","findings":[
+        {"code":"build-machine-jdk","level":"cost","title":"Remote machine mini JDK","detail":"mismatch","fix":"On mini, install JDK 17:\\nbrew install --cask zulu@17"}]}
+        """.utf8))
+    XCTAssertEqual(
+      toolsReport(journal: journal, status: status, capabilities: [.build], android: true, findings: withCommands.findings)
+        .first { $0.id == "jdk" }?.state.fix, "On mini, install JDK 17:\nbrew install --cask zulu@17")
   }
 
   func testProseFixesAndCommandExamplesAreNotCopyableShellCommands() {

@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { podEnvForRubyAsync, readRubyVersion } from '../engine/deps.ts';
@@ -7,6 +16,8 @@ import {
   androidToolchainAsync,
   jdkCandidates,
   jdkHomes,
+  listXcodeApps,
+  parseXcodeVersionPlist,
   useJdkMajor,
   iosToolchainAsync,
   macosToolchainAsync,
@@ -142,6 +153,7 @@ test('native Xcode discovery preserves required facts without invoking unrelated
         },
       });
     if (file === 'xcrun' && args[1] === 'iphonesimulator') return '27.0';
+    if (file === 'xcode-select') return '/Applications/Xcode.app/Contents/Developer\n';
     if (native) throw new Error(`Native Xcode discovery invoked unrelated ${file} ${args.join(' ')}`);
     if (file === 'xcrun' && args[1] === 'macosx') return '26.6';
     if (file === 'pod') return '1.16.2';
@@ -305,3 +317,73 @@ test('a worker lists the JDK majors it can build on and builds with the one a jo
   setExecutor(makeExecutor({ runFileQuiet: () => null }));
   expect(workerToolchain(null, 'gradle')).toMatchObject({ jdk: '25', jdks: expect.arrayContaining(['25']) });
 });
+
+const VERSION_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+\t<key>BuildVersion</key>
+\t<string>2</string>
+\t<key>CFBundleShortVersionString</key>
+\t<string>27.1</string>
+\t<key>ProductBuildVersion</key>
+\t<string>27A9275</string>
+</dict>
+</plist>
+`;
+
+test('the Xcode apps of a worker come from version.plist, with the license checks run only when asked', () => {
+  expect(parseXcodeVersionPlist(VERSION_PLIST)).toEqual({ version: '27.1', build: '27A9275' });
+  expect(parseXcodeVersionPlist('')).toEqual({ version: null, build: null });
+  const applications = realpathSync(mkdtempSync(join(root, 'apps-')));
+  for (const name of ['Xcode-27.1.app', 'Xcode-26.4.app'])
+    mkdirSync(join(applications, name, 'Contents', 'Developer'), { recursive: true });
+  writeFileSync(join(applications, 'Xcode-27.1.app', 'Contents', 'version.plist'), VERSION_PLIST);
+  mkdirSync(join(applications, 'Xcodes.app', 'Contents', 'MacOS'), { recursive: true });
+  mkdirSync(join(applications, 'Notes'), { recursive: true });
+  symlinkSync(join(applications, 'Xcode-27.1.app'), join(applications, 'Xcode.app'));
+  expect(listXcodeApps(false, applications)).toEqual([
+    { path: join(applications, 'Xcode-26.4.app'), version: null, build: null },
+    { path: join(applications, 'Xcode-27.1.app'), version: '27.1', build: '27A9275' },
+  ]);
+  const calls: string[] = [];
+  setExecutor(
+    makeExecutor({
+      runFileQuiet: (_file, args, options) => {
+        calls.push(`${options.env?.DEVELOPER_DIR?.split('/').at(-3)} ${args.join(' ')}`);
+        return args[0] === '-license' && options.env?.DEVELOPER_DIR?.includes('26.4') ? null : '';
+      },
+    }),
+  );
+  expect(listXcodeApps(true, applications).map(({ license, firstLaunch }) => ({ license, firstLaunch }))).toEqual([
+    { license: false, firstLaunch: true },
+    { license: true, firstLaunch: true },
+  ]);
+  expect(calls).toContain('Xcode-26.4.app -license check');
+});
+
+test.skipIf(process.platform !== 'darwin')(
+  'the developer directory is what xcode-select prints, including the Command Line Tools',
+  () => {
+    setExecutor(
+      makeExecutor({
+        runFileQuiet: (file) => (file === 'xcode-select' ? '/Library/Developer/CommandLineTools\n' : null),
+      }),
+    );
+    expect(workerToolchain(null, 'xcode')).toMatchObject({
+      developerDir: '/Library/Developer/CommandLineTools',
+      xcode: null,
+      simulatorSdk: null,
+    });
+  },
+);
+
+test.skipIf(process.platform !== 'darwin')(
+  'a DEVELOPER_DIR in the environment hides the developer directory, which xcode-select cannot change',
+  () => {
+    vi.stubEnv('DEVELOPER_DIR', '/nonexistent');
+    setExecutor(makeExecutor({ runFileQuiet: () => null }));
+    const report = workerToolchain(null, 'xcode');
+    expect(report).not.toHaveProperty('developerDir');
+    expect(report).not.toHaveProperty('xcodeApps');
+  },
+);

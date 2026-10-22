@@ -1078,6 +1078,16 @@ export interface BuildToolchain {
   jdk: string | null;
   /** The majors of every JDK it can find, the one `jdk` names included; absent from a stim-server older than this field. */
   jdks?: string[];
+  /** What `xcode-select -p` prints on a Mac; absent from a stim-server older than this field, and while DEVELOPER_DIR is set there. */
+  developerDir?: string | null;
+  /** The Xcode apps in `/Applications`, with the license and first-launch checks of each while `xcode` is null. */
+  xcodeApps?: {
+    path: string;
+    version: string | null;
+    build: string | null;
+    license?: boolean;
+    firstLaunch?: boolean;
+  }[];
   /** The NDK, build-tools and platform directories of its Android SDK; null without an SDK. */
   androidSdk: { ndk: string[]; buildTools: string[]; platforms: string[] } | null;
   /** Whether that SDK has its licenses accepted, so Gradle downloads a missing package; absent from a stim-server older than this field. */

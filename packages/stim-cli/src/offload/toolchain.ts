@@ -39,6 +39,15 @@ export interface AndroidRequirements {
   sdkDownload?: boolean;
 }
 
+/** An Xcode app in `/Applications`, with the license and first-launch checks of its developer directory when they ran. */
+export interface XcodeApp {
+  path: string;
+  version: string | null;
+  build: string | null;
+  license?: boolean;
+  firstLaunch?: boolean;
+}
+
 /** A remote machine's toolchain, the simulator runtimes it can build for, and its JDK and Android SDK packages. */
 export interface WorkerToolchain extends Omit<IosToolchain, 'compat'> {
   /** Absent from a stim-server older than build compatibility versions. */
@@ -48,6 +57,10 @@ export interface WorkerToolchain extends Omit<IosToolchain, 'compat'> {
   macosSdk: string | null;
   bundler: string | null;
   runtimes: string[];
+  /** The developer directory `xcode-select -p` prints, null when it prints none; absent from a stim-server older than this field. */
+  developerDir?: string | null;
+  /** The Xcode apps in `/Applications`; their license and first-launch checks run only while `xcode` is null. */
+  xcodeApps?: XcodeApp[];
   jdk: string | null;
   /** The majors of every JDK found on the machine, `jdk` included; absent from a stim-server older than this field. */
   jdks?: string[];
@@ -381,6 +394,53 @@ function sdkPackages(): WorkerToolchain['androidSdk'] {
   return { ndk: listDir(join(sdk, 'ndk')) ?? [], buildTools: listDir(join(sdk, 'build-tools')) ?? [], platforms };
 }
 
+/** `CFBundleShortVersionString` and `ProductBuildVersion` of an Xcode app's `Contents/version.plist`. */
+export function parseXcodeVersionPlist(plist: string): { version: string | null; build: string | null } {
+  const value = (key: string) => new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`).exec(plist)?.[1] ?? null;
+  return { version: value('CFBundleShortVersionString'), build: value('ProductBuildVersion') };
+}
+
+function realPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+const realPathOrNull = (path: string | null) => (path ? realPath(path) : null);
+
+export function listXcodeApps(checks: boolean, root = '/Applications'): XcodeApp[] {
+  const apps: XcodeApp[] = [];
+  for (const entry of listDir(root) ?? []) {
+    if (!entry.endsWith('.app') || !existsSync(join(root, entry, 'Contents', 'Developer'))) continue;
+    const path = realPath(join(root, entry));
+    if (apps.some((each) => each.path === path)) continue;
+    let plist = '';
+    try {
+      plist = readFileSync(join(path, 'Contents', 'version.plist'), 'utf8');
+    } catch {}
+    const app: XcodeApp = { path, ...parseXcodeVersionPlist(plist) };
+    if (checks) {
+      const env = { ...process.env, DEVELOPER_DIR: join(path, 'Contents', 'Developer') };
+      const passes = (args: string[]) =>
+        getExecutor().runFileQuiet('xcodebuild', args, { timeoutMs: 20_000, env }) !== null;
+      app.license = passes(['-license', 'check']);
+      app.firstLaunch = passes(['-checkFirstLaunchStatus']);
+    }
+    apps.push(app);
+  }
+  return apps;
+}
+
+function xcodeSelectionReport(xcode: string | null): Pick<WorkerToolchain, 'developerDir' | 'xcodeApps'> {
+  if (process.env.DEVELOPER_DIR) return {};
+  return {
+    developerDir: realPathOrNull(quiet('xcode-select', ['-p'])?.trim() || null),
+    xcodeApps: listXcodeApps(xcode === null),
+  };
+}
+
 /** Whether the SDK's licenses are accepted: Gradle's SDK download reads `licenses/android-sdk-license`. */
 function sdkLicensesAccepted(sdk: string): boolean {
   try {
@@ -415,8 +475,10 @@ export function workerToolchain(rubyVersion: string | null = null, native?: 'xco
   try {
     listed = JSON.parse(quiet('xcrun', ['simctl', 'list', 'devices', 'available', '-j']) ?? 'null');
   } catch {}
+  const ios = iosToolchainForRuby(rubyVersion, native);
   return {
-    ...iosToolchainForRuby(rubyVersion, native),
+    ...ios,
+    ...(process.platform === 'darwin' ? xcodeSelectionReport(ios.xcode) : {}),
     os: process.platform,
     macosSdk: native ? null : (quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null),
     bundler: native ? null : quiet('bundle', ['--version'])?.trim() || null,
@@ -455,6 +517,8 @@ export interface OffloadProblem {
   /** Shell commands that clear it, to run on the remote machine, and what they do, as the end of "On <machine>, ...". */
   commands?: string[];
   lead?: string;
+  /** The problem whose fix also clears this one, so it carries no fix of its own. */
+  followsFrom?: OffloadProblem['code'];
 }
 
 interface SdkGap {
@@ -576,6 +640,124 @@ function versionMismatch(tool: string, there: string | null, here: string | null
   return `${side(there)} there, ${side(here)} here`;
 }
 
+const COMMAND_LINE_TOOLS = '/Library/Developer/CommandLineTools';
+
+function xcodeIdentity(xcode: string | null): { version: string | null; build: string | null } {
+  return {
+    version: xcode ? (/Xcode (\S+)/.exec(xcode)?.[1] ?? null) : null,
+    build: xcode ? (/Build version (\S+)/.exec(xcode)?.[1] ?? null) : null,
+  };
+}
+
+const versionParts = (version: string | null) =>
+  (version ?? '').split('.').map((part) => Number.parseInt(part, 10) || 0);
+
+function compareVersions(a: string | null, b: string | null): number {
+  const [left, right] = [versionParts(a), versionParts(b)];
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference) return difference;
+  }
+  return 0;
+}
+
+function pickXcodeApp(
+  apps: XcodeApp[],
+  wanted: { version: string | null; build: string | null },
+): XcodeApp | undefined {
+  return (
+    (wanted.build ? apps.find((app) => app.build === wanted.build) : undefined) ??
+    (wanted.version ? apps.find((app) => app.version === wanted.version) : undefined) ??
+    apps.toSorted((a, b) => compareVersions(b.version, a.version))[0]
+  );
+}
+
+const developerDirOf = (app: XcodeApp) => join(app.path, 'Contents', 'Developer');
+
+function selectXcode(
+  app: XcodeApp,
+  selected: boolean,
+  worker: WorkerToolchain,
+): Pick<OffloadProblem, 'commands' | 'lead'> {
+  const commands = selected ? [] : [`sudo xcode-select -s ${shellQuote(developerDirOf(app), worker.os)}`];
+  if (app.license === false && app.firstLaunch === false) {
+    commands.push('sudo xcodebuild -license accept && sudo xcodebuild -runFirstLaunch');
+  } else if (app.license === false) commands.push('sudo xcodebuild -license accept');
+  else if (app.firstLaunch === false) commands.push('sudo xcodebuild -runFirstLaunch');
+  const name = basename(app.path, '.app');
+  return {
+    commands,
+    lead: selected
+      ? `finish setting up ${name}`
+      : `select ${name}${commands.length > 1 ? ' and finish setting it up' : ''}`,
+  };
+}
+
+function diagnosesXcode(local: { xcode: string | null }, worker: WorkerToolchain): boolean {
+  return worker.xcode === null && worker.developerDir !== undefined && local.xcode !== null;
+}
+
+function xcodeProblem(local: { xcode: string | null }, worker: WorkerToolchain, onWorker = false): OffloadProblem {
+  const legacy = {
+    code: 'xcode' as const,
+    reason: onWorker ? 'no Xcode there' : versionMismatch('Xcode', worker.xcode, local.xcode),
+  };
+  if (worker.developerDir === undefined || (!onWorker && !local.xcode)) return legacy;
+  const wanted = onWorker ? { version: null, build: null } : xcodeIdentity(local.xcode);
+  const apps = worker.xcodeApps ?? [];
+  if (worker.xcode) {
+    const match = wanted.build ? apps.find((app) => app.build === wanted.build) : undefined;
+    return match ? { ...legacy, ...selectXcode(match, false, worker) } : legacy;
+  }
+  const app = pickXcodeApp(apps, wanted);
+  if (!app) {
+    return {
+      code: 'xcode',
+      reason: 'no Xcode there',
+      ...(wanted.version
+        ? {
+            commands: [`xcodes install ${wanted.version}`],
+            lead: `install Xcode ${wanted.version} (from the App Store, or with xcodes), then run stim doctor again`,
+          }
+        : {}),
+    };
+  }
+  const selected = worker.developerDir === developerDirOf(app);
+  const where = worker.developerDir
+    ? worker.developerDir.startsWith(COMMAND_LINE_TOOLS)
+      ? 'Command Line Tools'
+      : worker.developerDir
+    : 'nothing';
+  const fix = selectXcode(app, selected, worker);
+  const matches = app.build === wanted.build || app.version === wanted.version;
+  return {
+    code: 'xcode',
+    reason: selected
+      ? `no Xcode there: ${basename(app.path)} is selected${fix.commands?.length ? ' but not set up' : ' but xcodebuild fails'}`
+      : `no Xcode there: xcode-select points at ${where}`,
+    ...fix,
+    ...(wanted.version && !matches
+      ? { lead: `${fix.lead} (this Mac has Xcode ${wanted.version}; xcodes install ${wanted.version} matches it)` }
+      : {}),
+  };
+}
+
+function runtimeProblem(runtime: string, worker: WorkerToolchain, followsXcode: boolean): OffloadProblem {
+  const reason = `no iPhone simulator on ${runtime} there`;
+  if (followsXcode) {
+    return { code: 'runtime', reason: `${reason}; this follows from the Xcode problem`, followsFrom: 'xcode' };
+  }
+  const version = /iOS-(\d+)-(\d+)$/.exec(runtime);
+  return worker.developerDir !== undefined && version
+    ? {
+        code: 'runtime',
+        reason,
+        commands: [`xcodebuild -downloadPlatform iOS -buildVersion ${version[1]}.${version[2]}`],
+        lead: `download the iOS ${version[1]}.${version[2]} simulator runtime if it is not installed (an installed runtime also needs an iPhone simulator)`,
+      }
+    : { code: 'runtime', reason };
+}
+
 /** Why a remote machine cannot build like this machine; empty when it can. */
 export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain): OffloadProblem[] {
   const { local } = target;
@@ -595,24 +777,26 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
     return [...out, { code: 'platform', reason: `${worker.os} there, and ${name} builds need a Mac` }];
   }
   if (target.platform === 'macos' && target.runsOnWorker) {
-    if (!worker.xcode) out.push({ code: 'xcode', reason: 'no Xcode there' });
+    if (!worker.xcode) {
+      out.push(xcodeProblem(target.local, worker, true));
+    }
     if (!worker.macosSdk) out.push({ code: 'macos-sdk', reason: 'no macOS SDK there' });
     return out;
   }
   if (worker.arch !== local.arch) out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
   if (target.platform === 'macos') {
     const macos = target.local;
-    if (!macos.xcode || worker.xcode !== macos.xcode)
-      out.push({ code: 'xcode', reason: versionMismatch('Xcode', worker.xcode, macos.xcode) });
-    if (!macos.macosSdk || worker.macosSdk !== macos.macosSdk)
+    const xcode = !macos.xcode || worker.xcode !== macos.xcode ? xcodeProblem(macos, worker) : null;
+    if (xcode) out.push(xcode);
+    if ((!macos.macosSdk || worker.macosSdk !== macos.macosSdk) && !(xcode && diagnosesXcode(macos, worker)))
       out.push({ code: 'macos-sdk', reason: versionMismatch('macOS SDK', worker.macosSdk, macos.macosSdk) });
     return out;
   }
   const ios = target.local;
-  if (!ios.xcode || worker.xcode !== ios.xcode) {
-    out.push({ code: 'xcode', reason: versionMismatch('Xcode', worker.xcode, ios.xcode) });
-  }
-  if (!ios.simulatorSdk || worker.simulatorSdk !== ios.simulatorSdk) {
+  const xcode = !ios.xcode || worker.xcode !== ios.xcode ? xcodeProblem(ios, worker) : null;
+  if (xcode) out.push(xcode);
+  const selection = xcode !== null && diagnosesXcode(ios, worker);
+  if ((!ios.simulatorSdk || worker.simulatorSdk !== ios.simulatorSdk) && !selection) {
     out.push({
       code: 'simulator-sdk',
       reason: versionMismatch('simulator SDK', worker.simulatorSdk, ios.simulatorSdk),
@@ -626,7 +810,7 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
     out.push({ code: 'cocoapods', reason: versionMismatch('CocoaPods', worker.cocoapods, ios.cocoapods) });
   }
   if (target.runtime && !worker.runtimes.includes(target.runtime)) {
-    out.push({ code: 'runtime', reason: `no iPhone simulator on ${target.runtime} there` });
+    out.push(runtimeProblem(target.runtime, worker, selection || Boolean(xcode?.commands)));
   }
   return out;
 }

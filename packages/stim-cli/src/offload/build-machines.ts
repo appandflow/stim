@@ -159,6 +159,7 @@ function commandFix(problem: OffloadProblem, entry: string): string | null {
 
 function problemFix(problem: OffloadProblem, entry: string): string {
   const { code } = problem;
+  if (problem.followsFrom) return `Fix the ${problem.followsFrom} problem on ${entry} first; this follows from it.`;
   switch (code) {
     case 'unreachable':
       return `Check that stim-server runs on ${entry} and that its tailscale serve route answers, then run \`stim doctor\` again. To keep it running there, run \`stim-server service install --serve\` on ${entry}.`;
@@ -171,13 +172,19 @@ function problemFix(problem: OffloadProblem, entry: string): string {
     case 'xcode':
     case 'simulator-sdk':
     case 'macos-sdk':
-      return `Install and select the same Xcode on ${entry} and this Mac (\`xcode-select -p\` on each).`;
+      return (
+        commandFix(problem, entry) ??
+        `Install and select the same Xcode on ${entry} and this Mac (\`xcode-select -p\` on each).`
+      );
     case 'cocoapods':
       return `Install the same CocoaPods version on ${entry}, on the PATH its stim-server's login shell sets.`;
     case 'bundler':
       return `Install Bundler (\`gem install bundler\`) on ${entry}, on the PATH its stim-server's login shell sets.`;
     case 'runtime':
-      return `Install that iOS simulator runtime on ${entry} with at least one iPhone simulator, or set ios.runtime here to one ${entry} has.`;
+      return (
+        commandFix(problem, entry) ??
+        `Install that iOS simulator runtime on ${entry} with at least one iPhone simulator, or set ios.runtime here to one ${entry} has.`
+      );
     case 'jdk':
       return (
         commandFix(problem, entry) ??

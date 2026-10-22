@@ -611,9 +611,10 @@ leased until <time>" for each one.`,
                   cocoapods, bundler, runtime, jdk, android-sdk, ndk,
                   build-tools, compile-sdk, disk, busy or platform). problems lists the same
                   reasons as { code, reason } with that code; an ndk, build-tools,
-                  compile-sdk or jdk problem also carries commands and a lead, the lines
-                  to run on that machine (sdkmanager, or the JDK install for its OS) and
-                  what they do. notes lists what a build there does without stopping:
+                  compile-sdk, jdk, xcode or runtime problem can also carry commands and a
+                  lead, the lines to run on that machine (sdkmanager, the JDK install,
+                  xcode-select, xcodebuild or xcodes) and what they do, or followsFrom, the
+                  code of the problem whose fix also clears it. notes lists what a build there does without stopping:
                   { code, reason } for an ndk, build-tools or compile-sdk package its
                   Android SDK lacks and Gradle downloads on the first build (licenses
                   accepted there, no android.builder.sdkDownload=false in the app), each

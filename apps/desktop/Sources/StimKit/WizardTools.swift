@@ -45,6 +45,7 @@ public func toolsReport(
           && ["Remote machine", "Remote Mac"].contains { finding.title.hasPrefix("\($0) \(status.machine) ") }
       }
     }
+    if let commands = finding?.fix, commands.contains("\n") { return commands }
     return step?.fix ?? finding?.fix
       ?? (isLocal(code, reason) ? "Check this problem on this Mac." : "Check this problem on the remote machine.")
   }
@@ -207,7 +208,8 @@ private func cocoapodsAdvice(problems: [BuildMachineStatus.Problem], machine: St
 
 public func wizardFixIsCommand(_ fix: String) -> Bool {
   let commands = [
-    "sudo", "brew", "gem", "bundle", "xcodebuild", "xcode-select", "sdkmanager", "stim", "stim-server", "npx", "npm", "winget",
+    "sudo", "brew", "gem", "bundle", "xcodebuild", "xcode-select", "sdkmanager", "stim", "stim-server", "npx", "npm",
+    "winget", "xcodes",
   ]
   let program: Substring
   if let quote = fix.first, quote == "\"" || quote == "'" {

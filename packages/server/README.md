@@ -1630,7 +1630,8 @@ connected since stim-server started keeps its directory when revoked.
   `xcrun --sdk macosx --show-sdk-version`); `cocoapods`; `runtimes`, the simulator
   runtimes with an iPhone simulator to build for; `jdk`, the major version of
   the JDK in `JAVA_HOME` or the macOS default; `jdks`, the majors of every JDK it finds
-  (`JAVA_HOME`, the system JVM directories, Homebrew, Android Studio's JBR, SDKMAN), the default included; and `androidSdk`, the `ndk`,
+  (`JAVA_HOME`, the system JVM directories, Homebrew, Android Studio's JBR, SDKMAN), the default included; `developerDir` (what `xcode-select -p` prints) and `xcodeApps` (the Xcode apps in
+  `/Applications` with `version`, `build` and, while `xcode` is null, the `license` and `firstLaunch` checks of each), on a Mac; and `androidSdk`, the `ndk`,
   `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME`, else `~/Library/Android/sdk` on macOS or
   `~/Android/Sdk` on Linux, null without one), `androidHome` (that directory) and
   `androidLicenses` (whether `licenses/android-sdk-license` in it has content, so

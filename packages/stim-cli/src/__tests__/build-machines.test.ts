@@ -587,6 +587,42 @@ describe('inspectBuildMachines', () => {
     );
   });
 
+  it('fixes a deselected Xcode with the exact command, and a runtime that follows from it with a pointer', async () => {
+    await approvedCredential();
+    const { findings } = await inspectBuildMachines(
+      {
+        fix: false,
+        check: () =>
+          Promise.resolve({
+            capacity: null,
+            problems: [
+              {
+                code: 'xcode',
+                reason: 'no Xcode there: xcode-select points at Command Line Tools',
+                commands: ['sudo xcode-select -s /Applications/Xcode-27.1.app/Contents/Developer'],
+                lead: 'select Xcode-27.1',
+              },
+              { code: 'runtime', reason: 'no iPhone simulator on iOS-27-0 there', followsFrom: 'xcode' },
+              {
+                code: 'cocoapods',
+                reason: 'CocoaPods 1.17.0 there, 1.16.2 here',
+              },
+            ],
+          }),
+      },
+      fakeIo([approved()]).io,
+      ['mini'],
+    );
+    expect(findings.map(({ code, fix }) => ({ code, fix }))).toEqual([
+      {
+        code: 'build-machine-xcode',
+        fix: 'On mini, select Xcode-27.1:\nsudo xcode-select -s /Applications/Xcode-27.1.app/Contents/Developer',
+      },
+      { code: 'build-machine-runtime', fix: 'Fix the xcode problem on mini first; this follows from it.' },
+      expect.objectContaining({ code: 'build-machine-cocoapods' }),
+    ]);
+  });
+
   it.each([undefined, null, { name: 'Stim Host', screenRecording: false, accessibility: true }])(
     'approved entries expose host permissions only when reported: %j',
     async (host) => {
