@@ -114,7 +114,7 @@ test.skipIf(!POSIX)(
 );
 
 test.skipIf(!POSIX)(
-  'a background rm that exits before its identity is recorded reports the entry as deleted with the claim released',
+  'a background rm that exits before its identity is recorded reports the entry as deleted',
   async () => {
     const repo = repoWithIgnoredTrees();
     const trash = await moveIgnoredTreesToTrash(repo);
