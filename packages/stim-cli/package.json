@@ -55,7 +55,7 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@expo/fingerprint": "^0.20.10",
+    "@expo/fingerprint": "^0.21.5",
     "@stim-cli/agent-driver": "workspace:*",
     "@stim-cli/agent-driver-agent-device": "workspace:*",
     "@stim-cli/cache": "workspace:*",

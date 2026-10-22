@@ -170,6 +170,33 @@ export function androidProjectFingerprintOptions(
   };
 }
 
+const LOCKFILES = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json', 'bun.lock', 'bun.lockb'];
+
+/**
+ * The patches of a monorepo's install root, which @expo/fingerprint does not see: its patch sourcer reads only the
+ * app's own `patches/`, and its default preset hashes an installed package by name and version, so a patch applied
+ * from the workspace root would leave the key unchanged.
+ */
+export function workspacePatchSources(
+  projectRoot: string,
+  exists: (path: string) => boolean = existsSync,
+): NonNullable<FingerprintOptions['extraSources']> {
+  let dir = resolvePath(projectRoot);
+  for (;;) {
+    if (LOCKFILES.some((name) => exists(join(dir, name)))) break;
+    const parent = resolvePath(dir, '..');
+    if (parent === dir || exists(join(dir, '.git'))) return [];
+    dir = parent;
+  }
+  return ['patches', '.yarn/patches']
+    .filter((name) => (name === 'patches' ? dir !== resolvePath(projectRoot) : true) && exists(join(dir, name)))
+    .map((name) => ({
+      type: 'dir' as const,
+      filePath: relative(projectRoot, join(dir, name)).split(sep).join('/'),
+      reasons: ['workspacePatches'],
+    }));
+}
+
 interface FingerprintTarget {
   platform?: string;
   iosProjectPath?: string;
@@ -231,10 +258,11 @@ async function fingerprintOptions(
       : androidLayout?.custom
         ? androidProjectFingerprintOptions(projectRoot, androidLayout)
         : {};
-  if (ios.extraSources) {
+  const patches = workspacePatchSources(projectRoot);
+  if (ios.extraSources || patches.length) {
     // An explicit extraSources replaces fingerprint.config.js's list in @expo/fingerprint, so keep the project's own.
     const config = await loadFingerprintConfig(projectRoot, true);
-    ios.extraSources = [...(config?.extraSources ?? []), ...ios.extraSources];
+    ios.extraSources = [...(config?.extraSources ?? []), ...(ios.extraSources ?? []), ...patches];
   }
   const bundleOutput =
     platform === 'android'

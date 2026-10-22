@@ -109,6 +109,43 @@ Debug simulator build or a `--remote` build ends in its architecture (`-arm64`
 or `-x86-64`). A local iOS Release simulator build compiles every architecture
 the project lists and has no suffix.
 
+Stim runs `@expo/fingerprint` with its default `balanced` preset, the one the
+project's own Expo uses:
+
+- An installed dependency counts by its name and version, not by its files.
+- A package whose real path is outside `node_modules` counts by its files: a
+  workspace package, a `file:` or `link:` dependency, or a local Expo module.
+- `patches/`, a committed `ios/` or `android/`, the app config and the config
+  plugins it loads count by their contents. In a monorepo, Stim also hashes the
+  `patches/` and `.yarn/patches/` directories next to the lockfile.
+- The app's `version`, `ios.buildNumber` and `android.versionCode`, `eas.json`,
+  `.easignore` and the path overrides in `react-native.config.js` are left out.
+  A Release cache hit keeps the version it was built with.
+
+To hash the files of every native dependency, set `preset: 'strict'` in
+`fingerprint.config.js`. That costs about twice the fingerprint's CPU time.
+
+:::warning[Edits inside node_modules]
+
+Stim does not see an edit you make directly to a dependency's files, such as
+`node_modules/<package>/ios/*.m`, a podspec or `build.gradle`. The key stays the
+same, so the next run installs the cached app without your change. Make the
+change a patch with `patch-package` or `pnpm patch`; Stim hashes patches. To try
+an edit before you make it a patch, build it fresh on this machine:
+
+<StimTabs
+code={`stim ios --no-build-cache --remote-build local
+stim android --no-build-cache --remote-build local`}
+/>
+
+`--no-build-cache` alone can place the build on a paired build machine. That
+machine installs dependencies from the lockfile, so its build does not include
+your edit. The fresh build is stored under the same key, so later runs reuse
+it, edit included, until the dependency's version or patches change. Undo the
+edit with another `--no-build-cache` build.
+
+:::
+
 `stim ios` and `stim android` first check the machine-wide artifact cache. A hit
 installs the saved `.app` or `.apk`. A miss runs the native build and stores the
 result. Two matching misses use one build through a single-flight lock.

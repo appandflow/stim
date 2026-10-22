@@ -375,6 +375,20 @@ test('a custom iOS project directory keeps the sources fingerprint.config.js dec
   ]);
 });
 
+test('a patch at the monorepo install root moves the key of an app below it', async () => {
+  const app = join(root, 'apps/app');
+  mkdirSync(join(root, 'patches'), { recursive: true });
+  mkdirSync(app, { recursive: true });
+  writeFileSync(join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n");
+  writeFileSync(join(root, 'patches/react-native-mmkv.patch'), '--- a/ios/MMKV.mm\n+++ b/ios/MMKV.mm\n');
+  writeFileSync(join(app, 'package.json'), '{"name":"app"}');
+  getExecutor().runFile('git', ['init', '--quiet', root], { timeoutMs: 10_000 });
+  const hashOf = async () => (await fingerprintProject(app, { platform: 'ios' }))?.hash;
+  const before = await hashOf();
+  writeFileSync(join(root, 'patches/react-native-mmkv.patch'), '--- a/ios/MMKV.mm\n+++ b/ios/MMKV.mm\n@@ -1 +1 @@\n');
+  expect(await hashOf()).not.toBe(before);
+}, 30_000);
+
 test('an iOS project in the app directory hashes every tracked top-level entry except dependencies and build output', () => {
   const directories = new Set(['node_modules', 'js', 'Pods', 'android', 'build', 'RNTesterPods.xcodeproj', 'shared']);
   const { extraSources, ignorePaths } = iosProjectFingerprintOptions(root, '.', {
