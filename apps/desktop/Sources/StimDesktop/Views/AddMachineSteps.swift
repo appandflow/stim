@@ -136,7 +136,7 @@ struct AddMachineSteps: View {
       }
       if model.wizard.capabilities.contains(.build), let machine = model.machineEntry {
         tryIt(machine)
-        card("Builds", detail: "Auto: when this Mac is busy. Always: prefer \(name). Never: build here.") {
+        card("Builds", detail: buildsDetail) {
           Picker("Builds", selection: $model.mode) {
             ForEach(WizardMode.allCases, id: \.self) { Text($0.title).tag($0) }
           }
@@ -144,7 +144,7 @@ struct AddMachineSteps: View {
         }
       }
       if model.choosesSimulators, let machine = model.machineEntry {
-        card("Simulators", detail: "Auto: on \(name) when this Mac is full.") {
+        card("Simulators", detail: simulatorsDetail) {
           Picker("Simulators", selection: $model.simulators) {
             ForEach(SimulatorPlacement.allCases, id: \.self) { choice in
               Text(choice.title(machine: name)).tag(Optional(choice))
@@ -165,17 +165,36 @@ struct AddMachineSteps: View {
     }
   }
 
-  private func card<Content: View>(_ title: String, detail: String, @ViewBuilder content: () -> Content) -> some View {
+  private func card<Content: View>(_ title: String, detail: String?, @ViewBuilder content: () -> Content) -> some View {
     VStack(alignment: .leading, spacing: Space.md) {
       Text(title).font(.stim(.headline))
       content()
-      Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+      if let detail {
+        Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(Space.lg)
     .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
     .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+  }
+
+  private var buildsDetail: String {
+    switch model.mode {
+    case .auto: return "Builds run on \(name) when this Mac is busy."
+    case .force: return "Builds run on \(name) whenever it can take them, and on this Mac when it can't."
+    case .off: return "Builds always run on this Mac."
+    }
+  }
+
+  private var simulatorsDetail: String? {
+    switch model.simulators {
+    case .thisMac?: return "Simulators always run on this Mac."
+    case .auto?: return "Simulators run on \(name) when this Mac is full or busy."
+    case .always?: return "Simulators always run on \(name)."
+    case nil: return nil
+    }
   }
 
   private func tryIt(_ machine: String) -> some View {
