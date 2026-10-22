@@ -425,10 +425,16 @@ final class AddMachineModel {
 
   @discardableResult private func runDoctor(ask: Bool, ticket: String? = nil) async throws -> Bool {
     guard !isFixture, let checkout = doctorPath else { return false }
-    while doctorRunning { try? await Task.sleep(for: .milliseconds(50)) }
+    while doctorRunning { try await Task.sleep(for: .milliseconds(50)) }
     doctorRunning = true
-    defer { doctorRunning = false }
-    let report = try await dependencies.doctor(checkout, ask, ticket)
+    let report: DoctorReport
+    do {
+      report = try await dependencies.doctor(checkout, ask, ticket)
+      doctorRunning = false
+    } catch {
+      doctorRunning = false
+      throw error
+    }
     await send(.doctorReported(build: match(report.remoteMachines), host: match(report.deviceHosts)))
     return true
   }

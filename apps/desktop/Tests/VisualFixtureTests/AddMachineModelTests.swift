@@ -20,6 +20,7 @@ final class AddMachineModelTests: XCTestCase {
     var modeOrigin: String? = "default"
     var grantReady = false
     var journalDone = false
+    var statusState: String?
     var doctorDelay: Duration = .zero
     var doctorInFlight = 0
     var doctorMaxInFlight = 0
@@ -54,7 +55,8 @@ final class AddMachineModelTests: XCTestCase {
       func statuses(_ entries: [String], id: String) -> [[String: Any]] {
         entries.map {
           [
-            "machine": $0, "state": grantReady ? "approved" : "pending", "deviceId": id, "dnsName": "mini.tail.test",
+            "machine": $0, "state": statusState ?? (grantReady ? "approved" : "pending"), "deviceId": id,
+            "dnsName": "mini.tail.test",
             "offloadable": true, "problems": toolProblems[platform ?? ""] ?? [],
           ]
         }
@@ -232,6 +234,30 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(asked(), before + 1)
     await model.refresh()
     XCTAssertEqual(asked(), before + 1, "one request per signal, not one per poll")
+  }
+
+  @MainActor func testALapsedRequestIsAskedAgainFromAPollReadWithoutHangingTheWizard() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    let asks = { harness.asks.filter { $0.0 && $0.1 != nil }.count }
+    let before = asks()
+    harness.statusState = "lapsed"
+    harness.now = harness.now.addingTimeInterval(31)
+    var finished = false
+    Task {
+      await model.refresh()
+      finished = true
+    }
+    await waitUntil { finished }
+    XCTAssertTrue(finished, "the re-ask a poll read triggers must not wait for that read to end")
+    XCTAssertGreaterThan(asks(), before)
+    XCTAssertFalse(model.busy)
   }
 
   @MainActor func testADoctorRunNeverOverlapsAnotherOne() async {

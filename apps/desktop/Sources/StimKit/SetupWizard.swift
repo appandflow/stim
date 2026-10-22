@@ -583,7 +583,9 @@ extension SetupWizard {
     case .cancelled: return []
     case .command, .running, .approved, .expiredCommand:
       var reads: [SetupRefresh] = phase == .expiredCommand ? [] : [.journal]
-      let graceOver = ticket.map { now >= $0.expiresAt.addingTimeInterval(Self.readGraceAfterExpiry) } ?? false
+      let graceOver =
+        phase == .expiredCommand
+        && (ticket.map { now >= $0.expiresAt.addingTimeInterval(Self.readGraceAfterExpiry) } ?? false)
       if journal != nil, entriesWritten, !graceOver { reads.append(.doctor) }
       return reads
     }
