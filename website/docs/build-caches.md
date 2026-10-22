@@ -500,8 +500,7 @@ stops the disk-driven ones once free space is back above the floor:
    means no dev server, native run, build, lease, managed lock, driven or busy
    device, and no recorded use. The next run recreates them.
 
-The daily sweep covers what Stim Desktop's nightly cleanup does. It runs in
-the background of Stim commands every `maintenance.sweepHours` (24), never at a
+The daily sweep runs in the background of Stim commands every `maintenance.sweepHours` (24), never at a
 set hour, and waits while the host load is over `maintenance.maxLoadPerCore`.
 `maintenance.olderThanDays` (7) is the age for steps 2, 3, 5 and 6; set it to 0
 and the sweep removes nothing in them by age. Step 1, step 7 (which

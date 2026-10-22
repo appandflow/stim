@@ -761,7 +761,8 @@ idle devices after** sets `devices.idleShutdownMinutes` (30 minutes by
 default; Never is 0), and **Also remove clean, pushed worktrees unused that
 long** sets `maintenance.removeIdleWorktrees` (off by default; it removes
 unmerged linked worktrees no Stim command used that long, git-ignored files
-included), all with `stim settings set ... --scope machine`. Every
+included, and only while `maintenance.removeFinishedWorktrees` is on and the
+age is not Never), all with `stim settings set ... --scope machine`. Every
 other `maintenance.*` setting is under **Stim Settings**. A `stim` whose status
 has no `maintenance` block cleans up nothing on its own; the section then says
 to update `stim`, and the app does not clean up in its place. Idle device

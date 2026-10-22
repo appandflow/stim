@@ -1,8 +1,6 @@
 import StimKit
 import SwiftUI
 
-/// The CLI's automatic maintenance: its state from `stim status --json`, read only, and the machine settings that
-/// replaced the app's own idle shutdown and nightly cleanup, written with `stim settings set`.
 struct MaintenanceSection: View {
   var maintenance: MaintenanceStatus?
   var statusLoaded: Bool
@@ -36,7 +34,7 @@ struct MaintenanceSection: View {
       Text("Automatic Maintenance")
     } footer: {
       Text(
-        "With the mode On, Stim cleans up on its own whenever stim commands, a dev server or this app's status watch run: it shuts down owned simulators and emulators idle that long, never deleting them, and once a day clears the build outputs of workspaces and the cache entries unused that long and deletes devices parked that long. Removing idle worktrees whose branch is not merged is off by default: it takes their git-ignored files, such as .env.local, and counts a worktree as unused when no stim command ran there. Under the disk budget it reclaims more. These are machine settings, written with stim settings set, which a project's own setting overrides; Never for cleanup and the worktree switch need a stim newer than 1.25.0. Every maintenance.* setting is under Stim Settings."
+        "With the mode On, Stim cleans up on its own whenever stim commands, a dev server or this app's status watch run: it shuts down owned simulators and emulators idle that long, never deleting them, and once a day clears the build outputs of workspaces and the cache entries unused that long and deletes devices parked that long. Removing idle worktrees whose branch is not merged is off by default and also needs worktree removal on and a cleanup age other than Never: it takes their git-ignored files, such as .env.local, and counts a worktree as unused when no stim command ran there. Under the disk budget it reclaims more. These are machine settings, written with stim settings set, which a project's own setting overrides; Never for cleanup and the worktree switch need a stim newer than 1.25.0. Every maintenance.* setting is under Stim Settings."
       )
       .multilineTextAlignment(.leading)
       .frame(maxWidth: .infinity, alignment: .leading)

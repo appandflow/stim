@@ -3,11 +3,6 @@ import Combine
 import StimKit
 import StimStores
 
-/// Watches free disk against the Stim budget for the sidebar mark, the Machine page plan and its Do it, and the
-/// pressure notification. The CLI's automatic maintenance does the cleanup itself: it shuts down idle devices, runs the
-/// daily age sweep and reclaims space under disk pressure. The app asks with a notification only when that maintenance
-/// is not on or its last pass was blocked while disk is still under the budget. Do it runs `stim gc --delete` on the
-/// machine action slot.
 @MainActor
 final class AutopilotRunner: ObservableObject {
   static let tick: TimeInterval = 60
@@ -20,7 +15,6 @@ final class AutopilotRunner: ObservableObject {
   @Published private(set) var lowestVolume: DiskVolume?
   /// The CLI's automatic maintenance as the last `stim status --json` reported it; nil from a `stim` without it.
   @Published private(set) var cliMaintenance: MaintenanceStatus?
-  /// Whether `stim status --json` has loaded, so a nil `cliMaintenance` means a `stim` without maintenance.
   @Published private(set) var statusLoaded = false
 
   private let status: StatusStore
@@ -77,7 +71,6 @@ final class AutopilotRunner: ObservableObject {
     runPressurePlan()
   }
 
-  /// Runs `stim gc --delete` for the plan the Machine page and the pressure notification offer.
   func runPressurePlan() {
     run("Reclaim disk space", PressurePlan.arguments)
   }
