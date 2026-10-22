@@ -185,13 +185,36 @@ function workspacePatchSources(projectRoot: string): NonNullable<FingerprintOpti
     if (parent === dir || existsSync(join(dir, '.git'))) return [];
     dir = parent;
   }
-  return ['patches', '.yarn/patches']
+  const sources: NonNullable<FingerprintOptions['extraSources']> = ['patches', '.yarn/patches']
     .filter((name) => (name === 'patches' ? dir !== resolvePath(projectRoot) : true) && existsSync(join(dir, name)))
     .map((name) => ({
       type: 'dir' as const,
       filePath: relative(projectRoot, join(dir, name)).split(sep).join('/'),
       reasons: ['workspacePatches'],
     }));
+  const patched = pnpmPatchedDependencies(join(dir, 'pnpm-lock.yaml'));
+  if (patched)
+    sources.push({ type: 'contents', id: 'pnpmPatchedDependencies', contents: patched, reasons: ['workspacePatches'] });
+  return sources;
+}
+
+/** The lockfile's `patchedDependencies` block, which pnpm rewrites with each patch's hash wherever the patch lives. */
+function pnpmPatchedDependencies(lockfile: string): string | null {
+  let text: string;
+  try {
+    text = readFileSync(lockfile, 'utf8');
+  } catch {
+    return null;
+  }
+  const lines = text.split(/\r?\n/);
+  const start = lines.indexOf('patchedDependencies:');
+  if (start === -1) return null;
+  const block: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line && !/^\s/.test(line)) break;
+    if (line.trim()) block.push(line.trim());
+  }
+  return block.length ? block.join('\n') : null;
 }
 
 interface FingerprintTarget {

@@ -389,6 +389,20 @@ test('a patch at the monorepo install root moves the key of an app below it', as
   expect(await hashOf()).not.toBe(before);
 }, 30_000);
 
+test('a pnpm patch outside patches/ moves the key through the hash pnpm records for it', async () => {
+  const lockfile = (hash: string) =>
+    `lockfileVersion: '9.0'\n\npatchedDependencies:\n  react-native-mmkv@4.3.2: ${hash}\n\nimporters:\n  .: {}\n`;
+  writeFileSync(join(root, 'pnpm-lock.yaml'), lockfile('aaa'));
+  writeFileSync(join(root, 'package.json'), '{"name":"app"}');
+  getExecutor().runFile('git', ['init', '--quiet', root], { timeoutMs: 10_000 });
+  const hashOf = async () => (await fingerprintProject(root, { platform: 'android' }))?.hash;
+  const before = await hashOf();
+  writeFileSync(join(root, 'pnpm-lock.yaml'), `# reformatted\n${lockfile('aaa')}`);
+  expect(await hashOf()).toBe(before);
+  writeFileSync(join(root, 'pnpm-lock.yaml'), lockfile('bbb'));
+  expect(await hashOf()).not.toBe(before);
+}, 30_000);
+
 test('an iOS project in the app directory hashes every tracked top-level entry except dependencies and build output', () => {
   const directories = new Set(['node_modules', 'js', 'Pods', 'android', 'build', 'RNTesterPods.xcodeproj', 'shared']);
   const { extraSources, ignorePaths } = iosProjectFingerprintOptions(root, '.', {
