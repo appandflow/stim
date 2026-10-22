@@ -579,8 +579,7 @@ extension SetupWizard {
     case .choose: return [.approvals]
     case .cancelled: return []
     case .command, .running, .approved, .expiredCommand:
-      if phase == .expiredCommand { return [] }
-      var reads: [SetupRefresh] = [.journal]
+      var reads: [SetupRefresh] = phase == .expiredCommand ? [] : [.journal]
       if journal != nil, entriesWritten { reads.append(.doctor) }
       return reads
     }

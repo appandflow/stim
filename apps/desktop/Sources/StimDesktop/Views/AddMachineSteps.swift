@@ -18,7 +18,7 @@ struct AddMachineSteps: View {
     VStack(alignment: .leading, spacing: Space.lg) {
       Text("Tools on \(name)").font(.stim(.title))
       Text(
-        "Compared with this Mac. A red row means that capability will not work there yet; an amber row says what it costs. None of them stops Next, and Settings lists the problems on the machine's row."
+        "Compared with this Mac. A red row means that capability will not work there yet; an amber row says what it costs. None of them stops Next."
       )
       .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       ForEach(model.tools) { tool in
@@ -184,13 +184,13 @@ struct AddMachineSteps: View {
     switch model.mode {
     case .auto: return "Builds run on \(name) when this Mac is busy."
     case .force: return "Builds run on \(name) whenever it can take them, and on this Mac when it can't."
-    case .off: return "Builds always run on this Mac."
+    case .off: return "Builds run on this Mac."
     }
   }
 
   private var simulatorsDetail: String? {
     switch model.simulators {
-    case .thisMac?: return "Simulators always run on this Mac."
+    case .thisMac?: return "Simulators run on this Mac."
     case .auto?: return "Simulators run on \(name) when this Mac is full or busy."
     case .always?: return "Simulators always run on \(name)."
     case nil: return nil

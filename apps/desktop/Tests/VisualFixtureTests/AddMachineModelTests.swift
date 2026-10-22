@@ -240,10 +240,10 @@ final class AddMachineModelTests: XCTestCase {
     await model.refresh()
     XCTAssertEqual(model.wizard.phase, .expiredCommand)
     XCTAssertEqual(model.wizard.failure(now: harness.now), .expired)
-    let calls = harness.steps.count
+    let asks = harness.asks.filter { $0.0 }.count
     await model.refresh()
     await model.refresh()
-    XCTAssertEqual(harness.steps.count, calls, "no request or read after the ticket expired")
+    XCTAssertEqual(harness.asks.filter { $0.0 }.count, asks, "no request is sent after the ticket expired")
   }
 
   @MainActor func testBackgroundPollReadsDoctorDuringSetupBesideTheJournal() async throws {

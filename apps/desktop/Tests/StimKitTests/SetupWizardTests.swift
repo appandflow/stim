@@ -464,7 +464,8 @@ final class SetupWizardTests: XCTestCase {
     _ = wizard.apply(.tick, now: ticket.expiresAt)
     XCTAssertEqual(wizard.phase, .expiredCommand)
     XCTAssertEqual(
-      wizard.refreshes(page: .setup), [], "The worker dropped the ticket's secret at expiry: nothing to read or send")
+      wizard.refreshes(page: .setup), [.doctor],
+      "An expired ticket has no journal to read, but a grant recorded just before expiry still needs its doctor read")
     _ = wizard.apply(.cancel, now: now)
     XCTAssertEqual(wizard.refreshes(page: .setup), [], "A cancelled setup reads nothing; a failed undo waits for Retry undo")
 

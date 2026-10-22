@@ -435,7 +435,7 @@ so there is no Check again button:
    tools when **Builds** is chosen. A problem that stops the chosen
    capability is shown in red and never disables **Next**; the machine stays added,
    builds that cannot run there stay on this machine, and Settings > Remote Machines
-   keeps listing the problem on its row. Red problems are an incompatible Stim build
+   lists the iOS tool problems on its row (Android-only ones are shown only here). Red problems are an incompatible Stim build
    or no Xcode for Builds, and no iOS simulator runtime for Hosted simulators. **Install This Mac's Build**
    fixes an incompatible Stim build. A Linux or Windows machine shows only the Stim build and
    Android rows, and a missing Android SDK or any JDK difference is red

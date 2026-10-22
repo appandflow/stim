@@ -1298,6 +1298,8 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    budget of up to 150 seconds. When Builds is chosen, Android tools are always compared
    and are amber. Next is never disabled by a tool row: approval is finished, a
    failed offload falls back to a local build, and the machine stays added.
+   Settings > Remote Machines lists doctor's iOS-platform problems on the
+   machine's row; Android-only tool problems appear only here.
    A problem that stops the chosen capability is red: a Stim build mismatch, no Xcode, a different CPU or an
    unreachable or unapproved Mac for Builds, and no iOS simulator runtime for
    Hosted simulators when doctor reports it. With only Hosted simulators, setup
@@ -1313,8 +1315,7 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    never runs these fixes. A Linux or Windows machine is compared with
    `stim doctor --platform android` only: it shows the Stim build and Android
    rows, and a missing Android SDK or any JDK difference is red, since no
-   build could offload there. Settings > Remote Machines lists the same doctor
-   problems on that machine's row.
+   build could offload there.
 5. **Done.**
    - The approvals.
    - A **Try it** card with a copyable agent prompt and
