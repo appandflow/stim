@@ -36,15 +36,21 @@ Render frames again with `frame-sources/render.sh [name...]` (macOS, Google Chro
 
 ## Deploy
 
-`.github/workflows/demo-server-deploy.yml` deploys on every push to `main` that changes this package or `packages/core`, and on manual dispatch. It runs in the `demo-server` GitHub environment and skips with a notice when the Cloudflare secrets are missing. Limit that environment's deployment branches to `main` (Settings, Environments) so a manual run from another branch cannot deploy. A deploy restarts the Durable Object and disconnects every phone; the app reconnects by itself.
+The demo server deploys with the phone app, because it exists only for App Review and must match the build under review. `.github/workflows/mobile-release.yml` calls `.github/workflows/demo-server-deploy.yml` on a `mobile-v*` tag and in modes `auto`, `update` and `build`, after its `verify` job (on `main`, tag version, unit tests) passes, and builds or publishes only after the deploy and its smoke test pass. Modes `rollback` and `republish` do not deploy. A merge to `main` does not deploy. Run `demo-server-deploy.yml` by hand to redeploy without a release, such as after rotating `DEMO_TOKEN`.
+
+The deploy runs in the `demo-server` GitHub environment and refuses a commit that is not on `main`. On a `mobile-v*` tag, a missing `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` or `DEMO_TOKEN` fails the deploy job before anything is deployed and stops the release. A dispatched run, of this workflow or of the mobile release, skips the deploy or the smoke test with a notice instead, and a dispatched release goes on. A deploy restarts the Durable Object and disconnects every phone; the app reconnects by itself.
+
+The environment's deployment rule is a GitHub repository setting that code cannot change. In Settings, Environments, `demo-server`, Deployment branches and tags, choose "Selected branches and tags" and allow the branch `main` (manual runs and dispatched releases) and the tag pattern `mobile-v*` (tag releases). A ref the rule does not allow cannot deploy.
+
+After `wrangler deploy`, `scripts/smoke.mjs` checks the deployed Worker at `https://stim-demo.appandflow.workers.dev`: it reads the protocol 2 pairing code from `GET /pairing` and requires its `X-Demo-Version` header (the Worker's `version_metadata` id) to be the version `wrangler deploy` reported, so a previous version still answering does not pass. It then runs a protocol 2 first contact with core's `initiateNoise` and `DEMO_TOKEN`, checks that the server key matches the pairing code's fingerprint, sends `hello` and waits for a status event. A deploy restarts the Worker, so a failed attempt is retried every 5 seconds within one minute. Each step of an attempt waits at most 10 seconds and never past that minute. A check that still fails fails the job and names it. A refused first contact means the answering Worker does not hold this `DEMO_TOKEN`, such as a previous version still serving or a failed secret upload; a `DEMO_TOKEN` that is not 43 base64url characters fails before connecting. The smoke test derives its client key from `DEMO_TOKEN`, so every deploy pairs the same device record, named `Deploy smoke test`, again instead of adding one; anyone with the token can pair a phone anyway. It prints neither the token nor any key. Only CI runs it against the deployed Worker; `pnpm run test:live` runs it against `wrangler dev`.
 
 Secrets, on the repository or on the `demo-server` environment:
 
-| Secret                  | Value                                                                                 |
-| ----------------------- | ------------------------------------------------------------------------------------- |
-| `CLOUDFLARE_API_TOKEN`  | An API token with the "Edit Cloudflare Workers" template permissions for the account. |
-| `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account ID.                                                            |
-| `DEMO_TOKEN`            | Optional. When set, each deploy uploads it as the Worker secret `DEMO_TOKEN`.         |
+| Secret                  | Value                                                                                                          |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `CLOUDFLARE_API_TOKEN`  | An API token with the "Edit Cloudflare Workers" template permissions for the account.                          |
+| `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account ID.                                                                                     |
+| `DEMO_TOKEN`            | Optional. When set, each deploy uploads it as the Worker secret `DEMO_TOKEN` and the smoke test pairs with it. |
 
 The account's `workers.dev` subdomain is `appandflow`, so the Worker `stim-demo` is at `https://stim-demo.appandflow.workers.dev` and phones pair with `wss://stim-demo.appandflow.workers.dev`. Until `DEMO_TOKEN` is set, the Worker refuses every pairing.
 
