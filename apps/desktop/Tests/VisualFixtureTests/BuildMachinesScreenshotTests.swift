@@ -59,6 +59,26 @@
           """#.utf8))
     }
 
+    private func layers() throws -> [BuildMachineStatus] {
+      try JSONDecoder().decode(
+        [BuildMachineStatus].self,
+        from: Data(
+          #"""
+          [{"machine":"mini","state":"unreachable","dnsName":"mini.tail1234.ts.net","deviceId":"a1b2c3d4",
+            "diagnosis":{"layer":"server","code":"server-not-ready","title":"Server not ready",
+              "message":"stim-server on mini is running but is not serving clients (HTTP 503). It cannot read its Stim home, usually because the disk holding ~/.stim is disconnected or not responding.",
+              "remedy":"Check the disk that holds the Stim home on mini (reconnect or wake an external drive); stim-server serves again by itself once it answers. `stim-server service status` there shows the exact reason."}},
+           {"machine":"studio","state":"unreachable","dnsName":"studio.tail1234.ts.net","deviceId":"e5f6a7b8",
+            "diagnosis":{"layer":"server","code":"server-not-running","title":"Server not running",
+              "message":"Tailscale and the serve route on studio work, but nothing listens behind the route: stim-server is not running there (HTTP 502).",
+              "remedy":"On studio, run `stim-server service status`; `stim-server service install --serve` starts it and keeps it running."}},
+           {"machine":"air","state":"unreachable","dnsName":"air.tail1234.ts.net","deviceId":"c9d0e1f2",
+            "diagnosis":{"layer":"peer","code":"peer-offline","title":"Mac is offline",
+              "message":"air is offline on Tailscale (last seen 3 h ago).",
+              "remedy":"Wake air or check that it is powered on, connected to a network and signed in to Tailscale, then run `stim doctor` again."}}]
+          """#.utf8))
+    }
+
     private func busy() throws -> [BuildMachineStatus] {
       try JSONDecoder().decode(
         [BuildMachineStatus].self,
@@ -209,6 +229,7 @@
                 )
               ]))
         ),
+        ("layers", AnyView(content(entries: ["mini", "studio", "air"], statuses: try layers(), tailscale: true))),
         ("busy", AnyView(content(entries: ["mini", "studio"], statuses: try busy(), tailscale: true))),
         ("tailscale-off", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: false))),
         ("empty-tailscale-off", AnyView(content(entries: [], statuses: [], tailscale: false))),

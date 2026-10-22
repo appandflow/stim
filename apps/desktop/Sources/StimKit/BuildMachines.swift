@@ -303,9 +303,33 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     }
   }
 
+  /// The first layer `stim doctor` found stopping this Mac from using the machine: Tailscale here, the peer, its
+  /// serve route, stim-server or compatibility. `code` is stable; `title` is the short pill text.
+  public struct Diagnosis: Decodable, Hashable, Sendable {
+    public var layer: String
+    public var code: String
+    public var title: String
+    public var message: String
+    public var remedy: String
+
+    /// What failed, then what to do about it.
+    public var detail: String { "\(message) \(remedy)" }
+
+    public init(layer: String, code: String, title: String, message: String, remedy: String) {
+      self.layer = layer
+      self.code = code
+      self.title = title
+      self.message = message
+      self.remedy = remedy
+    }
+  }
+
   public var host: Host?
   public var machine: String
   public var state: State
+  /// Present for the states that stop below approval (`tailscale-off`, `not-on-tailnet`, `unreachable`) and for a
+  /// state this Desktop does not know, such as `outdated`; absent from an older `stim`.
+  public var diagnosis: Diagnosis?
   public var dnsName: String?
   public var deviceId: String?
   public var requestedAt: String?
@@ -331,6 +355,10 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public var readiness: MachineReadiness {
     let all = reasons.flatMap { $0.isEmpty ? nil : $0.joined(separator: "\n") }
     guard state == .approved, let offloadable else {
+      if let diagnosed {
+        return MachineReadiness(
+          title: diagnosed.title, remedy: nil, tone: state == .unknown ? .warning : state.readinessTone, reasons: all)
+      }
       return MachineReadiness(title: state.title, remedy: nil, tone: state.readinessTone, reasons: all)
     }
     if offloadable { return MachineReadiness(title: "Ready", remedy: nil, tone: .success, reasons: nil) }
@@ -358,7 +386,19 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       if code == "stim-build" { return MachineListStatus(title: "Needs update", tone: .warning) }
       return MachineListStatus(title: code.flatMap { MachineReadiness.problems[$0]?.0 } ?? "Not offloading", tone: .warning)
     case .pending: return MachineListStatus(title: "Waiting for approval", tone: .warning)
-    default: return MachineListStatus(title: state.title, tone: state.readinessTone)
+    default:
+      if let diagnosed {
+        return MachineListStatus(title: diagnosed.title, tone: state == .unknown ? .warning : state.readinessTone)
+      }
+      return MachineListStatus(title: state.title, tone: state.readinessTone)
+    }
+  }
+
+  /// The diagnosis, for the states it explains.
+  private var diagnosed: Diagnosis? {
+    switch state {
+    case .unreachable, .tailscaleOff, .notOnTailnet, .unknown: return diagnosis
+    default: return nil
     }
   }
 
@@ -444,6 +484,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public var approvalPrompt: String { "Someone on \(machine) approves it by running the setup command there" }
 
   public var detail: String {
+    if let diagnosed { return diagnosed.detail }
     switch state {
     case .approved:
       if offloadable != false { return "Builds can run there." }

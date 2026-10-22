@@ -385,7 +385,7 @@ features the host's stim-server reports.
 
 Open **Stim > Settings > Remote Machines** on your main machine. It lists your
 remote machines, each with a status (**Approved**, **Waiting for approval**,
-**Unreachable**, **Needs update** or the reason it is not offloading, with the reason and a fix under it), what it does and **Remove...**. Readiness covers every platform of the app: a Linux machine that matches for Android shows as approved even though it cannot build iOS, and a Mac without an Android SDK shows that reason for an app with Android. Choose **Add Remote Machine...** to start the wizard,
+the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading, with the reason and a fix under it), what it does and **Remove...**. Readiness covers every platform of the app: a Linux machine that matches for Android shows as approved even though it cannot build iOS, and a Mac without an Android SDK shows that reason for an app with Android. Choose **Add Remote Machine...** to start the wizard,
 which finds the Macs, Linux and Windows machines on your tailnet itself. **Remove** takes the machine out of
 `remote.machines` and shows the optional commands to run on that machine: `stim-server devices revoke <id>` for each
 request and `stim-server service uninstall`.
@@ -799,8 +799,9 @@ temporarily; it cannot authenticate.
 
 ### A remote machine is unreachable
 
-`stim doctor` stops at the first layer that fails and names it.
-`stim doctor --json` carries it as `diagnosis` (`layer`, `code`, `title`,
+`stim doctor` stops at the first layer that fails and names it. Stim Desktop
+shows it as the pill of the machine's row, with what failed and what to do
+under the name. `stim doctor --json` carries it as `diagnosis` (`layer`, `code`, `title`,
 `message`, `remedy`) under `remoteMachines` and `deviceHosts`. The `state` stays
 `unreachable`, `tailscale-off` or `not-on-tailnet`, so an older Desktop or phone
 app still shows its short label.
