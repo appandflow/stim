@@ -294,9 +294,12 @@ get request does not cancel another reader's shared work.
 After changing settings, running an action, or explicitly refreshing a view,
 Desktop calls `desktop.reports.invalidate` without parameters. This invalidates
 all report targets and refreshes active subscriptions. Results started before
-invalidation cannot replace a newer result or satisfy a waiting get. The existing
-request and subscription caps, report byte quota, API execution and cleanup
-budgets, and 150-second server limit apply. At most four shared report probes run
+invalidation cannot replace a newer result or satisfy a waiting get; invalidation
+aborts such a probe, so a waiting get waits only for the fresh one. A waiting get
+does not use one of the connection's request slots: a connection can wait for 16
+reports at a time, and more fail with `limit-exceeded`. The subscription cap,
+report byte quota, API execution and cleanup budgets, and 150-second server limit
+apply. At most four shared report probes run
 at once across connections and targets. A new target above that limit returns a
 busy error without starting or queuing work; invalidate and retry after a probe
 finishes. Unsubscribing does not release a probe's slot before it drains.
@@ -1945,7 +1948,7 @@ Events are `{ "event", "subscription", ... }`.
   retained logs and agent-device session actions locally through core, with the same JSON filters, ordering,
   markers and error context. Archive reads are synchronous and queued per
   connection, yielding to the event loop between requests. Pending archive
-  reads share the four-request limit with commands. Archived session actions
+  reads share the connection's request limit with commands. Archived session actions
   retain available platform and device attribution; device ids and Stim slot
   assignments absent from retained files are unavailable after removal. They never follow files or use a hosted relay.
   An archive subscription sends its records in the same batches and limits,
@@ -2355,9 +2358,10 @@ Events are `{ "event", "subscription", ... }`.
 
 `workspace` is an environment `path` from a status payload. Any other path is
 refused with `unknown-workspace` and runs nothing. A connection holds at most
-32 subscriptions and runs at most 4 `logs.query`, `stats.get`,
+32 subscriptions and runs at most 32 `logs.query`, `stats.get`,
 `settings.get`, `build.plan`, `workspace.files` and `workspace.diff` requests at
-a time. `logs.query`, `stats.get` and `settings.get` fail after 60 seconds,
+a time, actions included. A tailnet device runs at most 16 across all its
+connections; more fail with `limit-exceeded`. `logs.query`, `stats.get` and `settings.get` fail after 60 seconds,
 `build.plan` after 150; these four fail at 32 MiB of output. Closing the
 connection stops running requests. When the command refuses with Stim's error
 contract on stdout, the `stim-failed` message is its code, message and remedy;

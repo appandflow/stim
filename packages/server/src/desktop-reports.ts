@@ -8,7 +8,7 @@ interface Entry {
   generation: number;
   readers: number;
   settled?: { result: DetailsRead; at: number; generation: number };
-  pending?: { promise: Promise<void>; generation: number };
+  pending?: { promise: Promise<void>; generation: number; abort: AbortController };
   listeners: Set<(snapshot: DesktopReportSnapshot) => void>;
   published?: string;
   timer?: ReturnType<typeof setTimeout>;
@@ -18,12 +18,12 @@ export class DesktopReports {
   private readonly entries = new Map<string, Entry>();
   private closed = false;
   private activeLoads = 0;
-  private readonly load: (target: DesktopReportTarget) => Promise<DetailsRead>;
+  private readonly load: (target: DesktopReportTarget, signal: AbortSignal) => Promise<DetailsRead>;
   private readonly ttlMs: number;
   private readonly now: () => number;
 
   constructor(
-    load: (target: DesktopReportTarget) => Promise<DetailsRead>,
+    load: (target: DesktopReportTarget, signal: AbortSignal) => Promise<DetailsRead>,
     ttlMs = 60_000,
     now: () => number = Date.now,
   ) {
@@ -83,6 +83,7 @@ export class DesktopReports {
   invalidate(): void {
     for (const entry of this.entries.values()) {
       entry.generation++;
+      entry.pending?.abort.abort();
       clearTimeout(entry.timer);
       entry.timer = undefined;
       if (entry.listeners.size && !entry.pending) this.start(entry);
@@ -130,6 +131,7 @@ export class DesktopReports {
     const admitted = this.activeLoads < MAX_REPORT_READS;
     if (admitted) this.activeLoads++;
     const generation = entry.generation;
+    const abort = new AbortController();
     const promise = Promise.resolve()
       .then((): DetailsRead | Promise<DetailsRead> => {
         if (this.closed) return { ok: false, message: 'The server is closing.' };
@@ -138,7 +140,7 @@ export class DesktopReports {
             ok: false,
             message: `The server is already running ${MAX_REPORT_READS} shared reports. Try again after a report finishes.`,
           };
-        return this.load(entry.target);
+        return this.load(entry.target, abort.signal);
       })
       .catch((cause: unknown): DetailsRead => ({
         ok: false,
@@ -158,7 +160,7 @@ export class DesktopReports {
         this.schedule(entry);
         return undefined;
       });
-    const pending = { promise, generation };
+    const pending = { promise, generation, abort };
     entry.pending = pending;
     this.publish(entry);
     return pending;

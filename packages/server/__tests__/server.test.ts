@@ -439,6 +439,7 @@ async function start(
     logLimits?: ServerOptions['logLimits'];
     commandLimits?: ServerOptions['commandLimits'];
     actionLimits?: ServerOptions['actionLimits'];
+    requestLimits?: ServerOptions['requestLimits'];
     tailscaleState?: ServerOptions['tailscaleState'];
     tailscaleMonitor?: ServerOptions['tailscaleMonitor'];
     transports?: ServerOptions['transports'];
@@ -502,6 +503,7 @@ async function start(
     logLimits: overrides.logLimits,
     commandLimits: overrides.commandLimits,
     actionLimits: overrides.actionLimits,
+    requestLimits: overrides.requestLimits,
     frameLimits: { lingerMs: 50, ...overrides.frameLimits },
     frameHelper: overrides.frameHelper ?? null,
     foldHelper: overrides.foldHelper,
@@ -1482,7 +1484,51 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     });
   });
 
-  it('caps waiting requests, retains shared probes after disconnect, and drains them at shutdown', async () => {
+  it('serves five identical waiting reports from one load', async () => {
+    const bin = join(root, 'bin');
+    const jobs = join(root, 'report-git-jobs');
+    const release = join(root, 'release');
+    mkdirSync(bin);
+    mkdirSync(jobs);
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    writeFileSync(
+      join(bin, 'git'),
+      `#!${process.execPath}
+const { existsSync, writeFileSync } = require('node:fs');
+writeFileSync(require('node:path').join(process.env.REPORT_GIT_JOBS, String(process.pid)), '');
+const timer = setInterval(() => {
+  if (existsSync(process.env.REPORT_RELEASE)) {
+    clearInterval(timer);
+    process.exit(1);
+  }
+}, 20);
+`,
+    );
+    chmodSync(join(bin, 'git'), 0o755);
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: bin + ':' + process.env.PATH,
+        REPORT_GIT_JOBS: jobs,
+        REPORT_RELEASE: release,
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const client = await desktop();
+    const target = { report: 'doctor', cwd: workspace };
+    const replies = Promise.all(Array.from({ length: 5 }, () => client.request('desktop.reports.get', target)));
+    await until(() => readdirSync(jobs).length === 2);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(readdirSync(jobs)).toHaveLength(2);
+    writeFileSync(release, '');
+    const results = await replies;
+    expect(results.every((reply) => 'result' in reply)).toBe(true);
+    expect(new Set(results.map((reply) => ('result' in reply ? JSON.stringify(reply.result) : null))).size).toBe(1);
+    expect(results[0]).toMatchObject({ result: { pending: false, value: { project: workspace } } });
+  });
+
+  it('answers interactive requests while reports wait, caps report waiters, and drains shared probes at shutdown', async () => {
     const bin = join(root, 'bin');
     const jobs = join(root, 'report-git-jobs');
     mkdirSync(bin);
@@ -1508,15 +1554,16 @@ require('node:net').createServer().listen(0, '127.0.0.1');
     });
     const first = await desktop();
     const second = await desktop();
-    for (let id = 10; id < 14; id++)
+    for (let id = 100; id < 117; id++)
       first.socket.send(
         JSON.stringify({ id, method: 'desktop.reports.get', params: { report: 'doctor', cwd: workspace } }),
       );
-    await until(() => processes().length === 2);
-    expect(await first.request('settings.get')).toMatchObject({ error: { code: 'limit-exceeded' } });
-    expect(await first.request('desktop.settings.get', { cwd: workspace })).toMatchObject({
-      error: { code: 'limit-exceeded' },
+    expect(await first.next()).toMatchObject({
+      id: 116,
+      error: { code: 'limit-exceeded', message: 'A connection can wait for 16 reports at a time.' },
     });
+    await until(() => processes().length === 2);
+    expect(await first.request('stats.get')).toHaveProperty('result');
     await second.request('desktop.reports.subscribe', { report: 'doctor', cwd: workspace });
     expect(await second.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
     first.socket.close();
@@ -4132,7 +4179,7 @@ describe('archived reads', () => {
       'frames.subscribe',
     ];
     const replies = await Promise.all(
-      Array.from({ length: 40 }, (_, index) => client.request(methods[index % methods.length]!, params)),
+      Array.from({ length: 120 }, (_, index) => client.request(methods[index % methods.length]!, params)),
     );
     const refused = replies.filter((reply) => 'error' in reply);
     expect(refused.length).toBeGreaterThan(0);
@@ -4140,11 +4187,32 @@ describe('archived reads', () => {
       all.every(
         (reply) =>
           (reply as { error: { code: string } }).error.code === 'limit-exceeded' &&
-          (reply as { error: { message: string } }).error.message === 'A connection can run 4 requests at a time.',
+          (reply as { error: { message: string } }).error.message === 'A connection can run 32 requests at a time.',
       ),
     );
     expect(await client.request('frames.subscribe', params)).toMatchObject({ result: { video: 'h264' } });
     expect(await client.request('logs.query', { archive: id })).toMatchObject({ result: { records: [] } });
+  });
+
+  it('bounds a tailnet device more tightly than a local connection', async () => {
+    const { id, dir } = archiveFixture();
+    archivedFootage(dir, 1000, 10);
+    const port = await start();
+    const peer = '100.64.0.2';
+    const { keyPair } = await pair(port, peer);
+    const clients = [await returning(port, keyPair, peer), await returning(port, keyPair, peer)];
+    const params = { archive: id, platform: 'ios', at: 1000 };
+    const replies = await Promise.all(
+      clients.flatMap((client) =>
+        Array.from({ length: 40 }, (_, index) => client.request(index % 2 ? 'replay.range' : 'archive.detail', params)),
+      ),
+    );
+    const refused = replies.flatMap((reply) =>
+      'error' in reply ? [`${reply.error.code}: ${reply.error.message}`] : [],
+    );
+    expect(refused.length).toBeGreaterThan(0);
+    expect(new Set(refused)).toEqual(new Set(['limit-exceeded: A remote device can run 16 requests at a time.']));
+    expect(await clients[1]!.request('archive.detail', params)).toHaveProperty('result');
   });
 
   it('queries real archived logs with the same JSON filters and context as the CLI', async () => {
@@ -4937,7 +5005,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
     'keeps another socket responsive, shares the command cap, and cancels stats plus its Git child on disconnect',
     async () => {
       const slow = slowGit();
-      const port = await start({ env: slow.env });
+      const port = await start({ env: slow.env, requestLimits: { connection: 4 } });
       const first = await authed(port);
       const second = await authed(port);
       for (let id = 10; id < 14; id++)
@@ -6082,7 +6150,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     const secondClaim = second.acquired;
     const firstClaim = claims[0];
     assert(firstClaim);
-    await start();
+    await start({ requestLimits: { connection: 4 } });
     const original = stim.createStim;
     const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
       ...original(options),
@@ -6362,7 +6430,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       mkdirSync(folder, { recursive: true });
       writeFileSync(join(folder, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
     }
-    await start();
+    await start({ requestLimits: { connection: 4 } });
     const client = await desktop();
     const attempt = tryAcquireClaim({
       root: join(root, 'home', 'config.lock.claims'),
@@ -6566,7 +6634,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
       JSON.stringify({ projects: Object.fromEntries(roots.map((cwd) => [cwd, {}])) }),
     );
     const browsers = await Promise.all(roots.map((cwd, i) => reloadBrowser(cwd, i < 4)));
-    await start();
+    await start({ requestLimits: { connection: 4 } });
     const client = await desktop();
     const subscriptions: string[] = [];
     for (const cwd of roots.slice(0, 4)) {
