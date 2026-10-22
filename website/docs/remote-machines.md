@@ -775,10 +775,25 @@ temporarily; it cannot authenticate.
 
 ## Troubleshooting
 
+- [STIM_OFFLOAD_REFUSED](./troubleshooting.md#STIM_OFFLOAD_REFUSED): a named
+  worker cannot take or finish the build. Check approval, tool compatibility,
+  capacity and the pinned server key. A `fingerprint-mismatch` reason names the
+  fingerprint sources that differ and the files `pod install` or prebuild rewrote
+  on the worker; make that input agree on both Macs. Rerun with
+  `--remote-build auto` or `local` only when you want to change placement.
+- [STIM_HOSTING_REFUSED](./troubleshooting.md#STIM_HOSTING_REFUSED): the host
+  is unreachable, has no compatible simulator or cannot confirm the session.
+  Retry the same host, or reconcile with `stim stop` when it is reachable.
+- [STIM_BAD_ARG](./troubleshooting.md#STIM_BAD_ARG): check the named host,
+  simulator selectors and incompatible flags. Automatic hosting and named
+  Android hosting are unavailable.
+- For setup failures, follow the named step's fix and exit code. Update a
+  reused server older than 1.21.0, generate a new command after expiry, and
+  check Tailscale and the private route when the live mirror cannot connect.
+
 ### A remote machine is unreachable
 
-`stim doctor` stops at the first layer that fails and names it. Stim Desktop
-shows the same layer and message on the machine's row and in its details, and
+`stim doctor` stops at the first layer that fails and names it.
 `stim doctor --json` carries it as `diagnosis` (`layer`, `code`, `title`,
 `message`, `remedy`) under `remoteMachines` and `deviceHosts`. The `state` stays
 `unreachable`, `tailscale-off` or `not-on-tailnet`, so an older Desktop or phone
@@ -803,22 +818,6 @@ app still shows its short label.
 A machine that answers outranks Tailscale's own online flag, which can lag a
 reachable Mac. Approval states (`pending`, `revoked`, `lapsed`, `key-changed`)
 mean the machine answered; they have their own findings and remedies.
-
-- [STIM_OFFLOAD_REFUSED](./troubleshooting.md#STIM_OFFLOAD_REFUSED): a named
-  worker cannot take or finish the build. Check approval, tool compatibility,
-  capacity and the pinned server key. A `fingerprint-mismatch` reason names the
-  fingerprint sources that differ and the files `pod install` or prebuild rewrote
-  on the worker; make that input agree on both Macs. Rerun with
-  `--remote-build auto` or `local` only when you want to change placement.
-- [STIM_HOSTING_REFUSED](./troubleshooting.md#STIM_HOSTING_REFUSED): the host
-  is unreachable, has no compatible simulator or cannot confirm the session.
-  Retry the same host, or reconcile with `stim stop` when it is reachable.
-- [STIM_BAD_ARG](./troubleshooting.md#STIM_BAD_ARG): check the named host,
-  simulator selectors and incompatible flags. Automatic hosting and named
-  Android hosting are unavailable.
-- For setup failures, follow the named step's fix and exit code. Update a
-  reused server older than 1.21.0, generate a new command after expiry, and
-  check Tailscale and the private route when the live mirror cannot connect.
 
 ### Find out why a remote machine was slow or refused
 

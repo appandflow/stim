@@ -2,7 +2,6 @@ import type { RemoteDiagnosis } from '@stim-cli/core/protocol';
 import { isJsonObject, type TailnetPeer } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 
-/** What the connection to a remote machine's tailscale serve route did before any handshake byte was exchanged. */
 export type Transport =
   | { kind: 'http'; status: number }
   | { kind: 'refused' }
@@ -16,19 +15,17 @@ export interface PeerStartup {
   cause?: 'home-unreadable' | 'start-failed';
 }
 
-/** `tailscale status --json` read for Tailscale itself, apart from any peer. */
 export type TailscaleReading = { running: true } | { running: false; code: TailscaleCode };
 
 export type TailscaleCode = 'tailscale-unavailable' | 'tailscale-stopped' | 'tailscale-logged-out';
 
 const SILENT_ERRORS = new Set(['ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'EHOSTDOWN']);
-const REFUSED_ERRORS = new Set(['ECONNREFUSED', 'ECONNRESET']);
 
 /** Sorts a failed `ws` connection into the layer it stopped at. `status` is the HTTP status of a refused upgrade. */
 export function classifyTransport(error: Error & { code?: string }, status?: number): Transport {
   if (status !== undefined) return { kind: 'http', status };
   const code = error.code ?? '';
-  if (REFUSED_ERRORS.has(code)) return { kind: 'refused' };
+  if (code === 'ECONNREFUSED') return { kind: 'refused' };
   if (SILENT_ERRORS.has(code) || /handshake has timed out/i.test(error.message)) return { kind: 'silent' };
   if (
     /^(ERR_TLS_|CERT_|UNABLE_TO_|DEPTH_ZERO|SELF_SIGNED|ERR_SSL_)/.test(code) ||
@@ -46,7 +43,6 @@ export function parsePeerStartup(body: unknown): PeerStartup | null {
   return { state: startup.state, ...(cause ? { cause } : {}) };
 }
 
-/** Reads `tailscale status --json` for the daemon's own state; `status` is null when no command answered. */
 export function readTailscale(status: unknown): TailscaleReading {
   if (!isJsonObject(status)) return { running: false, code: 'tailscale-unavailable' };
   switch (status.BackendState) {
@@ -101,7 +97,6 @@ export function notOnTailnetDiagnosis(entry: string, ambiguous: boolean): Remote
   };
 }
 
-/** "3 hours ago" style text for the time since `iso`; null when it is not a usable time. */
 export function ago(iso: string | undefined, now: number): string | null {
   const then = iso ? Date.parse(iso) : NaN;
   if (!Number.isFinite(then) || then <= 0) return null;
@@ -130,14 +125,13 @@ export interface UnreachableInput {
 }
 
 /**
- * The first layer that explains why `entry` could not be used, from the peer's presence on the tailnet and what the
- * connection did. A peer Tailscale reports offline is named first unless something on it answered the connection: Tailscale's `Online` lags a peer that is reachable, and a refused connection, an HTTP status or a certificate proves the peer is up.
+ * Tailscale's `Online` lags a reachable peer, so `peer-offline` needs a silent connection; any other outcome,
+ * including one past the transport (no `transport`), shows the peer answered.
  */
 export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
   const { entry, peer, port, transport, now = Date.now() } = input;
   const route = `https port ${port}`;
-  const answered = transport !== undefined && transport.kind !== 'silent' && transport.kind !== 'other';
-  if (peer.online === false && !answered) {
+  if (peer.online === false && transport?.kind === 'silent') {
     const seen = ago(peer.lastSeen, now);
     return {
       layer: 'peer',
@@ -228,7 +222,6 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
   };
 }
 
-/** The doctor finding for a diagnosis; build and device-host checks of one machine produce the same title, so doctor prints it once. */
 export function diagnosisFinding(code: string, entry: string, diagnosis: RemoteDiagnosis): Finding {
   return {
     code,

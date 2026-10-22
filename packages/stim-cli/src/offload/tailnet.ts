@@ -266,7 +266,8 @@ export function openAuthenticated(
                 ? `its tailscale serve route answered HTTP ${status}`
                 : error.message,
         refused: false,
-        transport: classifyTransport(error, status),
+        transport:
+          opened && status === undefined ? { kind: 'other', message: error.message } : classifyTransport(error, status),
       });
     socket.once('unexpected-response', (request, response) => {
       response.resume();
@@ -409,7 +410,7 @@ export async function diagnoseOutcome(
   input: { entry: string; peer: TailnetPeer; port: number; target: Endpoint; reason: string; transport?: Transport },
 ): Promise<RemoteDiagnosis> {
   const { target, ...rest } = input;
-  const needsStartup = rest.transport?.kind === 'http' && rest.transport.status === 503 && rest.peer.online !== false;
+  const needsStartup = rest.transport?.kind === 'http' && rest.transport.status === 503;
   const startup = needsStartup ? await io.startup?.(target) : null;
   return diagnoseUnreachable({ ...rest, startup });
 }

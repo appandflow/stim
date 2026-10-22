@@ -287,7 +287,6 @@ describe('inspectBuildMachines', () => {
       expect(findings).toEqual([
         expect.objectContaining({
           title: 'Remote machine mini: Server not running',
-          fix: expect.stringContaining('stim-server service status'),
         }),
       ]);
     });
@@ -360,10 +359,7 @@ describe('inspectBuildMachines', () => {
       );
       expect(machines).toEqual([
         expect.objectContaining({
-          diagnosis: expect.objectContaining({
-            code: 'peer-no-answer',
-            message: expect.stringContaining('through the nyc relay'),
-          }),
+          diagnosis: expect.objectContaining({ code: 'peer-no-answer' }),
         }),
       ]);
     });

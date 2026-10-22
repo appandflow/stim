@@ -80,7 +80,10 @@ describe('diagnoseUnreachable', () => {
       code: 'peer-offline',
       message: 'mini is offline on Tailscale (last seen 12 h ago).',
     });
-    expect(diagnose(undefined, { peer: offline, now })).toMatchObject({ code: 'peer-offline' });
+    expect(diagnose(undefined, { peer: offline, now })).toMatchObject({ code: 'connect-failed' });
+    expect(diagnose({ kind: 'other', message: 'reset' }, { peer: offline, now })).toMatchObject({
+      code: 'connect-failed',
+    });
   });
 
   it('trusts an answer over Tailscale reporting the peer offline, which lags a reachable Mac', () => {
@@ -210,7 +213,8 @@ describe('what a real connection reports below the handshake', () => {
 
   it('classifies socket errors', () => {
     expect(classifyTransport(Object.assign(new Error('x'), { code: 'EHOSTUNREACH' }))).toEqual({ kind: 'silent' });
-    expect(classifyTransport(Object.assign(new Error('x'), { code: 'ECONNRESET' }))).toEqual({ kind: 'refused' });
+    expect(classifyTransport(Object.assign(new Error('x'), { code: 'ECONNREFUSED' }))).toEqual({ kind: 'refused' });
+    expect(classifyTransport(Object.assign(new Error('x'), { code: 'ECONNRESET' }))).toMatchObject({ kind: 'other' });
     expect(classifyTransport(Object.assign(new Error('cert'), { code: 'CERT_HAS_EXPIRED' }))).toMatchObject({
       kind: 'tls',
     });
