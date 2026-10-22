@@ -361,7 +361,7 @@ WHAT WRITES WHAT
                        The count does not attribute unknown OS errors to the app.
                        Known JavaScript errors also print individually: Android
                        ReactNativeJS records, and iOS com.facebook.react.log /
-                       javascript records. These can interrupt an optional
+                       javascript records. These can interrupt a recommended
                        readiness wait even without a client or Metro copy.
                        Client and Metro errors still print individually.
                        A native app that loaded its bundle but reported app errors

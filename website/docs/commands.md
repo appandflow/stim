@@ -101,6 +101,8 @@ directory that is not an app records nothing.
 
 The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote Machines > Add**.
 
+The `readiness-markers-missing` note appears when no JavaScript or TypeScript source under the app directory contains `[stim:readiness]`. The scan skips `node_modules`, the native project and build output directories (`ios`, `android`, `macos`, `windows`, `Pods`, `build`, `dist`, `web-build`, `coverage`) and dot-directories. It does not read shared packages outside the app directory, and it reports nothing in an app with more than 5000 source files. It points to `stim guide lifecycle readiness` and the [app-declared readiness](./dev-server-and-logs.md#recommended-app-declared-readiness) logs.
+
 On macOS, a `memory-culprit` finding names each process whose physical
 footprint is abnormal, with its restart command when one is known to be safe.
 See [memory pressure](./owned-devices.md#abnormally-large-processes).

@@ -327,7 +327,7 @@ leased until <time>" for each one.`,
                                  JavaScript running -- the first screen may
                                  still be rendering\` (\`stable for 3s\` when
                                  no \`Running\` log arrived). Poll the UI
-                                 before you trust a screenshot. Optional
+                                 before you trust a screenshot. Recommended
                                  app-declared readiness adds a separate
                                  stderr readiness phase; it does not change
                                  this field. See
@@ -607,6 +607,7 @@ leased until <time>" for each one.`,
                   with an abnormally large footprint and, when it is safe to
                   restart, the command
                   offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Remote Machines > Add
+                  readiness-markers-missing is a note when no JS or TS source under the app directory contains [stim:readiness]; the scan skips node_modules, native and build output directories and dot-directories, and reports nothing past 5000 source files; see stim guide lifecycle readiness
 
 ON FAILURE
   \`start\`, \`ios\`, \`android\` and \`web\` all print the error contract instead,
