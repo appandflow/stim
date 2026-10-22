@@ -359,8 +359,11 @@ Stim reads exact standalone messages from this app's platform-specific device
 log, after the current launch. Stale, other-platform, error-level, and embedded
 example messages are ignored. Unlabelled shared Metro output cannot identify
 which platform is ready. If device-log capture is unavailable or `pending` is
-not captured in time, the default check applies. Release runs and
-`--no-metro-check` do not use this debug-only integration.
+not captured in time, the default check applies. On a simulator or emulator
+hosted on another Mac (`--remote <machine>`), the device log is the copy Stim
+pulls from that Mac during the launch check, so each window waits up to 10
+seconds for the copy to cover it. Release runs and `--no-metro-check` do not use
+this debug-only integration.
 
 This is the app declaring readiness, not visual verification. It does not alter
 the `launched` JSON field: bundle/process evidence remains separate. Continue
