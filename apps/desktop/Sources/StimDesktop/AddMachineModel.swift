@@ -332,6 +332,7 @@ final class AddMachineModel {
     guard version != nil, selfNode != nil, !busy else { return }
     busy = true
     defer { busy = false }
+    error = nil
     do {
       sample?.prepare()
       if checkout == nil, let sample {

@@ -23,8 +23,7 @@ import Foundation
     guard case .open(let hello) = client.state, hello.features?.contains("desktop-reports") == true else {
       throw ServerError(code: "unsupported", message: "Update the local stim-server to read setup reports.")
     }
-    _ = try await client.request("desktop.reports.invalidate", [:])
-    let result = try await client.request("desktop.reports.get", ["report": .string("doctor"), "cwd": .string(cwd)])
+    let result = try await client.report(["report": .string("doctor"), "cwd": .string(cwd)])
     guard case .object(let snapshot) = result, snapshot["pending"] == .bool(false), let value = snapshot["value"] else {
       throw ServerError(code: "bad-response", message: "The local stim-server did not return a completed setup report.")
     }

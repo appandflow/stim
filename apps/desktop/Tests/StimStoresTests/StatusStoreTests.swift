@@ -83,7 +83,7 @@ struct StatusStoreTests {
     #expect(store.doctor[directory.path]?.error == nil)
   }
 
-  @Test func anActionDuringDoctorDiscardsTheEarlierReplyAndRefreshesAgain() async throws {
+  @Test func anActionDuringDoctorRestartsTheReadInFlightInsteadOfSendingAnother() async throws {
     let directory = try doctorWorkspace()
     defer { try? FileManager.default.removeItem(at: directory) }
     let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": directory.path]) }
@@ -102,16 +102,16 @@ struct StatusStoreTests {
     store.useServer((client, directory.path))
     store.accept(.success(try doctorPayload(directory)))
     #expect(await until { socket.doctorRequests.count == 1 })
+    #expect(socket.invalidations == 1)
     store.doctorChanged(in: directory.path)
-    #expect(await until { socket.doctorRequests.count == 2 })
-    socket.answerDoctor(0, title: "Before action")
+    #expect(await until { socket.invalidations == 2 })
     await settle()
-    #expect(store.doctor[directory.path]?.value == nil)
-    socket.answerDoctor(1, title: "After action")
+    #expect(socket.doctorRequests.count == 1)
+    socket.answerDoctor(0, title: "After action")
     #expect(await until { store.doctor[directory.path]?.value?.findings.first?.title == "After action" })
     store.accept(.success(try doctorPayload(directory)))
     await settle()
-    #expect(socket.doctorRequests.count == 2)
+    #expect(socket.doctorRequests.count == 1)
   }
 
   @Test func unchangedProjectsDoNotPublishAndNewReportedAndResolvedProjectsPublishTogether() async throws {
@@ -305,6 +305,7 @@ struct StatusStoreTests {
   let home: String
   let features: [String]
   var doctorRequests: [(id: JSONValue, cwd: String)] = []
+  var invalidations = 0
   let onEvent: @MainActor (ServerTransportEvent) -> Void
 
   init(home: String, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void, features: [String] = []) {
@@ -320,6 +321,7 @@ struct StatusStoreTests {
       let id = request["id"]
     else { return }
     if request["method"] == .string("desktop.reports.invalidate") {
+      invalidations += 1
       reply(id, .object([:]))
       return
     }
