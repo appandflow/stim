@@ -587,7 +587,7 @@ leased until <time>" for each one.`,
                   tailscale-stopped, tailscale-logged-out, tailscale-unavailable
                   (this machine's Tailscale), peer-not-found, peer-ambiguous,
                   peer-offline (with last seen), peer-no-answer (the connection
-                  got no reply while Tailscale does not list it offline), route-missing (nothing accepts
+                  got no reply and tailscale ping fails), route-missing (nothing accepts
                   connections on the serve port), route-tls, route-http-error
                   (any HTTP status but 502 and 503), server-not-running (502:
                   nothing behind the route), server-not-ready (503: running but

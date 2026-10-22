@@ -168,13 +168,15 @@ async function pingPeer(address: string, signal?: AbortSignal): Promise<boolean>
   for (const binary of ['tailscale', MAC_APP_TAILSCALE]) {
     signal?.throwIfAborted();
     try {
-      await getExecutor().runFileAsync(binary, ['ping', '--c', '1', '--timeout', '4s', address], {
-        timeoutMs: 6000,
-        signal,
-      });
+      await getExecutor().runFileAsync(
+        binary,
+        ['ping', '--c', '1', '--until-direct=false', '--timeout', '4s', address],
+        { timeoutMs: 6000, signal },
+      );
       return true;
-    } catch {
+    } catch (error) {
       signal?.throwIfAborted();
+      if (!/ENOENT|not found/i.test(String(error))) return false;
     }
   }
   return false;
