@@ -171,3 +171,38 @@ test('a stalled Git inventory child is terminated and leaves no unlisted deletio
   expect(child?.signalCode).toBe('SIGKILL');
   expect(report.unlisted).toEqual([]);
 });
+
+test('a report without build-state measurement reads only cached sizes and runs no du', async () => {
+  mkdirSync(join(root, '.build'));
+  writeFileSync(join(root, '.build', 'artifact'), 'build');
+  const executor = getExecutor();
+  const programs: string[] = [];
+  setExecutor({
+    ...executor,
+    runFileAsync: (file, args, options) => {
+      programs.push(file);
+      return executor.runFileAsync(file, args, options);
+    },
+  });
+  const report = sweep();
+  report.worktrees = [
+    {
+      path: root,
+      keys: [root],
+      idleDays: null,
+      merge: null,
+      head: null,
+      pullRequest: null,
+      skipCode: 'source-checkout',
+      skipped: 'source checkout',
+      eligibleAt: null,
+      activity: null,
+    },
+  ];
+  const cachedOnly = await measureWorktreeSweep(report, undefined, false);
+  expect(cachedOnly.worktrees[0]?.buildState).toEqual({ bytes: null, dirs: [{ path: '.build', bytes: null }] });
+  expect(programs).not.toContain('du');
+  const measured = await measureWorktreeSweep(report);
+  expect(measured.worktrees[0]?.buildState?.dirs).toEqual([{ path: '.build', bytes: expect.any(Number) }]);
+  expect(programs).toContain('du');
+});

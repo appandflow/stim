@@ -61,6 +61,7 @@ import { recordPullRequestLookup } from '../../status-measures.ts';
 import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
+import { eachLimited, READ_CONCURRENCY } from './limited.ts';
 import { phase } from './progress.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 
@@ -651,7 +652,7 @@ async function checkMergeStates(
     // default branch, after its cached closed pull request was reopened, or inside the grace window of a pull request
     // merged or closed after its merge commit was made. Only --delete acts, and it always refreshes first.
     const fetch = refresh ? null : await staleFetch(repo, grace.now, freshMs, execution);
-    for (const { candidate, facts } of entries) {
+    await eachLimited(entries, READ_CONCURRENCY, async ({ candidate, facts }) => {
       operation?.signal.throwIfAborted();
       const merge: MergeState =
         'error' in target
@@ -668,7 +669,7 @@ async function checkMergeStates(
         skipped: verdict ? (note ? `${verdict.text}; ${note}` : verdict.text) : null,
         eligibleAt: verdict?.eligibleAt ?? null,
       });
-    }
+    });
   }
 }
 
@@ -716,9 +717,13 @@ export async function collectWorktreeSweep({
   const candidates = await candidateRootsAsync(operation);
   if (candidates.length)
     phase('worktrees', `checking ${plural(candidates.length, 'project')} for merged or idle worktrees`, operation);
-  for (const root of candidates) {
+  const matched: ReturnType<typeof matchWorktreeEntry>[] = [];
+  await eachLimited([...candidates.entries()], READ_CONCURRENCY, async ([index, root]) => {
     operation?.signal.throwIfAborted();
-    const entry = matchWorktreeEntry(await listWorktreesAsync(root, read), root);
+    matched[index] = matchWorktreeEntry(await listWorktreesAsync(root, read), root);
+  });
+  for (const [index, root] of candidates.entries()) {
+    const entry = matched[index];
     if (!entry) {
       outside.push({
         path: root,
@@ -737,7 +742,7 @@ export async function collectWorktreeSweep({
     groups.set(entry.path, [...(groups.get(entry.path) ?? []), root]);
   }
   const inspected: Inspected[] = [];
-  for (const [path, roots] of groups) {
+  await eachLimited([...[...groups].entries()], READ_CONCURRENCY, async ([index, [path, roots]]) => {
     operation?.signal.throwIfAborted();
     const { entries, ...source } = await resolveSourceCheckoutAsync(path, read);
     const entry = matchWorktreeEntry(entries, path);
@@ -764,7 +769,7 @@ export async function collectWorktreeSweep({
       pullRequest: null,
       activity,
     };
-    inspected.push({
+    inspected[index] = {
       candidate: {
         path,
         keys,
@@ -780,8 +785,8 @@ export async function collectWorktreeSweep({
       facts,
       repo: 'refusal' in source ? null : source.path,
       branch: head && entry?.branch ? entry.branch : null,
-    });
-  }
+    };
+  });
   const linked = inspected.filter(({ facts }) => facts.source === 'linked');
   for (const { candidate, facts } of linked) {
     for (const key of candidate.keys)
