@@ -1429,8 +1429,31 @@ While a `--fix` run goes, the row shows "Asking <machine>…" or "Removing
 plain check after 30 seconds, and the tab shows that stim did not answer.
 
 A remote Mac whose Stim build is incompatible with this Mac's (doctor's
-`stim-build` reason) offers **Install This Mac's Build**, here and on its
-**Machines** page. Desktop asks the local stim-server, over its local control connection,
+`stim-build` reason, raised when the build compatibility versions differ, or the build digests
+differ for a Mac that reports no version) offers
+**Install This Mac's Build**, here and on its **Machines** page. For each such
+Mac Desktop first reads `machines.update.status`, a read that never installs, and
+compares the Stim release it reports with this Mac's stim-server. An install only
+moves a remote Mac forward, so the button is disabled, with the reason beside it, while
+the read or this Mac's stim-server connection is pending and when the Mac would refuse:
+
+- this Mac runs an npm release and the Mac runs a newer Stim: the button gives way to "<machine> runs
+  Stim 1.25.0, newer than this Mac (1.24.0). Update Stim Desktop to match.", the pill reads
+  **Update this Mac**, and **Check for Updates...** starts Sparkle (builds without
+  an update key, such as Stim Dev, show only the message). A build from a checkout is
+  not blocked by version, since stim-server checks versions only for releases;
+- this Mac runs a build from a checkout and the Mac has `server.acceptClientBuilds`
+  off: the row shows `stim settings set server.acceptClientBuilds true`, with a
+  copy button labeled for running it on that Mac;
+- its stim-server does not run as a service, so it cannot update itself;
+- it did not answer the read (not approved for builds or device hosting, no update
+  capability, unreachable): the row shows the reason its stim-server gave.
+
+Desktop takes the connected stim-server for an npm release unless Desktop started
+it from a path outside `node_modules`. Keeping remote machines on this Mac's
+version never installs on a Mac that is disabled this way.
+
+An install asks the local stim-server, over its local control connection,
 to update that machine with `machines.update.start`. The local server connects
 to the machine with the credential `stim doctor --fix` stored and goes ahead only
 with the stim-server that proves it holds the key pinned at approval. It asks for the same npm release when this Mac runs one, or, when it
@@ -1447,7 +1470,7 @@ follows `machines.update.status` every 2 seconds:
 - the outcome, or the refusal (for example, the setting the machine needs, or
   another update already running there).
 
-A failure shows its full text, selectable, with a **Copy** button.
+A failure shows its full text, selectable.
 
 While the update waits for hosted simulators that this Mac's workspaces run on
 that machine, the row offers **Stop and Update...**. After a confirmation that
@@ -1462,8 +1485,7 @@ Then the row checks the machine again. **Keep remote machines on this Mac's Stim
 version** (off by default; "When this Mac's Stim changes, update stim-server on
 approved remote Macs so builds can keep offloading.") does the same the next time Desktop
 checks a machine that reports an incompatible Stim build. It runs once per machine and
-reason each time Desktop launches. Either way, the machine gets this Mac's build,
-whether it is newer or older than the one it runs.
+reason each time Desktop launches. Either way, the machine gets this Mac's build.
 
 The **Machines** page shows where builds ran. While `remote.machines` names a
 machine, **Where Builds Ran** under **This Mac** counts today's compiling builds that built here, on a remote Mac, or

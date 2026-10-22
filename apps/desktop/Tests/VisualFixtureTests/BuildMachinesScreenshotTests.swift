@@ -23,6 +23,7 @@
 
     @MainActor private func content(
       entries: [String]?, statuses: [BuildMachineStatus]?, tailscale: Bool?, updates: [String: MachineUpdatePhase] = [:],
+      installs: [String: StimInstall] = [:],
       poolDisabled: [String: [String]]? = nil, failure: String? = nil, hosted: [HostedOnMachine] = [],
       linux: Set<String> = [],
       settingsReadFailure: String? = nil, showsThisMac: Bool = false
@@ -31,7 +32,7 @@
         entries: entries, statuses: statuses,
         hosts: [
           BuildMachineStatus(machine: "mini", state: .approved), BuildMachineStatus(machine: "janics-mac-mini", state: .approved),
-        ], updates: updates,
+        ], updates: updates, installs: installs,
         working: nil, progress: nil, refreshing: false, failure: failure, tailscaleRunning: tailscale,
         settingsReadFailure: settingsReadFailure, canAsk: true,
         addDisabled: false,
@@ -151,7 +152,49 @@
         ),
         (
           "section-mismatch",
-          AnyView(content(entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true, poolDisabled: pools))
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true,
+              installs: ["janics-mac-mini": .install], poolDisabled: pools))
+        ),
+        (
+          "install-remote-newer",
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true,
+              installs: [
+                "janics-mac-mini": .blocked(
+                  StimInstallBlock(
+                    reason:
+                      "janics-mac-mini runs Stim 1.25.0, newer than this Mac (1.24.0). Update Stim Desktop to match.",
+                    action: .checkForUpdates))
+              ], poolDisabled: pools))
+        ),
+        (
+          "install-needs-setting",
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true,
+              installs: [
+                "janics-mac-mini": .blocked(
+                  StimInstallBlock(
+                    reason:
+                      "janics-mac-mini takes only npm releases, and this Mac runs a checkout build. To allow it, run `stim settings set server.acceptClientBuilds true` on janics-mac-mini.",
+                    action: .runOnRemote("stim settings set server.acceptClientBuilds true")))
+              ], poolDisabled: pools))
+        ),
+        (
+          "install-cannot-update",
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true,
+              installs: [
+                "janics-mac-mini": .blocked(
+                  StimInstallBlock(
+                    reason:
+                      "stim-server on janics-mac-mini cannot be updated from here yet. Update it once there with `stim-server service update`.",
+                    action: .runOnRemote("stim-server service update")))
+              ], poolDisabled: pools))
         ),
         (
           "section-updating",

@@ -509,6 +509,7 @@ final class AddMachineModel {
     }
     return rows
   }
+  var installStatus: BuildMachineStatus? { buildsAndroidOnly ? androidStatus : toolsStatus }
 
   func openTools() async {
     guard wizard.phase == .approved else { return }
@@ -530,6 +531,7 @@ final class AddMachineModel {
         androidStatus = match(report.remoteMachines)
         androidFindings = report.findings
         error = nil
+        if let androidStatus { await machines?.readRemoteServers([androidStatus]) }
       } catch { self.error = error.localizedDescription }
       return
     }
@@ -538,6 +540,7 @@ final class AddMachineModel {
       toolsStatus = match(report.remoteMachines)
       toolFindings = report.findings
       error = nil
+      if let toolsStatus { await machines?.readRemoteServers([toolsStatus]) }
     } catch {
       self.error = error.localizedDescription
       return

@@ -328,6 +328,8 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   machine allows it with `server.acceptClientBuilds`. The update goes over the
   tailnet, with no ssh, and the old server comes back if the new one does not
   start. **Settings > Remote Machines** can keep them on this Mac's Stim version automatically.
+  The install only moves a machine forward: when the machine runs a newer Stim than
+  this Mac, the button is replaced by a note to update Stim Desktop.
   A removed selection returns to **This Mac**; remote selections have no local
   cleanup actions. Select checklist items to enable **Free space**;
   cleanup previews or confirms the selection before deleting anything.

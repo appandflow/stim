@@ -21,32 +21,39 @@ struct AddMachineSteps: View {
         "Compared with this Mac. A red row means that capability will not work there yet; an amber row says what it costs. None of them stops Next."
       )
       .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      let remoteIsNewer = model.installStatus.flatMap { model.machines?.install(for: $0) }?.block?.remoteIsNewer == true
       ForEach(model.tools) { tool in
+        let staleAdvice = tool.id == "stim-build" && remoteIsNewer
         VStack(alignment: .leading, spacing: Space.xs) {
           Label(tool.title, systemImage: icon(tool)).font(.stim(.body, weight: .semibold))
             .foregroundStyle(color(tool))
           if let detail = tool.detail {
             Text(detail).font(.stim(.footnote)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
           }
-          if let consequence = tool.consequence {
+          if let consequence = tool.consequence, !staleAdvice {
             Text(consequence).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
               .fixedSize(horizontal: false, vertical: true)
           }
-          if let fix = tool.state.fix {
+          if let fix = tool.state.fix, !staleAdvice {
             Text(tool.onThisMac ? "Problem on this Mac:" : "Fix for \(name):")
               .font(.stim(.footnote, weight: .semibold))
             ForEach(Array(fix.split(separator: "\n").map(String.init).enumerated()), id: \.offset) { _, line in
               if wizardFixIsCommand(line) {
-                CopyableCommand(command: line)
+                CopyableCommand(command: line, runsOn: tool.onThisMac ? nil : name)
               } else {
                 Text(line).font(.stim(.footnote)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
               }
             }
           }
           if tool.id == "stim-build" {
-            MachineUpdateLine(phase: model.machineEntry.flatMap { model.machines?.updates[$0] }, needed: tool.state.fix != nil) {
+            MachineUpdateLine(
+              machine: model.machineEntry ?? name, phase: model.machineEntry.flatMap { model.machines?.updates[$0] },
+              install: model.installStatus.flatMap { model.machines?.install(for: $0) }
+            ) {
               Task {
-                if let entry = model.machineEntry { await model.machines?.update(entry, checkout: model.doctorPath) }
+                if let entry = model.machineEntry {
+                  await model.machines?.update(entry, checkout: model.doctorPath, status: model.installStatus)
+                }
                 await model.refreshTools()
               }
             }
