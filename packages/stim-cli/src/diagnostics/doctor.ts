@@ -1460,7 +1460,7 @@ function checkReadinessMarkers(projectRoot: string): Finding | null {
       'note',
       'The app does not report readiness to Stim',
       `No \`${READINESS_MARKER}\` marker appears in this app's JavaScript or TypeScript sources outside node_modules. A debug \`stim ios\` or \`stim android\` launch then ends shortly after the app's JavaScript starts running, before the app is usable, and a later startup error shows only in \`stim logs --errors\`.`,
-      "Log `[stim:readiness] pending` at the top level of the app's JS entry file and `[stim:readiness] ready` once the app is usable. Run `stim guide lifecycle readiness`.",
+      "In debug builds, log `[stim:readiness] pending` from the first module the app's entry loads, before the root component, and `[stim:readiness] ready` once the app is usable. `stim guide lifecycle readiness` has the code.",
     ),
   };
 }
