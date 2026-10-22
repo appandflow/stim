@@ -86,6 +86,18 @@ describe('diagnoseUnreachable', () => {
     });
   });
 
+  it('tells a silent route behind a pingable Mac from a Mac that does not answer at all', () => {
+    const silent = { kind: 'silent' } as const;
+    expect(diagnose(silent, { pinged: true })).toMatchObject({ layer: 'server', code: 'server-no-answer' });
+    expect(diagnose(silent, { pinged: true, peer: { ...peer, online: false } })).toMatchObject({
+      code: 'server-no-answer',
+    });
+    expect(diagnose(silent, { pinged: false })).toMatchObject({ layer: 'peer', code: 'peer-no-answer' });
+    expect(diagnose(silent, { pinged: false, peer: { ...peer, online: false } })).toMatchObject({
+      code: 'peer-offline',
+    });
+  });
+
   it('trusts an answer over Tailscale reporting the peer offline, which lags a reachable Mac', () => {
     const offline = { ...peer, online: false };
     expect(diagnose({ kind: 'http', status: 503 }, { peer: offline })).toMatchObject({ code: 'server-not-ready' });

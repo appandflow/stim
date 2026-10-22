@@ -592,7 +592,7 @@ leased until <time>" for each one.`,
                   (any HTTP status but 502 and 503), server-not-running (502:
                   nothing behind the route), server-not-ready (503: running but
                   not serving; its message gives the cause the server reports),
-                  server-outdated and connect-failed (none of the above).
+                  server-no-answer (silent route while tailscale ping reaches the Mac), server-outdated and connect-failed (none of the above).
                   Tailscale's own "offline" flag lags a reachable peer, so an
                   answer from the machine outranks it. host has the same shape and presence rule as in
                   deviceHosts, as do expiresAt (a pending request's lapse

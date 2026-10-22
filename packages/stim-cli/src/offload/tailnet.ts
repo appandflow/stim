@@ -79,6 +79,8 @@ export interface TailnetMachineIo {
   rawStatus?: () => unknown;
   /** The `startup` of the peer's `/health` after a 503, or null when it says none. */
   startup?: (endpoint: Endpoint) => Promise<PeerStartup | null>;
+  /** Whether `tailscale ping` gets an answer from the peer's address. */
+  ping?: (address: string) => Promise<boolean>;
 }
 
 function parseJson(output: string): unknown {
@@ -160,6 +162,22 @@ async function tailscaleOutputAsync(signal?: AbortSignal): Promise<string | null
 export async function tailscaleStatusAsync(signal?: AbortSignal): Promise<unknown> {
   const output = await tailscaleOutputAsync(signal);
   return output === null ? null : parseTailscaleStatus(output);
+}
+
+async function pingPeer(address: string, signal?: AbortSignal): Promise<boolean> {
+  for (const binary of ['tailscale', MAC_APP_TAILSCALE]) {
+    signal?.throwIfAborted();
+    try {
+      await getExecutor().runFileAsync(binary, ['ping', '--c', '1', '--timeout', '4s', address], {
+        timeoutMs: 6000,
+        signal,
+      });
+      return true;
+    } catch {
+      signal?.throwIfAborted();
+    }
+  }
+  return false;
 }
 
 async function rawTailscaleStatusAsync(signal?: AbortSignal): Promise<unknown> {
@@ -391,6 +409,7 @@ export const realIo: TailnetMachineIo = {
   hello,
   rawStatus: rawTailscaleStatus,
   startup: peerStartup,
+  ping: (address) => pingPeer(address),
 };
 export function doctorIo(operation?: StimContext): TailnetMachineIo {
   return {
@@ -398,6 +417,7 @@ export function doctorIo(operation?: StimContext): TailnetMachineIo {
     hello: (target, auth) => hello(target, auth, operation),
     rawStatus: () => rawTailscaleStatusAsync(operation?.signal),
     startup: peerStartup,
+    ping: (address) => pingPeer(address, operation?.signal),
   };
 }
 
@@ -412,7 +432,8 @@ export async function diagnoseOutcome(
   const { target, ...rest } = input;
   const needsStartup = rest.transport?.kind === 'http' && rest.transport.status === 503;
   const startup = needsStartup ? await io.startup?.(target) : null;
-  return diagnoseUnreachable({ ...rest, startup });
+  const pinged = rest.transport?.kind === 'silent' ? await io.ping?.(rest.peer.address) : undefined;
+  return diagnoseUnreachable({ ...rest, startup, pinged });
 }
 
 /** Why `status` is null, as a diagnosis of the Tailscale layer; falls back to the daemon being unavailable. */

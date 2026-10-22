@@ -344,6 +344,21 @@ describe('inspectBuildMachines', () => {
       ]);
     });
 
+    it('names a silent route behind a Mac that answers tailscale ping as stim-server not answering', async () => {
+      await approvedCredential();
+      const { machines } = await inspectBuildMachines(
+        { fix: false },
+        {
+          ...fakeIo([{ failed: 'no reply in time', transport: { kind: 'silent' } }]).io,
+          ping: async () => true,
+        },
+        ['mini'],
+      );
+      expect(machines).toEqual([
+        expect.objectContaining({ diagnosis: expect.objectContaining({ code: 'server-no-answer' }) }),
+      ]);
+    });
+
     it('names an online peer that does not answer', async () => {
       await approvedCredential();
       const online = status();

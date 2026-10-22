@@ -120,6 +120,8 @@ export interface UnreachableInput {
   transport?: Transport;
   /** The `startup` of the peer's `/health`, read after a 503. */
   startup?: PeerStartup | null;
+  /** Whether `tailscale ping` reached the peer, read after a silent connection; undefined when not asked. */
+  pinged?: boolean;
   now?: number;
 }
 
@@ -130,6 +132,15 @@ export interface UnreachableInput {
 export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
   const { entry, peer, port, transport, now = Date.now() } = input;
   const route = `https port ${port}`;
+  if (transport?.kind === 'silent' && input.pinged === true) {
+    return {
+      layer: 'server',
+      code: 'server-no-answer',
+      title: 'Server not answering',
+      message: `${entry} answers on Tailscale, but its serve route and stim-server sent no reply in time. stim-server may be starting, stalled or restarting.`,
+      remedy: `On ${entry}, run \`stim-server service status\`; it reports a restart loop or a Stim home it is still reading, and the log file to read.`,
+    };
+  }
   if (peer.online === false && transport?.kind === 'silent') {
     const seen = ago(peer.lastSeen, now);
     return {
