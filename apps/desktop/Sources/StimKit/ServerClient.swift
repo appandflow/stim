@@ -100,8 +100,8 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   private var retry = ServerClient.minimumRetry
   private var cancelReconnect: (() -> Void)?
   private var stopped = true
-  private var reportReads: [String: (id: Int, task: Task<JSONValue, Error>)] = [:]
-  private var nextReportRead = 0
+  private var reportReads: [String: ReportRead] = [:]
+  private var nextReportWaiter = 0
   var busyRetryDelays: [Duration] = [.milliseconds(250), .milliseconds(500), .seconds(1), .seconds(2), .seconds(4)]
   /// Changes whenever the active transport is replaced or dropped, including reconnects to the same server.
   public private(set) var generation = 0
@@ -194,33 +194,62 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     }
   }
 
+  @MainActor private final class ReportRead {
+    var task: Task<Void, Never>?
+    var waiters: [Int: CheckedContinuation<JSONValue, Error>] = [:]
+  }
+
   /// Reads a fresh Desktop report snapshot for `target`. A read of the same target already in flight on this connection
   /// is joined instead of sent again; otherwise the target is invalidated first, only that target when the server
   /// supports it. With `restart`, a new read is sent even while one is in flight, and later callers join it instead.
-  /// A caller that is cancelled still waits for the shared read before it sees the cancellation.
+  /// A cancelled caller stops waiting at once, and a read whose callers have all cancelled is not sent further.
   public func report(_ target: [String: JSONValue], restart: Bool = false) async throws -> JSONValue {
-    let key = String(decoding: try Self.sortedEncoder.encode(JSONValue.object(target)), as: UTF8.self)
-    var scope: [String: JSONValue] = [:]
-    if case .open(let hello) = state, hello.features?.contains("desktop-report-invalidate-target") == true {
-      scope = target
-    }
-    if !restart, let running = reportReads[key] {
-      let value = try await running.task.value
-      try Task.checkCancellation()
-      return value
-    }
-    nextReportRead += 1
-    let id = nextReportRead
-    let task = Task { @MainActor [weak self, scope] () throws -> JSONValue in
-      guard let self else { throw CancellationError() }
-      defer { if self.reportReads[key]?.id == id { self.reportReads[key] = nil } }
-      _ = try await self.read("desktop.reports.invalidate", scope)
-      return try await self.read("desktop.reports.get", target)
-    }
-    reportReads[key] = (id, task)
-    let value = try await task.value
     try Task.checkCancellation()
-    return value
+    let key = String(decoding: try Self.sortedEncoder.encode(JSONValue.object(target)), as: UTF8.self)
+    let shared: ReportRead
+    if !restart, let running = reportReads[key] {
+      shared = running
+    } else {
+      var scope: [String: JSONValue] = [:]
+      if case .open(let hello) = state, hello.features?.contains("desktop-report-invalidate-target") == true {
+        scope = target
+      }
+      let read = ReportRead()
+      reportReads[key] = read
+      read.task = Task { @MainActor [weak self, scope] in
+        let result: Result<JSONValue, Error>
+        if let self {
+          result = await Result.awaiting {
+            _ = try await self.read("desktop.reports.invalidate", scope)
+            return try await self.read("desktop.reports.get", target)
+          }
+          if self.reportReads[key] === read { self.reportReads[key] = nil }
+        } else {
+          result = .failure(CancellationError())
+        }
+        let waiters = read.waiters.values
+        read.waiters = [:]
+        for waiter in waiters { waiter.resume(with: result) }
+      }
+      shared = read
+    }
+    nextReportWaiter += 1
+    let waiter = nextReportWaiter
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        shared.waiters[waiter] = continuation
+      }
+    } onCancel: {
+      Task { @MainActor [weak self] in self?.stopWaiting(waiter, on: shared, key: key) }
+    }
+  }
+
+  private func stopWaiting(_ waiter: Int, on read: ReportRead, key: String) {
+    guard let continuation = read.waiters.removeValue(forKey: waiter) else { return }
+    continuation.resume(throwing: CancellationError())
+    guard read.waiters.isEmpty else { return }
+    read.task?.cancel()
+    if reportReads[key] === read { reportReads[key] = nil }
   }
 
   private static let sortedEncoder: JSONEncoder = {

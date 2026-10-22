@@ -22,8 +22,8 @@ server refuses with `limit-exceeded` retry after 0.25, 0.5, 1, 2 and 4 seconds, 
 that the local stim-server is busy. The shared
 GC report store keeps its existing demand-driven refreshes, coalesces callers, and retains its last
 good report and measurement age when a read fails. An older server shows an update error. Reads
-never retry through the CLI. Cancelling does not disconnect the shared session, and a cancelled
-caller of a shared report read stops once that read answers;
+never retry through the CLI. Cancelling stops waiting without disconnecting the shared session, and
+a shared report read whose callers have all cancelled sends nothing further;
 the server report can continue within its execution and cleanup limits (up to 150 seconds at the
 request boundary). The same 16 MiB response limit applies.
 
