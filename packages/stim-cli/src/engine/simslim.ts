@@ -21,6 +21,7 @@ type SpawnFn = (cmd: string, args: readonly string[], opts: SpawnOptions) => Chi
 export interface SimSlimResult {
   managed: boolean;
   profile: string | null;
+  notInstalled?: true;
 }
 
 export async function reconcileSimSlim(options: Parameters<typeof applySimSlim>[0]): Promise<SimSlimResult> {
@@ -33,7 +34,7 @@ export async function reconcileSimSlim(options: Parameters<typeof applySimSlim>[
     options.out?.(
       'SimSlim: ios.simslim is on but the `simslim` command is not installed; continuing without it. Run `brew install mobai-app/tap/simslim`.',
     );
-    return { managed: Boolean(options.previouslyManaged), profile: null };
+    return { managed: Boolean(options.previouslyManaged), profile: null, notInstalled: true };
   }
 }
 

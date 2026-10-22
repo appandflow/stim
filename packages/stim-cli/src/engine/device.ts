@@ -23,6 +23,7 @@ export interface OwnedDeviceRecord {
   setupIncomplete?: boolean;
   bootPending?: boolean;
   simslimManaged?: boolean;
+  simslimApplied?: { profile: string; springBoardPid: number };
   deviceType?: string | null;
   runtime?: string | null;
   systemImage?: string | null;

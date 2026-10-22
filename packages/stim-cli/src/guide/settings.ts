@@ -153,9 +153,9 @@ KEYS STIM READS
                         iOS work after reviewing service tradeoffs; see
                         \`stim guide lifecycle simslim\`. Each local \`stim ios\`
                         reconciles the profile on its Stim-owned simulator.
-                        The first change can reboot it; a matching profile is a
-                        fast no-op. Removing the setting restores stock services
-                        when Stim applied the profile. Absolute paths, root or
+                        The first change can reboot it; an unchanged profile on
+                        the same boot is skipped. Removing the setting
+                        restores stock services when Stim applied the profile. Absolute paths, root or
                         symlink escapes, and missing files are refused before
                         simulator creation. Remote and unowned simulators are
                         never changed.
