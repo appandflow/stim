@@ -22,6 +22,8 @@ public struct WizardTool: Equatable, Identifiable, Sendable {
   public var onThisMac = false
   public var blocks = false
   public var consequence: String?
+  /// An `ok` row that still says something the person should know, shown in amber.
+  public var warns = false
 }
 
 private let androidCodes: Set<String> = ["jdk", "android-sdk", "ndk", "build-tools", "compile-sdk"]
@@ -90,6 +92,12 @@ public func toolsReport(
         .joined(separator: "\n")
       row.state = missing ? .missing(fix) : .mismatch(fix)
       (row.blocks, row.consequence) = policy(code: code, missing: missing, builds: builds, hosts: hosts, androidOnly: androidOnly)
+      return row
+    }
+    let notes = status?.notes?.filter { codes.contains($0.code) } ?? []
+    if !notes.isEmpty {
+      var row = WizardTool(id: code, title: title, detail: notes.map(\.reason).joined(separator: "\n"), state: .ok)
+      row.warns = true
       return row
     }
     if isAndroid, let step, !(androidOnly && status?.state == .approved && status?.offloadable != nil) {
@@ -201,6 +209,7 @@ public func wizardFixIsCommand(_ fix: String) -> Bool {
   let commands = [
     "sudo", "brew", "gem", "bundle", "xcodebuild", "xcode-select", "sdkmanager", "stim", "stim-server", "npx", "npm",
   ]
+  let program = String(fix.split(separator: " ").first ?? "")
   return !fix.contains("\n") && !fix.contains("`") && !fix.contains("<")
-    && commands.contains(String(fix.split(separator: " ").first ?? ""))
+    && commands.contains(String(program.split(separator: "/").last ?? ""))
 }

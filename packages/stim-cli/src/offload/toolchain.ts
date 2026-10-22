@@ -34,6 +34,8 @@ export interface AndroidRequirements {
   ndk: string | null;
   buildTools: string | null;
   compileSdk: string | null;
+  /** `false` when the project sets `android.builder.sdkDownload=false`, so Gradle never fetches a missing package. */
+  sdkDownload?: boolean;
 }
 
 /** A remote machine's toolchain, the simulator runtimes it can build for, and its JDK and Android SDK packages. */
@@ -47,6 +49,10 @@ export interface WorkerToolchain extends Omit<IosToolchain, 'compat'> {
   runtimes: string[];
   jdk: string | null;
   androidSdk: { ndk: string[]; buildTools: string[]; platforms: string[] } | null;
+  /** Whether that SDK has its licenses accepted, so Gradle can download a missing package; absent from a stim-server older than this field. */
+  androidLicenses?: boolean;
+  /** The SDK directory `androidSdk` was read from, for the commands that install into it; absent from a stim-server older than this field. */
+  androidHome?: string;
 }
 
 /** The build a machine is asked to take, with this machine's side of the toolchain comparison. */
@@ -240,12 +246,29 @@ export function parseAndroidRequirements(catalog: string): AndroidRequirements {
   return { ndk: value('ndkVersion'), buildTools: value('buildTools'), compileSdk: value('compileSdk') };
 }
 
+/** Whether `android.builder.sdkDownload=false` is set in a `gradle.properties` file's text. */
+export function sdkDownloadDisabled(properties: string): boolean {
+  return /^\s*android\.builder\.sdkDownload\s*[=:]\s*false\s*$/im.test(properties);
+}
+
+function projectSdkDownload(projectRoot: string): boolean {
+  try {
+    return !sdkDownloadDisabled(readFileSync(join(projectRoot, 'android', 'gradle.properties'), 'utf8'));
+  } catch {
+    return true;
+  }
+}
+
 export function androidRequirements(projectRoot: string): AndroidRequirements {
+  const sdkDownload = projectSdkDownload(projectRoot) ? {} : { sdkDownload: false };
   try {
     const pkg = createRequire(join(projectRoot, 'package.json')).resolve('react-native/package.json');
-    return parseAndroidRequirements(readFileSync(join(dirname(pkg), 'gradle', 'libs.versions.toml'), 'utf8'));
+    return {
+      ...parseAndroidRequirements(readFileSync(join(dirname(pkg), 'gradle', 'libs.versions.toml'), 'utf8')),
+      ...sdkDownload,
+    };
   } catch {
-    return { ndk: null, buildTools: null, compileSdk: null };
+    return { ndk: null, buildTools: null, compileSdk: null, ...sdkDownload };
   }
 }
 
@@ -286,6 +309,22 @@ function sdkPackages(): WorkerToolchain['androidSdk'] {
   return { ndk: listDir(join(sdk, 'ndk')) ?? [], buildTools: listDir(join(sdk, 'build-tools')) ?? [], platforms };
 }
 
+/** Whether the SDK's licenses are accepted: Gradle's SDK download reads `licenses/android-sdk-license`. */
+function sdkLicensesAccepted(sdk: string): boolean {
+  try {
+    return readFileSync(join(sdk, 'licenses', 'android-sdk-license'), 'utf8').trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function sdkReport(): Pick<WorkerToolchain, 'androidSdk' | 'androidLicenses' | 'androidHome'> {
+  const androidSdk = sdkPackages();
+  if (!androidSdk) return { androidSdk };
+  const home = androidHome();
+  return { androidSdk, androidLicenses: sdkLicensesAccepted(home), androidHome: home };
+}
+
 export function workerToolchain(rubyVersion: string | null = null, native?: 'xcode' | 'gradle'): WorkerToolchain {
   if (native === 'gradle')
     return {
@@ -297,7 +336,7 @@ export function workerToolchain(rubyVersion: string | null = null, native?: 'xco
       macosSdk: null,
       bundler: null,
       runtimes: [],
-      androidSdk: sdkPackages(),
+      ...sdkReport(),
     };
   let listed: unknown = null;
   try {
@@ -310,7 +349,7 @@ export function workerToolchain(rubyVersion: string | null = null, native?: 'xco
     bundler: native ? null : quiet('bundle', ['--version'])?.trim() || null,
     runtimes: iphoneRuntimes(listed),
     jdk: native ? null : localJdk(),
-    androidSdk: native ? null : sdkPackages(),
+    ...(native ? { androidSdk: null } : sdkReport()),
   };
 }
 
@@ -339,6 +378,53 @@ export interface OffloadProblem {
     | 'busy'
     | 'platform';
   reason: string;
+  /** Shell commands that clear it, to run on the remote machine. */
+  commands?: string[];
+}
+
+/** One SDK package the project needs and the worker lacks. */
+interface SdkGap {
+  code: 'ndk' | 'build-tools' | 'compile-sdk';
+  /** How a sentence names it, such as `NDK 27.1.12297006`. */
+  label: string;
+  /** Its `sdkmanager` package id. */
+  id: string;
+  /** What Gradle's download costs on the first build, for the packages worth a warning. */
+  size?: string;
+}
+
+function sdkGaps(requires: AndroidRequirements, sdk: NonNullable<WorkerToolchain['androidSdk']>): SdkGap[] {
+  const gaps: SdkGap[] = [];
+  if (requires.ndk && !sdk.ndk.includes(requires.ndk)) {
+    gaps.push({ code: 'ndk', label: `NDK ${requires.ndk}`, id: `ndk;${requires.ndk}`, size: 'about 1-2 GB' });
+  }
+  if (requires.buildTools && !sdk.buildTools.includes(requires.buildTools)) {
+    gaps.push({
+      code: 'build-tools',
+      label: `build-tools ${requires.buildTools}`,
+      id: `build-tools;${requires.buildTools}`,
+    });
+  }
+  if (requires.compileSdk && !sdk.platforms.some((dir) => platformLevel(dir) === requires.compileSdk)) {
+    gaps.push({
+      code: 'compile-sdk',
+      label: `platform android-${requires.compileSdk}`,
+      id: `platforms;android-${requires.compileSdk}`,
+    });
+  }
+  return gaps;
+}
+
+/** Whether Gradle downloads a package the worker's SDK lacks: its licenses are accepted and the project allows it. */
+function gradleDownloads(requires: AndroidRequirements, worker: WorkerToolchain): boolean {
+  return worker.androidLicenses === true && requires.sdkDownload !== false;
+}
+
+function sdkManagerPath(worker: WorkerToolchain): string {
+  if (!worker.androidHome) return 'sdkmanager';
+  return worker.os === 'win32'
+    ? `${worker.androidHome}\\cmdline-tools\\latest\\bin\\sdkmanager.bat`
+    : `${worker.androidHome}/cmdline-tools/latest/bin/sdkmanager`;
 }
 
 function androidMismatches(
@@ -352,15 +438,38 @@ function androidMismatches(
   }
   const sdk = worker.androidSdk;
   if (!sdk) return [...out, { code: 'android-sdk', reason: 'no Android SDK there' }];
-  if (requires.ndk && !sdk.ndk.includes(requires.ndk))
-    out.push({ code: 'ndk', reason: `no NDK ${requires.ndk} there` });
-  if (requires.buildTools && !sdk.buildTools.includes(requires.buildTools)) {
-    out.push({ code: 'build-tools', reason: `no build-tools ${requires.buildTools} there` });
-  }
-  if (requires.compileSdk && !sdk.platforms.some((dir) => platformLevel(dir) === requires.compileSdk)) {
-    out.push({ code: 'compile-sdk', reason: `no platform android-${requires.compileSdk} there` });
+  if (gradleDownloads(requires, worker)) return out;
+  const sdkManager = sdkManagerPath(worker);
+  const why =
+    requires.sdkDownload === false
+      ? ', and the project sets android.builder.sdkDownload=false'
+      : worker.androidLicenses === false
+        ? ', and its SDK licenses are not accepted'
+        : '';
+  for (const gap of sdkGaps(requires, sdk)) {
+    const install = `${sdkManager} "${gap.id}"`;
+    out.push({
+      code: gap.code,
+      reason: `no ${gap.label} there${why}`,
+      commands:
+        worker.androidLicenses === false && requires.sdkDownload !== false
+          ? [`${sdkManager} --licenses`, install]
+          : [install],
+    });
   }
   return out;
+}
+
+/**
+ * What a build on the worker does beyond the match: the SDK packages it lacks and Gradle downloads on the first build,
+ * because its SDK licenses are accepted and the project allows the download. None of them stops the build.
+ */
+export function toolchainNotes(target: BuildTarget, worker: WorkerToolchain): OffloadProblem[] {
+  if (target.platform !== 'android' || !worker.androidSdk || !gradleDownloads(target.requires, worker)) return [];
+  return sdkGaps(target.requires, worker.androidSdk).map((gap) => ({
+    code: gap.code,
+    reason: `${gap.label} is not installed there; Gradle downloads it on the first build${gap.size ? ` (${gap.size})` : ''}`,
+  }));
 }
 
 function versionMismatch(tool: string, there: string | null, here: string | null): string {

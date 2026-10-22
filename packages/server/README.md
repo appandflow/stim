@@ -1623,7 +1623,10 @@ connected since stim-server started keeps its directory when revoked.
   runtimes with an iPhone simulator to build for; `jdk`, the major version of
   the JDK in `JAVA_HOME` or the macOS default; and `androidSdk`, the `ndk`,
   `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME`, else `~/Library/Android/sdk` on macOS or
-  `~/Android/Sdk` on Linux, null without one), `capacity` and `warm`
+  `~/Android/Sdk` on Linux, null without one), `androidHome` (that directory) and
+  `androidLicenses` (whether `licenses/android-sdk-license` in it has content, so
+  Gradle can download a missing package; both absent from a server older than
+  them, and from a worker without an SDK), `capacity` and `warm`
   (`checkout`, `dependencies`, and the legacy `build` field, now always false)
   for that repository. For React Native and Expo builds, clients supporting `build-dependency-cache` can send
   `dependencies: { project, packageName }` alongside `lockfile`; the dependency

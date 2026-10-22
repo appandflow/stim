@@ -60,6 +60,32 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertFalse(try row("bundler", "no Bundler there to run the CocoaPods this project's Gemfile.lock pins", [.build]).blocks)
   }
 
+  func testAnAndroidPackageGradleDownloadsIsAnAmberRowAndNeverBlocks() throws {
+    let note = "NDK 27.1.12297006 is not installed there; Gradle downloads it on the first build (about 1-2 GB)"
+    let downloads = try JSONDecoder().decode(
+      BuildMachineStatus.self,
+      from: JSONSerialization.data(withJSONObject: [
+        "machine": "mini", "state": "approved", "offloadable": true, "problems": [],
+        "notes": [["code": "ndk", "reason": note]],
+      ]))
+    let rows = toolsReport(journal: nil, status: downloads, capabilities: [.build], android: true)
+    let ndk = try XCTUnwrap(rows.first { $0.id == "ndk" })
+    XCTAssertEqual(ndk.state, .ok)
+    XCTAssertTrue(ndk.warns)
+    XCTAssertFalse(ndk.blocks)
+    XCTAssertEqual(ndk.detail, note)
+    XCTAssertNil(ndk.consequence)
+    XCTAssertFalse(rows.contains { $0.blocks })
+    XCTAssertFalse(try XCTUnwrap(rows.first { $0.id == "build-tools" }).warns)
+  }
+
+  func testSdkmanagerByPathIsACopyableCommand() {
+    XCTAssertTrue(wizardFixIsCommand("/Users/x/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses"))
+    XCTAssertTrue(wizardFixIsCommand("~/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager \"ndk;27.1.12297006\""))
+    XCTAssertFalse(wizardFixIsCommand("On mini, install the package into its Android SDK:"))
+    XCTAssertFalse(wizardFixIsCommand("/usr/bin/rm -rf x"))
+  }
+
   func testHostedOnlyToolsWithoutBuildDataNeverWaitForever() {
     let rows = toolsReport(journal: journal([]), status: nil, capabilities: [.deviceHost])
     XCTAssertFalse(rows.contains { $0.blocks }, "setup sends no tools steps and doctor lists no build status without Builds")

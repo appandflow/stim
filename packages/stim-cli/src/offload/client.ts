@@ -58,7 +58,13 @@ import type { FingerprintSource } from '@expo/fingerprint';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
 import { namedBuildMachine, OffloadRefusal } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
-import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
+import {
+  toolchainMismatches,
+  toolchainNotes,
+  type BuildTarget,
+  type OffloadProblem,
+  type WorkerToolchain,
+} from './toolchain.ts';
 import { ambientContext, dependencyLockfile, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
 import type {
   BuildArtifactIdentity,
@@ -330,10 +336,14 @@ export function pickOffer({
     }
     const score = Number(offer.warm.dependencies);
     ranked.push({ index, score, load: typeof load === 'number' ? load : Number.POSITIVE_INFINITY });
+    const notes = toolchainNotes(target, offer.toolchain).map((each) => each.reason);
     candidates.push({
       machine,
       code: 'accepted',
-      msg: typeof load === 'number' ? `can take the build (load ${load}/core there)` : 'can take the build',
+      msg: [
+        typeof load === 'number' ? `can take the build (load ${load}/core there)` : 'can take the build',
+        ...notes,
+      ].join('; '),
     });
   });
   ranked.sort((a, b) => b.score - a.score || a.load - b.load);
@@ -1854,6 +1864,17 @@ export function machineProblems(offer: BuildOffer, targets: BuildTarget[]): Offl
   return problems;
 }
 
+/** What a build on the machine does beyond the match, for each of `targets`, labeled like `machineProblems`. */
+export function machineNotes(offer: BuildOffer, targets: BuildTarget[]): OffloadProblem[] {
+  const notes: OffloadProblem[] = [];
+  for (const target of targets) {
+    for (const note of toolchainNotes(target, offer.toolchain)) {
+      notes.push(targets.length > 1 ? { ...note, reason: `${PLATFORM_LABEL[target.platform]}: ${note.reason}` } : note);
+    }
+  }
+  return notes;
+}
+
 const DOCTOR_CONNECT_MS = 5000;
 const DOCTOR_OFFER_MS = 8000;
 const PLATFORM_LABEL = { ios: 'iOS', android: 'Android', macos: 'macOS' } as const;
@@ -1868,7 +1889,7 @@ export function offloadCheck(
   targets: () => Promise<BuildTarget[]>,
 ): (
   credential: BuildMachineCredential,
-) => Promise<{ capacity: BuildOffer['capacity'] | null; problems: OffloadProblem[] }> {
+) => Promise<{ capacity: BuildOffer['capacity'] | null; problems: OffloadProblem[]; notes?: OffloadProblem[] }> {
   let identity: Promise<RepoIdentity | string> | undefined;
   const readIdentity = async (): Promise<RepoIdentity | string> => {
     try {
@@ -1899,6 +1920,11 @@ export function offloadCheck(
     if ('failure' in probe) return { capacity: null, problems: [{ code: 'unreachable', reason: probe.failure }] };
     probe.connection.close();
     resolved ??= targets();
-    return { capacity: probe.offer.capacity, problems: machineProblems(probe.offer, await resolved) };
+    const judged = await resolved;
+    return {
+      capacity: probe.offer.capacity,
+      problems: machineProblems(probe.offer, judged),
+      notes: machineNotes(probe.offer, judged),
+    };
   };
 }

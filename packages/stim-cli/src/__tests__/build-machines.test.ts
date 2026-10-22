@@ -365,6 +365,50 @@ describe('inspectBuildMachines', () => {
     expect(findings[0]!.fix).toContain('run `stim-server service update --release <version>`');
   });
 
+  it('reports a package Gradle downloads as a note that does not stop the build, and a blocker with commands otherwise', async () => {
+    await approvedCredential();
+    const note = {
+      code: 'ndk' as const,
+      reason: 'NDK 27.1.12297006 is not installed there; Gradle downloads it on the first build (about 1-2 GB)',
+    };
+    const blocker = {
+      code: 'build-tools' as const,
+      reason: 'no build-tools 37.0.0 there, and its SDK licenses are not accepted',
+      commands: [
+        '/sdk/cmdline-tools/latest/bin/sdkmanager --licenses',
+        '/sdk/cmdline-tools/latest/bin/sdkmanager "build-tools;37.0.0"',
+      ],
+    };
+    const run = (problems: (typeof blocker)[], notes: (typeof note)[]) =>
+      inspectBuildMachines(
+        { fix: false, check: () => Promise.resolve({ capacity: null, problems, notes }) },
+        fakeIo([approved()]).io,
+        ['mini'],
+      );
+    const taken = await run([], [note]);
+    expect(taken.machines).toEqual([expect.objectContaining({ offloadable: true, reasons: [], notes: [note] })]);
+    expect(taken.findings).toEqual([
+      expect.objectContaining({
+        code: 'build-machine-ndk',
+        level: 'note',
+        detail: `The build goes there anyway: ${note.reason}.`,
+        fix: null,
+      }),
+    ]);
+    const blocked = await run([blocker], []);
+    expect(blocked.machines).toEqual([expect.objectContaining({ offloadable: false, reasons: [blocker.reason] })]);
+    expect(blocked.findings).toEqual([
+      expect.objectContaining({
+        code: 'build-machine-build-tools',
+        level: 'cost',
+        fix: [
+          'On mini, accept the SDK licenses so Gradle downloads the package, or install it:',
+          ...blocker.commands,
+        ].join('\n'),
+      }),
+    ]);
+  });
+
   it.each([undefined, null, { name: 'Stim Host', screenRecording: false, accessibility: true }])(
     'approved entries expose host permissions only when reported: %j',
     async (host) => {
