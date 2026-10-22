@@ -50,6 +50,16 @@ describe('signingBlockOffset', () => {
     expect(signingBlockOffset(apk.size, reader(apk.file))).toBe(apk.tailOffset);
   });
 
+  test('a block whose two stored sizes disagree, or a ZIP64 end record, is not trusted', () => {
+    const apk = signedApkBytes();
+    const disagree = Buffer.from(apk.file);
+    disagree.writeBigUInt64LE(1n, apk.tailOffset);
+    expect(signingBlockOffset(disagree.length, reader(disagree))).toBe(null);
+    const zip64 = Buffer.from(apk.file);
+    zip64.writeUInt32LE(0xffffffff, zip64.length - 22 + 16);
+    expect(signingBlockOffset(zip64.length, reader(zip64))).toBe(null);
+  });
+
   test.each([
     ['a block with no v2 or v3 pair', signedApkBytes({ ids: [VERITY_PADDING_ID] }).file],
     ['no signing block', Buffer.concat([Buffer.from('entries'), Buffer.alloc(22)])],
@@ -127,6 +137,15 @@ describe('signedTailFor', () => {
     expect(await signedTailFor(path, run, signer)).toBe(null);
     expect(calls).toEqual([]);
     expect(readdirSync(join(home, 'project'))).toEqual(['app-debug.apk']);
+  });
+
+  test('a recorded tail is ignored once the APK it describes is replaced by another of the same size', () => {
+    const path = entryApk();
+    const apk = writeSignedApk(path);
+    const replacement = signedApkBytes({ entries: 'other entry '.repeat(200), signature: 'other signature' });
+    expect(replacement.size).toBe(apk.size);
+    writeFileSync(path, replacement.file);
+    expect(recordedSignedTail(path)).toBe(null);
   });
 
   test('a recorded tail is used where the APK lives and ignored once the file changes size', () => {

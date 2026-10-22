@@ -18,8 +18,9 @@ export function signedApkBytes({
   ids = [V2_SCHEME_ID],
   entries = 'entry bytes '.repeat(200),
   comment = '',
-}: { ids?: number[]; entries?: string; comment?: string } = {}): SignedApk {
-  const value = Buffer.from('signature bytes');
+  signature = 'signature bytes',
+}: { ids?: number[]; entries?: string; comment?: string; signature?: string } = {}): SignedApk {
+  const value = Buffer.from(signature);
   const pairs = Buffer.concat(
     ids.map((id) => {
       const pair = Buffer.alloc(12 + value.length);

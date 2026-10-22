@@ -1,15 +1,5 @@
-import { createHash } from 'node:crypto';
-import {
-  closeSync,
-  fstatSync,
-  openSync,
-  readFileSync,
-  readSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  statSync,
-} from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { findBuildTool } from '../devices/android.ts';
@@ -102,10 +92,6 @@ const apksignerPath = () => findBuildTool(['apksigner'])?.path ?? null;
 
 export type RunApkTool = (file: string, args: string[]) => Promise<unknown>;
 
-/**
- * Reads the APK's signed tail after `apksigner verify` shows its v2 or v3 signature covers the file's bytes. Null when
- * the APK has no such signature, apksigner is missing, or verification fails.
- */
 export async function computeSignedTail(
   apkPath: string,
   run: RunApkTool,
@@ -146,9 +132,11 @@ export function recordedSignedTail(apkPath: string): SignedTail | null {
       !Number.isSafeInteger(size) ||
       !Number.isSafeInteger(tailOffset) ||
       tailOffset < 0 ||
-      tailOffset >= size ||
-      statSync(apkPath).size !== size
+      tailOffset >= size
     )
+      return null;
+    const current = readSignedTail(apkPath);
+    if (!current || current.size !== size || current.tailOffset !== tailOffset || current.tailSha256 !== tailSha256)
       return null;
     return { file, size, tailOffset, tailSha256 };
   } catch {
@@ -158,7 +146,7 @@ export function recordedSignedTail(apkPath: string): SignedTail | null {
 
 export async function writeSignedTail(dir: string, tail: SignedTail): Promise<void> {
   const target = join(dir, SIGNED_TAIL_FILE);
-  const temporary = `${target}.${process.pid}.tmp`;
+  const temporary = `${target}.${randomUUID()}.tmp`;
   try {
     await writeFile(temporary, JSON.stringify(tail));
     renameSync(temporary, target);
@@ -176,10 +164,6 @@ function inBuildCacheEntry(apkPath: string): boolean {
   }
 }
 
-/**
- * The APK's recorded signed tail. A build cache entry stored without one gets it computed once and recorded; an APK
- * outside the build cache has none, so its callers compare whole files.
- */
 export async function signedTailFor(
   apkPath: string,
   run: RunApkTool,
