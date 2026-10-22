@@ -237,7 +237,10 @@ function resolveRelative(from: string, spec: string): string | null {
 function scanConfigSource(file: string, scan: ConfigScan, evaluated: boolean, root: string): void {
   if (scan.files.has(file)) return;
   scan.files.add(file);
-  if (file.endsWith('.json')) return;
+  if (file.endsWith('.json')) {
+    scanJsonConfig(file, scan, root);
+    return;
+  }
   const source = readFileSync(file, 'utf8');
   const where = relative(root, file);
   const flag = (reason: string) => {
@@ -288,11 +291,39 @@ function scanConfigSource(file: string, scan: ConfigScan, evaluated: boolean, ro
   }
 }
 
-/** The env files @expo/env loads for the config, in the mode @expo/fingerprint's config loader sets. */
+/**
+ * The local files a static config names: every string value that is a path to a file, such as an icon, a splash
+ * image, a google services file or a local plugin, and the packages its plugins name.
+ */
+function scanJsonConfig(file: string, scan: ConfigScan, root: string): void {
+  let json: unknown;
+  try {
+    json = readJson(file);
+  } catch {
+    throw new Uncertain(`${relative(root, file)} cannot be parsed`);
+  }
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) value.forEach(visit);
+    else if (value && typeof value === 'object') Object.values(value).forEach(visit);
+    else if (typeof value === 'string' && value && value.length < 512 && !value.includes('\n')) {
+      const found = value.startsWith('.') ? resolveRelative(file, value) : null;
+      const plain = resolve(dirname(file), value);
+      if (found && /\.[cm]?[jt]s$/.test(found)) scanConfigSource(found, scan, false, root);
+      else if (found) scan.files.add(found);
+      else if (statSync(plain, { throwIfNoEntry: false })?.isFile()) scan.files.add(plain);
+      else if (/^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(\/[\w.-]+)*$/.test(value))
+        scan.packages.add(
+          value.startsWith('@') ? value.split('/').slice(0, 2).join('/') : (value.split('/')[0] ?? value),
+        );
+    }
+  };
+  visit(json);
+}
+
+/** The env files @expo/env loads for the config: @expo/fingerprint 0.21 evaluates it in development mode. */
 function expoEnvFiles(env: NodeJS.ProcessEnv): string[] {
   if (/^(1|true)$/i.test(env.EXPO_NO_DOTENV ?? '')) return [];
-  const mode = env.NODE_ENV || 'development';
-  return [`.env.${mode}.local`, ...(mode === 'test' ? [] : ['.env.local']), `.env.${mode}`, '.env'];
+  return ['.env.development.local', '.env.local', '.env.development', '.env'];
 }
 
 function lockfileDigest(root: string, top: string): unknown {
@@ -376,7 +407,7 @@ async function computeDigest(
   }
 
   const packages = packageGraph(root, top, manifest);
-  const scan: ConfigScan = { files: new Set(), packages: new Set(), env: new Set(['NODE_ENV', 'EXPO_NO_DOTENV']) };
+  const scan: ConfigScan = { files: new Set(), packages: new Set(), env: new Set(['EXPO_NO_DOTENV']) };
   for (const name of [...CONFIG_FILES, ...FINGERPRINT_CONFIGS, ...RN_CONFIGS]) {
     const path = join(root, name);
     if (existsSync(path)) scanConfigSource(path, scan, true, root);
@@ -457,7 +488,14 @@ async function computeDigest(
     else if (stat) hashed.push(toPosix(spec));
   }
   if (hashed.length > UNTRACKED_FILE_CAP) throw new Uncertain('too many inputs outside git');
-  for (const name of expoEnvFiles(env)) hashed.push(name);
+  for (const name of expoEnvFiles(env)) {
+    hashed.push(name);
+    let text = '';
+    try {
+      text = readFileSync(join(root, name), 'utf8');
+    } catch {}
+    for (const match of text.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)) scan.env.add(String(match[1]));
+  }
   for (const file of scan.files) hashed.push(toPosix(relative(root, file)));
   await Promise.all(
     hashed.map(async (path) => {

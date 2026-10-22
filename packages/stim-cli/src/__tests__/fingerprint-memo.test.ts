@@ -61,7 +61,19 @@ function fixture(layout: 'npm' | 'pnpm'): string {
       dependencies: { 'native-lib': '1.0.0', 'js-lib': '1.0.0', 'ws-lib': 'workspace:*' },
     }),
   );
-  write(join(root, 'app.json'), JSON.stringify({ expo: { name: 'App', ios: { bundleIdentifier: 'com.app' } } }));
+  write(
+    join(root, 'app.json'),
+    JSON.stringify({
+      expo: {
+        name: 'App',
+        icon: './assets/icon.png',
+        ios: { bundleIdentifier: 'com.app' },
+        plugins: ['./plugins/native'],
+      },
+    }),
+  );
+  write(join(root, 'assets', 'icon.png'), 'png');
+  write(join(root, 'plugins', 'native.js'), 'module.exports = (config) => config;');
   write(
     join(root, 'app.config.js'),
     'module.exports = ({ config }) => ({ ...config, extra: { flag: process.env.APP_FLAG } });\n',
@@ -179,6 +191,8 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
       ['a root react-native.config.js added', () => write(join(app, 'react-native.config.js'), 'module.exports = {};')],
       ['an app.json edit', () => write(join(app, 'app.json'), JSON.stringify({ expo: { name: 'Renamed' } }))],
       ['a .env file the config loader reads', () => write(join(app, '.env'), 'APP_FLAG=1')],
+      ['an asset app.json names', () => write(join(app, 'assets/icon.png'), 'new png')],
+      ['a local plugin app.json names', () => appendFileSync(join(app, 'plugins/native.js'), '\n// edit')],
       ['a patch added', () => write(join(app, 'patches/native-lib+1.0.0.patch'), '--- a/ios/Lib.m')],
       [
         'a lockfile entry change',
@@ -196,6 +210,20 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
 
     test('misses when an environment variable the config reads changes', async () => {
       expect((await lookup(app, { PATH: process.env.PATH, APP_FLAG: 'on' })).hit).toBe(false);
+    });
+
+    test('misses when .env.development changes, whatever NODE_ENV the run has', async () => {
+      const env = { PATH: process.env.PATH, NODE_ENV: 'production' };
+      await lookup(app, env);
+      write(join(app, '.env.development'), 'APP_FLAG=dev');
+      expect((await lookup(app, env)).hit).toBe(false);
+    });
+
+    test('misses when a variable a .env file expands changes', async () => {
+      write(join(app, '.env'), 'APP_FLAG=${BASE_FLAG}');
+      await lookup(app, { PATH: process.env.PATH, BASE_FLAG: 'a' });
+      expect((await lookup(app, { PATH: process.env.PATH, BASE_FLAG: 'a' })).hit).toBe(true);
+      expect((await lookup(app, { PATH: process.env.PATH, BASE_FLAG: 'b' })).hit).toBe(false);
     });
 
     test('misses when the file an environment variable names changes', async () => {
