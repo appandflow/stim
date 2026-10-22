@@ -276,7 +276,10 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
   expect(screen.getByTestId('splash-overlay')).toBeTruthy();
   await act(() => jest.advanceTimersByTimeAsync(0));
   expect(readyLogs()).toBe(0);
-  await act(() => jest.advanceTimersByTimeAsync(1000));
+  await act(() => jest.advanceTimersByTimeAsync(400));
+  expect(screen.getByTestId('splash-overlay')).toBeTruthy();
+  expect(readyLogs()).toBe(1);
+  await act(() => jest.advanceTimersByTimeAsync(600));
   expect(MockSocket.sent).toContain('workspaces.subscribe');
   await act(async () => {
     activate();
