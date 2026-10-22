@@ -407,8 +407,9 @@ so there is no Check again button:
    A machine you already added is marked **Added** and shows the same status as
    the Remote Machines list (**Approved**, **Unreachable**, a Tailscale or
    stim-server problem and what to do about it) instead of Tailscale's
-   online flag. Choosing it does not start setup again; it points you to that
-   machine's row in Remote Machines.
+   online flag. Choosing it does not start setup again; it says the machine is
+   already added and offers to close the wizard so you can use its row in
+   Remote Machines.
    `stim-server setup` on the worker Mac gives the same three answers when it
    cannot read Tailscale: install it from `https://tailscale.com/download/mac`,
    turn the app on from its menu bar icon, or run `tailscale up`.

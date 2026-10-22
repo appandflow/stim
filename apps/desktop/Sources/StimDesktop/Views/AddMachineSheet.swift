@@ -279,9 +279,9 @@ struct AddMachineSheet: View {
     }
     .buttonStyle(.hoverRow(radius: Radius.control, selected: model.existingId == peer.id))
     .accessibilityLabel(
-      "\(peer.mac.hostName), already added\(added.status.map { ", \($0.title)" } ?? "")"
+      "\(peer.mac.hostName), already added\(added.status.map { ", \($0.title)" } ?? "")\(added.detail.map { ". \($0)" } ?? "")"
     )
-    .accessibilityHint("Shows where it is set up")
+    .accessibilityHint("Shows that it is set up in Remote Machines")
   }
 
   private func peerName(_ peer: Tailnet.Peer) -> some View {

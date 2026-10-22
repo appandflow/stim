@@ -56,7 +56,6 @@ final class AddMachineModel {
   private var preferredMachineID: String?
   private var prefersHostedSimulators = false
   var selectedId: String?
-  /// The picker row the user last chose while its machine was already in `remote.machines`.
   private(set) var existingId: String?
   var manualPort = ""
   var isFixture = false
@@ -143,20 +142,15 @@ final class AddMachineModel {
 
   var selected: Tailnet.Peer? { peers.first { $0.id == selectedId } }
 
-  /// `peer` as the Remote Machines list knows it, or nil when it is not in `remote.machines`. The entry this wizard
-  /// wrote for its own setup does not count.
   func added(_ peer: Tailnet.Peer) -> AddedMachine? {
     let check = machines?.check(in: checkout)
     return OffloadMachines.added(
-      peer.mac, entries: (machines?.entries ?? []).filter { $0 != addedEntries["remote.machines"] },
-      statuses: check?.problem == nil ? check?.statuses : nil)
+      peer.mac, entries: machines?.entries ?? [], statuses: check?.problem == nil ? check?.statuses : nil)
   }
   var checkingAdded: Bool { machines?.isBusy == true }
   private var selectablePeers: [Tailnet.Peer] { peers.filter { added($0) == nil } }
   var existingPeer: Tailnet.Peer? { peers.first { $0.id == existingId && added($0) != nil } }
 
-  /// Selects a machine to set up. A machine already in `remote.machines` is not a new target: it is only remembered so
-  /// the sheet can point to its row in Remote Machines.
   func choose(_ peer: Tailnet.Peer) {
     if added(peer) == nil {
       existingId = nil

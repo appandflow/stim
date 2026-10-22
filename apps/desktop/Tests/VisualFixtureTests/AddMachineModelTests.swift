@@ -207,22 +207,6 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertNil(model.selectedId)
   }
 
-  @MainActor func testTheEntryThisWizardWroteDoesNotMakeItsMachineCountAsAlreadyAdded() async {
-    let harness = Harness()
-    let machines = harness.machinesModel()
-    let model = harness.make(machines: machines)
-    await model.start()
-    defer { model.stop() }
-    model.choose(model.peers[0])
-    await model.pick()
-    await model.next()
-    await model.refresh()
-    XCTAssertEqual(harness.builds, ["mini:7447"])
-    await machines.refresh(checkout: "/fixture")
-    XCTAssertEqual(machines.entries, ["mini:7447"])
-    XCTAssertNil(model.added(model.peers[0]))
-  }
-
   @MainActor func testDiscoveryPreselectionWaitsForPeersAndRequiresTheUserToPick() async {
     let harness = Harness()
     let model = harness.make()
