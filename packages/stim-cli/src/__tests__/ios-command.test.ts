@@ -331,6 +331,11 @@ function harness(overrides: LooseDeps = {}) {
       record('fingerprintProject', path);
       return { hash: FINGERPRINT, sources: [] };
     },
+    memoizedFingerprint: async (projectRoot, target, { fingerprint }) => ({
+      fingerprint: fingerprint ? await fingerprint(projectRoot, target) : null,
+      memoHit: false,
+      check: null,
+    }),
     untrackedNativeFiles: (args) => {
       record('untrackedNativeFiles', args);
       return [];
@@ -1530,6 +1535,55 @@ describe('the cache', () => {
     const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe('local');
     expect(facts.appPath).toBe(cachedApp);
+  });
+
+  test('a memoized fingerprint whose background check disagrees warns at the end of the run', async () => {
+    reserve();
+    const consulted: boolean[] = [];
+    const { exitCode, stderr } = await run(
+      {},
+      {
+        resolveBuild: () => '/cache/Fixture.app',
+        memoizedFingerprint: async (_root, _target, { consult }) => {
+          consulted.push(consult);
+          return {
+            fingerprint: { hash: FINGERPRINT, sources: [] },
+            memoHit: true,
+            check: {
+              settle: async () => ({ status: 'stale', recorded: FINGERPRINT, current: 'ffee0011' }),
+              cancel: () => {},
+            },
+          };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(consulted).toEqual([true]);
+    expect(stderr).toMatch(/matches a recorded fingerprint of this tree/);
+    expect(stderr).toMatch(/fingerprint a3f9b1\.\. no longer matches the tree \(ffee0011\)/);
+    expect(buildRecords().find((entry) => entry.event === 'fingerprint_memo_stale')).toMatchObject({
+      recorded: FINGERPRINT,
+      current: 'ffee0011',
+    });
+  });
+
+  test('--no-build-cache fingerprints in full without consulting the memo', async () => {
+    reserve();
+    const consulted: boolean[] = [];
+    await run(
+      { buildCache: false },
+      {
+        memoizedFingerprint: async (projectRoot, target, { consult, fingerprint }) => {
+          consulted.push(consult);
+          return {
+            fingerprint: fingerprint ? await fingerprint(projectRoot, target) : null,
+            memoHit: false,
+            check: null,
+          };
+        },
+      },
+    );
+    expect(consulted).toEqual([false]);
   });
 
   test('a hit reads the bundle id from the cached binary, not from the config', async () => {
@@ -4841,6 +4895,34 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     const last = (readWorkspaceState(root) as WorkspaceState).lastIosBuild as Record<string, unknown>;
     expect(last).toMatchObject({ status: 'failed', fingerprint: WARM, cacheHit: 'local' });
     expect(String(last.cacheKey)).toMatch(new RegExp(`^${WARM}`));
+  });
+
+  test('after a memo hit, the post-prebuild key comes from a full fingerprint, not the memo', async () => {
+    reserve();
+    let full = 0;
+    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-debug-sim-arm64`, 'Fixture.app');
+    const { logs, errs, calls } = await run(
+      { json: true },
+      {
+        detectIsExpo: () => true,
+        planPrebuild: () => 'generate',
+        memoizedFingerprint: async () => ({
+          fingerprint: { hash: COLD, sources: [{ type: 'dir', filePath: 'ios', reasons: [], hash: null }] },
+          memoHit: true,
+          check: { settle: async () => ({ status: 'confirmed', recorded: COLD, current: COLD }), cancel: () => {} },
+        }),
+        fingerprintProject: async () => {
+          full++;
+          return { hash: WARM, sources: [{ type: 'dir', filePath: 'ios', reasons: [], hash: null }] };
+        },
+        resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
+      },
+    );
+    expect(calls.order.includes('runPrebuild')).toBe(true);
+    expect(full).toBeGreaterThan(0);
+    expect(errs.find((line) => /^  fingerprint\s+\S+ -> /.test(line))).toMatch(/aaaaaa\.\. -> bbbbbb\.\./);
+    expect(calls.args.installIosApp.appPath).toBe(cachedApp);
+    expect(parseFirst(logs).fingerprint).toBe(WARM);
   });
 
   test.each([false, true])('a post-shift hit preserves a prior shared-build wait: %s', async (waited) => {

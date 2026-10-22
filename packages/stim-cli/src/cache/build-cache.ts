@@ -217,7 +217,7 @@ function pnpmPatchedDependencies(lockfile: string): string | null {
   return block.length ? block.join('\n') : null;
 }
 
-interface FingerprintTarget {
+export interface FingerprintTarget {
   platform?: string;
   iosProjectPath?: string;
   androidLayout?: AndroidLayout | null;
@@ -254,7 +254,7 @@ export function trackedFingerprintPaths(
   return names.filter((name) => matched.has(name) && !ignored.has(name)).toSorted();
 }
 
-async function fingerprintOptions(
+export async function fingerprintOptions(
   projectRoot: string,
   {
     platform,
@@ -316,11 +316,10 @@ export async function fingerprintProject(
   return { hash, sources };
 }
 
-/** The env files @expo/env loads for the config, in the mode @expo/fingerprint's config loader sets. */
-function expoEnvFiles(env: NodeJS.ProcessEnv = {}): string[] {
+/** The env files @expo/env loads for the config: @expo/fingerprint 0.21 evaluates it in development mode. */
+export function expoEnvFiles(env: NodeJS.ProcessEnv = {}): string[] {
   if (/^(1|true)$/i.test(env.EXPO_NO_DOTENV ?? '')) return [];
-  const mode = env.NODE_ENV || 'development';
-  return [`.env.${mode}.local`, ...(mode === 'test' ? [] : ['.env.local']), `.env.${mode}`, '.env'];
+  return ['.env.development.local', '.env.local', '.env.development', '.env'];
 }
 
 const inNodeModules = (path: string) => path.split('/').includes('node_modules');

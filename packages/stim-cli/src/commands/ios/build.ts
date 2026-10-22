@@ -297,6 +297,7 @@ export async function buildIosOperation(
           stats.record({ failed: true, durationMs: Date.now() - started });
           throw failure;
         } finally {
+          artifact?.cancelFingerprintCheck();
           await artifact?.release();
           failureAfterCleanup = built && runCancellationSignal(context)?.aborted ? cancelledError('iOS build') : null;
           if (failureAfterCleanup) {

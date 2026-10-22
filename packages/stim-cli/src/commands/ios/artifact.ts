@@ -21,6 +21,7 @@ import {
   providerUploadOutcome,
   storedAppId,
 } from '../../cache/build-cache.ts';
+import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../../cache/compilation-cache-corruption.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
@@ -144,6 +145,8 @@ export interface PreparedIosArtifact {
   completeUploads(): Promise<boolean>;
   /** Waits for cache uploads that read temporary copies before removing them; repeated calls are safe. */
   release(): void | Promise<void>;
+  /** Stops a background fingerprint check that completeUploads() has not settled. */
+  cancelFingerprintCheck(): void;
 }
 
 type IosArtifactResult =
@@ -926,7 +929,10 @@ export async function acquireIosArtifact(
     },
     { root, logFile, deps: d },
   );
-  if (!acquired.ok) return { ok: false, failure: acquired.failure, compilationCache };
+  if (!acquired.ok) {
+    recipe.fingerprintCheck?.()?.cancel();
+    return { ok: false, failure: acquired.failure, compilationCache };
+  }
   appPath = acquired.artifact;
   const artifact: PreparedIosArtifact = {
     handoff,
@@ -961,8 +967,15 @@ export async function acquireIosArtifact(
         if (outcome.warn) note(chalk.yellow(phaseLine('cache', outcome.line)));
         else phase('cache', outcome.line);
       }
+      await settleFingerprintCheck(
+        recipe.fingerprintCheck?.() ?? null,
+        PLATFORM,
+        (line) => note(chalk.yellow(phaseLine('fingerprint', line))),
+        (record) => logWriter().write(record),
+      );
       return abandonedRemote || uploadWasAbandoned;
     },
+    cancelFingerprintCheck: () => recipe.fingerprintCheck?.()?.cancel(),
     release: async () => {
       await settleArtifactUploads(providerUpload, uploadPending);
       acquired.release();
