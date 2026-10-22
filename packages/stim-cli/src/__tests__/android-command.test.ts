@@ -536,6 +536,12 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       calls.verify.push(args);
       return { verified: true, waitedMs: 3100, timedOut: false, mode: null };
     },
+    followHostedLaunchLogs: () => ({
+      readDeviceRecords: () => [],
+      readNativeCrashes: () => [],
+      deviceLogsThrough: () => null,
+      stop: () => {},
+    }),
     ensureStorage: async (dir: string) => {
       calls.ensureStorage.push(dir);
     },
@@ -7749,6 +7755,53 @@ describe('named Android hosting placement', () => {
       expect(h.calls.spawn).toEqual([]);
     },
   );
+
+  test("a hosted debug launch waits for the app's readiness in the host's copied device log", async () => {
+    let at = 1000;
+    const copied = () => at - 3000;
+    const stop = vi.fn<() => void>();
+    const readiness = (ts: number, state: string) => ({
+      ts,
+      src: 'device',
+      platform: 'android',
+      level: 'info',
+      msg: `[stim:readiness] ${state}`,
+    });
+    const h = harness({
+      json: true,
+      remoteDevice: 'mini',
+      prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: hostDevice, session: null }),
+      placeHostedAndroid: async (_target: unknown, args: { reserved: (value: typeof placement) => void }) => {
+        args.reserved(placement);
+        return { placement, launched: 'unverified' };
+      },
+      build: async () => makeAndroidBuildSuccess({ apkPath: fakeApk() }),
+      followHostedLaunchLogs: () => ({
+        readDeviceRecords: () => [readiness(1500, 'pending'), readiness(6000, 'ready')].filter((r) => r.ts <= copied()),
+        readNativeCrashes: () => [],
+        deviceLogsThrough: copied,
+        stop,
+      }),
+      verifyLaunched: (args: Parameters<typeof verifyLaunch>[0]) =>
+        verifyLaunch({
+          ...args,
+          since: 1000,
+          now: () => at,
+          sleep: async (ms) => {
+            at += ms;
+          },
+          readRecords: () => [
+            { ts: 1000, src: 'metro', platform: 'android', event: 'bundle_response_started', requestId: 'app' },
+            { ts: 1200, src: 'metro', platform: 'android', event: 'bundle_response_finished', requestId: 'app' },
+          ],
+        }),
+    });
+    const result = await h.run();
+    expect(h.stderr.join('\n')).toContain('waiting for app readiness');
+    expect(h.stderr.join('\n')).toContain('app reported ready');
+    expect(result.facts?.launched).toBe(true);
+    expect(stop).toHaveBeenCalledOnce();
+  });
 
   test('a hosted launch failure after the build records the build as failed with its code', async () => {
     const h = harness({

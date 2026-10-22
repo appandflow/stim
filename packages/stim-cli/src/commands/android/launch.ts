@@ -78,6 +78,7 @@ import type { RuntimePlan } from '../../engine/runtime-plan.ts';
 import { killPreviousCollector, startCollector } from './collector.ts';
 import { captureNativeCrashes, printNativeCrashReport } from '../../diagnostics/native-crash.ts';
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
+import type { HostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
 
 interface VerifyAndroidRunArgs {
   operation?: StimContext;
@@ -100,6 +101,7 @@ interface VerifyAndroidRunArgs {
   component?: string | null;
   phase: (label: unknown, text: string) => void;
   enterActivity?: BuildProgress['activity'];
+  hostedLogs?: Omit<HostedLaunchLogs, 'stop'>;
 }
 
 interface AndroidRuntimeLaunchContext {
@@ -245,7 +247,7 @@ async function verifyAndroidProcessRun({
   return { state: LAUNCH_FATAL };
 }
 
-async function verifyAndroidMetroRun({
+export async function verifyAndroidMetroRun({
   operation,
   root,
   slot,
@@ -264,17 +266,24 @@ async function verifyAndroidMetroRun({
   component = null,
   phase,
   enterActivity,
-}: VerifyAndroidRunArgs): Promise<{ state: boolean | string; warning?: string; unattributed?: boolean }> {
+  hostedLogs,
+}: Omit<VerifyAndroidRunArgs, 'verifyReleaseLaunched' | 'variant'>): Promise<{
+  state: boolean | string;
+  warning?: string;
+  unattributed?: boolean;
+}> {
   const runCommand = nativeRunCommand('android', slot, { physical, deviceId: serial });
   const readNativeCrashes = () =>
-    remoteDevice
-      ? []
-      : captureNativeCrashes(
-          { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
-          logsDir,
-          operation?.signal,
-          operation?.env,
-        );
+    hostedLogs
+      ? hostedLogs.readNativeCrashes()
+      : remoteDevice
+        ? []
+        : captureNativeCrashes(
+            { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
+            logsDir,
+            operation?.signal,
+            operation?.env,
+          );
 
   const freshEmulator = Boolean((device.created || device.adoptionPending) && device.owned && !remoteDevice);
   const timeoutMs = freshEmulator ? 60000 : VERIFY_TIMEOUT_MS;
@@ -295,10 +304,14 @@ async function verifyAndroidMetroRun({
         platform: 'android',
         mode: workspaceDevServerMode(root, isExpo),
         readNativeCrashes,
-        processAlive: async () => {
-          const running = await androidAppProcess(serial, androidPackage);
-          return running.state === 'unknown' ? null : running.state === 'running';
-        },
+        readDeviceRecords: hostedLogs?.readDeviceRecords,
+        deviceLogsThrough: hostedLogs?.deviceLogsThrough,
+        processAlive: hostedLogs
+          ? null
+          : async () => {
+              const running = await androidAppProcess(serial, androidPackage);
+              return running.state === 'unknown' ? null : running.state === 'running';
+            },
       })
     : { verified: false, skipped: true };
   const nativeCrashes = verification.errors?.some((record) => record.event === 'native_crash')
@@ -419,6 +432,7 @@ async function verifyAndroidMetroRun({
     devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, physical) : null,
     devClient: Boolean(scheme),
     mode: workspaceDevServerMode(root, isExpo),
+    remote: Boolean(hostedLogs),
   }))
     phase('', chalk.yellow(line));
   return { state: LAUNCH_UNVERIFIED };

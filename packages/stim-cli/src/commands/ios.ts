@@ -1187,7 +1187,9 @@ async function runIos(
           devServer,
           fail,
           note,
+          phase,
           enterPhase: progress.step,
+          enterActivity: progress.activity,
           selectors,
         });
       if (!localBoot) {

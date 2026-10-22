@@ -49,6 +49,7 @@ import {
   simulatorConsolePaths,
 } from '../../diagnostics/native-crash.ts';
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
+import type { HostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
 
 interface VerifyIosRunArgs {
   operation?: StimContext;
@@ -75,6 +76,7 @@ interface VerifyIosRunArgs {
   remoteDevice: boolean;
   metroOrigin: string | null;
   enterActivity?: BuildProgress['activity'];
+  hostedLogs?: Omit<HostedLaunchLogs, 'stop'>;
 }
 
 interface IosRuntimeRoute {
@@ -230,7 +232,7 @@ async function verifyIosProcessRun({
   return { state: crashes.length || processCheck?.reason === 'exited' ? LAUNCH_FATAL : LAUNCH_UNVERIFIED };
 }
 
-async function verifyIosMetroRun({
+export async function verifyIosMetroRun({
   operation,
   root,
   slot,
@@ -254,17 +256,20 @@ async function verifyIosMetroRun({
   remoteDevice,
   metroOrigin,
   enterActivity,
+  hostedLogs,
 }: VerifyIosRunArgs): Promise<{ state: boolean | string; warning?: string; unattributed?: boolean }> {
   const runCommand = nativeRunCommand('ios', slot, { physical, deviceId: udid });
   const readNativeCrashes = () =>
-    remoteDevice
-      ? []
-      : captureNativeCrashes(
-          { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
-          logsDir,
-          operation?.signal,
-          operation?.env,
-        );
+    hostedLogs
+      ? hostedLogs.readNativeCrashes()
+      : remoteDevice
+        ? []
+        : captureNativeCrashes(
+            { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
+            logsDir,
+            operation?.signal,
+            operation?.env,
+          );
   const deviceProcess = async (): Promise<boolean | null> => {
     const running = await d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
     return running.state === 'unknown' ? null : running.state === 'running';
@@ -285,6 +290,8 @@ async function verifyIosMetroRun({
         platform: 'ios',
         mode: workspaceDevServerMode(root, isExpo),
         readNativeCrashes,
+        readDeviceRecords: hostedLogs?.readDeviceRecords,
+        deviceLogsThrough: hostedLogs?.deviceLogsThrough,
         processAlive: remoteDevice
           ? null
           : physical
