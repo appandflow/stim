@@ -1,55 +1,5 @@
 import Foundation
 
-/// When Stim Desktop's autopilot runs its cleanup commands.
-public enum AutopilotSchedule {
-  /// True once the most recent `hour`:00 at or before `now` is later than `lastRun`, so a nightly run
-  /// the Mac slept through happens at the next check.
-  public static func nightlyDue(now: Date, hour: Int, lastRun: Date, calendar: Calendar = .current) -> Bool {
-    guard let today = calendar.date(bySettingHour: hour, minute: 0, second: 0, of: now) else { return false }
-    let scheduled = today <= now ? today : calendar.date(byAdding: .day, value: -1, to: today) ?? today
-    return lastRun < scheduled
-  }
-
-  /// A booted device and when the app last saw its screen change.
-  public struct Device: Sendable {
-    public var activity: DeviceActivity?
-    public var screenChangedAt: Date?
-
-    public init(activity: DeviceActivity?, screenChangedAt: Date?) {
-      self.activity = activity
-      self.screenChangedAt = screenChangedAt
-    }
-  }
-
-  /// Whether `stim gc --idle <minutes>m` has a device to shut down. The CLI cannot see screen changes, so
-  /// when a device it counts as idle that long has a screen the app saw change since, the run waits:
-  /// `gc --idle` would shut that device down too.
-  public static func idleShutdownDue(_ devices: [Device], minutes: Int, now: Date) -> Bool {
-    let threshold = TimeInterval(minutes * 60)
-    func idleFor(_ badge: ActivityBadge?) -> TimeInterval? {
-      if case .idle(let seconds) = badge { return seconds }
-      return nil
-    }
-    var due = false
-    for device in devices {
-      guard let cli = idleFor(ActivityBadge(device.activity, now: now)), cli >= threshold else { continue }
-      let seen = idleFor(ActivityBadge(device.activity, screenChangedAt: device.screenChangedAt, now: now))
-      guard let seen, seen >= threshold else { return false }
-      due = true
-    }
-    return due
-  }
-
-  public static func idleDuration(minutes: Int) -> String { "\(minutes)m" }
-
-  /// The nightly cleanup reclaims only what has gone unused for `olderThanDays`: merged worktrees and clean ones
-  /// idle that long, build outputs and cache entries unused that long, and devices parked or unused that long.
-  /// Pressure runs stay unbounded with `PressurePlan.arguments`.
-  public static func nightlyArguments(olderThanDays: Int) -> [String] {
-    ["gc", "--delete", "--worktrees", "--older-than", String(olderThanDays), "--json"]
-  }
-}
-
 /// Free disk under the `budget.minFreeDiskGb` Stim enforces, and what `stim gc --delete` would do about it.
 public struct PressurePlan: Hashable, Sendable {
   public var freeBytes: Int64
@@ -105,8 +55,4 @@ public struct PressurePlan: Hashable, Sendable {
 
   static func count(_ n: Int, _ noun: String) -> String { n == 1 ? "1 \(noun)" : "\(n) \(noun)s" }
 
-}
-
-public enum AutopilotTrigger: Sendable {
-  case pressure, manual
 }

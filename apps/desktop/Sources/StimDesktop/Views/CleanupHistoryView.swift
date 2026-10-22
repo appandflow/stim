@@ -8,6 +8,8 @@ struct CleanupHistorySection: View {
     Section {
       if let error = history.error, history.runs.isEmpty {
         Text(abbreviatingHome(error)).foregroundStyle(Palette.error)
+        Text("The history needs a stim newer than 1.25.0; with an older one, update stim.")
+          .font(.stim(.footnote)).foregroundStyle(Palette.warning)
       } else if history.runs.isEmpty {
         InlineEmpty(history.loaded ? "Nothing has been cleared yet." : "Loading\u{2026}")
       } else {

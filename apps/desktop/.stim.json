@@ -2,20 +2,7 @@
   "macos": {
     "product": "StimDesktop",
     "infoPlist": "Support/Info-Development.plist",
-    "arguments": [
-      "-autopilot.idleShutdown",
-      "NO",
-      "-autopilot.nightly",
-      "NO",
-      "-autopilot.pressure",
-      "NO",
-      "-notify.diskPressure",
-      "NO",
-      "-notify.level.build-request",
-      "silent",
-      "-skipOnboarding",
-      "YES"
-    ],
+    "arguments": ["-notify.diskPressure", "NO", "-notify.level.build-request", "silent", "-skipOnboarding", "YES"],
     "assetCatalog": "Support/Assets.xcassets",
     "resources": {
       "AppIcon.icns": "Support/AppIcon-Dev.icns",
