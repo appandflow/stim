@@ -793,8 +793,9 @@ temporarily; it cannot authenticate.
 
 ### A remote machine is unreachable
 
-`stim doctor` stops at the first layer that fails and names it.
-`stim doctor --json` carries it as `diagnosis` (`layer`, `code`, `title`,
+`stim doctor` stops at the first layer that fails and names it. Stim Desktop
+shows it as the pill of the machine's row, with what failed and what to do
+under the name. `stim doctor --json` carries it as `diagnosis` (`layer`, `code`, `title`,
 `message`, `remedy`) under `remoteMachines` and `deviceHosts`. The `state` stays
 `unreachable`, `tailscale-off` or `not-on-tailnet`, so an older Desktop or phone
 app still shows its short label.
