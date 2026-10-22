@@ -415,46 +415,6 @@ import Testing
 }
 
 @Suite struct AutopilotTests {
-  let calendar: Calendar = {
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(identifier: "America/Montreal")!
-    return calendar
-  }()
-
-  func date(_ day: Int, _ hour: Int, _ minute: Int = 0) -> Date {
-    calendar.date(from: DateComponents(year: 2026, month: 9, day: day, hour: hour, minute: minute))!
-  }
-
-  @Test func runsNightlyOnceAfterTheHourAndCatchesUpAMissedNight() {
-    #expect(!AutopilotSchedule.nightlyDue(now: date(25, 2, 59), hour: 3, lastRun: date(24, 3, 1), calendar: calendar))
-    #expect(AutopilotSchedule.nightlyDue(now: date(25, 3), hour: 3, lastRun: date(24, 3, 1), calendar: calendar))
-    #expect(!AutopilotSchedule.nightlyDue(now: date(25, 14), hour: 3, lastRun: date(25, 3, 1), calendar: calendar))
-    #expect(AutopilotSchedule.nightlyDue(now: date(25, 1), hour: 3, lastRun: date(23, 3, 1), calendar: calendar))
-  }
-
-  @Test func boundsTheNightlyCleanupByAgeAndLeavesPressureRunsUnbounded() {
-    #expect(
-      AutopilotSchedule.nightlyArguments(olderThanDays: 7) == ["gc", "--delete", "--worktrees", "--older-than", "7", "--json"])
-    #expect(AutopilotSchedule.nightlyArguments(olderThanDays: 14).contains("14"))
-    #expect(PressurePlan.arguments == ["gc", "--delete", "--json"])
-  }
-
-  func device(idleSince: Date, screen: Date? = nil) -> AutopilotSchedule.Device {
-    let stamp = ISO8601DateFormatter().string(from: idleSince)
-    return AutopilotSchedule.Device(
-      activity: DeviceActivity(state: "idle", driver: nil, lastActivityAt: stamp, basis: []), screenChangedAt: screen)
-  }
-
-  @Test func shutsDownIdleDevicesOnlyWhenNoWatchedScreenWouldGoWithThem() {
-    let now = date(25, 12)
-    let idle = device(idleSince: now.addingTimeInterval(-7200))
-    let watched = device(idleSince: now.addingTimeInterval(-7200), screen: now.addingTimeInterval(-60))
-    let recent = device(idleSince: now.addingTimeInterval(-600))
-    #expect(AutopilotSchedule.idleShutdownDue([idle, recent], minutes: 60, now: now))
-    #expect(!AutopilotSchedule.idleShutdownDue([idle, watched], minutes: 60, now: now))
-    #expect(!AutopilotSchedule.idleShutdownDue([recent], minutes: 60, now: now))
-  }
-
   @Test func proposesGcDeleteOnlyUnderTheBudget() throws {
     let gib: Int64 = 1_073_741_824
     let json = """

@@ -75,8 +75,8 @@ In on mode a pass runs, cheapest to rebuild first:
      and of any
      workspace idle for maintenance.deviceIdleDays (3; 0 turns it off) in the
      age sweep. Devices are recreated on the next run.
-The age sweep (every maintenance.sweepHours, 24) covers Stim Desktop's nightly
-cleanup, run in the background of commands instead of at an hour.
+The age sweep runs every maintenance.sweepHours (24) in the background of
+commands, never at a set hour.
 maintenance.olderThanDays (7) is its age for steps 2, 3, 5 and 6; with 0 the
 sweep removes nothing in them by age, while step 1, step 7, finished
 worktrees and the cap and disk-driven parts of steps 2 and 3 still run.

@@ -390,8 +390,16 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   content pane has room for all four, and wrap on smaller panes. Device cards
   stay centered, fill available width up to 640 points, and form extra columns
   only when full-width cards fit.
-- **Notifications and cleanup.** Alerts for stuck agents and builds that keep failing, and
-  automatic removal of worktrees after their pull request merges. The **Needs
+- **Notifications and cleanup.** Alerts for stuck agents and builds that keep failing.
+  Cleanup is Stim's own automatic maintenance, which runs from the CLI whether
+  Desktop is open or not; **Settings > App > Automatic Maintenance** shows its
+  mode and last pass, and sets how long something stays unused before it is
+  cleaned up (`maintenance.olderThanDays`) and when idle devices shut down
+  (`devices.idleShutdownMinutes`), and whether idle unmerged worktrees are
+  removed (`maintenance.removeIdleWorktrees`, off by default). The worktree
+  switch, **Never** for the cleanup age and Cleanup History need a Stim newer
+  than 1.25.0; with an older one they say to update Stim. See
+  [automatic maintenance](./build-caches.md#automatic-maintenance). The **Needs
   you** category lists only what agents cannot handle, such as a doctor
   finding, a signing failure or an expired device lease, with **Run**, **Copy
   command**, **Fix**, **Open Logs** or **Show in Finder** on its row in

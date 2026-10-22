@@ -31,7 +31,7 @@ struct SettingsView: View {
 
   var body: some View {
     TabView(selection: $tab) {
-      AppPreferencesView(stimHome: store.stimHome, history: history)
+      AppPreferencesView(stimHome: store.stimHome, settings: machine, history: history)
         .tabItem { Label("App", systemImage: "macwindow") }
         .tag("app")
       if flags.phoneApp {

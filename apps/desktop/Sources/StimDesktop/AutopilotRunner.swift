@@ -3,21 +3,9 @@ import Combine
 import StimKit
 import StimStores
 
-/// Runs Stim's cleanup commands on a schedule while the app runs: `stim gc --idle` for idle devices,
-/// a nightly `stim gc --delete` bounded by age, and an unbounded `stim gc --delete` when free disk falls under
-/// the Stim budget.
-/// When the CLI's own automatic maintenance is on (`MaintenanceStatus.cleansAutomatically`), the CLI clears build
-/// outputs, trims caches and removes finished worktrees, so the disk-pressure run stands down; idle shutdown and the
-/// nightly run stay, because the CLI does not do them. When the CLI's last pass was blocked and disk is still under
-/// the budget, the app asks with a notification instead of running `stim gc --delete`, which would clear what the
-/// CLI keeps.
-/// Every run goes through the CLI on the machine action slot, so it never overlaps a cleanup the user
-/// started.
 @MainActor
 final class AutopilotRunner: ObservableObject {
   static let tick: TimeInterval = 60
-  static let idleRetry: TimeInterval = 10 * 60
-  static let pressureRetry: TimeInterval = 60 * 60
   static let budgetMaxAge: TimeInterval = 30 * 60
   static let reportMaxAge: TimeInterval = 10 * 60
 
@@ -27,6 +15,7 @@ final class AutopilotRunner: ObservableObject {
   @Published private(set) var lowestVolume: DiskVolume?
   /// The CLI's automatic maintenance as the last `stim status --json` reported it; nil from a `stim` without it.
   @Published private(set) var cliMaintenance: MaintenanceStatus?
+  @Published private(set) var statusLoaded = false
 
   private let status: StatusStore
   private let actions: ActionCenter
@@ -35,12 +24,9 @@ final class AutopilotRunner: ObservableObject {
   private let settings: MachineSettingsStore
   private var timer: Timer?
   private var checking = false
-  private var lastIdleRun: Date?
-  private var lastPressureRun: Date?
   private(set) var budget: (minFree: Double, hardFloor: Double)?
   private var budgetAt: Date?
   private var notifiedEpisode = false
-  private var nightlyHour: Int?
   private var maintenanceSubscription: AnyCancellable?
 
   init(
@@ -51,29 +37,26 @@ final class AutopilotRunner: ObservableObject {
     self.gc = gc
     self.disks = disks
     self.settings = settings
-    maintenanceSubscription = status.$payload.map { $0?.maintenance }.removeDuplicates().sink { [weak self] in
-      self?.cliMaintenance = $0
-    }
+    maintenanceSubscription = status.$payload.map { ($0 != nil, $0?.maintenance) }.removeDuplicates { $0 == $1 }
+      .sink { [weak self] loaded, maintenance in
+        self?.statusLoaded = loaded
+        self?.cliMaintenance = maintenance
+      }
   }
-
-  private var cliCleansAutomatically: Bool { cliMaintenance?.cleansAutomatically == true }
 
   private var defaults: UserDefaults { .standard }
 
   func start() {
     guard timer == nil else { return }
-    if defaults.object(forKey: AppPreferences.Key.autopilotLastNightly) == nil {
-      defaults.set(Date(), forKey: AppPreferences.Key.autopilotLastNightly)
-    }
     NotificationResponder.shared.runPlan = { [weak self] in self?.runPlanFromNotification() }
     if defaults.bool(forKey: AppPreferences.Key.notifiesDiskPressure) {
       Notifier.requestAuthorization()
     }
     timer = Timer.scheduledTimer(withTimeInterval: Self.tick, repeats: true) { [weak self] _ in
-      MainActor.assumeIsolated { self?.check() }
+      MainActor.assumeIsolated { self?.checkPressure(maxAge: Self.tick / 2) }
     }
     Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
-      MainActor.assumeIsolated { self?.check() }
+      MainActor.assumeIsolated { self?.checkPressure(maxAge: Self.tick / 2) }
     }
   }
 
@@ -85,62 +68,11 @@ final class AutopilotRunner: ObservableObject {
       OpenRequests.shared.showsMachine = true
       return
     }
-    runPressurePlan(trigger: .manual, present: true)
+    runPressurePlan()
   }
 
-  func runPressurePlan(trigger: AutopilotTrigger, present: Bool) {
-    lastPressureRun = Date()
-    run("Reclaim disk space", PressurePlan.arguments, present: present) { run, summary in
-      guard trigger == .pressure else { return }
-      let archived = run.gcOutcome.flatMap { try? $0.get().archivedWorktrees.isEmpty } == false
-      Notifier.postPressure(
-        id: "\(archived ? Notifier.archivedPressurePrefix : Notifier.ranPressurePrefix)\(run.id)",
-        title: "Free disk is under the Stim budget",
-        body: summary
-          ?? "Stim Desktop ran stim gc --delete. \(run.exitStatus == 0 ? "It finished" : "It exited with an error"); see Settings > App > Cleanup History.",
-        offersPlan: false)
-    }
-  }
-
-  private func check() {
-    let now = Date()
-    let idle = actions.active(for: ActionCenter.machineKey) == nil
-    let hour = defaults.integer(forKey: AppPreferences.Key.autopilotNightlyHour)
-    if !defaults.bool(forKey: AppPreferences.Key.autopilotNightly) || (nightlyHour != nil && nightlyHour != hour) {
-      defaults.set(now, forKey: AppPreferences.Key.autopilotLastNightly)
-    }
-    nightlyHour = hour
-    if idle, defaults.bool(forKey: AppPreferences.Key.autopilotNightly),
-      let last = defaults.object(forKey: AppPreferences.Key.autopilotLastNightly) as? Date,
-      AutopilotSchedule.nightlyDue(now: now, hour: hour, lastRun: last)
-    {
-      defaults.set(now, forKey: AppPreferences.Key.autopilotLastNightly)
-      let days = defaults.integer(forKey: AppPreferences.Key.autopilotNightlyOlderThanDays)
-      run("Nightly cleanup", AutopilotSchedule.nightlyArguments(olderThanDays: days), present: false)
-      return
-    }
-    let minutes = defaults.integer(forKey: AppPreferences.Key.autopilotIdleMinutes)
-    if idle, defaults.bool(forKey: AppPreferences.Key.autopilotIdleShutdown), minutes > 0,
-      lastIdleRun.map({ now.timeIntervalSince($0) >= Self.idleRetry }) ?? true,
-      AutopilotSchedule.idleShutdownDue(bootedDevices, minutes: minutes, now: now)
-    {
-      lastIdleRun = now
-      run(
-        "Shut down idle devices", ["gc", "--idle", AutopilotSchedule.idleDuration(minutes: minutes), "--json"],
-        present: false)
-      return
-    }
-    checkPressure(maxAge: Self.tick / 2)
-  }
-
-  /// Booted devices of workspaces with no build running, which `gc --idle` skips.
-  private var bootedDevices: [AutopilotSchedule.Device] {
-    (status.payload?.environments ?? []).filter { $0.build?.isRunning != true }.flatMap { env in
-      env.devices.filter { $0.isRunning && $0.platform != "macos" }
-    }
-    .map {
-      AutopilotSchedule.Device(activity: $0.activity, screenChangedAt: $0.activityKey.flatMap(ScreenActivity.shared.lastChange))
-    }
+  func runPressurePlan() {
+    run("Reclaim disk space", PressurePlan.arguments)
   }
 
   private func checkPressure(maxAge: TimeInterval) {
@@ -197,38 +129,17 @@ final class AutopilotRunner: ObservableObject {
       notifiedEpisode = false
       return
     }
-    let wants = defaults.bool(forKey: AppPreferences.Key.autopilotPressure)
-    if wants, !plan.isEmpty, status.payload == nil { return }
-    if wants, !plan.isEmpty, cliCleansAutomatically, cliMaintenance?.lastPass?.blocked.isEmpty ?? true { return }
-    let acts = wants && !cliCleansAutomatically
-    if acts, !plan.isEmpty, actions.active(for: ActionCenter.machineKey) == nil,
-      lastPressureRun.map({ Date().timeIntervalSince($0) >= Self.pressureRetry }) ?? true
-    {
-      runPressurePlan(trigger: .pressure, present: false)
-      return
-    }
-    guard !notifiedEpisode, !(acts && !plan.isEmpty) else { return }
+    guard status.payload != nil, !notifiedEpisode, MaintenanceStatus.asksAboutDiskPressure(cliMaintenance) else { return }
     notifiedEpisode = true
     Notifier.postPressure(
       id: "pressure-\(Date().timeIntervalSince1970)", title: plan.headline, body: plan.proposal, offersPlan: !plan.isEmpty)
   }
 
-  private func run(
-    _ title: String, _ arguments: [String], present: Bool,
-    completion: ((ActionRun, String?) -> Void)? = nil
-  ) {
-    let command = StimCommand(arguments, cwd: NSHomeDirectory())
-    let titles = Dictionary(
-      (status.payload?.environments.map { ($0.path, $0.names.title) } ?? [])
-        + (status.payload?.unprovisionedWorktrees?.map { ($0.path, $0.names.title) } ?? []),
-      uniquingKeysWith: { first, _ in first })
-    actions.run(title, steps: [command], key: ActionCenter.machineKey, present: present) { [weak self] run in
-      guard let self else { return }
-      self.checkPressure(maxAge: 0)
-      let summary = run.gcOutcome.flatMap { try? $0.get() }.map {
-        $0.summary(name: { titles[$0] ?? PathNames(path: $0).title })
-      }
-      completion?(run, summary)
+  private func run(_ title: String, _ arguments: [String]) {
+    actions.run(
+      title, steps: [StimCommand(arguments, cwd: NSHomeDirectory())], key: ActionCenter.machineKey, present: true
+    ) { [weak self] _ in
+      self?.checkPressure(maxAge: 0)
     }
   }
 }

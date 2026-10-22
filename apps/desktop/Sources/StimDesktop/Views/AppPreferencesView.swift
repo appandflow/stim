@@ -5,6 +5,7 @@ import SwiftUI
 
 struct AppPreferencesView: View {
   let stimHome: String
+  let settings: MachineSettingsStore
   @ObservedObject var history: GcHistoryModel
   @AppStorage(AppPreferences.Key.appearance) private var appearance = Appearance.auto
   @AppStorage(AppPreferences.Key.sidebarStatuses) private var statuses = StatusFilter.encode(StatusFilter.defaultSelection)
@@ -21,12 +22,6 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
   @AppStorage(AppPreferences.Key.stimExecutable) private var stimExecutable = ""
   @AppStorage(AppPreferences.Key.remoteSessionMinutes) private var remoteMinutes = 30
-  @AppStorage(AppPreferences.Key.autopilotIdleShutdown) private var idleShutdown = true
-  @AppStorage(AppPreferences.Key.autopilotIdleMinutes) private var idleMinutes = 60
-  @AppStorage(AppPreferences.Key.autopilotNightly) private var nightly = true
-  @AppStorage(AppPreferences.Key.autopilotNightlyHour) private var nightlyHour = 3
-  @AppStorage(AppPreferences.Key.autopilotNightlyOlderThanDays) private var nightlyOlderThanDays = 7
-  @AppStorage(AppPreferences.Key.autopilotPressure) private var actsOnPressure = true
   @AppStorage(AppPreferences.Key.notifiesDiskPressure) private var notifiesPressure = true
   @AppStorage(NotificationSettings.stuckMinutesKey) private var stuckMinutes = Oversight.defaultStuckMinutes
   @AppStorage(NotificationSettings.quietHoursKey) private var quietHours = "off"
@@ -109,43 +104,8 @@ struct AppPreferencesView: View {
         }
       }
 
-      Section {
-        Toggle("Shut down idle devices", isOn: $idleShutdown)
-        Picker("After", selection: $idleMinutes) {
-          ForEach(AppPreferences.idleMinuteChoices, id: \.self) { minutes in
-            Text(minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h").tag(minutes)
-          }
-        }
-        .disabled(!idleShutdown)
-        Toggle("Clean up every night", isOn: $nightly)
-        Picker("At", selection: $nightlyHour) {
-          ForEach(0..<24, id: \.self) { hour in Text(String(format: "%02d:00", hour)).tag(hour) }
-        }
-        .disabled(!nightly)
-        Picker("Only what is unused for", selection: $nightlyOlderThanDays) {
-          ForEach(AppPreferences.nightlyOlderThanDayChoices, id: \.self) { days in
-            Text(days == 1 ? "1 day" : "\(days) days").tag(days)
-          }
-        }
-        .disabled(!nightly)
-        Toggle("Reclaim space when free disk is under the Stim budget", isOn: $actsOnPressure)
-        if let maintenance = autopilot.cliMaintenance, maintenance.cleansAutomatically {
-          Text(
-            "Stim's automatic maintenance is on, so it frees disk space and removes worktrees of finished pull requests. Reclaiming space under the budget does not run here while it is on."
-              + (maintenance.lastPassLine.map { " \($0)" } ?? "")
-          )
-          .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-        }
-      } header: {
-        Text("Autopilot")
-      } footer: {
-        Text(
-          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup runs stim gc --delete --worktrees --older-than with the chosen days (7 by default): it removes merged worktrees and clean ones idle that long, clears the build outputs of workspaces and the cache entries unused that long, and deletes devices parked or unused that long. Disk pressure runs stim gc --delete with no age limit: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. Disk pressure does nothing here while stim's automatic maintenance is on (maintenance.mode on, the default from stim 1.18.0); an older stim, or maintenance.mode report or off, leaves it to this app, and the nightly run still deletes unused and parked devices. A nightly run the Mac slept through runs at the next check."
-        )
-        .multilineTextAlignment(.leading)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .foregroundStyle(Palette.tertiary)
-      }
+      MaintenanceSection(
+        maintenance: autopilot.cliMaintenance, statusLoaded: autopilot.statusLoaded, settings: settings)
 
       CleanupHistorySection(history: history)
 
