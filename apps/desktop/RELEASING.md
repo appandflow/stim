@@ -13,9 +13,10 @@ tags are separate from the npm packages' `v*` tags, which follow
 1. Pick the version. Stable versions look like `1.2.0`; release candidates look
    like `1.2.0-rc.1`.
 2. Cut the Desktop release right after an npm release publishes, at the same
-   commit. Find that commit with `git rev-list -n 1 v<npm-version>`, and wait
-   for the Desktop workflow to pass on it. It builds the same ad-hoc release
-   package on every change to `apps/desktop`.
+   commit. Find that commit with `git rev-list -n 1 v<npm-version>`. An npm
+   release commit changes no path the Desktop workflow watches, so no Desktop
+   run exists for it; the `Desktop release` run builds the app before it loads
+   any secret.
 3. Tag that commit and push the tag:
 
    ```bash
