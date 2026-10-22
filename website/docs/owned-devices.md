@@ -736,10 +736,13 @@ and resets its preferences, and on Android it runs `pm clear`. It does this on
 every adoption, whichever workspace parked the device. The reset preferences
 of an iOS expo-dev-client app hold only the two that hide the Expo dev menu and
 its Tools button, so the menu stays off when an agent or a crash relaunches
-the app. Stim then compares the installed app with the requested build byte
-for byte and skips the install when they match, so a new worktree running the
+the app. Stim then compares the installed app with the requested build and
+skips the install when they match, so a new worktree running the
 same build as the parked device boots it warm and launches without copying the
-app. App-group
+app. On iOS it hashes both bundles. On Android it compares the installed APK's
+size and the SHA-256 of its signing block, central directory and end record
+with values recorded when the build was cached, so the check is one `adb shell`
+call instead of reading the whole APK. App-group
 containers, photos, the pasteboard and Simulator settings are not cleared.
 
 Android adoption requires the same system image, disk size and AVD creation

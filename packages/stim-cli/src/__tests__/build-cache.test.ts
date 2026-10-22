@@ -46,6 +46,8 @@ import {
   untrackedNativeFiles,
 } from '../cache/build-cache.ts';
 import { testContext } from './_context.ts';
+import { writeSignedApk } from './_signed-apk.ts';
+import { recordedSignedTail } from '../engine/apk-signed-tail.ts';
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
 import { buildCacheKey as providerKey } from '../../../expo-build-cache/index.js';
 
@@ -586,6 +588,43 @@ test('a capability store records the app id read from the stored artifact, and s
   await storeBuild('android', 'ak6', build, { root, readAppId: () => null });
   expect(storedAppId('android', 'ak6', root)).toBe(null);
   expect(storedAppId('android', 'missing', root)).toBe(null);
+});
+
+test('storing an Android APK verifies its signature once and records the signed tail beside it', async () => {
+  resetExecutor();
+  const sdk = join(root, 'sdk');
+  mkdirSync(join(sdk, 'build-tools', '36.0.0'), { recursive: true });
+  writeFileSync(join(sdk, 'build-tools', '36.0.0', 'apksigner'), '');
+  const build = join(root, 'build7', 'app-debug.apk');
+  const apk = writeSignedApk(build, {}, false);
+  const real = getExecutor();
+  const signerCalls: string[][] = [];
+  setExecutor({
+    ...real,
+    runFileAsync: async (file, args, options) => {
+      if (!file.endsWith('apksigner')) return real.runFileAsync(file, args, options);
+      signerCalls.push([file, ...(args ?? [])]);
+      return 'Verified using v2 scheme (APK Signature Scheme v2): true\n';
+    },
+  });
+  const androidHome = process.env.ANDROID_HOME;
+  process.env.ANDROID_HOME = sdk;
+  try {
+    const stored = await storeBuild('android', 'ak7', build, { root });
+    assert(stored);
+    expect(signerCalls.map((call) => call.slice(0, 3))).toEqual([
+      [join(sdk, 'build-tools', '36.0.0', 'apksigner'), 'verify', '--verbose'],
+    ]);
+    expect(recordedSignedTail(stored)).toEqual({
+      file: 'app-debug.apk',
+      size: apk.size,
+      tailOffset: apk.tailOffset,
+      tailSha256: apk.tailSha256,
+    });
+  } finally {
+    if (androidHome === undefined) delete process.env.ANDROID_HOME;
+    else process.env.ANDROID_HOME = androidHome;
+  }
 });
 
 test('{ overwrite } REPLACES the manifest too, so a refusing entry stops refusing', async () => {

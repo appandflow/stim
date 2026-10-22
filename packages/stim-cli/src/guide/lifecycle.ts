@@ -1513,11 +1513,27 @@ IOS SCHEME SELECTION
 
 AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
   Both platforms store the artifact verbatim, so its hash is its identity.
-  Before installing, Stim hashes the artifact it is about to install and the
-  one the device already has -- \`pm path\` then \`sha256sum\` on Android, the
-  \`simctl get_app_container\` bundle on iOS. Byte-identical means the install
-  is skipped. The phase still reports the cost of proving that identity, but
-  avoids the ~43s a 400MB APK can cost to copy and install over USB.
+  Before installing, Stim compares the artifact it is about to install with
+  the one the device already has. On iOS it hashes both bundles: the
+  \`simctl get_app_container\` bundle and the one about to be installed.
+  Byte-identical means the install is skipped. The phase still reports the
+  cost of proving that identity, but avoids the ~43s a 400MB APK can cost to
+  copy and install over USB.
+
+  On Android the proof is one \`adb shell\` call that returns the installed
+  APK's path, size, and the SHA-256 of its tail: the v2 or v3 signing block,
+  the central directory, and the end record. That tail carries the signed
+  digests of every other byte, and Android verified them when it installed
+  the APK. Stim verifies the local APK against the same digests once, with
+  \`apksigner verify\`, and keeps the size and tail digest in
+  \`apk-signed-tail.json\` beside the APK in its build cache entry (stored with
+  the build; an older entry gets it on first use). The same size and tail
+  digest mean the same file, on an owned emulator, an adopted one, a
+  \`--device\` phone and a plain rerun. A different size or tail digest
+  installs without hashing the whole APK. An APK outside a build cache entry,
+  one without a v2 or v3 signing block, an apksigner that is missing or fails,
+  and a device whose \`tail\` or \`stat\` does not answer as expected fall back
+  to \`pm path\` then \`sha256sum\` of the whole installed APK.
 
     install     unchanged (emulator-5584 already has this build) (0.4s)
 
@@ -1530,8 +1546,9 @@ AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
     install     unchanged (stim-app already has this build) (0.4s)
     install     dev client prepared (0.9s)
 
-  The skip needs PROOF. A package that is not installed, a split install, an
-  image without \`sha256sum\`, and any adb or simctl failure all read as
+  The skip needs PROOF. A package that is not installed, a split install, a
+  device that answers neither probe (no \`tail\` and no \`sha256sum\`), and any
+  adb or simctl failure all read as
   "cannot determine", and the run installs exactly as it always did. A release
   run swaps this workspace's JS into a COPY of the artifact, which is a
   different artifact and is therefore always installed.

@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
-import { isAbsolute, join, posix, relative, resolve as resolvePath, sep } from 'path';
+import { basename, isAbsolute, join, posix, relative, resolve as resolvePath, sep } from 'path';
 import { isDeepStrictEqual } from 'util';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
@@ -15,6 +15,7 @@ import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 import { getExecutor } from '../exec.ts';
 import { git, gitAsync, gitQuiet } from '../workspace/git.ts';
 import { register } from './cache-manifest.ts';
+import { computeSignedTail, writeSignedTail } from '../engine/apk-signed-tail.ts';
 import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from '../engine/asset-manifest.ts';
 import { sharedBuildCache as cacheRoot } from '../workspace/paths.ts';
 import { DEFAULT_IOS_PROJECT_PATH, type AndroidLayout } from '../workspace/settings.ts';
@@ -411,6 +412,21 @@ export async function storeBuild(
           }),
         overwrite: Boolean(options.overwrite),
         writeMetadata: async (staging) => {
+          if (platform === 'android' && buildPath.endsWith('.apk')) {
+            try {
+              const tail = await computeSignedTail(join(staging, basename(buildPath)), (file, args) =>
+                getExecutor().runFileAsync(file, args, {
+                  timeoutMs: 120_000,
+                  ...(env ? childEnvironment(env) : {}),
+                  onSpawn: killOnAbort(signal),
+                  declareFor: options.context,
+                }),
+              );
+              if (tail) await writeSignedTail(staging, tail);
+            } catch {
+              throwIfCancelled(signal, 'build cache copy');
+            }
+          }
           if (Array.isArray(options.sources)) {
             try {
               await writeFile(join(staging, SOURCES_FILE), JSON.stringify(options.sources.map(withoutContents)));
