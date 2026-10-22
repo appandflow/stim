@@ -1652,6 +1652,7 @@ export class BuildSession {
         cacheArtifact: params.cacheArtifact === true,
         stimBuild: params.stimBuild,
         ...(compat !== undefined && toolchain.compat !== undefined ? { compat } : {}),
+        ...(typeof params.jdk === 'string' ? { jdk: params.jdk } : {}),
         configuration: optional(params.configuration),
         scheme: optional(params.scheme),
         iosProjectPath: optional(params.iosProjectPath),

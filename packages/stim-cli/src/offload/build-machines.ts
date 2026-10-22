@@ -152,12 +152,9 @@ const NOTE_TITLES: Partial<Record<OffloadProblem['code'], string>> = {
 };
 
 function commandFix(problem: OffloadProblem, entry: string): string | null {
-  const [first, ...rest] = problem.commands ?? [];
-  if (!first) return null;
-  const lead = first.endsWith(' --licenses')
-    ? `On ${entry}, accept the SDK licenses so Gradle downloads the package, or install it:`
-    : `On ${entry}, install the package into its Android SDK:`;
-  return [lead, first, ...rest].join('\n');
+  return problem.commands?.length && problem.lead
+    ? [`On ${entry}, ${problem.lead}:`, ...problem.commands].join('\n')
+    : null;
 }
 
 function problemFix(problem: OffloadProblem, entry: string): string {
@@ -182,7 +179,10 @@ function problemFix(problem: OffloadProblem, entry: string): string {
     case 'runtime':
       return `Install that iOS simulator runtime on ${entry} with at least one iPhone simulator, or set ios.runtime here to one ${entry} has.`;
     case 'jdk':
-      return `Start stim-server on ${entry} with JAVA_HOME at a JDK of the same major version as this machine's.`;
+      return (
+        commandFix(problem, entry) ??
+        `Start stim-server on ${entry} with JAVA_HOME at a JDK of the same major version as this machine's.`
+      );
     case 'android-sdk':
     case 'ndk':
     case 'build-tools':

@@ -2102,6 +2102,12 @@ export function protocolJsonSchema(): JsonSchema {
                 ...buildCompat,
                 description: 'Compared instead of stimBuild by a machine whose build.offer toolchain reports compat.',
               },
+              jdk: {
+                type: 'string',
+                pattern: '^[0-9]{1,3}$',
+                description:
+                  'The JDK major an Android build runs on, sent to a stim-server with the build-jdk feature.',
+              },
             },
           }),
           request('build.cancel', buildJob),

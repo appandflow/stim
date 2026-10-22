@@ -550,10 +550,12 @@ remote machine's `concurrency.maxBuilds` slots, so a local `stim ios` or
 slot is freed when the build ends, is cancelled, or its process is gone. Delete
 a client's directory there to reclaim its space.
 
-For Android builds, start stim-server on the remote machine with `JAVA_HOME`
-pointing at a JDK of the same major version as the clients (otherwise it
-uses the macOS default JDK, which `java_home` may not find, for example with
-Homebrew's `openjdk@17`) and `ANDROID_HOME` at its Android SDK (default
+For Android builds, the remote machine builds on an installed JDK of the same
+major version as the client (found in the system JVM directories, Homebrew,
+Android Studio and SDKMAN) even when its default JDK is another one; a machine
+with none gets the install command as the fix. Start stim-server with
+`JAVA_HOME` at such a JDK only to choose it for every build, and with
+`ANDROID_HOME` at its Android SDK (default
 `~/Library/Android/sdk`, or `~/Android/Sdk` on Linux). After an Android build, the client's Gradle daemon
 stays warm for `server.gradleDaemonIdleMinutes` (default 30; `0` stops it
 when each build ends), so the client's next build skips a JVM start of about

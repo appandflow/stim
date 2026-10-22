@@ -935,7 +935,7 @@ describe('native Gradle worker transfer', () => {
           result: {
             capabilities: ['build'],
             features: capable
-              ? ['native-gradle-build', ...(cache ? ['native-gradle-artifact-cache'] : [])]
+              ? ['native-gradle-build', ...(cache ? ['native-gradle-artifact-cache', 'build-jdk'] : [])]
               : ['native-xcode-build'],
           },
         }),
@@ -982,6 +982,7 @@ describe('native Gradle worker transfer', () => {
       fingerprint: null,
       native: { provider: 'gradle', sourceDigest: transfer.digest, inputs: transfer.declaration },
     });
+    expect(start.jdk).toBe(cache ? '17' : undefined);
     expect(start.native).toEqual({
       provider: 'gradle',
       sourceDigest: transfer.digest,

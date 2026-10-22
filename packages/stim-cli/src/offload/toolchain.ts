@@ -1,6 +1,7 @@
-import { readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stimBuildDigest } from '@stim-cli/core/state';
 import { androidHome } from '../devices/android.ts';
@@ -48,6 +49,8 @@ export interface WorkerToolchain extends Omit<IosToolchain, 'compat'> {
   bundler: string | null;
   runtimes: string[];
   jdk: string | null;
+  /** The majors of every JDK found on the machine, `jdk` included; absent from a stim-server older than this field. */
+  jdks?: string[];
   androidSdk: { ndk: string[]; buildTools: string[]; platforms: string[] } | null;
   /** Whether that SDK has its licenses accepted, so Gradle can download a missing package; absent from a stim-server older than this field. */
   androidLicenses?: boolean;
@@ -188,9 +191,9 @@ function assembleMacosToolchain(xcode: string | null, macosSdk: string | null): 
   };
 }
 
-/** The major version in a JDK's `release` file, as `JAVA_VERSION="17.0.19"` gives it. */
+/** The major version in a JDK's `release` file, as `JAVA_VERSION="17.0.19"` (or `"1.8.0_402"` for Java 8) gives it. */
 export function jdkMajor(release: string): string | null {
-  return /^JAVA_VERSION="(\d+)/m.exec(release)?.[1] ?? null;
+  return /^JAVA_VERSION="(?:1\.)?(\d+)/m.exec(release)?.[1] ?? null;
 }
 
 function releaseMajor(home: string): string | null {
@@ -216,6 +219,73 @@ function localJdk(env: NodeJS.ProcessEnv = process.env): string | null {
   }
   const home = quiet('/usr/libexec/java_home', [])?.trim();
   return home ? releaseMajor(home) : null;
+}
+
+/** Where JDKs install, as `JAVA_HOME` values: the one in `env` first, then the usual locations of `platform`. */
+export function jdkCandidates(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home: string = homedir(),
+): string[] {
+  const out: string[] = env.JAVA_HOME ? [env.JAVA_HOME] : [];
+  const children = (dir: string) => (listDir(dir) ?? []).map((entry) => join(dir, entry));
+  out.push(...children(join(home, '.sdkman', 'candidates', 'java')));
+  if (platform === 'darwin') {
+    for (const dir of ['/Library/Java/JavaVirtualMachines', join(home, 'Library', 'Java', 'JavaVirtualMachines')]) {
+      out.push(...children(dir).map((jvm) => join(jvm, 'Contents', 'Home')));
+    }
+    for (const prefix of ['/opt/homebrew', '/usr/local']) {
+      for (const formula of children(join(prefix, 'opt')).filter((dir) => /^openjdk(@\d+)?$/.test(basename(dir)))) {
+        out.push(join(formula, 'libexec', 'openjdk.jdk', 'Contents', 'Home'));
+      }
+    }
+    for (const app of children('/Applications').filter((dir) => basename(dir).startsWith('Android Studio'))) {
+      out.push(join(app, 'Contents', 'jbr', 'Contents', 'Home'));
+    }
+  } else if (platform === 'win32') {
+    const programs = env.ProgramFiles ?? 'C:\\Program Files';
+    for (const vendor of ['Eclipse Adoptium', 'Java', 'Microsoft', 'Zulu', 'Android']) {
+      out.push(...children(join(programs, vendor)));
+    }
+    out.push(join(programs, 'Android', 'Android Studio', 'jbr'));
+  } else {
+    out.push(...children('/usr/lib/jvm'), ...children('/opt').map((dir) => join(dir, 'jbr')));
+  }
+  return out;
+}
+
+/** The first home of each JDK major among `candidates`, read from each `release` file; a home without `javac` is a JRE. */
+export function jdkHomes(candidates: string[]): Map<string, string> {
+  const homes = new Map<string, string>();
+  for (const candidate of candidates) {
+    const major = releaseMajor(candidate);
+    const javac = join(candidate, 'bin', process.platform === 'win32' ? 'javac.exe' : 'javac');
+    if (major && !homes.has(major) && existsSync(javac)) homes.set(major, candidate);
+  }
+  return homes;
+}
+
+function installedJdkMajors(): string[] {
+  const majors = new Set(jdkHomes(jdkCandidates()).keys());
+  const current = localJdk();
+  if (current) majors.add(current);
+  return [...majors].toSorted((a, b) => Number(a) - Number(b));
+}
+
+/**
+ * Points this process, and the Gradle it starts, at an installed JDK of `major` when its default JDK is another one.
+ * Returns why it cannot, or null.
+ */
+export function useJdkMajor(
+  major: string,
+  env: NodeJS.ProcessEnv = process.env,
+  candidates: string[] = jdkCandidates(env),
+): string | null {
+  if (localJdk(env) === major) return null;
+  const home = jdkHomes(candidates).get(major);
+  if (!home) return `This machine has no JDK ${major} to build on.`;
+  env.JAVA_HOME = home;
+  return null;
 }
 
 export function androidToolchain(): AndroidToolchain {
@@ -338,6 +408,7 @@ export function workerToolchain(rubyVersion: string | null = null, native?: 'xco
       macosSdk: null,
       bundler: null,
       runtimes: [],
+      jdks: installedJdkMajors(),
       ...sdkReport(),
     };
   let listed: unknown = null;
@@ -351,6 +422,7 @@ export function workerToolchain(rubyVersion: string | null = null, native?: 'xco
     bundler: native ? null : quiet('bundle', ['--version'])?.trim() || null,
     runtimes: iphoneRuntimes(listed),
     jdk: native ? null : localJdk(),
+    ...(native ? {} : { jdks: installedJdkMajors() }),
     ...(native ? { androidSdk: null } : sdkReport()),
   };
 }
@@ -380,8 +452,9 @@ export interface OffloadProblem {
     | 'busy'
     | 'platform';
   reason: string;
-  /** Shell commands that clear it, to run on the remote machine. */
+  /** Shell commands that clear it, to run on the remote machine, and what they do, as the end of "On <machine>, ...". */
   commands?: string[];
+  lead?: string;
 }
 
 interface SdkGap {
@@ -435,14 +508,28 @@ function sdkManagerPath(worker: WorkerToolchain): string {
   );
 }
 
+function jdkInstall(major: string, os: string | undefined): Pick<OffloadProblem, 'commands' | 'lead'> {
+  const command =
+    os === 'linux'
+      ? `sudo apt install openjdk-${major}-jdk-headless`
+      : os === 'win32'
+        ? `winget install EclipseAdoptium.Temurin.${major}.JDK`
+        : `brew install --cask zulu@${major}`;
+  return { commands: [command], lead: `install JDK ${major}; Stim uses it automatically, no restart needed` };
+}
+
 function androidMismatches(
   local: AndroidToolchain,
   requires: AndroidRequirements,
   worker: WorkerToolchain,
 ): OffloadProblem[] {
   const out: OffloadProblem[] = [];
-  if (!local.jdk || worker.jdk !== local.jdk) {
-    out.push({ code: 'jdk', reason: `JDK ${worker.jdk ?? 'none'} there, ${local.jdk ?? 'none'} here` });
+  if ((!local.jdk || worker.jdk !== local.jdk) && !(local.jdk && worker.jdks?.includes(local.jdk))) {
+    out.push({
+      code: 'jdk',
+      reason: `JDK ${worker.jdk ?? 'none'} there, ${local.jdk ?? 'none'} here`,
+      ...(local.jdk && worker.jdks ? jdkInstall(local.jdk, worker.os) : {}),
+    });
   }
   const sdk = worker.androidSdk;
   if (!sdk) return [...out, { code: 'android-sdk', reason: 'no Android SDK there' }];
@@ -456,13 +543,16 @@ function androidMismatches(
         : '';
   for (const gap of sdkGaps(requires, sdk)) {
     const install = `${sdkManager} "${gap.id}"`;
+    const licenses = worker.androidLicenses === false && requires.sdkDownload !== false;
     out.push({
       code: gap.code,
       reason: `no ${gap.label} there${why}`,
-      commands:
-        worker.androidLicenses === false && requires.sdkDownload !== false
-          ? [`${sdkManager} --licenses`, install]
-          : [install],
+      commands: licenses ? [`${sdkManager} --licenses`, install] : [install],
+      lead: licenses
+        ? 'accept the SDK licenses so Gradle downloads the package, or install it'
+        : worker.androidHome
+          ? 'install the package into its Android SDK'
+          : 'install the package into the Android SDK stim-server uses (its ANDROID_HOME, else the default SDK location)',
     });
   }
   return out;

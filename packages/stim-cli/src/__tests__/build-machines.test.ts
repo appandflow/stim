@@ -528,6 +528,7 @@ describe('inspectBuildMachines', () => {
     const blocker = {
       code: 'build-tools' as const,
       reason: 'no build-tools 37.0.0 there, and its SDK licenses are not accepted',
+      lead: 'accept the SDK licenses so Gradle downloads the package, or install it',
       commands: [
         '/sdk/cmdline-tools/latest/bin/sdkmanager --licenses',
         '/sdk/cmdline-tools/latest/bin/sdkmanager "build-tools;37.0.0"',
@@ -561,6 +562,29 @@ describe('inspectBuildMachines', () => {
         ].join('\n'),
       }),
     ]);
+  });
+
+  it('fixes a JDK mismatch with an install command, and a stim-server that lists no JDKs with the JAVA_HOME restart', async () => {
+    await approvedCredential();
+    const run = (problem: { code: 'jdk'; reason: string; commands?: string[]; lead?: string }) =>
+      inspectBuildMachines(
+        { fix: false, check: () => Promise.resolve({ capacity: null, problems: [problem] }) },
+        fakeIo([approved()]).io,
+        ['mini'],
+      );
+    const listed = await run({
+      code: 'jdk',
+      reason: 'JDK 25 there, 17 here',
+      commands: ['brew install --cask zulu@17'],
+      lead: 'install JDK 17; Stim uses it automatically, no restart needed',
+    });
+    expect(listed.findings[0]?.fix).toBe(
+      'On mini, install JDK 17; Stim uses it automatically, no restart needed:\nbrew install --cask zulu@17',
+    );
+    const old = await run({ code: 'jdk', reason: 'JDK 25 there, 17 here' });
+    expect(old.findings[0]?.fix).toBe(
+      "Start stim-server on mini with JAVA_HOME at a JDK of the same major version as this machine's.",
+    );
   });
 
   it.each([undefined, null, { name: 'Stim Host', screenRecording: false, accessibility: true }])(

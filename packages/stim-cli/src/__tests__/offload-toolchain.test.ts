@@ -5,6 +5,9 @@ import { delimiter, join } from 'node:path';
 import { podEnvForRubyAsync, readRubyVersion } from '../engine/deps.ts';
 import {
   androidToolchainAsync,
+  jdkCandidates,
+  jdkHomes,
+  useJdkMajor,
   iosToolchainAsync,
   macosToolchainAsync,
   workerToolchain,
@@ -258,4 +261,47 @@ test('the Gradle offer reports the SDK directory and whether its licenses are ac
   rmSync(join(sdk, 'platforms'), { recursive: true });
   expect(workerToolchain(null, 'gradle')).toMatchObject({ androidSdk: null });
   expect(workerToolchain(null, 'gradle')).not.toHaveProperty('androidLicenses');
+});
+
+function fakeJdk(parent: string, name: string, version: string, jre = false): string {
+  const home = join(parent, name);
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, 'release'), `JAVA_VERSION="${version}"\n`);
+  if (!jre) {
+    mkdirSync(join(home, 'bin'));
+    writeFileSync(join(home, 'bin', process.platform === 'win32' ? 'javac.exe' : 'javac'), '');
+  }
+  return home;
+}
+
+test('a worker lists the JDK majors it can build on and builds with the one a job names', () => {
+  const jdks = join(root, 'jvms');
+  const jdk25 = fakeJdk(jdks, 'jdk-25', '25.0.1');
+  const jdk17 = fakeJdk(jdks, 'zulu-17', '17.0.18');
+  const jdk17Other = fakeJdk(jdks, 'temurin-17', '17.0.9');
+  const jre21 = fakeJdk(jdks, 'jre-21', '21.0.3', true);
+  const jdk8 = fakeJdk(jdks, 'jdk-8', '1.8.0_402');
+  mkdirSync(join(jdks, 'broken'));
+  expect([...jdkHomes([jdk25, join(jdks, 'broken'), jre21, jdk17, jdk17Other, jdk8])]).toEqual([
+    ['25', jdk25],
+    ['17', jdk17],
+    ['8', jdk8],
+  ]);
+  mkdirSync(join(root, 'home', '.sdkman', 'candidates', 'java', '21.0.5-tem'), { recursive: true });
+  expect(jdkCandidates({ JAVA_HOME: jdk25 }, 'linux', join(root, 'home'))).toEqual(
+    expect.arrayContaining([jdk25, join(root, 'home', '.sdkman', 'candidates', 'java', '21.0.5-tem')]),
+  );
+
+  const env: NodeJS.ProcessEnv = { JAVA_HOME: jdk25 };
+  expect(useJdkMajor('25', env, [jdk25, jdk17])).toBeNull();
+  expect(env.JAVA_HOME).toBe(jdk25);
+  expect(useJdkMajor('17', env, [jdk25, jdk17])).toBeNull();
+  expect(env.JAVA_HOME).toBe(jdk17);
+  expect(useJdkMajor('21', env, [jdk25, jdk17])).toBe('This machine has no JDK 21 to build on.');
+  expect(env.JAVA_HOME).toBe(jdk17);
+
+  vi.stubEnv('JAVA_HOME', jdk25);
+  vi.stubEnv('ANDROID_HOME', join(root, 'no-sdk'));
+  setExecutor(makeExecutor({ runFileQuiet: () => null }));
+  expect(workerToolchain(null, 'gradle')).toMatchObject({ jdk: '25', jdks: expect.arrayContaining(['25']) });
 });

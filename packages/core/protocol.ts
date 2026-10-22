@@ -78,6 +78,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `build-compat` accepts `compat` on `build.start`, and in place of `stimBuild` in React Native and SwiftPM artifact
  * queries.
+ * `build-jdk` accepts `jdk` on `build.start`, the JDK major an Android build runs on; the machine finds an installed JDK of that
+ * major when its default differs.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
@@ -129,6 +131,7 @@ export const FEATURES = [
   'hosted-metro-ports',
   'server-update',
   'build-compat',
+  'build-jdk',
   'status-views',
   'desktop-reports',
   'desktop-report-platform',
@@ -1073,6 +1076,8 @@ export interface BuildToolchain {
   runtimes: string[];
   /** The major version of the JDK Gradle runs on there. */
   jdk: string | null;
+  /** The majors of every JDK it can find, the one `jdk` names included; absent from a stim-server older than this field. */
+  jdks?: string[];
   /** The NDK, build-tools and platform directories of its Android SDK; null without an SDK. */
   androidSdk: { ndk: string[]; buildTools: string[]; platforms: string[] } | null;
   /** Whether that SDK has its licenses accepted, so Gradle downloads a missing package; absent from a stim-server older than this field. */
@@ -1204,6 +1209,8 @@ export interface BuildStartParams {
   stimBuild: string;
   /** The client's Stim build compatibility version, compared instead of `stimBuild` by a machine that reports one. */
   compat?: number;
+  /** The JDK major the client's Android build ran on; a machine with the `build-jdk` feature builds on a JDK of that major. */
+  jdk?: string;
   cacheArtifact?: boolean;
 }
 
