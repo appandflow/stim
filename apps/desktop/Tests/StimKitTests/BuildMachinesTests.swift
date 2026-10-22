@@ -194,6 +194,37 @@ import Testing
     #expect(BuildMachineStatus(machine: "mini", state: .pending).readiness.line == "Waiting for approval")
   }
 
+  @Test func namesTheLayerThatStoppedAMachineInsteadOfTheGenericLine() throws {
+    func status(_ json: String) throws -> BuildMachineStatus {
+      try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
+    }
+    let notReady = try status(
+      #"""
+      {"machine":"mini","state":"unreachable","diagnosis":{"layer":"server","code":"server-not-ready","title":"Server not ready","message":"stim-server on mini is running but is not serving clients (HTTP 503).","remedy":"Check the disk that holds the Stim home on mini."}}
+      """#)
+    #expect(notReady.listStatus == MachineListStatus(title: "Server not ready", tone: .warning))
+    #expect(notReady.diagnosis?.code == "server-not-ready")
+    #expect(notReady.rowDetail.hasPrefix("stim-server on mini is running but is not serving clients"))
+    #expect(notReady.detail.hasSuffix("Check the disk that holds the Stim home on mini."))
+
+    let signedOut = try status(
+      #"""
+      {"machine":"mini","state":"tailscale-off","diagnosis":{"layer":"tailscale","code":"tailscale-logged-out","title":"Tailscale signed out","message":"Tailscale on this Mac is signed out.","remedy":"Sign in."}}
+      """#)
+    #expect(signedOut.listStatus.title == "Tailscale signed out")
+
+    let outdated = try status(
+      #"""
+      {"machine":"mini","state":"outdated","diagnosis":{"layer":"compat","code":"server-outdated","title":"Server is outdated","message":"Older protocol.","remedy":"Update it."}}
+      """#)
+    #expect(outdated.state == .unknown)
+    #expect(outdated.listStatus == MachineListStatus(title: "Server is outdated", tone: .warning))
+
+    let older = try status(#"{"machine":"mini","state":"unreachable"}"#)
+    #expect(older.listStatus.title == "Unreachable")
+    #expect(older.detail == "stim-server did not answer on its tailscale serve route.")
+  }
+
   @Test func showsOneListPillPerMachine() throws {
     func status(_ json: String) throws -> BuildMachineStatus {
       try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
