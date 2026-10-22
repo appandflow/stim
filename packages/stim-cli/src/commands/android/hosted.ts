@@ -141,6 +141,7 @@ export async function finishHostedAndroidRun({
           phase,
           enterActivity,
           hostedLogs,
+          hostedRunCommand: `stim android --remote ${run.placement.selected}${slot === 'default' ? '' : ` --slot ${slot}`}`,
         });
       } finally {
         hostedLogs.stop();

@@ -1124,6 +1124,19 @@ test('plain log pull commits 64 pages and reports a bound while final drain fini
   }
 });
 
+test('a log pull reports the checkpoint of its last page as the copied-through time', async () => {
+  const target = await prepareHostedIos('mini', {}, placement());
+  const request = vi
+    .spyOn(target.host.connection, 'request')
+    .mockResolvedValueOnce({ result: { records: [], cursor: {}, more: true, checkpoint: 1000 } })
+    .mockResolvedValueOnce({ result: { records: [], cursor: {}, more: false, checkpoint: 2000 } });
+  try {
+    await expect(pullHostedNativeLogs(root, 'default', placement(), target.host)).resolves.toBe(2000);
+  } finally {
+    request.mockRestore();
+  }
+});
+
 test.each([false, true])('an iOS page with no cursor or checkpoint progress cannot spin (final=%s)', async (final) => {
   const target = await prepareHostedIos('mini', {}, placement());
   const request = vi

@@ -7803,6 +7803,39 @@ describe('named Android hosting placement', () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 
+  test('a hosted native crash names the hosted rerun command', async () => {
+    const h = harness({
+      json: true,
+      remoteDevice: 'mini',
+      prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: hostDevice, session: null }),
+      placeHostedAndroid: async (_target: unknown, args: { reserved: (value: typeof placement) => void }) => {
+        args.reserved(placement);
+        return { placement, launched: 'unverified' };
+      },
+      build: async () => makeAndroidBuildSuccess({ apkPath: fakeApk() }),
+      verifyLaunched: async () => ({
+        verified: false,
+        fatal: true,
+        processAlive: null,
+        waitedMs: 1500,
+        mode: null,
+        errors: [
+          {
+            ts: 2000,
+            src: 'device',
+            platform: 'android',
+            level: 'fatal',
+            event: 'native_crash',
+            msg: 'FATAL EXCEPTION: main',
+          },
+        ],
+      }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(h.stderr.join('\n')).toContain('run `stim android --remote mini` again');
+  });
+
   test('a hosted launch failure after the build records the build as failed with its code', async () => {
     const h = harness({
       json: true,

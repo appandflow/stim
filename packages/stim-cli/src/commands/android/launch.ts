@@ -102,6 +102,7 @@ interface VerifyAndroidRunArgs {
   phase: (label: unknown, text: string) => void;
   enterActivity?: BuildProgress['activity'];
   hostedLogs?: Omit<HostedLaunchLogs, 'stop'>;
+  hostedRunCommand?: string;
 }
 
 interface AndroidRuntimeLaunchContext {
@@ -267,12 +268,13 @@ export async function verifyAndroidMetroRun({
   phase,
   enterActivity,
   hostedLogs,
+  hostedRunCommand,
 }: Omit<VerifyAndroidRunArgs, 'verifyReleaseLaunched' | 'variant'>): Promise<{
   state: boolean | string;
   warning?: string;
   unattributed?: boolean;
 }> {
-  const runCommand = nativeRunCommand('android', slot, { physical, deviceId: serial });
+  const runCommand = hostedRunCommand ?? nativeRunCommand('android', slot, { physical, deviceId: serial });
   const readNativeCrashes = () =>
     hostedLogs
       ? hostedLogs.readNativeCrashes()
@@ -349,7 +351,9 @@ export async function verifyAndroidMetroRun({
       phase(
         'remedy',
         chalk.yellow(
-          `Fix the crash, then run \`${runCommand}\` again; it force-stops a crashed process that remains alive behind the system crash dialog. Metro reload cannot recover it.`,
+          hostedRunCommand
+            ? `Fix the crash, then run \`${runCommand}\` again. Metro reload cannot recover it.`
+            : `Fix the crash, then run \`${runCommand}\` again; it force-stops a crashed process that remains alive behind the system crash dialog. Metro reload cannot recover it.`,
         ),
       );
     } else if (verification.processAlive === true && metroPort !== null) {
