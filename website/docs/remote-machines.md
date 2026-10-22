@@ -330,7 +330,7 @@ versions must match, and the worker needs the project's NDK, build-tools and
 compile SDK, or the Android SDK licenses accepted so Gradle downloads what is
 missing on the first build there (the NDK is about 1-2 GB). The project can
 turn that download off with `android.builder.sdkDownload=false` in
-`android/gradle.properties`. An Android worker can have another CPU architecture, and it can
+the `gradle.properties` of the Android project. An Android worker can have another CPU architecture, and it can
 be an x86_64 Linux or Windows machine; see [Linux worker](#linux-worker) and
 [Windows worker](#windows-worker). See [machine settings](./settings.md#machine-settings) for the
 full toolchain and placement rules.

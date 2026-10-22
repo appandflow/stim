@@ -1038,7 +1038,7 @@ compile platform that the project's React Native version names in
 gradle/libs.versions.toml; Gradle and AGP come from the synced project. A
 package the SDK lacks is a note, not a blocker, when its offer reports the SDK
 licenses accepted (\`licenses/android-sdk-license\`) and the app's
-android/gradle.properties does not set android.builder.sdkDownload=false:
+Gradle root's gradle.properties does not set android.builder.sdkDownload=false:
 Gradle downloads the package on the first build there (the NDK is about 1-2 GB).
 Otherwise it blocks, and doctor's fix is the sdkmanager commands to run on that
 machine; a stim-server that does not report its licenses keeps that rule. When

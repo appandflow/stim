@@ -250,16 +250,19 @@ export function sdkDownloadDisabled(properties: string): boolean {
   return /^\s*android\.builder\.sdkDownload\s*[=:]\s*false\s*$/im.test(properties);
 }
 
-function projectSdkDownload(projectRoot: string): boolean {
+function projectSdkDownload(gradleRoot: string): boolean {
   try {
-    return !sdkDownloadDisabled(readFileSync(join(projectRoot, 'android', 'gradle.properties'), 'utf8'));
+    return !sdkDownloadDisabled(readFileSync(join(gradleRoot, 'gradle.properties'), 'utf8'));
   } catch {
     return true;
   }
 }
 
-export function androidRequirements(projectRoot: string): AndroidRequirements {
-  const sdkDownload = projectSdkDownload(projectRoot) ? {} : { sdkDownload: false };
+export function androidRequirements(
+  projectRoot: string,
+  gradleRoot: string = join(projectRoot, 'android'),
+): AndroidRequirements {
+  const sdkDownload = projectSdkDownload(gradleRoot) ? {} : { sdkDownload: false };
   try {
     const pkg = createRequire(join(projectRoot, 'package.json')).resolve('react-native/package.json');
     return {

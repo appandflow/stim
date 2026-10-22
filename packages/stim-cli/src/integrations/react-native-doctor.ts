@@ -70,7 +70,7 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
           targets.push({
             platform: 'android',
             local: operation ? await androidToolchainAsync(operation.env) : androidToolchain(),
-            requires: androidRequirements(root),
+            requires: androidRequirements(root, androidDir),
           });
         }
         return targets;

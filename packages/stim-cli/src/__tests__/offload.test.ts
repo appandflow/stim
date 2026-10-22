@@ -480,6 +480,7 @@ describe('pickOffer for Android', () => {
       mkdirSync(join(project, 'android'));
       writeFileSync(join(project, 'android', 'gradle.properties'), 'android.builder.sdkDownload=false\n');
       expect(androidRequirements(project).sdkDownload).toBe(false);
+      expect(androidRequirements(project, join(project, 'elsewhere')).sdkDownload).toBeUndefined();
     } finally {
       rmSync(project, { recursive: true, force: true });
     }
