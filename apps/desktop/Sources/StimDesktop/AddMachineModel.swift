@@ -59,6 +59,7 @@ final class AddMachineModel {
   private(set) var existingId: String?
   var manualPort = ""
   var isFixture = false
+  var fixtureRegistered: ([String], [BuildMachineStatus]?)?
   private var tailscaleRead = false
   var checkingTailscale: Bool { !isFixture && !tailscaleRead }
   private let checkout: String?
@@ -144,8 +145,8 @@ final class AddMachineModel {
 
   func added(_ peer: Tailnet.Peer) -> AddedMachine? {
     let check = machines?.check(in: checkout)
-    return OffloadMachines.added(
-      peer.mac, entries: machines?.entries ?? [], statuses: check?.problem == nil ? check?.statuses : nil)
+    let known = fixtureRegistered ?? (machines?.entries ?? [], check?.problem == nil ? check?.statuses : nil)
+    return OffloadMachines.added(peer.mac, entries: known.0, statuses: known.1)
   }
   var checkingAdded: Bool { machines?.isBusy == true }
   private var selectablePeers: [Tailnet.Peer] { peers.filter { added($0) == nil } }

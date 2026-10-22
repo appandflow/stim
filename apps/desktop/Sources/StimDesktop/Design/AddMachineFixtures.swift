@@ -4,7 +4,7 @@
   import SwiftUI
 
   enum AddMachineFixture: String, CaseIterable, Identifiable {
-    case tailscaleMissing, tailscaleStoppedApp, tailscaleStoppedCLI, noMac, allOffline, peerOffline, ready
+    case tailscaleMissing, tailscaleStoppedApp, tailscaleStoppedCLI, noMac, allOffline, peerOffline, ready, peerAdded
     case chooseBoth, chooseBuilds, chooseHosted, chooseNone, alreadyApproved
     case command, expired, starting, awaitingApproval, awaitingPermission, approved
     case noAnswer, stepFailed, serverTooOld, requestLapsed, grantedOther, funneled, permissionSkipped, noWorkspace
@@ -52,8 +52,8 @@
       let mac = (androidOnly ? peers.first { $0.mac.os == target } : peers.first)!.mac
       let machine = mac.machine
       var wizard = SetupWizard(hasWorkspace: self != .noWorkspace)
-      if ![.tailscaleMissing, .tailscaleStoppedApp, .tailscaleStoppedCLI, .noMac, .allOffline, .peerOffline, .ready].contains(
-        self)
+      if ![.tailscaleMissing, .tailscaleStoppedApp, .tailscaleStoppedCLI, .noMac, .allOffline, .peerOffline, .ready, .peerAdded]
+        .contains(self)
       {
         _ = wizard.apply(.macChosen(mac), now: now)
         if self == .chooseBuilds { _ = wizard.apply(.capabilitiesChanged([.build]), now: now) }
@@ -182,6 +182,17 @@
         selfNode: client, ticket: ticket,
         install: self == .tailscaleMissing ? .none : self == .tailscaleStoppedCLI ? .cli : .app)
       if self == .allOffline { model.selectedId = nil }
+      if self == .peerAdded {
+        let statuses = try! JSONDecoder().decode(
+          [BuildMachineStatus].self,
+          from: Data(
+            #"""
+            [{"machine":"mini","state":"unreachable","dnsName":"mini.tail.test","diagnosis":{"layer":"server","code":"server-not-running","title":"Server not running","message":"stim-server is not running on mini.","remedy":"Start it there with stim-server service status."}},
+             {"machine":"old-air","state":"approved","offloadable":true,"dnsName":"old-air.tail.test"}]
+            """#.utf8))
+        model.fixtureRegistered = (["mini", "old-air"], statuses)
+        model.selectedId = "nUbuntu"
+      }
       return model
     }
 
