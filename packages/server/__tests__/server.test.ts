@@ -4210,27 +4210,6 @@ describe('archived reads', () => {
     expect(await client.request('logs.query', { archive: id })).toMatchObject({ result: { records: [] } });
   });
 
-  it('bounds a tailnet device more tightly than a local connection', async () => {
-    const { id, dir } = archiveFixture();
-    archivedFootage(dir, 1000, 10);
-    const port = await start();
-    const peer = '100.64.0.2';
-    const { keyPair } = await pair(port, peer);
-    const clients = [await returning(port, keyPair, peer), await returning(port, keyPair, peer)];
-    const params = { archive: id, platform: 'ios', at: 1000 };
-    const replies = await Promise.all(
-      clients.flatMap((client) =>
-        Array.from({ length: 40 }, (_, index) => client.request(index % 2 ? 'replay.range' : 'archive.detail', params)),
-      ),
-    );
-    const refused = replies.flatMap((reply) =>
-      'error' in reply ? [`${reply.error.code}: ${reply.error.message}`] : [],
-    );
-    expect(refused.length).toBeGreaterThan(0);
-    expect(new Set(refused)).toEqual(new Set(['limit-exceeded: A remote device can run 16 requests at a time.']));
-    expect(await clients[1]!.request('archive.detail', params)).toHaveProperty('result');
-  });
-
   it('queries real archived logs with the same JSON filters and context as the CLI', async () => {
     const { id, dir } = archiveFixture([
       { ts: 2, src: 'client', level: 'error', msg: 'previous error' },
@@ -5033,6 +5012,29 @@ require('node:net').createServer().listen(0, '127.0.0.1');
       first.socket.terminate();
       await until(() => owned.every((pid) => !alive(pid)));
       expect(await second.request('stats.get')).toMatchObject({ result: { version: 1 } });
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'bounds a tailnet device across its connections until its cancelled reads drain',
+    async () => {
+      const slow = slowGit();
+      const port = await start({ env: slow.env, requestLimits: { device: 2 } });
+      const peer = '100.64.0.2';
+      const { keyPair } = await pair(port, peer);
+      const first = await returning(port, keyPair, peer);
+      const second = await returning(port, keyPair, peer);
+      for (let id = 10; id < 12; id++)
+        first.socket.send(JSON.stringify({ id, method: 'stats.get', params: { workspace } }));
+      await until(() => slow.processes().length >= 2);
+      expect(await second.request('stats.get', { workspace })).toMatchObject({
+        error: { code: 'limit-exceeded', message: 'A remote device can run 2 requests at a time.' },
+      });
+      const owned = slow.processes();
+      first.socket.terminate();
+      await until(() => owned.every((pid) => !alive(pid)));
+      second.socket.send(JSON.stringify({ id: 20, method: 'stats.get', params: { workspace } }));
+      await until(() => slow.processes().length > owned.length);
     },
   );
 

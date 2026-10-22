@@ -1205,7 +1205,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     signal?: AbortSignal,
   ): Promise<DetailsRead> => {
     const abort = new AbortController();
-    signal?.addEventListener('abort', () => abort.abort(), { once: true });
+    if (signal?.aborted) abort.abort();
+    else signal?.addEventListener('abort', () => abort.abort(), { once: true });
     const timeoutMs = options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS;
     let task: Promise<DetailsRead>;
     const cancel = async () => {
@@ -1550,8 +1551,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const slotsFull = (needed = 1) =>
       commands.size + needed > requestLimits.connection ||
       (peer !== null && (peerCommands.get(peer) ?? 0) + needed > requestLimits.device);
-    const slotsMessage = () =>
-      peer !== null && commands.size < requestLimits.connection
+    const slotsMessage = (needed = 1) =>
+      peer !== null && commands.size + needed <= requestLimits.connection
         ? `A remote device can run ${requestLimits.device} requests at a time.`
         : `A connection can run ${requestLimits.connection} requests at a time.`;
     const planRequests = new Map<
@@ -3400,7 +3401,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const cwd = readDir(id, { workspace, archive });
       if (!cwd) return;
       if (archive === undefined && slotsFull(2)) {
-        return error(id, 'limit-exceeded', slotsMessage());
+        return error(id, 'limit-exceeded', slotsMessage(2));
       }
       const slotName = slot ?? 'default';
       const spans = recordedSpans(
@@ -4378,7 +4379,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       for (const unsubscribe of subscriptions.values()) unsubscribe();
       subscriptions.clear();
       for (const cancel of [...commands, ...reportWaits]) {
-        if (persistentActions.has(cancel)) continue;
+        if (persistentActions.has(cancel)) {
+          releaseSlot(cancel);
+          continue;
+        }
         running.delete(cancel);
         void cancelling.track(cancel());
       }
