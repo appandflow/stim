@@ -194,22 +194,26 @@ function mainCheckoutAppDir(root: string, target: string, cwd: string): string {
 
 /**
  * The app workspace a warm prepares: the nearest app below the worktree root, or else the one app registered in
- * the source checkout or in this worktree, at the same place in this worktree, or else the worktree root when it
- * is the app. A monorepo root can declare react-native without being the app.
+ * the source checkout, at the same place in this worktree, or else the one registered in this worktree, or else
+ * the worktree root when it is the app. A monorepo root can declare react-native without being the app.
  */
 export function warmedWorkspace(root: string, target: string, cwd: string): string | null {
   const nearest = findProjectRoot(cwd);
   const app = nearest && isPathPrefix(target, nearest) && isMobileProject(nearest) ? nearest : null;
   if (app && app !== target) return app;
-  const apps = new Set<string>();
-  for (const path of Object.keys(loadConfig()?.projects ?? {})) {
-    for (const checkout of [root, target]) {
+  const registered = Object.keys(loadConfig()?.projects ?? {});
+  const appsUnder = (checkout: string): Set<string> => {
+    const apps = new Set<string>();
+    for (const path of registered) {
       const rel = relative(checkout, path);
       if (rel.startsWith('..') || isAbsolute(rel)) continue;
       const mapped = resolve(target, rel);
-      if (apps.has(mapped) || isMobileProject(mapped)) apps.add(mapped);
+      if (isMobileProject(mapped)) apps.add(mapped);
     }
-  }
+    return apps;
+  };
+  const source = appsUnder(root);
+  const apps = source.size ? source : appsUnder(target);
   return apps.size === 1 ? [...apps][0]! : app;
 }
 

@@ -1404,6 +1404,15 @@ describe('a refresh from the worktree root with a nested app that has its own lo
     expect(result.stderr).not.toContain('no single app');
   });
 
+  test('keeps the source checkout app when the worktree root, which also declares react-native, is registered too', async () => {
+    write(target, 'package.json', '{"name":"refresh-fixture","dependencies":{"react-native":"0.80.0"}}\n');
+    upsertProject(app, {});
+    upsertProject(target, {});
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(0);
+    expect(spawned).toEqual([`npm ci in ${app}`]);
+  });
+
   test('says that only the repository root is refreshed when no app is registered, and where to run the refresh', async () => {
     const result = await runWarm(target, '--refresh');
     expect(result.code).toBe(0);
