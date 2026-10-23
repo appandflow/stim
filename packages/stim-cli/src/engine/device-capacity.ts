@@ -229,6 +229,53 @@ function listed<T>(source: Listing<T>, empty: T, absent: (error: unknown) => boo
   }
 }
 
+async function listedAwait<T>(
+  read: () => T | Promise<T>,
+  empty: T,
+  absent: (error: unknown) => boolean = () => false,
+): Promise<T> {
+  try {
+    return (await read()) ?? empty;
+  } catch (error) {
+    if (absent(error)) return empty;
+    throw new DeviceCountUnavailable('', { cause: error });
+  }
+}
+
+type AsyncListing<T> = T | (() => T | Promise<T>);
+
+interface AsyncInventorySources {
+  sims?: AsyncListing<SimRecord[]>;
+  adb?: AsyncListing<AdbDevices>;
+  config?: AsyncListing<Config | null>;
+  booting?: AsyncListing<BootingDevice[]>;
+}
+
+async function readInventoryAsync({
+  sims = () => (process.platform === 'darwin' ? listAllIosSimsAsync({ timeoutMs: LISTING_TIMEOUT_MS }) : []),
+  adb = () => listAdbDevicesAsync({ timeoutMs: LISTING_TIMEOUT_MS }),
+  config = loadConfig,
+  booting = readBootingDevices,
+}: AsyncInventorySources): Promise<DeviceInventory | CapacityRefusal> {
+  try {
+    const recorded = await listedAwait(() => (typeof config === 'function' ? config() : config), null);
+    return {
+      booting: await listedAwait(() => (typeof booting === 'function' ? booting() : booting), []),
+      sims: await listedAwait(() => (typeof sims === 'function' ? sims() : sims), [], toolAbsent),
+      adb: recordsOwnedEmulator(recorded)
+        ? await listedAwait(() => (typeof adb === 'function' ? adb() : adb), NO_ADB, toolAbsent)
+        : NO_ADB,
+      config: recorded,
+    };
+  } catch (error) {
+    if (error instanceof DeviceCountUnavailable) {
+      if (isClaimRefusal(error.cause)) throw error.cause;
+      return uncountedRefusal(error.cause);
+    }
+    throw error;
+  }
+}
+
 function readInventory({
   sims = listSimsForCount,
   adb = listAdbForCount,
@@ -275,6 +322,19 @@ async function listedAsync<T>(source: () => Promise<T>, empty: T): Promise<T> {
   } catch (error) {
     if (toolAbsent(error)) return empty;
     throw new DeviceCountUnavailable('', { cause: error });
+  }
+}
+
+export async function countLiveOwnedDevicesFrom(
+  sources: AsyncInventorySources,
+  { exclude = [] }: { exclude?: DeviceCountExclusion[] } = {},
+): Promise<number | { unknown: string }> {
+  try {
+    const inventory = await readInventoryAsync(sources);
+    return 'code' in inventory ? { unknown: inventory.message } : inventoryKeys(inventory, exclude).size;
+  } catch (error) {
+    if (isClaimRefusal(error)) return { unknown: error.message };
+    throw error;
   }
 }
 
@@ -644,7 +704,7 @@ export async function withDeviceBootAdmission<T>(
               if (claims.some((entry) => deviceKey(entry.platform, entry.key) === own)) return admit();
               return wait(lastInventory);
             }
-            const inventory = readInventory(sources);
+            const inventory = await readInventoryAsync(sources);
             if ('code' in inventory) throw new DeviceAdmissionRefusal(inventory);
             const keys = inventoryKeys(inventory);
             const own = deviceKey(device.platform, device.key);

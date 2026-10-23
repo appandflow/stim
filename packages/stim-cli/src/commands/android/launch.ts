@@ -77,7 +77,11 @@ import { settleFingerprintCheck, type FingerprintCheck } from '../../cache/finge
 import { launchOutcomeRecord, type MobileRuntimePreparation, type RuntimeReadiness } from '../native-runtime.ts';
 import type { RuntimePlan } from '../../engine/runtime-plan.ts';
 import { killPreviousCollector, startCollector } from './collector.ts';
-import { captureNativeCrashes, printNativeCrashReport } from '../../diagnostics/native-crash.ts';
+import {
+  androidCrashClockOffset,
+  captureNativeCrashes,
+  printNativeCrashReport,
+} from '../../diagnostics/native-crash.ts';
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 import type { HostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
 
@@ -267,17 +271,28 @@ export async function verifyAndroidMetroRun({
   unattributed?: boolean;
 }> {
   const runCommand = hostedRunCommand ?? nativeRunCommand('android', slot, { physical, deviceId: serial });
-  const readNativeCrashes = () =>
-    hostedLogs
-      ? hostedLogs.readNativeCrashes()
-      : remoteDevice
-        ? []
-        : captureNativeCrashes(
-            { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
-            logsDir,
-            operation?.signal,
-            operation?.env,
-          );
+  let clockOffsetMs: number | undefined;
+  const readNativeCrashes = async () => {
+    if (hostedLogs) return hostedLogs.readNativeCrashes();
+    if (remoteDevice) return [];
+    // One verification keeps one clock offset; a guest clock step during it is not re-measured.
+    const measured = clockOffsetMs ?? (await androidCrashClockOffset(serial, operation?.signal));
+    if (measured !== null) clockOffsetMs = measured;
+    return captureNativeCrashes(
+      {
+        root,
+        slot,
+        platform: 'android',
+        deviceId: serial,
+        appId: androidPackage,
+        since: launchedAt,
+        clockOffsetMs: measured,
+      },
+      logsDir,
+      operation?.signal,
+      operation?.env,
+    );
+  };
 
   const freshEmulator = Boolean((device.created || device.adoptionPending) && device.owned && !remoteDevice);
   const timeoutMs = freshEmulator ? 60000 : VERIFY_TIMEOUT_MS;

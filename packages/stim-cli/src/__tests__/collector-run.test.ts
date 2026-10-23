@@ -848,6 +848,7 @@ describe('runCollector reattach seams', () => {
     assert(firstStarted);
     firstStarted.emit('exit', 0, null);
 
+    await until(() => started.length === 2, { label: 'the reattached stream' });
     expect(started.map((c) => c.pid)).toEqual([3132, 4200]);
     expect(
       deviceLog()
@@ -860,8 +861,76 @@ describe('runCollector reattach seams', () => {
     result.finish(0, 'info', 'done', 'collector_stopped');
   });
 
+  test('a newer pid reported while a reattach reads the device clock replaces it instead of adding a stream', async () => {
+    const started: ChildProcess[] = [];
+    const pendingClocks: Array<() => void> = [];
+    let samples = 0;
+    let reportPid: ((pid: number) => void | Promise<void>) | undefined;
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () =>
+        ++samples === 1 ? 0 : new Promise<number>((resolve) => pendingClocks.push(() => resolve(0))),
+      watchPid: ({ onChange }) => {
+        reportPid = onChange;
+        return { stop: () => {}, probe: async () => 4200, pid: 3132 };
+      },
+      startStream: ({ pid: streamPid }) => {
+        const c = fakeChild(streamPid);
+        started.push(c);
+        return c;
+      },
+      attachSignals: false,
+      onExit: () => {},
+    });
+    const firstStream = started[0];
+    assert(firstStream);
+    firstStream.emit('exit', 0, null);
+    await until(() => pendingClocks.length === 1, { label: 'the reattach clock read' });
+    assert(reportPid);
+    void reportPid(4300);
+    await until(() => pendingClocks.length === 2, { label: 'the second clock read' });
+    for (const release of pendingClocks) release();
+    await until(() => started.length === 2, { label: 'the reattached stream' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(started.map((c) => c.pid)).toEqual([3132, 4300]);
+    assert(result);
+    result.finish(0, 'info', 'done', 'collector_stopped');
+  });
+
+  test('finish aborts the adb reads the collector still has in flight', async () => {
+    let readSignal: AbortSignal | undefined;
+    let watchSignal: AbortSignal | undefined;
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: (_serial, { signal }) => {
+        readSignal = signal;
+        return null;
+      },
+      watchPid: ({ signal }) => {
+        watchSignal = signal;
+        return { stop: () => {}, probe: async () => 3132, pid: 3132 };
+      },
+      startStream: ({ pid: streamPid }) => fakeChild(streamPid),
+      attachSignals: false,
+      onExit: () => {},
+    });
+    assert(result);
+    expect(readSignal?.aborted).toBe(false);
+    expect(watchSignal).toBe(readSignal);
+    result.finish(0, 'info', 'done', 'collector_stopped');
+    expect(readSignal?.aborted).toBe(true);
+  });
+
   test('a stream that ends with no app left is still the end of the collector', async () => {
-    let code = null;
+    let code: number | null = null;
     const result = await runCollector({
       platform: 'android',
       root,
@@ -879,6 +948,7 @@ describe('runCollector reattach seams', () => {
     });
     assert(result?.child);
     result.child.emit('exit', 0, null);
+    await until(() => code === 0, { label: 'the collector to finish' });
     expect(code).toBe(0);
     expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
     expect('collectors' in (state() || {})).toBe(false);
@@ -900,7 +970,7 @@ describe('runCollector reattach seams', () => {
           stopped = true;
           timers.cleared++;
         },
-        probe: () => null,
+        probe: async () => null,
         pid: 3132,
       }),
       attachSignals: false,
@@ -954,6 +1024,7 @@ describe('the collector never signals a pid it does not own', () => {
       assert(firstStarted);
       firstStarted.emit('exit', 0, null);
 
+      await until(() => started.length === 2, { label: 'the reattached stream' });
       expect(killedHandles).toEqual(['SIGTERM']);
       expect(signalled.filter(([, sig]) => sig !== 0)).toEqual([]);
 

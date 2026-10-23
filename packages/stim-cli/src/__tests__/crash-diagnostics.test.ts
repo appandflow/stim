@@ -464,6 +464,47 @@ test('a stalled symbolication server cannot hide or indefinitely delay the origi
   expect(record?.symbolicationNote).toContain('timed out');
 });
 
+test('a caller that measured the device clock spares every crash read its own clock sample', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-native-clock-'));
+  process.env.STIM_HOME = join(root, 'stim-home');
+  const epoch = Math.floor(Date.now() / 1000);
+  const raw = [
+    `${epoch}.000 F/DEBUG( 80): *** *** *** ***`,
+    `${epoch}.001 F/DEBUG( 80): pid: 44, tid: 44, name: app.test  >>> app.test <<<`,
+    `${epoch}.002 F/DEBUG( 80): signal 6 (SIGABRT), code -1`,
+  ].join('\n');
+  const adbCalls: string[][] = [];
+  setExecutor({
+    runFileQuiet: (file, args) => {
+      if (file !== 'adb') return null;
+      adbCalls.push(args);
+      return args.includes('date') ? String(Date.now()) : raw;
+    },
+  });
+  try {
+    const target = {
+      root,
+      platform: 'android' as const,
+      appId: 'app.test',
+      deviceId: 'owned',
+      since: epoch * 1000 - 1000,
+    };
+    const logs = join(root, 'logs');
+    const measured = await captureNativeCrashes({ ...target, clockOffsetMs: 0 }, logs);
+    expect(measured).toHaveLength(1);
+    expect(adbCalls.map((args) => args[2])).toEqual(['logcat']);
+    adbCalls.length = 0;
+    expect(await captureNativeCrashes({ ...target, clockOffsetMs: null }, logs)).toEqual([]);
+    expect(adbCalls).toEqual([]);
+    await captureNativeCrashes(target, logs);
+    expect(adbCalls.map((args) => args[2])).toEqual(['shell', 'logcat']);
+  } finally {
+    resetExecutor();
+    delete process.env.STIM_HOME;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('APK frames require a matching ELF build ID and repeated collection does not duplicate a crash', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-native-diagnostics-'));
   const priorSdk = process.env.ANDROID_HOME;

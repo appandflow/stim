@@ -3969,6 +3969,32 @@ describe('launch verification', () => {
     },
   );
 
+  test('every crash check of one launch verification shares one device clock sample', async () => {
+    const adbCalls: string[][] = [];
+    setExecutor(
+      makeExecutor({
+        runFileQuiet: (file, args) => {
+          if (file !== 'adb') return null;
+          adbCalls.push(args);
+          return args.includes('date') ? String(Date.now()) : '';
+        },
+      }),
+    );
+    try {
+      const h = harness({
+        verifyLaunched: async (args: Parameters<typeof verifyLaunch>[0]) => {
+          for (let check = 0; check < 3; check++) await args?.readNativeCrashes?.();
+          return { verified: true, processAlive: true, waitedMs: 2500, errors: [] };
+        },
+      });
+      expect((await h.run()).ok).toBe(true);
+      expect(adbCalls.filter((args) => args.includes('date'))).toHaveLength(1);
+      expect(adbCalls.filter((args) => args.includes('logcat')).length).toBeGreaterThanOrEqual(3);
+    } finally {
+      resetExecutor();
+    }
+  });
+
   test("a verified launch reports launched: true and polls this workspace's timeline", async () => {
     const h = harness();
     const result = await h.run();
