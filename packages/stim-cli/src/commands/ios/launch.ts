@@ -1127,24 +1127,15 @@ export async function finishIosRun({
     });
   }
   logWriter().write(
-    runtime.kind === 'process'
-      ? {
-          src: 'build',
-          level: launchState === LAUNCH_UNVERIFIED ? 'warn' : 'info',
-          event: launchState === LAUNCH_UNVERIFIED ? 'launch_unverified' : 'launch_verified',
-          msg:
-            launchState === LAUNCH_UNVERIFIED
-              ? `${bundleId} could not be verified as running`
-              : `${bundleId} is running its native process`,
-        }
-      : launchOutcomeRecord({
-          launchState,
-          release: runtime.kind === 'embedded-js',
-          bundleId,
-          configuration,
-          metroPort,
-          unattributed,
-        }),
+    launchOutcomeRecord({
+      launchState,
+      release: runtime.kind === 'embedded-js',
+      process: runtime.kind === 'process',
+      bundleId,
+      configuration,
+      metroPort,
+      unattributed,
+    }),
   );
 
   const leaseFacts = lease?.facts() ?? null;

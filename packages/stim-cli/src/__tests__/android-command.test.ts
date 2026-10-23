@@ -58,7 +58,7 @@ import {
   upsertProject,
   writeConfigSetting,
 } from '../workspace/config.ts';
-import { buildMachinesFile, openLogDir, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
+import { buildMachinesFile, openLogDir, queryLogs, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import {
   workspaceDir,
@@ -7910,6 +7910,70 @@ describe('named Android hosting placement', () => {
     expect(h.stderr.join('\n')).toContain('app reported ready');
     expect(result.facts?.launched).toBe(true);
     expect(stop).toHaveBeenCalledOnce();
+  });
+
+  test.each([
+    { verified: true, event: 'launch_verified', level: 'info' },
+    { verified: false, event: 'launch_unverified', level: 'warn' },
+  ])(
+    'a hosted launch writes its launch window so logs --errors shows only the latest attempt: $event',
+    async ({ verified, event, level }) => {
+      const h = harness({
+        json: true,
+        remoteDevice: 'mini',
+        prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: hostDevice, session: null }),
+        placeHostedAndroid: async (_target: unknown, args: { reserved: (value: typeof placement) => void }) => {
+          args.reserved(placement);
+          return { placement, launched: 'unverified' };
+        },
+        build: async () => makeAndroidBuildSuccess({ apkPath: fakeApk() }),
+        verifyLaunched: async () => (verified ? { verified: true, waitedMs: 10 } : { verified: false, timedOut: true }),
+      });
+      await h.run();
+      const logsDir = workspaceLogsDir(root);
+      const records = parseNdjsonText(readFileSync(join(logsDir, 'build-android.ndjson'), 'utf-8'));
+      const marker = records.find((r) => r.marker === true);
+      expect(marker).toMatchObject({
+        event: 'launch_attempt',
+        platform: 'android',
+        slot: 'default',
+        remote: true,
+        host: 'mini',
+      });
+      expect(records.filter((r) => String(r.event).startsWith('launch_')).map((r) => [r.event, r.level])).toEqual([
+        ['launch_attempt', 'info'],
+        [event, level],
+      ]);
+      const client = (ts: number, msg: string) => ({ ts, src: 'client', platform: 'android', level: 'error', msg });
+      const launchTs = Number(marker?.ts);
+      writeFileSync(
+        join(logsDir, 'client.ndjson'),
+        [client(launchTs - 1000, 'before'), client(launchTs + 1000, 'after')].map((r) => JSON.stringify(r)).join('\n') +
+          '\n',
+      );
+      for (const slot of [undefined, 'default'])
+        expect(queryLogs({ dir: logsDir, slot, errorsOnly: true }).map((r) => r.msg)).toEqual(['after']);
+    },
+  );
+
+  test('a hosted placement that fails after the device is ready still leaves the launch marker', async () => {
+    const h = harness({
+      json: true,
+      remoteDevice: 'mini',
+      prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: hostDevice, session: null }),
+      placeHostedAndroid: async (_target: unknown, args: { reserved: (value: unknown) => unknown }) => {
+        await args.reserved({ ...placement, device: undefined });
+        await args.reserved(placement);
+        throw Object.assign(new Error('launch failed'), { code: 'STIM_HOSTING_REFUSED' });
+      },
+      build: async () => makeAndroidBuildSuccess({ apkPath: fakeApk() }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
+    expect(records.filter((r) => r.marker === true)).toMatchObject([
+      { event: 'launch_attempt', remote: true, host: 'mini', deviceId: placement.session },
+    ]);
   });
 
   test('a hosted native crash names the hosted rerun command', async () => {
