@@ -101,6 +101,7 @@ export async function selectAndroidPlacement({
   fromFlag,
   noWait,
   waitMs,
+  signal,
   buildMachine,
   localSelectors,
   eas,
@@ -115,6 +116,7 @@ export async function selectAndroidPlacement({
   fromFlag: boolean;
   noWait: boolean;
   waitMs?: number;
+  signal?: AbortSignal;
   buildMachine?: string;
   eas?: () => Promise<EasFallbackCheck>;
   localSelectors: (target: {
@@ -170,6 +172,7 @@ export async function selectAndroidPlacement({
       noWait,
       ...(waitMs === undefined ? {} : { waitMs }),
       onWait: (line) => phase('placement:', line),
+      signal,
       ...(eas ? { eas } : {}),
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
@@ -213,6 +216,14 @@ export async function selectAndroidPlacement({
       devicePlacement: placed.placement,
     };
   } catch (error) {
+    if (signal?.aborted)
+      return {
+        failure: {
+          code: 'STIM_CANCELLED',
+          message: 'The run was cancelled while it waited for a remote machine.',
+          remedy: 'Run the command again when you want the app on a device.',
+        },
+      };
     return {
       failure: {
         code: (error as Error & { code?: string }).code ?? 'STIM_HOSTING_REFUSED',

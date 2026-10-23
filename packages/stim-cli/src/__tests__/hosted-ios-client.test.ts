@@ -1427,6 +1427,39 @@ test('remote-only waits for a full host and places once it has room, and refuses
   expect(sleeps).toEqual([]);
 });
 
+test('an aborted run ends the remote-only wait instead of polling to its deadline', async () => {
+  declined = 'All configured hosted device reservations are occupied';
+  capacity = 0;
+  const controller = new AbortController();
+  let sleeps = 0;
+  await expect(
+    automaticDevicePlacement(
+      {
+        root,
+        slot: 'default',
+        platform: 'ios',
+        placement: 'remote-only',
+        selectors: {},
+        noWait: false,
+        waitMs: 600_000,
+        signal: controller.signal,
+      },
+      {
+        peek: () => ({ count: 3, max: 3, queued: 0, localLive: false }),
+        capacity: () => ({ cpus: 4, loadPerCore: 1, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
+        memory: () => 'normal',
+        budget: async () => null,
+        now: () => 0,
+        sleep: async () => {
+          sleeps++;
+          controller.abort();
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ name: 'AbortError' });
+  expect(sleeps).toBe(1);
+});
+
 test('remote.easFallback asks EAS only when this machine is full and no host admits', async () => {
   const eas = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
   const place = (count: number) =>

@@ -289,8 +289,7 @@ export async function automaticDevicePlacement(
     if (immediate || waited >= waitMs)
       throw Object.assign(new Error(refusalText(decision, immediate ? null : waited)), {
         code: 'STIM_AT_CAPACITY',
-        remedy:
-          'Wait for a remote machine in remote.machines to have room, retry with a longer --wait <seconds>, or select a placement that may run here.',
+        remedy: `Wait for a remote machine in remote.machines to have room, ${platform === 'macos' ? 'retry later' : 'retry with a longer --wait <seconds>'}, or select a placement that may run here.`,
       });
     if (!announced) {
       announced = true;

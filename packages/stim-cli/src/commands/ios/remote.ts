@@ -1,5 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import type { IosSimSnapshot } from '../../devices/ios.ts';
+import { runCancellationSignal } from '../../engine/native-run.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { resolveSimulatorAppFlag } from './support.ts';
 import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
@@ -161,6 +162,7 @@ export async function selectIosPlacement(
   const selection = selectIosTarget(args);
   if ('failure' in selection || selection.machine !== 'auto') return selection;
   const { root, slot, d, opts, deviceType, runtime, noWait, waitMs, phase, log, release, appMode, metroCheck } = args;
+  const signal = runCancellationSignal(args.operation) ?? args.operation?.signal;
   const viewer = resolveSimulatorAppFlag(opts.simulatorApp, args.physical, null);
   if ('refusal' in viewer) return { failure: viewer.refusal };
   const refusal = await args.validateSelectors();
@@ -188,6 +190,7 @@ export async function selectIosPlacement(
       noWait,
       ...(waitMs === undefined ? {} : { waitMs }),
       onWait: (line) => phase('placement:', line),
+      signal,
       ...(easFallback
         ? {
             eas: () =>
@@ -243,6 +246,14 @@ export async function selectIosPlacement(
       devicePlacement: placed.placement,
     };
   } catch (error) {
+    if (signal?.aborted)
+      return {
+        failure: {
+          code: 'STIM_CANCELLED',
+          message: 'The run was cancelled while it waited for a remote machine.',
+          remedy: 'Run the command again when you want the app on a device.',
+        },
+      };
     return {
       failure: {
         code: (error as Error & { code?: string }).code ?? 'STIM_HOSTING_REFUSED',

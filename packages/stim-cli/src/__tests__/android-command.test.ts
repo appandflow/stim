@@ -8077,6 +8077,36 @@ describe('named Android hosting placement', () => {
   });
 });
 
+test('stop cancels a remote-only placement wait, which got the run signal and its --wait', async () => {
+  const controller = new AbortController();
+  const context = testContext({ signal: controller.signal });
+  let aborted: boolean | undefined;
+  const automatic = vi.fn<typeof automaticDevicePlacement>(async ({ signal }) => {
+    const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
+    assert(claim);
+    requestNativeRunCancel(root, claim.claimId);
+    controller.abort('SIGINT');
+    aborted = signal?.aborted;
+    throw Object.assign(new Error('no host'), { code: 'STIM_HOSTING_REFUSED' });
+  });
+  const h = harness({
+    context,
+    json: true,
+    remoteDevice: 'remote-only',
+    wait: '90',
+    automaticDevicePlacement: automatic,
+  });
+  const result = await withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+    write: () => {},
+  });
+  expect(automatic).toHaveBeenCalledWith(
+    expect.objectContaining({ placement: 'remote-only', waitMs: 90_000, signal: expect.any(AbortSignal) }),
+  );
+  expect(aborted).toBe(true);
+  expect(result.error?.code).toBe('STIM_CANCELLED');
+  expect(h.calls.build).toEqual([]);
+});
+
 test('stop cancels Android device preparation waiting for a slot before any build or boot', async () => {
   const boot = vi.fn<() => Promise<void>>(async () => {});
   const controller = new AbortController();

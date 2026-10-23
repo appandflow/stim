@@ -906,6 +906,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     metroCheck,
     noWait: plan.deviceSlotWaitMs === 0,
     waitMs: plan.deviceSlotWaitMs,
+    signal: settingsSignal,
     buildMachine: options.buildMachine,
     read: options.readHostedAndroid,
     resolveSerial: resolveAvdSerial,

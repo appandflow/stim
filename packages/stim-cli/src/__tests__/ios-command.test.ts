@@ -8184,6 +8184,29 @@ describe('iOS placement on a hosting Mac', () => {
     },
   );
 
+  test('stop cancels a remote-only placement wait, which got the run signal and its --wait', async () => {
+    let aborted: boolean | undefined;
+    const automatic = vi.fn<typeof automaticDevicePlacement>(async ({ signal }) => {
+      const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
+      assert(claim);
+      requestNativeRunCancel(root, claim.claimId);
+      process.emit('SIGINT');
+      aborted = signal?.aborted;
+      throw Object.assign(new Error('no host'), { code: 'STIM_HOSTING_REFUSED' });
+    });
+    const prepare = vi.fn<() => never>();
+    const result = await run(
+      { remote: 'remote-only', wait: '90', json: true },
+      { automaticDevicePlacement: automatic, prepareHostedIos: prepare },
+    );
+    expect(automatic).toHaveBeenCalledWith(
+      expect.objectContaining({ placement: 'remote-only', waitMs: 90_000, signal: expect.any(AbortSignal) }),
+    );
+    expect(aborted).toBe(true);
+    expect(parseFirst(result.logs).code).toBe('STIM_CANCELLED');
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
   test('ios.remote remote-only places automatically when no flag is passed', async () => {
     writeConfigSetting({ scope: 'workspace', projectPath: root }, 'ios', { remote: 'remote-only' });
     const automatic = vi
