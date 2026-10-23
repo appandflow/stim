@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
@@ -89,8 +89,12 @@ export async function copySpringBoardCrashReports({
     try {
       await writeFile(join(destDir, name), text, { flag: 'wx', mode: 0o600 });
     } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'EEXIST') files.push(name);
-      continue;
+      if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
+        files.push(name);
+        continue;
+      }
+      await rm(join(destDir, name), { force: true });
+      throw error;
     }
     stored++;
     copiedBytes += bytes;

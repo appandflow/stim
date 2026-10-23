@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { copySpringBoardCrashReports, selectSpringBoardReports } from '../devices/springboard-crash-reports.ts';
@@ -115,4 +124,16 @@ test('copySpringBoardCrashReports reports an unreadable report folder instead of
   rmSync(join(home, 'Library/Logs/DiagnosticReports/Retired'), { recursive: true });
   writeFileSync(join(home, 'Library/Logs/DiagnosticReports/Retired'), 'not a directory');
   await expect(copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home })).rejects.toThrow(/ENOTDIR/);
+});
+
+test('copySpringBoardCrashReports surfaces a failed write instead of counting it as over the limits', async () => {
+  report('', 'SpringBoard-2026-10-22-235817.ips', own());
+  mkdirSync(dest);
+  chmodSync(dest, 0o500);
+  try {
+    await expect(copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home })).rejects.toThrow(/EACCES/);
+  } finally {
+    chmodSync(dest, 0o700);
+  }
+  expect(readdirSync(dest)).toEqual([]);
 });
