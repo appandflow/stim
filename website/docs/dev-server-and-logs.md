@@ -435,8 +435,8 @@ code={`stim logs --source placement
 stim logs --source placement --json`}
 />
 
-A record has the settings that applied (`remote.build`, `remote.buildMode`,
-`ios.remote` or `android.remote`) with the layer each came from (`flag`, `env`,
+A record has the settings that applied (`remote.build` for a build,
+`ios.remote` or `android.remote` for a device) with the layer each came from (`flag`, `env`,
 `setting` or `default`), each remote machine that was checked with a reason code
 (`accepted`, `unreachable`, `busy`, `disk`, `load`, `version-mismatch`,
 `no-matching-device`, `declined`, `memory`, `no-capacity`) and the human

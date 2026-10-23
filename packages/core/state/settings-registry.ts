@@ -960,7 +960,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: { kind: 'strings' },
     scopes: MACHINE,
     description:
-      'Tailscale names of the remote machines this machine may build on and host owned simulators on, each optionally with :<port> of its tailscale serve route (default 7443); what each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
+      'Tailscale names of the remote machines this machine may build on and host owned simulators, emulators and macOS apps on, each optionally with :<port> of its tailscale serve route (default 7443). The order is the placement priority: each workload goes to the first machine with room and a load under its own limit. What each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
   },
   {
     key: 'remote.buildPoolDisabled',
@@ -984,7 +984,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: false,
     description:
-      'When ios.remote or android.remote is auto, this machine is at its concurrency.maxDevices cap and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can',
+      'When ios.remote or android.remote is auto or remote, this machine is at its concurrency.maxDevices cap and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can; remote-only never uses it',
   },
   {
     key: 'remote.easMaxDurationMinutes',
@@ -1013,7 +1013,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 2,
     description:
-      'Load per core (5-minute load average divided by the CPU count) at which this machine counts as saturated: it declines builds other machines send it, automatic build placement stops preferring it, and automatic iOS and Android device placement treats it as busy',
+      'Load per core (5-minute load average divided by the CPU count) at which this machine counts as saturated: it declines builds other machines send it, reports the limit in its device offers so other machines skip it like a full one, stops preferring itself for automatic placement, and automatic iOS, Android and macOS placement treats it as busy',
   },
   {
     key: 'server.workerRoot',

@@ -328,8 +328,11 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertTrue(speedComparison(machine: "mini", offloadMs: 172000, localMs: 250000).contains("faster"))
     XCTAssertTrue(speedComparison(machine: "mini", offloadMs: 250000, localMs: 172000).contains("slower"))
     XCTAssertTrue(speedComparison(machine: "mini", offloadMs: 172000, localMs: 172000).contains("same time"))
-    XCTAssertEqual(WizardMode.defaultChoice(changedMode: true, current: "off"), .auto)
-    XCTAssertEqual(WizardMode.defaultChoice(changedMode: false, current: "force"), .force)
+    XCTAssertEqual(WizardMode.defaultChoice(changedMode: true, current: "local"), .auto)
+    XCTAssertEqual(WizardMode.defaultChoice(changedMode: false, current: "remote"), .remote)
+    XCTAssertEqual(WizardMode.defaultChoice(changedMode: false, current: nil), .auto)
+    XCTAssertNil(WizardMode.defaultChoice(changedMode: false, current: "remote-only"))
+    XCTAssertNil(WizardMode.defaultChoice(changedMode: false, current: "janics-mac-mini"))
   }
 
   func testSampleRemovalRejectsOtherFoldersAndSymlinkEscapes() throws {

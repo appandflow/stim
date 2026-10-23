@@ -1328,9 +1328,12 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    - The approvals.
    - A **Try it** card with a copyable agent prompt and
      `stim ios --remote-build <machine>`, or `stim android` for a Linux or Windows machine.
-   - **Builds**: Auto / Always / Never for `remote.buildMode`. It defaults to
-     Auto when the wizard added the first remote Mac, and otherwise keeps the
-     current mode.
+   - **Builds**: Auto / Remote first / This Mac for `remote.build` (`auto`,
+     `remote` or `local`). It defaults to Auto when the wizard added the first
+     remote Mac, and otherwise keeps the current choice. A current value the
+     wizard does not offer, such as `remote-only` or one Mac's name, selects
+     nothing and Done keeps it unless you choose. The caption under the choice
+     says where builds run.
    - **Simulators**, shown when Hosted simulators was chosen: This Mac / Auto /
      Always on the Mac. Done writes `ios.remote` and `android.remote` at machine
      scope (unset, `auto`, or the `remote.machines` entry with its port), and
@@ -1354,7 +1357,7 @@ workspace and sample folder, and releases its owned simulator or emulator (parke
 within the parked-simulator limit, deleted otherwise), quietly and on a best-effort
 basis.
 
-Cancel removes entries added by the wizard, restores `remote.buildMode` only if the
+Cancel removes entries added by the wizard, restores `remote.build` only if the
 wizard changed it, and runs doctor to forget the pairing. A failed undo shows
 **Retry Undo**; it does not repeat on its own, because each run asks doctor to
 forget the pairing. It shows revoke commands for grants created during this run,
@@ -1371,10 +1374,15 @@ Another Mac on the tailnet can build for this one once a person on it approves
 this Mac (see [Build access](../../packages/server/README.md#build-access)).
 
 On the Mac that wants to build elsewhere, **Stim > Settings > Remote Machines**
-is a list of the entries of the `remote.machines` machine setting. Each row
-shows the Mac's name, one status pill, its MagicDNS name with its cores and
+is a list of the entries of the `remote.machines` machine setting, in that order.
+The order is the placement priority for builds, simulators, emulators and macOS apps:
+each goes to the first Mac that has room and a load under its own
+`server.maxLoadPerCore`, and to the next only when it has none. With two or more Macs
+each row shows its place, and the up and down buttons write the new order to
+`remote.machines` at machine scope. The list's footer says the same. Each row
+shows its place in the list, the Mac's name, one status pill, its MagicDNS name with its cores and
 offloaded builds, a detail line, what it does (**Builds**, plus **Simulators**
-when its device-host access is approved), and **Remove...**. The pill reads **Approved**, **Waiting for
+when its device-host access is approved), up and down buttons that move the Mac, and **Remove...**. The pill reads **Approved**, **Waiting for
 approval** (someone on that machine approves it by running the setup command
 there; the row says when the request lapses, such as "Waiting for approval
 until 21:05", in local time),

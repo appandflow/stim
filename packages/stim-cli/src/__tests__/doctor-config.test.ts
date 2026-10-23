@@ -250,6 +250,18 @@ describe('against a config file on disk', () => {
     return { layers, settings: mergeSettingsLayers(layers.map((layer) => layer.settings)) };
   }
 
+  test('a remote.buildMode left in the machine config reaches doctor with its replacement', () => {
+    writeConfig({ version: 2, repos: {}, projects: {}, remote: { machines: ['mini'], buildMode: 'force' } });
+    const { layers, settings } = machineSettings();
+    const findings = checkMachineSettings({ settings, layers, projectRoot: project, env: {} });
+    expect(findings).toEqual([
+      expect.objectContaining({
+        title: 'remote.buildMode was replaced by remote.build',
+        fix: `Run \`stim settings set remote.build remote\`, then remove remote.buildMode from ${join(home, 'config.json')}.`,
+      }),
+    ]);
+  });
+
   test('a projects entry for a checkout that is gone is left to gc while its settings are swept', () => {
     const dead = join(home, 'deleted-checkout');
     writeConfig({

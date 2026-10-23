@@ -222,7 +222,7 @@ final class SetupWizardTests: XCTestCase {
       (.init(mode: "auto", modeOrigin: "default"), [.build], true),
       (.init(builds: ["other"]), [.build], false),
       (.init(mode: "auto", modeOrigin: "machine"), [.build], false),
-      (.init(mode: "off", modeOrigin: "env"), [.build], false),
+      (.init(mode: "local", modeOrigin: "env"), [.build], false),
       (.init(), [.deviceHost], false),
     ] {
       var wizard = wizard(settings: settings, capabilities: capabilities)

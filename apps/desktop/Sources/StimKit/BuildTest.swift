@@ -198,18 +198,20 @@ public func speedComparison(machine: String, offloadMs: Double, localMs: Double)
     "Builds on \(machine) were \(sampleDuration(abs(difference))) \(difference > 0 ? "faster" : "slower") than building here for this sample."
 }
 
+/// Where this Mac builds: the `remote.build` words the wizard offers. The raw value is the setting value.
 public enum WizardMode: String, CaseIterable, Sendable {
-  case auto, force, off
+  case auto, remote, local
   public var title: String {
     switch self {
     case .auto: return "Auto"
-    case .force: return "Always"
-    case .off: return "Never"
+    case .remote: return "Remote first"
+    case .local: return "This Mac"
     }
   }
-  /// Auto once the wizard sets up the first build machine; otherwise the mode this Mac already had.
-  public static func defaultChoice(changedMode: Bool, current: String?) -> Self {
-    changedMode ? .auto : Self(rawValue: current ?? "auto") ?? .auto
+  /// Auto once the wizard sets up the first build machine; otherwise the choice this Mac already had. Nil for a
+  /// current value the wizard does not offer, such as `remote-only` or one machine's name.
+  public static func defaultChoice(changedMode: Bool, current: String?) -> Self? {
+    changedMode ? .auto : Self(rawValue: current ?? "auto")
   }
 }
 

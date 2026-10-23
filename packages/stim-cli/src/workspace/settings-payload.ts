@@ -14,7 +14,7 @@ import {
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig, type Config } from './config.ts';
 import { gitPath, killOnAbort } from './git-read.ts';
 import { findCommandWorkspaceAsync } from './project.ts';
-import { readCommittedSettings, unknownSettingKeys } from './settings.ts';
+import { readCommittedSettings, removedMachineSettings, unknownSettingKeys } from './settings.ts';
 import { settingDefault, stimDesktopInstalled, stimDesktopInstalledAsync } from '../devices/stim-desktop.ts';
 
 const MASK = '********';
@@ -213,7 +213,7 @@ function unknownEntries(context: SettingsContext): SettingsPayload['unknown'] {
     {
       scope: 'machine',
       file: layerFile(context, 'machine', null),
-      settings: { optimizations: context.machine?.optimizations },
+      settings: { optimizations: context.machine?.optimizations, ...removedMachineSettings(context.machine) },
     },
     {
       scope: 'workspace',

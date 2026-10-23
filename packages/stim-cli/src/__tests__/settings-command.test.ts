@@ -131,6 +131,19 @@ test('a removed setting is listed with the command that replaces it', async () =
   ]);
 });
 
+test('a removed setting in the machine config is listed with its replacement too', async () => {
+  saveConfig({ version: 2, projects: { [app]: {} }, repos: {}, remote: { buildMode: 'off' } });
+  const [printed] = (await settings(['--json'])).out;
+  expect(JSON.parse(printed ?? '').unknown).toEqual([
+    expect.objectContaining({
+      key: 'remote.buildMode',
+      scope: 'machine',
+      value: 'off',
+      replacement: 'stim settings set remote.build local',
+    }),
+  ]);
+});
+
 test('set and unset edit .stim.json in place, keeping other keys and indentation', async () => {
   const file = join(app, '.stim.json');
   writeFileSync(

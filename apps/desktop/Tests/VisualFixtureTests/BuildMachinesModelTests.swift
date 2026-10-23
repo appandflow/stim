@@ -93,6 +93,21 @@ final class BuildMachinesModelTests: XCTestCase {
     XCTAssertNil(model.approvedHostingMachines(in: "/w"))
   }
 
+  @MainActor func testMovingAMachineWritesTheNewPlacementOrder() async {
+    let harness = Harness()
+    harness.machines = #"["fast","slow"]"#
+    let model = harness.make()
+    await model.settings.refresh()
+    XCTAssertEqual(model.entries, ["fast", "slow"])
+    await model.move("slow", by: -1)
+    XCTAssertEqual(harness.machines, #"["slow","fast"]"#)
+    await model.settings.refresh()
+    XCTAssertEqual(model.entries, ["slow", "fast"])
+    await model.move("slow", by: -1)
+    XCTAssertEqual(harness.machines, #"["slow","fast"]"#)
+    XCTAssertNil(model.writeFailure)
+  }
+
   @MainActor func testSettingsReadFailureShowsUntilTheListLoads() async {
     let harness = Harness()
     let model = harness.make()

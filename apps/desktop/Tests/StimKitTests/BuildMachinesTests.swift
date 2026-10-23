@@ -388,6 +388,16 @@ import Testing
     #expect(buildMachineCapabilities("mini", hosts: nil) == ["Builds"])
   }
 
+  @Test func movesAnEntryToChangeThePlacementPriority() {
+    let entries = ["fast", "slow", "spare"]
+    #expect(OffloadMachines.moving("slow", by: -1, in: entries) == #"["slow","fast","spare"]"#)
+    #expect(OffloadMachines.moving("fast", by: 1, in: entries) == #"["slow","fast","spare"]"#)
+    #expect(OffloadMachines.moving("spare", by: -2, in: entries) == #"["spare","fast","slow"]"#)
+    #expect(OffloadMachines.moving("fast", by: -1, in: entries) == nil)
+    #expect(OffloadMachines.moving("spare", by: 1, in: entries) == nil)
+    #expect(OffloadMachines.moving("unlisted", by: -1, in: entries) == nil)
+  }
+
   @Test func editsTheSettingAndUnsetsItWhenEmpty() {
     #expect(OffloadMachines.adding("mini", to: ["studio:7444"]) == #"["studio:7444","mini"]"#)
     #expect(OffloadMachines.adding("mini", to: ["mini"]) == #"["mini"]"#)

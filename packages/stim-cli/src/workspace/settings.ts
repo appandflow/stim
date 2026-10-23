@@ -23,6 +23,7 @@ import {
   settingDefinition,
   settingValueError,
   REMOTE_DEVICE_BACKENDS,
+  REPLACED_SETTINGS,
   SETTING_GROUPS,
   SETTINGS,
   WEB_VIEWPORTS,
@@ -667,8 +668,18 @@ const MACHINE_READABLE_SETTINGS = SETTINGS.filter(
     isLayeredSetting(setting) && setting.scopes.includes('machine') && !setting.key.startsWith('optimizations.'),
 );
 
-function machineLayerSettings(machine: unknown): SettingsObject | null {
+/** The removed settings `machine` still holds, nested as in the config, so doctor and settings can name their replacements. */
+export function removedMachineSettings(machine: unknown): SettingsObject {
   const settings: SettingsObject = {};
+  for (const key of Object.keys(REPLACED_SETTINGS)) {
+    const value = settingValueAt(machine, key);
+    if (value !== undefined) setSettingValueAt(settings, key, value);
+  }
+  return settings;
+}
+
+function machineLayerSettings(machine: unknown): SettingsObject | null {
+  const settings: SettingsObject = removedMachineSettings(machine);
   // Copied whole, not key by key, so an unknown or malformed key under machine
   // optimizations still reaches settingShapeErrors and doctor's inert-key check
   // instead of silently disappearing.

@@ -688,7 +688,7 @@ See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for 
 **Settings > Remote Machines** lists your remote machines with a status
 (**Approved**, **Waiting for approval**, the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading),
 a line with its running builds and free disk, any problem that keeps builds on
-this Mac with its fix, what each does (**Builds**, **Simulators**) and **Remove...**. It updates itself; there is no Refresh button. With none, it
+this Mac with its fix, what each does (**Builds**, **Simulators**), up and down buttons and **Remove...**. With two or more machines each row shows its place in the list. The order is the placement priority: builds, simulators, emulators and macOS apps go to the first machine that has room and a load under its own limit, and to the next only when it has none. The buttons write the new order to `remote.machines`. It updates itself; there is no Refresh button. With none, it
 offers **Add Remote Machine…**, which guides you through five steps:
 
 1. Check Tailscale and pick a Mac, Linux or Windows machine on your tailnet.
@@ -711,7 +711,7 @@ differences, such as a different project-selected CocoaPods or missing Android t
 warnings that say what they cost and offer copyable fixes.
 
 The last step offers a **Try it** agent prompt and `stim ios --remote-build
-<machine>`. It sets **Builds** (`remote.buildMode`, Auto by default for your
+<machine>`. It sets **Builds** (`remote.build`: Auto, Remote first or This Mac; Auto by default for your
 first remote machine). With Hosted simulators chosen, it also sets **Simulators**
 (`ios.remote` and `android.remote` for this Mac). **Run a
 test build with a sample app** runs the optional sample test in Desktop's own
