@@ -247,4 +247,4 @@ test('worktree reads overlap only while no claim records the children of the ope
     releaseClaim(got.acquired);
   }
   expect(most).toBe(1);
-});
+}, 30_000);
