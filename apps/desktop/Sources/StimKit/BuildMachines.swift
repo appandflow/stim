@@ -397,7 +397,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   }
 
   /// The diagnosis, for the states it explains.
-  private var diagnosed: Diagnosis? {
+  var diagnosed: Diagnosis? {
     switch state {
     case .unreachable, .tailscaleOff, .notOnTailnet, .unknown: return diagnosis
     default: return nil

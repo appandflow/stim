@@ -12,6 +12,7 @@ struct BuildMachinesView: View {
   var actions: ActionCenter?
 
   @State private var removing: String?
+  @State private var opened: String?
   @State private var adding: AddMachineModel?
   @AppStorage(AppPreferences.Key.updatesBuildMachines) private var updatesAutomatically = false
   @ObservedObject private var server = ServerController.shared
@@ -26,39 +27,17 @@ struct BuildMachinesView: View {
   }
 
   var body: some View {
-    BuildMachinesContent(
-      entries: model.entries, statuses: statuses, hosts: model.check(in: checkout)?.hosts, updates: model.updates,
-      installs: Dictionary(
-        (statuses ?? []).compactMap { status in model.install(for: status).map { (status.machine, $0) } },
-        uniquingKeysWith: { first, _ in first }),
-      working: model.working, progress: model.progress, refreshing: model.isBusy, failure: failure,
-      tailscaleRunning: model.tailscaleRunning,
-      settingsReadFailure: model.settingsReadFailure,
-      retry: { Task { await model.load(checkout: checkout) } },
-      canAsk: checkout != nil,
-      addDisabled: model.working != nil,
-      updatesAutomatically: $updatesAutomatically,
-      add: { adding = model.addMachine(checkout: checkout) },
-      ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
-      update: { entry in Task { await model.update(entry, checkout: checkout) } },
-      remove: { entry in removing = entry },
-      poolDisabled: model.poolDisabled,
-      setPool: { role, machine, enabled in Task { await model.setPool(role, machine: machine, enabled: enabled) } },
-      hostsSimulators: { !model.androidOnlyNames.contains(OffloadMachines.name($0)) },
-      hosted: { hostedDevices(on: $0, in: store.payload?.environments ?? []) },
-      stopHosted: { entry, devices in
-        var steps: [StimCommand] = []
-        for device in devices where !steps.contains(device.stop) { steps.append(device.stop) }
-        guard !steps.isEmpty else { return }
-        actions?.run("Stop hosted devices on \(entry)", steps: steps, key: "stop-hosted:\(entry)", present: false)
-      },
-      showsThisMac: ThisMacAccessSections.shows(clients: hostClients, sessions: hosted.sessions ?? []),
-      thisMac: ThisMacAccessSections(
-        clients: hostClients, sessions: hosted.sessions ?? [], stopping: hosted.stopping,
-        revoke: { revokingClient = $0 },
-        stop: { stoppingSession = $0 })
-    )
+    Group {
+      if let opened, model.entries?.contains(opened) == true {
+        detailPage(opened)
+      } else {
+        list
+      }
+    }
     .background(Palette.background)
+    .onChange(of: model.entries) {
+      if let opened, model.entries?.contains(opened) != true { self.opened = nil }
+    }
     .onReceive(OpenRequests.shared.$addMachine) { request in
       guard let request else { return }
       Task { @MainActor in
@@ -141,6 +120,69 @@ struct BuildMachinesView: View {
     }
   }
 
+  private func detailPage(_ entry: String) -> some View {
+    let status = statuses?.first { $0.machine == entry }
+    let update = model.updates[entry]
+    return MachineDetailPage(
+      entry: entry, detail: model.detail(for: entry, checkout: checkout), status: status,
+      capabilities: buildMachineCapabilities(entry, hosts: model.check(in: checkout)?.hosts),
+      working: model.working == entry, progress: model.working == entry ? model.progress : nil, canAsk: checkout != nil,
+      hosted: hostedDevices(on: entry, in: store.payload?.environments ?? []), update: update,
+      install: status.flatMap { model.install(for: $0) }, back: { opened = nil },
+      ask: { Task { await model.ask(entry, checkout: checkout) } },
+      startUpdate: { Task { await model.update(entry, checkout: checkout) } },
+      stopHosted: { stopHosted(entry, $0) }, remove: { removing = entry }, showsToggles: model.poolDisabled != nil,
+      toggles: BuildMachinePoolToggles(
+        machine: entry, poolDisabled: model.poolDisabled,
+        hostsSimulators: !model.androidOnlyNames.contains(OffloadMachines.name(entry)), disabled: model.isBusy,
+        setPool: { role, machine, enabled in Task { await model.setPool(role, machine: machine, enabled: enabled) } })
+    )
+    .task(id: DetailKey(entry: entry, checkout: checkout)) {
+      while !Task.isCancelled {
+        await model.loadDetails(entry, checkout: checkout)
+        try? await Task.sleep(for: .seconds(60))
+      }
+    }
+  }
+
+  private func stopHosted(_ entry: String, _ devices: [HostedOnMachine]) {
+    var steps: [StimCommand] = []
+    for device in devices where !steps.contains(device.stop) { steps.append(device.stop) }
+    guard !steps.isEmpty else { return }
+    actions?.run("Stop hosted devices on \(entry)", steps: steps, key: "stop-hosted:\(entry)", present: false)
+  }
+
+  private var list: some View {
+    BuildMachinesContent(
+      entries: model.entries, statuses: statuses, hosts: model.check(in: checkout)?.hosts, updates: model.updates,
+      installs: Dictionary(
+        (statuses ?? []).compactMap { status in model.install(for: status).map { (status.machine, $0) } },
+        uniquingKeysWith: { first, _ in first }),
+      working: model.working, progress: model.progress, refreshing: model.isBusy, failure: failure,
+      tailscaleRunning: model.tailscaleRunning,
+      settingsReadFailure: model.settingsReadFailure,
+      retry: { Task { await model.load(checkout: checkout) } },
+      canAsk: checkout != nil,
+      addDisabled: model.working != nil,
+      updatesAutomatically: $updatesAutomatically,
+      add: { adding = model.addMachine(checkout: checkout) },
+      ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
+      update: { entry in Task { await model.update(entry, checkout: checkout) } },
+      remove: { entry in removing = entry },
+      open: { opened = $0 },
+      poolDisabled: model.poolDisabled,
+      setPool: { role, machine, enabled in Task { await model.setPool(role, machine: machine, enabled: enabled) } },
+      hostsSimulators: { !model.androidOnlyNames.contains(OffloadMachines.name($0)) },
+      hosted: { hostedDevices(on: $0, in: store.payload?.environments ?? []) },
+      stopHosted: { stopHosted($0, $1) },
+      showsThisMac: ThisMacAccessSections.shows(clients: hostClients, sessions: hosted.sessions ?? []),
+      thisMac: ThisMacAccessSections(
+        clients: hostClients, sessions: hosted.sessions ?? [], stopping: hosted.stopping,
+        revoke: { revokingClient = $0 },
+        stop: { stoppingSession = $0 })
+    )
+  }
+
   private func hostRequest(_ entry: String) -> String? {
     model.check(in: checkout)?.hosts?.first { OffloadMachines.name($0.machine) == OffloadMachines.name(entry) }?.deviceId
   }
@@ -175,6 +217,11 @@ private struct PollKey: Hashable {
   var checkout: String?
 }
 
+private struct DetailKey: Hashable {
+  var entry: String
+  var checkout: String?
+}
+
 /// The Remote Machines tab for the state it is given: a progress view, the empty state, or the list.
 struct BuildMachinesContent<ThisMac: View>: View {
   var entries: [String]?
@@ -196,6 +243,7 @@ struct BuildMachinesContent<ThisMac: View>: View {
   var ask: (String) -> Void
   var update: (String) -> Void
   var remove: (String) -> Void
+  var open: (String) -> Void = { _ in }
   var poolDisabled: [String: [String]]? = nil
   var setPool: (String, String, Bool) -> Void = { _, _, _ in }
   var hostsSimulators: (String) -> Bool = { _ in true }
@@ -278,28 +326,10 @@ struct BuildMachinesContent<ThisMac: View>: View {
     }
   }
 
-  @ViewBuilder private func poolToggles(_ machine: String) -> some View {
-    if let poolDisabled {
-      HStack(spacing: Space.xxxl) {
-        ForEach(hostsSimulators(machine) ? ["build", "device"] : ["build"], id: \.self) { role in
-          let title = role == "build" ? "Builds enabled" : "Simulators enabled"
-          HStack(spacing: Space.md) {
-            Text(title).font(.stim(.callout)).foregroundStyle(Palette.secondary)
-            Toggle(
-              title,
-              isOn: Binding(
-                get: { !(poolDisabled[role] ?? []).contains(machine) },
-                set: { setPool(role, machine, $0) })
-            )
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-          }
-          .disabled(refreshing)
-        }
-        Spacer(minLength: 0)
-      }
-    }
+  private func poolToggles(_ machine: String) -> some View {
+    BuildMachinePoolToggles(
+      machine: machine, poolDisabled: poolDisabled, hostsSimulators: hostsSimulators(machine), disabled: refreshing,
+      setPool: setPool)
   }
 
   private func list(_ entries: [String]) -> some View {
@@ -317,7 +347,7 @@ struct BuildMachinesContent<ThisMac: View>: View {
             progress: working == entry ? progress : nil,
             canAsk: canAsk, update: updates[entry], install: installs[entry], hosted: hosted(entry), ask: { ask(entry) },
             startUpdate: { update(entry) }, stopHosted: { stopHosted(entry, $0) },
-            remove: { remove(entry) }, toggles: poolToggles(entry))
+            open: { open(entry) }, remove: { remove(entry) }, toggles: poolToggles(entry))
         }
       } header: {
         HStack {
@@ -344,6 +374,40 @@ struct BuildMachinesContent<ThisMac: View>: View {
   }
 }
 
+/// The Builds enabled and Simulators enabled switches of a machine in the pools `remote.buildPoolDisabled` and
+/// `remote.devicePoolDisabled` describe; `machine` is `local` for this Mac.
+struct BuildMachinePoolToggles: View {
+  var machine: String
+  var poolDisabled: [String: [String]]?
+  var hostsSimulators: Bool
+  var disabled: Bool
+  var setPool: (String, String, Bool) -> Void
+
+  var body: some View {
+    if let poolDisabled {
+      HStack(spacing: Space.xxxl) {
+        ForEach(hostsSimulators ? ["build", "device"] : ["build"], id: \.self) { role in
+          let title = role == "build" ? "Builds enabled" : "Simulators enabled"
+          HStack(spacing: Space.md) {
+            Text(title).font(.stim(.callout)).foregroundStyle(Palette.secondary)
+            Toggle(
+              title,
+              isOn: Binding(
+                get: { !(poolDisabled[role] ?? []).contains(machine) },
+                set: { setPool(role, machine, $0) })
+            )
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+          }
+          .disabled(disabled)
+        }
+        Spacer(minLength: 0)
+      }
+    }
+  }
+}
+
 private struct BuildMachineRow<Toggles: View>: View {
   var entry: String
   var status: BuildMachineStatus?
@@ -360,6 +424,7 @@ private struct BuildMachineRow<Toggles: View>: View {
   var ask: () -> Void
   var startUpdate: () -> Void
   var stopHosted: ([HostedOnMachine]) -> Void
+  var open: () -> Void
   var remove: () -> Void
   var toggles: Toggles
 
@@ -371,10 +436,8 @@ private struct BuildMachineRow<Toggles: View>: View {
         HStack(spacing: Space.sm) {
           Text(verbatim: entry).font(.stim(.body, weight: .semibold)).lineLimit(1)
           if let status {
-            let listed = status.listStatus
-            let updating = update.map { !$0.isDone } == true && needsStimUpdate(status)
-            let title = updating ? "Updating" : install?.block?.remoteIsNewer == true ? "Update this Mac" : listed.title
-            Pill(title, tone: updating ? .warning : listed.tone, size: .small)
+            let pill = status.pill(install: install, update: update)
+            Pill(pill.title, tone: pill.tone, size: .small)
               .help(status.readiness.reasons ?? status.detail)
             if refreshing { ProgressView().controlSize(.mini).help("Checking again") }
           } else if checking {
@@ -401,22 +464,8 @@ private struct BuildMachineRow<Toggles: View>: View {
             }
           }
         }
-        let problems = status?.problemLines ?? []
-        if !problems.isEmpty || update != nil || install != nil {
+        if update != nil || install != nil {
           VStack(alignment: .leading, spacing: Space.sm) {
-            ForEach(Array(problems.enumerated()), id: \.offset) { _, line in
-              VStack(alignment: .leading, spacing: Space.xs) {
-                Text(verbatim: line.reason).font(.stim(.footnote)).foregroundStyle(Palette.warning)
-                  .textSelection(.enabled)
-                switch line.fix {
-                case .command(let command)?: CopyableCommand(command: command, runsOn: entry)
-                case .advice(let advice)?
-                where line.code != "stim-build" || (update?.isDone ?? true) && install?.block?.remoteIsNewer != true:
-                  Text(verbatim: advice).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-                default: EmptyView()
-                }
-              }
-            }
             MachineUpdateLine(machine: entry, phase: update, install: install, update: startUpdate)
             if case .waiting(_, let sessions)? = update, sessions > 0 {
               WaitingSessions(machine: entry, sessions: sessions, hosted: hosted, stop: stopHosted)
@@ -433,6 +482,10 @@ private struct BuildMachineRow<Toggles: View>: View {
       if let status, status.state.canAsk(requested: status.requestedAt != nil) {
         Button(status.state == .notAsked ? "Ask" : "Ask Again", action: ask).disabled(working || !canAsk)
       }
+      Button("Details", action: open)
+        .buttonStyle(.stim(.secondary))
+        .fixedSize()
+        .accessibilityLabel("Details of \(entry)")
       Button("Remove\u{2026}", action: remove)
         .buttonStyle(.stim(.secondary))
         .fixedSize()
@@ -511,7 +564,7 @@ private struct RemoveMachineSheet: View {
   }
 }
 
-private struct WaitingSessions: View {
+struct WaitingSessions: View {
   var machine: String
   var sessions: Int
   var hosted: [HostedOnMachine]

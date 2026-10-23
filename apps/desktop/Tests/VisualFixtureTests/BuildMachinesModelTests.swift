@@ -15,6 +15,9 @@ final class BuildMachinesModelTests: XCTestCase {
     var machines: String?
     var remoteMachines = "[]"
     var requests: [String] = []
+    var androidCalls: [String] = []
+    var androidMachines = "[]"
+    var androidFails = false
     var remoteServer = ""
     var local: LocalStim? = LocalStim(version: "1.25.0", isRelease: true)
 
@@ -50,6 +53,16 @@ final class BuildMachinesModelTests: XCTestCase {
           if let hosts = self.hosts { object["deviceHosts"] = hosts.map { ["machine": $0, "state": "approved"] } }
           return try JSONDecoder().decode(DoctorReport.self, from: JSONSerialization.data(withJSONObject: object))
         },
+        androidDoctor: { checkout in
+          self.androidCalls.append(checkout)
+          if self.androidFails { throw ServerError(code: "unsupported", message: "Update the local stim-server.") }
+          let object: [String: Any] = [
+            "project": checkout, "findings": [],
+            "remoteMachines": try JSONSerialization.jsonObject(with: Data(self.androidMachines.utf8)),
+          ]
+          return try JSONDecoder().decode(DoctorReport.self, from: JSONSerialization.data(withJSONObject: object))
+        },
+        serverVersion: { _, _ in "1.25.0" },
         localStim: { self.local },
         request: { method, _ in
           self.requests.append(method)
@@ -68,6 +81,45 @@ final class BuildMachinesModelTests: XCTestCase {
       return
         #"{"remote":{"server":{"version":"\#(version)","stimBuild":"a"},"service":"dev.stim.server","acceptsClientBuilds":\#(acceptsClientBuilds),"running":null,"last":\#(last)},"unreachable":null,"upload":null}"#
     }
+  }
+
+  @MainActor func testAndroidReportLoadsWhenAMachinePageOpensNotOnTheListsPoll() async throws {
+    let harness = Harness()
+    harness.remoteMachines =
+      #"[{"machine":"mini","state":"approved","offloadable":false,"dnsName":"mini.ts.net","problems":[{"code":"stim-build","reason":"Stim build a there, b here"}]}]"#
+    harness.androidMachines =
+      #"[{"machine":"mini","state":"approved","offloadable":false,"problems":[{"code":"jdk","reason":"JDK 25 there, 17 here"}]}]"#
+    let model = harness.make()
+    await model.refreshStatuses(checkout: "/w", ask: false)
+    await model.refreshStatuses(checkout: "/w", ask: false)
+    XCTAssertEqual(harness.androidCalls, [])
+    XCTAssertEqual(model.detail(for: "mini", checkout: "/w").androidMessage, nil)
+
+    await model.loadDetails("mini", checkout: "/w")
+    XCTAssertEqual(harness.androidCalls, ["/w"])
+    let detail = model.detail(for: "mini", checkout: "/w")
+    XCTAssertEqual(detail.groups.map(\.platform), [.machine, .android])
+    XCTAssertEqual(detail.groups.last?.issues.map(\.code), ["jdk"])
+    XCTAssertEqual(detail.versions.first { $0.label == "mini" }?.value, "stim-server 1.25.0")
+
+    await model.loadDetails("mini", checkout: "/w")
+    XCTAssertEqual(harness.androidCalls.count, 1, "a report younger than 30 seconds is reused")
+    harness.now = harness.now.addingTimeInterval(31)
+    await model.loadDetails("mini", checkout: "/w")
+    XCTAssertEqual(harness.androidCalls.count, 2)
+  }
+
+  @MainActor func testAndroidReportFailureIsShownOnThePageAndKeepsTheListsIssues() async throws {
+    let harness = Harness()
+    harness.remoteMachines =
+      #"[{"machine":"mini","state":"approved","offloadable":false,"problems":[{"code":"ndk","reason":"Android: no NDK 27.1.12297006 there"}]}]"#
+    harness.androidFails = true
+    let model = harness.make()
+    await model.refreshStatuses(checkout: "/w", ask: false)
+    await model.loadDetails("mini", checkout: "/w")
+    let detail = model.detail(for: "mini", checkout: "/w")
+    XCTAssertEqual(detail.androidMessage, "Could not check the Android tools: Update the local stim-server.")
+    XCTAssertEqual(detail.groups.flatMap(\.issues).map(\.code), ["ndk"])
   }
 
   @MainActor func testUnknownHostsAndFailedDoctorKeepSavedMachineUntilAnAuthoritativeReport() async {
