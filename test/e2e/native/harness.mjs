@@ -537,8 +537,9 @@ export async function verifyCleanup({ h, cleanup, appDir, created }) {
   const gc = h.cli(['gc', '--json'], { allowFail: true });
   if (h.env.STIM_E2E_STRICT_QA === '1') assert(gc.code === 0, `cleanup gc inspection failed: ${gc.stderr}`);
   if (gc.code === 0) {
-    // A background `worktree remove` keeps a trash entry naming its source worktree until the delete finishes.
-    const text = JSON.stringify({ ...JSON.parse(gc.stdout).sections, trash: null });
+    const { sections } = JSON.parse(gc.stdout);
+    assert(sections && typeof sections === 'object', `cleanup gc --json has no sections: ${gc.stdout.slice(0, 500)}`);
+    const text = JSON.stringify({ ...sections, trash: null });
     assert(
       !created.some((p) => text.includes(JSON.stringify(p).slice(1, -1))),
       'gc reports one of our workspaces as orphaned',
