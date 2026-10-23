@@ -10,9 +10,10 @@ export function installedNpmTreeProblems(projectRoot: string): string {
     getExecutor().runFile('npm', ['ls', '--all', '--json', '--silent'], { cwd: projectRoot, timeoutMs: 30_000 });
     return '';
   } catch (error) {
+    const stdout = error instanceof Error && 'stdout' in error ? error.stdout : '';
     let problems: unknown;
     try {
-      problems = JSON.parse(String((error as { stdout?: unknown }).stdout ?? ''))?.problems;
+      problems = JSON.parse(String(stdout ?? ''))?.problems;
     } catch {}
     const list = Array.isArray(problems) ? problems.map(String).toSorted() : ['npm ls failed'];
     return createHash('sha256').update(list.join('\n')).digest('hex');
