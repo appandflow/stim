@@ -108,6 +108,120 @@
           """#.utf8))
     }
 
+    private func decode(_ json: String) throws -> BuildMachineStatus {
+      try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
+    }
+
+    private func findings(_ json: String) throws -> [DoctorReport.Finding] {
+      try JSONDecoder().decode([DoctorReport.Finding].self, from: Data(json.utf8))
+    }
+
+    /// The old-worker report of janics-mac-mini-2: no licenses reported, so the SDK packages are blockers.
+    private func strictSdk() throws -> BuildMachineStatus {
+      try decode(
+        #"""
+        {"machine":"janics-mac-mini-2","state":"approved","offloadable":false,"dnsName":"janics-mac-mini-2.tail1234.ts.net",
+         "problems":[{"code":"ndk","reason":"Android: no NDK 27.1.12297006 there"},
+                     {"code":"compile-sdk","reason":"Android: no platform android-36 there"}],
+         "capacity":{"running":0,"max":1,"diskFreeBytes":859830480896,"cpus":12,"loadPerCore":0.5,"maxLoadPerCore":2,"builds":0,"maxBuilds":0,
+                     "memoryUsedBytes":9413672960,"memoryTotalBytes":34359738368}}
+        """#)
+    }
+
+    /// The same machine once its stim-server reports accepted licenses.
+    private func noted() throws -> BuildMachineStatus {
+      try decode(
+        #"""
+        {"machine":"janics-mac-mini-2","state":"approved","offloadable":true,"dnsName":"janics-mac-mini-2.tail1234.ts.net",
+         "notes":[{"code":"ndk","reason":"Android: NDK 27.1.12297006 is not installed there; Gradle downloads it on the first build (about 1-2 GB)"},
+                  {"code":"compile-sdk","reason":"Android: platform android-36 is not installed there; Gradle downloads it on the first build"}],
+         "capacity":{"running":0,"max":1,"diskFreeBytes":859830480896,"cpus":12,"loadPerCore":0.5,"maxLoadPerCore":2,"builds":0,"maxBuilds":0,
+                     "memoryUsedBytes":9413672960,"memoryTotalBytes":34359738368}}
+        """#)
+    }
+
+    private func notedMini() throws -> BuildMachineStatus {
+      var status = try noted()
+      status.machine = "janics-mac-mini"
+      return status
+    }
+
+    private let sdkFindings =
+      #"""
+      [{"code":"build-machine-ndk","level":"note","title":"Remote machine janics-mac-mini-2 downloads this project's NDK on its first Android build",
+        "detail":"The build goes there anyway: NDK 27.1.12297006 is not installed there; Gradle downloads it on the first build (about 1-2 GB).",
+        "fix":"On janics-mac-mini-2, install the package now so the first build does not download it:\n/Users/janic/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager \"ndk;27.1.12297006\""},
+       {"code":"build-machine-compile-sdk","level":"note","title":"Remote machine janics-mac-mini-2 downloads this project's Android compile platform on its first Android build",
+        "detail":"The build goes there anyway: platform android-36 is not installed there; Gradle downloads it on the first build.",
+        "fix":"On janics-mac-mini-2, install the package now so the first build does not download it:\n/Users/janic/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager \"platforms;android-36\""}]
+      """#
+
+    @MainActor private func page(
+      _ detail: MachineDetail, status: BuildMachineStatus?, install: StimInstall? = nil, update: MachineUpdatePhase? = nil
+    ) -> some View {
+      MachineDetailPage(
+        entry: detail.entry, detail: detail, status: status, capabilities: ["Builds", "Simulators"], working: false,
+        progress: nil, canAsk: true, hosted: [], update: update, install: install, back: {}, ask: {}, startUpdate: {},
+        stopHosted: { _ in }, remove: {}, showsToggles: true,
+        toggles: BuildMachinePoolToggles(
+          machine: detail.entry, poolDisabled: ["build": [], "device": []], hostsSimulators: true, disabled: false,
+          setPool: { _, _, _ in })
+      )
+      .font(.stim(.body))
+      .foregroundStyle(Palette.text)
+      .background(Palette.background)
+      .frame(width: 780, height: 560)
+    }
+
+    @MainActor private func detailFixtures() throws -> [(String, AnyView)] {
+      var android = MachineDetail.Input(entry: "janics-mac-mini-2", status: try noted())
+      android.android = .loaded(try noted(), try findings(sdkFindings))
+      android.host = BuildMachineStatus(machine: "janics-mac-mini-2", state: .approved)
+      android.thisMacVersion = "1.25.0"
+      android.serverVersion = "1.25.0"
+      var strict = MachineDetail.Input(entry: "janics-mac-mini-2", status: try strictSdk())
+      strict.thisMacVersion = "1.25.0"
+      strict.serverVersion = "1.25.0"
+      strict.android = .loading
+      var newer = MachineDetail.Input(entry: "janics-mac-mini", status: try mismatch()[0])
+      newer.install = .blocked(
+        StimInstallBlock(
+          reason: "janics-mac-mini runs Stim 1.26.0, newer than this Mac (1.25.0). Update Stim Desktop to match.",
+          action: .checkForUpdates))
+      newer.thisMacVersion = "1.25.0"
+      newer.serverVersion = "1.26.0"
+      var mixed = MachineDetail.Input(
+        entry: "janics-mac-mini",
+        status: try decode(
+          #"""
+          {"machine":"janics-mac-mini","state":"approved","offloadable":false,"dnsName":"janics-mac-mini.tail1234.ts.net",
+           "problems":[{"code":"stim-build","reason":"Stim build 5773060690f40277 there, d9b8bdb39828c9a0 here"},
+                       {"code":"cocoapods","reason":"iOS: CocoaPods 1.17.0 there, 1.16.2 here"},
+                       {"code":"jdk","reason":"Android: JDK 25 there, 17 here"}]}
+          """#))
+      mixed.install = newer.install
+      mixed.android = .loaded(
+        try decode(
+          #"{"machine":"janics-mac-mini","state":"approved","offloadable":false,"problems":[{"code":"jdk","reason":"JDK 25 there, 17 here"}]}"#
+        ),
+        try findings(
+          #"""
+          [{"code":"build-machine-jdk","level":"cost","title":"Remote machine janics-mac-mini runs another JDK major version",
+            "detail":"Builds fall back to this machine: JDK 25 there, 17 here.",
+            "fix":"On janics-mac-mini, install JDK 17; Stim uses it automatically, no restart needed:\nbrew install --cask zulu@17"}]
+          """#))
+      let down = try layers()[0]
+      return [
+        ("detail-notes", AnyView(page(MachineDetail(android), status: try noted()))),
+        ("detail-old-worker", AnyView(page(MachineDetail(strict), status: try strictSdk()))),
+        ("detail-update-this-mac", AnyView(page(MachineDetail(mixed), status: mixed.status, install: newer.install))),
+        (
+          "detail-unreachable",
+          AnyView(page(MachineDetail(MachineDetail.Input(entry: "mini", status: down)), status: down))
+        ),
+      ]
+    }
+
     @MainActor func testBuildMachinesScreenshots() throws {
       guard let directory = ProcessInfo.processInfo.environment["STIM_BUILD_MACHINES_SHOTS"] else {
         throw XCTSkip("Set STIM_BUILD_MACHINES_SHOTS to render remote Mac fixtures.")
@@ -273,12 +387,19 @@
               ]))
         ),
         ("layers", AnyView(content(entries: ["mini", "studio", "air"], statuses: try layers(), tailscale: true))),
+        (
+          "rows-sdk-packages",
+          AnyView(
+            content(
+              entries: ["janics-mac-mini-2", "janics-mac-mini"], statuses: [try strictSdk(), try notedMini()],
+              tailscale: true, poolDisabled: ["build": [], "device": []]))
+        ),
         ("busy", AnyView(content(entries: ["mini", "studio"], statuses: try busy(), tailscale: true))),
         ("tailscale-off", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: false))),
         ("empty-tailscale-off", AnyView(content(entries: [], statuses: [], tailscale: false))),
         ("empty-checking", AnyView(content(entries: [], statuses: [], tailscale: nil))),
       ]
-      for (name, view) in fixtures {
+      for (name, view) in fixtures + (try detailFixtures()) {
         for dark in [false, true] {
           let host = NSHostingView(
             rootView: view.environment(\.colorScheme, dark ? .dark : .light)
