@@ -19,10 +19,23 @@ const SECRET_ASSIGNMENT = new RegExp(
   String.raw`([A-Za-z0-9_]*(?:${SECRET_WORDS})[A-Za-z0-9_]*)=(?:'[^']*'|"[^"]*"|[^\s&]+)`,
   'gi',
 );
-const URL_USERINFO = /(\/\/)[^/\s@]+@/g;
+const URL_USERINFO = /(\/\/)[^/\s?#]*@/g;
 const SECRET_HEADER = new RegExp(String.raw`(\b[A-Za-z-]*(?:${SECRET_WORDS})[A-Za-z-]*:\s*)[^'"\r\n]+`, 'gi');
 const AUTH_SCHEME = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
-const TOKEN_SHAPE = /\b(?:gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA)[A-Za-z0-9_-]{10,}/g;
+const TOKEN_SHAPE =
+  /\b(?:(?:gh[pousr]_|github_pat_|sk-|[sr]k_(?:live|test)_|xox[abprs]-|AKIA|AIza|glpat-)[A-Za-z0-9_-]{10,}|npm_[A-Za-z0-9]{36}|eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*)/g;
+
+const CREDENTIAL_FLAGS: Record<string, Record<string, readonly string[]>> = {
+  curl: { '': ['-u', '-U', '--user', '--proxy-user'] },
+  security: { 'unlock-keychain': ['-p'], 'create-keychain': ['-p'], import: ['-P'], export: ['-P'] },
+};
+
+function credentialFlagsOf(program: string, subcommand: string | undefined): ReadonlySet<string> {
+  const name = basename(program);
+  const flags = Object.hasOwn(CREDENTIAL_FLAGS, name) ? CREDENTIAL_FLAGS[name] : undefined;
+  const key = flags && Object.hasOwn(flags, '') ? '' : (subcommand ?? '');
+  return new Set(flags && Object.hasOwn(flags, key) ? flags[key] : []);
+}
 
 function scrubText(text: string, exact: readonly string[]): string {
   return exact
@@ -37,20 +50,32 @@ function scrubText(text: string, exact: readonly string[]): string {
 
 /**
  * `args` with the value of any flag or assignment that looks like a secret, credentials in URLs, token shapes and
- * the `exact` values replaced.
+ * the `exact` values replaced. `program` selects the flags that carry a credential without a secret-looking name,
+ * such as `curl -u`.
  */
-export function redactArgv(args: readonly string[], exact: readonly string[] = []): string[] {
+export function redactArgv(args: readonly string[], exact: readonly string[] = [], program = ''): string[] {
   const out: string[] = [];
+  const credentialFlags = credentialFlagsOf(program, args[0]);
   let redactNext = false;
   for (const arg of args.slice(0, MAX_ARGS)) {
     const flag = /^(--?[A-Za-z0-9_.-]+)=/.exec(arg)?.[1];
     const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(arg)?.[1];
+    const attached = arg.length > 2 && credentialFlags.has(arg.slice(0, 2)) ? arg.slice(0, 2) : null;
     if (redactNext) {
       out.push('[redacted]');
       redactNext = false;
+    } else if (credentialFlags.has(arg)) {
+      out.push(arg);
+      redactNext = true;
+    } else if (attached) {
+      out.push(`${attached}[redacted]`);
     } else if (flag) {
-      out.push(SECRET_NAME.test(flag) ? `${flag}=[redacted]` : clip(scrubText(arg.slice(0, SCAN_ARG_CHARS), exact)));
-    } else if (arg.startsWith('-') && SECRET_NAME.test(arg)) {
+      out.push(
+        SECRET_NAME.test(flag) || credentialFlags.has(flag)
+          ? `${flag}=[redacted]`
+          : clip(scrubText(arg.slice(0, SCAN_ARG_CHARS), exact)),
+      );
+    } else if (/^--?[A-Za-z0-9_.-]+$/.test(arg) && SECRET_NAME.test(arg)) {
       out.push(arg);
       redactNext = true;
     } else if (assignment && SECRET_NAME.test(assignment)) {

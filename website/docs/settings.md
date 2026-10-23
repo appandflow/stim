@@ -887,9 +887,12 @@ to that file, never to stdout or stderr, so `--json` output is unchanged.
 The command you start truncates the file; the processes it starts, such as the
 Metro supervisor, append to it, so use a new path for each command. The file is a
 JSON array with one event per line and no closing bracket, which Perfetto and
-`chrome://tracing` accept. Argument values of flags that look like secrets and
-credentials in URLs are replaced with `[redacted]`. A trace still holds full
-paths and arguments, so treat it like a log.
+`chrome://tracing` accept. Argument values of flags that look like secrets,
+credentials in URLs and common token shapes are replaced with `[redacted]`, as
+are the credentials of `curl -u` and `security import -P`. Other programs'
+short flags such as `-p` and `-u` are kept, because they usually mean a path, a
+port or a user. A trace still holds full paths and arguments, so treat it like a
+log.
 
 Try this with your agent:
 
