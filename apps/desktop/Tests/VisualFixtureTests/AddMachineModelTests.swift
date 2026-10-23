@@ -508,7 +508,7 @@ final class AddMachineModelTests: XCTestCase {
     harness.grantReady = true
     await checkUntilApproved(model)
     await model.openSummary()
-    model.mode = .off
+    model.mode = .local
     await model.finish()
     model.stop()
     try? await Task.sleep(for: .milliseconds(100))
