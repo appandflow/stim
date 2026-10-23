@@ -26,6 +26,7 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
     private var content = AnyView(EmptyView())
     private var popupOpen = false
     private var transitioning = false
+    private var followsAppEdge = true
 
     func update(isPresented: Bool, ownerWindow: NSWindow?, content: AnyView) {
       guard isPresented else { return close() }
@@ -54,6 +55,15 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
               }
             },
           ]
+          observers.append(
+            NotificationCenter.default.addObserver(
+              forName: NSWindow.didResizeNotification, object: ownerWindow, queue: .main
+            ) { [weak self] _ in
+              MainActor.assumeIsolated {
+                guard let self, self.followsAppEdge, !self.transitioning else { return }
+                self.positionTutorialBesideApp()
+              }
+            })
           for name in [NSWindow.willEnterFullScreenNotification, NSWindow.willExitFullScreenNotification] {
             observers.append(
               NotificationCenter.default.addObserver(forName: name, object: ownerWindow, queue: .main) { [weak self] _ in
@@ -85,19 +95,18 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
           panel.standardWindowButton(button)?.isHidden = true
         }
-        if let screen = (ownerWindow?.screen ?? NSScreen.main)?.visibleFrame {
-          let width = panel.frame.width
-          let height = min(800, screen.height)
-          let ownerFrame = ownerWindow?.frame ?? screen
-          let right = ownerFrame.maxX + 12
-          let left = ownerFrame.minX - width - 12
-          let preferredX = right + width <= screen.maxX ? right : left
-          let x = max(screen.minX, min(preferredX, screen.maxX - width))
-          let y = max(screen.minY, min(ownerFrame.maxY - height, screen.maxY - height))
-          panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: false)
-        }
         self.panel = panel
         self.hosting = hosting
+        if let screen = (ownerWindow?.screen ?? NSScreen.main)?.visibleFrame {
+          panel.setContentSize(NSSize(width: WorkspaceDetail.inspectorWidth, height: min(800, screen.height)))
+        }
+        positionTutorialBesideApp()
+        observers.append(
+          NotificationCenter.default.addObserver(
+            forName: NSWindow.willMoveNotification, object: panel, queue: .main
+          ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.followsAppEdge = false }
+          })
       }
       refreshContent()
       panel?.isFloatingPanel = false
@@ -117,6 +126,18 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
       }
     }
 
+    private func positionTutorialBesideApp() {
+      guard let panel, let owner, let screen = owner.screen?.visibleFrame else { return }
+      let width = panel.frame.width
+      let height = panel.frame.height
+      let right = owner.frame.maxX + 12
+      let left = owner.frame.minX - width - 12
+      let preferredX = right + width <= screen.maxX ? right : left
+      let x = max(screen.minX, min(preferredX, screen.maxX - width))
+      let y = max(screen.minY, min(owner.frame.maxY - height, screen.maxY - height))
+      panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
     private func refreshContent() {
       hosting?.rootView = AnyView(content.disabled(popupOpen).allowsHitTesting(!popupOpen))
     }
@@ -127,6 +148,7 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
       owner = nil
       popupOpen = false
       transitioning = false
+      followsAppEdge = true
       content = AnyView(EmptyView())
       if let panel {
         panel.parent?.removeChildWindow(panel)
