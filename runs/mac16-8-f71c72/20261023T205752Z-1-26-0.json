@@ -1,0 +1,370 @@
+{
+  "schema": 1,
+  "id": "20261023T205752Z-1-26-0",
+  "startedAt": "2026-10-23T20:57:52.211Z",
+  "finishedAt": "2026-10-23T21:03:16.931Z",
+  "stim": {
+    "source": "npm",
+    "label": "1.26.0",
+    "version": "1.26.0",
+    "traceSupport": false
+  },
+  "repo": {
+    "sha": "232bd0a50312b7ae33a53dae7c067f597b4d045e"
+  },
+  "machine": {
+    "id": "mac16-8-f71c72",
+    "model": "Mac16,8",
+    "cpu": "Apple M4 Pro",
+    "cores": 14,
+    "memoryGb": 48,
+    "os": "macOS 27.0 (26A428)",
+    "xcode": "Xcode 27.1 Build version 27A9275",
+    "node": "v22.22.2"
+  },
+  "config": {
+    "reps": 3,
+    "primed": true,
+    "app": "apps/mobile",
+    "maxLoad": 80
+  },
+  "load": {
+    "start": [
+      57.42,
+      62.38,
+      55.65
+    ],
+    "end": [
+      77.56,
+      65.18,
+      58.08
+    ]
+  },
+  "scenarios": {
+    "warm": {
+      "runs": [
+        {
+          "rep": 1,
+          "wallMs": 11028,
+          "exit": 0,
+          "loadBefore": 43,
+          "loadAfter": 38.71
+        },
+        {
+          "rep": 2,
+          "wallMs": 10828,
+          "exit": 0,
+          "loadBefore": 55.15,
+          "loadAfter": 51.16
+        },
+        {
+          "rep": 3,
+          "wallMs": 9997,
+          "exit": 0,
+          "loadBefore": 65.88,
+          "loadAfter": 63.37
+        }
+      ],
+      "summary": {
+        "n": 3,
+        "failures": 0,
+        "medianMs": 10828,
+        "minMs": 9997,
+        "maxMs": 11028,
+        "spread": 0.09521610639083856
+      }
+    },
+    "start": {
+      "runs": [
+        {
+          "rep": 1,
+          "wallMs": 3584,
+          "exit": 0,
+          "loadBefore": 44.66,
+          "loadAfter": 45.01
+        },
+        {
+          "rep": 2,
+          "wallMs": 3532,
+          "exit": 0,
+          "loadBefore": 47.87,
+          "loadAfter": 47.87
+        },
+        {
+          "rep": 3,
+          "wallMs": 3531,
+          "exit": 0,
+          "loadBefore": 67.19,
+          "loadAfter": 69.33
+        }
+      ],
+      "summary": {
+        "n": 3,
+        "failures": 0,
+        "medianMs": 3532,
+        "minMs": 3531,
+        "maxMs": 3584,
+        "spread": 0.015005662514156285
+      }
+    },
+    "ios-first": {
+      "runs": [
+        {
+          "rep": 1,
+          "wallMs": 17743,
+          "exit": 0,
+          "loadBefore": 45.01,
+          "loadAfter": 57.99,
+          "statsPhases": {
+            "prepare": 1227,
+            "cache-lookup": 1684,
+            "device": 6995,
+            "install": 413,
+            "launch": 7275
+          }
+        },
+        {
+          "rep": 2,
+          "wallMs": 18229,
+          "exit": 0,
+          "loadBefore": 47.87,
+          "loadAfter": 47.39,
+          "statsPhases": {
+            "prepare": 1458,
+            "cache-lookup": 1233,
+            "device": 8154,
+            "install": 416,
+            "launch": 6798
+          }
+        },
+        {
+          "rep": 3,
+          "wallMs": 17927,
+          "exit": 0,
+          "loadBefore": 69.33,
+          "loadAfter": 86.21,
+          "statsPhases": {
+            "prepare": 1336,
+            "cache-lookup": 2513,
+            "device": 6315,
+            "install": 402,
+            "launch": 7196
+          }
+        }
+      ],
+      "summary": {
+        "n": 3,
+        "failures": 0,
+        "medianMs": 17927,
+        "minMs": 17743,
+        "maxMs": 18229,
+        "spread": 0.02710994589167178
+      }
+    },
+    "ios-rerun": {
+      "runs": [
+        {
+          "rep": 1,
+          "wallMs": 9131,
+          "exit": 0,
+          "loadBefore": 57.99,
+          "loadAfter": 55.48,
+          "statsPhases": {
+            "prepare": 714,
+            "cache-lookup": 776,
+            "device": 12,
+            "install": 335,
+            "launch": 7140
+          }
+        },
+        {
+          "rep": 2,
+          "wallMs": 8428,
+          "exit": 0,
+          "loadBefore": 47.39,
+          "loadAfter": 54.41,
+          "statsPhases": {
+            "prepare": 702,
+            "cache-lookup": 574,
+            "device": 15,
+            "install": 396,
+            "launch": 6582
+          }
+        },
+        {
+          "rep": 3,
+          "wallMs": 8780,
+          "exit": 0,
+          "loadBefore": 86.21,
+          "loadAfter": 88.3,
+          "statsPhases": {
+            "prepare": 714,
+            "cache-lookup": 1020,
+            "device": 12,
+            "install": 322,
+            "launch": 6544
+          }
+        }
+      ],
+      "summary": {
+        "n": 3,
+        "failures": 0,
+        "medianMs": 8780,
+        "minMs": 8428,
+        "maxMs": 9131,
+        "spread": 0.08006833712984054
+      }
+    },
+    "android-first": {
+      "runs": [
+        {
+          "rep": 1,
+          "wallMs": 14016,
+          "exit": 0,
+          "loadBefore": 55.48,
+          "loadAfter": 54.68,
+          "statsPhases": {
+            "prepare": 5640,
+            "cache-lookup": 955,
+            "device": 350,
+            "install": 699,
+            "launch": 6228
+          }
+        },
+        {
+          "rep": 2,
+          "wallMs": 15390,
+          "exit": 0,
+          "loadBefore": 54.41,
+          "loadAfter": 55.04,
+          "statsPhases": {
+            "prepare": 6014,
+            "cache-lookup": 476,
+            "device": 683,
+            "install": 192,
+            "launch": 7886
+          }
+        },
+        {
+          "rep": 3,
+          "wallMs": 14432,
+          "exit": 0,
+          "loadBefore": 88.3,
+          "loadAfter": 87.55,
+          "statsPhases": {
+            "prepare": 5851,
+            "cache-lookup": 1253,
+            "device": 491,
+            "install": 246,
+            "launch": 6453
+          }
+        }
+      ],
+      "summary": {
+        "n": 3,
+        "failures": 0,
+        "medianMs": 14432,
+        "minMs": 14016,
+        "maxMs": 15390,
+        "spread": 0.0952050997782705
+      }
+    },
+    "android-rerun": {
+      "runs": [
+        {
+          "rep": 1,
+          "wallMs": 7047,
+          "exit": 0,
+          "loadBefore": 54.68,
+          "loadAfter": 57.27,
+          "statsPhases": {
+            "prepare": 636,
+            "cache-lookup": 448,
+            "device": 47,
+            "install": 43,
+            "launch": 5721
+          }
+        },
+        {
+          "rep": 2,
+          "wallMs": 13210,
+          "exit": 0,
+          "loadBefore": 55.04,
+          "loadAfter": 59.08,
+          "statsPhases": {
+            "prepare": 1061,
+            "cache-lookup": 598,
+            "device": 54,
+            "install": 95,
+            "launch": 11201
+          }
+        },
+        {
+          "rep": 3,
+          "wallMs": 8591,
+          "exit": 0,
+          "loadBefore": 87.55,
+          "loadAfter": 83,
+          "statsPhases": {
+            "prepare": 905,
+            "cache-lookup": 1045,
+            "device": 49,
+            "install": 89,
+            "launch": 6341
+          }
+        }
+      ],
+      "summary": {
+        "n": 3,
+        "failures": 0,
+        "medianMs": 8591,
+        "minMs": 7047,
+        "maxMs": 13210,
+        "spread": 0.7173786520777558
+      }
+    },
+    "stop": {
+      "runs": [
+        {
+          "rep": 1,
+          "wallMs": 4253,
+          "exit": 0,
+          "loadBefore": 57.27,
+          "loadAfter": 58.21
+        },
+        {
+          "rep": 2,
+          "wallMs": 4540,
+          "exit": 0,
+          "loadBefore": 59.08,
+          "loadAfter": 67.96
+        },
+        {
+          "rep": 3,
+          "wallMs": 4430,
+          "exit": 0,
+          "loadBefore": 83,
+          "loadAfter": 77.56
+        }
+      ],
+      "summary": {
+        "n": 3,
+        "failures": 0,
+        "medianMs": 4430,
+        "minMs": 4253,
+        "maxMs": 4540,
+        "spread": 0.06478555304740406
+      }
+    }
+  },
+  "skipped": [
+    {
+      "scenario": "bare-ios-rerun",
+      "reason": "no bare React Native fixture is checked in; test/e2e generates one from the network"
+    },
+    {
+      "scenario": "bare-android-rerun",
+      "reason": "no bare React Native fixture is checked in; test/e2e generates one from the network"
+    }
+  ]
+}
