@@ -140,6 +140,9 @@ test('redactArgv hides secret flag values, credentials in URLs and exact values,
         'https://opaquetoken@host/p',
         'eas build --token abc --platform ios',
         'X-Api-Key: k123',
+        'Authorization: Bearer abcdefghijkl',
+        'Cookie: sid=abc; other=1',
+        '--pwd=hunter2',
       ],
       ['literal-secret-value'],
     ),
@@ -162,7 +165,17 @@ test('redactArgv hides secret flag values, credentials in URLs and exact values,
     'https://[redacted]@host/p',
     'eas build --token [redacted] --platform ios',
     'X-Api-Key: [redacted]',
+    'Authorization: [redacted]',
+    'Cookie: [redacted]',
+    '--pwd=[redacted]',
   ]);
+});
+
+test('redactArgv finishes quickly on a huge argument made of flag-like text', () => {
+  const started = performance.now();
+  redactArgv([`--${'ab-'.repeat(60_000)}`, `-${'-'.repeat(20_000)}`]);
+  redactCommandLine(`--${'ab-'.repeat(60_000)}`);
+  expect(performance.now() - started).toBeLessThan(2000);
 });
 
 test('redactArgv bounds the argument count and length', () => {

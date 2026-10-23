@@ -8,7 +8,10 @@ const PHASE_TID_BASE = 1000;
 const MAX_ARGS = 60;
 const MAX_ARG_CHARS = 240;
 const MAX_LINE_CHARS = 500;
-const SECRET_WORDS = 'token|secret|ticket|pass|credential|cookie|api[-_]?key|access[-_]?key|private[-_]?key|auth';
+const SCAN_ARG_CHARS = 1000;
+const SCAN_LINE_CHARS = 2000;
+const SECRET_WORDS =
+  'token|secret|ticket|pass|pwd|otp|credential|cookie|api[-_]?key|access[-_]?key|private[-_]?key|auth';
 const SECRET_NAME = new RegExp(SECRET_WORDS, 'i');
 const SECRET_FLAG = String.raw`--?[A-Za-z0-9_.-]*(?:${SECRET_WORDS})[A-Za-z0-9_.-]*`;
 const SECRET_FLAG_VALUE = new RegExp(String.raw`(${SECRET_FLAG})(=|\s+)(?:'[^']*'|"[^"]*"|\S+)`, 'gi');
@@ -17,7 +20,7 @@ const SECRET_ASSIGNMENT = new RegExp(
   'gi',
 );
 const URL_USERINFO = /(\/\/)[^/\s@]+@/g;
-const SECRET_HEADER = new RegExp(String.raw`(\b[A-Za-z-]*(?:${SECRET_WORDS})[A-Za-z-]*:\s*)\S+`, 'gi');
+const SECRET_HEADER = new RegExp(String.raw`(\b[A-Za-z-]*(?:${SECRET_WORDS})[A-Za-z-]*:\s*)[^'"\r\n]+`, 'gi');
 const AUTH_SCHEME = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 const TOKEN_SHAPE = /\b(?:gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA)[A-Za-z0-9_-]{10,}/g;
 
@@ -46,7 +49,7 @@ export function redactArgv(args: readonly string[], exact: readonly string[] = [
       out.push('[redacted]');
       redactNext = false;
     } else if (flag) {
-      out.push(SECRET_NAME.test(flag) ? `${flag}=[redacted]` : clip(scrubText(arg, exact)));
+      out.push(SECRET_NAME.test(flag) ? `${flag}=[redacted]` : clip(scrubText(arg.slice(0, SCAN_ARG_CHARS), exact)));
     } else if (arg.startsWith('-') && SECRET_NAME.test(arg)) {
       out.push(arg);
       redactNext = true;
@@ -55,7 +58,7 @@ export function redactArgv(args: readonly string[], exact: readonly string[] = [
     } else if (/\s/.test(arg)) {
       out.push(redactCommandLine(arg, exact));
     } else {
-      out.push(clip(scrubText(arg, exact)));
+      out.push(clip(scrubText(arg.slice(0, SCAN_ARG_CHARS), exact)));
     }
   }
   if (args.length > MAX_ARGS) out.push(`[+${args.length - MAX_ARGS} more]`);
@@ -68,7 +71,8 @@ function clip(text: string, max = MAX_ARG_CHARS): string {
 
 /** A shell command line with the same redactions as `redactArgv`, clipped to a fixed length. */
 export function redactCommandLine(command: string, exact: readonly string[] = []): string {
-  return clip(scrubText(command.replace(SECRET_FLAG_VALUE, '$1$2[redacted]'), exact), MAX_LINE_CHARS);
+  const bounded = command.slice(0, SCAN_LINE_CHARS);
+  return clip(scrubText(bounded.replace(SECRET_FLAG_VALUE, '$1$2[redacted]'), exact), MAX_LINE_CHARS);
 }
 
 export type TraceArgs = Record<string, unknown>;
