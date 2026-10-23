@@ -1,6 +1,6 @@
 ---
-title: 'Stim Desktop'
-description: 'A macOS app that shows every workspace, device and build Stim runs'
+title: "Stim Desktop"
+description: "A macOS app that shows every workspace, device and build Stim runs"
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
@@ -161,7 +161,7 @@ The panel shows one step at a time. Click a node on the progress track, use the 
 
 The tutorial opens in a floating window beside Stim without taking focus. It uses the same window level as Stim, so other apps can cover both windows.
 While a popup is open in the Stim window, the tutorial stays visible but its controls
-and arrow-key navigation are disabled until the popup closes. It opens beside the Stim window, staying onscreen when space is limited. It stays on the same desktop Space as the Stim window. Drag it anywhere while it is open; reopening places it beside Stim again.
+and arrow-key navigation are disabled until the popup closes. It opens beside the Stim window, staying onscreen when space is limited. It stays on the same desktop Space as the Stim window. Drag it anywhere while it is open; reopening places it beside Stim again. Until you drag it, resizing Stim keeps the tutorial beside the app with a 12-point gap where screen space permits. Use the pin at the bottom right to dock it in the sidebar or float it again. In full-screen mode it docks automatically and the pin is disabled. Leaving full screen restores floating mode with the same progress. The tutorial hides during the transition and fades back in afterward, respecting Reduce Motion.
 
 The tutorial does not start the server, pair phones or
 grant access, and it runs no builds itself.
@@ -771,8 +771,8 @@ Desktop suggests a remote machine, cache review, or phone pairing when recent bu
 
 **Explore Stim's features** at the bottom of the sidebar opens **Discover Stim**.
 You can also open it from **Help > Discover Stim** or **Settings > App > Features**.
-The page groups features into Get started, Understand your app, Organize
-workspaces, Use more devices, and Other workflows. Each card explains the benefit
+The page starts with a tutorial banner, followed by Everyday workflows,
+Use more devices, and Other workflows. Each card explains the benefit
 and opens an existing action or offers a copyable agent prompt. The full prompt appears
 in a container with a Copy button. Phone access appears only when the Phone app feature
 flag is enabled.

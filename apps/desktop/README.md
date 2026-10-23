@@ -1874,8 +1874,8 @@ build, and appear at most once per day.
 
 **Explore Stim's features** at the bottom of the sidebar opens **Discover Stim**.
 You can also open it from **Help > Discover Stim** or **Settings > App > Features**.
-The page groups features into Get started, Understand your app, Organize
-workspaces, Use more devices, and Other workflows. Each card explains the benefit
+The page starts with a tutorial banner, followed by Everyday workflows,
+Use more devices, and Other workflows. Each card explains the benefit
 and opens an existing action or offers a copyable agent prompt. The full prompt appears
 in a container with a Copy button. Phone access appears only when the Phone app feature
 flag is enabled.
@@ -2150,8 +2150,12 @@ The summary includes a copyable prompt to try Stim with your own app.
 a floating window beside the main app window, kept within the screen and on the
 same desktop Space as that window. It stays
 freely draggable while open; reopening positions it beside the app again.
-In full-screen mode, the tutorial docks inside the right side of the main
-window. Leaving full screen restores the floating tutorial with the same progress.
+Until you drag it, resizing Stim keeps the tutorial beside the app with a 12-point
+gap where screen space permits. The pin at the bottom right docks it in the sidebar;
+click it again to float the tutorial. In full-screen mode, the tutorial docks inside
+the right side of the main window and the pin is disabled. Leaving full screen
+restores the floating tutorial with the same progress. The tutorial hides during
+the transition and fades back in when it finishes, respecting Reduce Motion.
 It uses the same window level as Stim, so other apps can cover both windows.
 While a popup is open in the Stim window, the tutorial stays visible but its controls
 and arrow-key navigation are disabled until the popup closes.
