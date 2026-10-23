@@ -255,17 +255,19 @@ default, level info unless noted. They show in a plain \`logs\` and in
     viewer_opened       the simulator viewer was asked to open it
     simslim_reboot      SimSlim changed the simulator and SpringBoard has a new
                         pid; pidBefore is null when it could not be read
-    restart             warn: SpringBoard is not running after boot, so Stim
-                        restarts the simulator once
+    restart             warn: SpringBoard is not running after boot and the
+                        simulator was shut down; Stim boots it once more
   event springboard_crash_reports, written before that restart and again if
     SpringBoard is still missing after it. files lists the SpringBoard-*.ips
     reports that name this simulator and were captured in the last ten minutes,
     copied from ~/Library/Logs/DiagnosticReports and its Retired folder into
     the workspace logs directory; level is warn, or info with an empty files
     when none matched. dropped counts matching reports that exceeded the limits
-    below and were not copied. macOS deletes the originals after about two days; Stim
-    only reads that folder. It copies at most 20 candidate reports of 1 MiB each,
-    8 MiB per run, and keeps at most 40 in the directory.
+    below and were not copied; failure is the message of a write that failed,
+    with the reports copied before it in files. macOS deletes the originals
+    after about two days; Stim only reads that folder. It looks at the newest
+    100 reports of at most 1 MiB each, copies at most 8 MiB per run, and keeps
+    at most 40 in the directory.
 
 Maintenance records use src: maintenance and appear in the plain timeline.
   stim logs --source maintenance

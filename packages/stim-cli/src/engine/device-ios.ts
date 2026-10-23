@@ -630,15 +630,15 @@ export async function ensureIosBooted(args: IosBootArgs): Promise<BootResult> {
   out(chalk.yellow(phaseLine('device', `SpringBoard is not running on ${udid}; restarting the simulator once`)));
   const record = iosBootRecorder(projectPath, args.slot, udid);
   await preserveSpringBoardReports(record, udid, projectPath);
+  const stopped = await teardownOwnedIosSim(udid, { workspace: projectPath });
+  if (stopped.status !== 'torn-down') {
+    return { ...first, reason: `${first.reason} The restart did not run: ${stopped.reason ?? stopped.status}.` };
+  }
   record('ios_boot', {
     phase: 'restart',
     level: 'warn',
     msg: `ios boot ${udid}: restart (SpringBoard is not running after boot; restarting once)`,
   });
-  const stopped = await teardownOwnedIosSim(udid, { workspace: projectPath });
-  if (stopped.status !== 'torn-down') {
-    return { ...first, reason: `${first.reason} The restart did not run: ${stopped.reason ?? stopped.status}.` };
-  }
   const { booted: _booted, booting: _booting, ...unbooted } = device;
   const { springBoardDown: stillDown, ...second } = await bootOwnedIosSim({
     ...args,
@@ -657,18 +657,21 @@ export async function ensureIosBooted(args: IosBootArgs): Promise<BootResult> {
 async function preserveSpringBoardReports(record: IosBootRecorder, udid: string, root: string): Promise<void> {
   const dir = workspaceLogsDir(root);
   try {
-    const { files, dropped } = await copySpringBoardCrashReports({ udid, destDir: dir });
+    const { files, dropped, failure } = await copySpringBoardCrashReports({ udid, destDir: dir });
     const limit = dropped ? `; ${dropped} more matched but exceeded the copy limits` : '';
     record('springboard_crash_reports', {
-      level: files.length || dropped ? 'warn' : 'info',
+      level: files.length || dropped || failure ? 'warn' : 'info',
       files,
       dropped,
+      ...(failure ? { failure } : {}),
       dir,
-      msg: files.length
-        ? `copied ${files.length} SpringBoard crash report(s) for ${udid} to ${dir}: ${files.join(', ')}${limit}`
-        : dropped
-          ? `${dropped} SpringBoard crash report(s) for ${udid} matched but exceeded the copy limits`
-          : `no SpringBoard crash report for ${udid} from the last 10 minutes`,
+      msg: failure
+        ? `could not copy a SpringBoard crash report for ${udid} (${files.length} copied before it): ${failure}`
+        : files.length
+          ? `copied ${files.length} SpringBoard crash report(s) for ${udid} to ${dir}: ${files.join(', ')}${limit}`
+          : dropped
+            ? `${dropped} SpringBoard crash report(s) for ${udid} matched but exceeded the copy limits`
+            : `no SpringBoard crash report for ${udid} from the last 10 minutes`,
     });
   } catch (error) {
     record('springboard_crash_reports', {

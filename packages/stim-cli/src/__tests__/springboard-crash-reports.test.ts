@@ -126,14 +126,42 @@ test('copySpringBoardCrashReports reports an unreadable report folder instead of
   await expect(copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home })).rejects.toThrow(/ENOTDIR/);
 });
 
-test('copySpringBoardCrashReports surfaces a failed write instead of counting it as over the limits', async () => {
-  report('', 'SpringBoard-2026-10-22-235817.ips', own());
+test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+  'copySpringBoardCrashReports names a failed write instead of counting it as over the limits',
+  async () => {
+    report('', 'SpringBoard-2026-10-22-235817.ips', own());
+    mkdirSync(dest);
+    chmodSync(dest, 0o500);
+    try {
+      const result = await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home });
+      expect(result).toMatchObject({ files: [], dropped: 0, failure: expect.stringContaining('EACCES') });
+    } finally {
+      chmodSync(dest, 0o700);
+    }
+    expect(readdirSync(dest)).toEqual([]);
+  },
+);
+
+test('copySpringBoardCrashReports still lists reports already stored when the directory is full', async () => {
   mkdirSync(dest);
-  chmodSync(dest, 0o500);
-  try {
-    await expect(copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home })).rejects.toThrow(/EACCES/);
-  } finally {
-    chmodSync(dest, 0o700);
+  for (let i = 0; i < 39; i++) writeFileSync(join(dest, `SpringBoard-old-${i}.ips`), 'x');
+  report('', 'SpringBoard-2026-10-22-235802.ips', own('2026-10-22 23:58:02.0000 -0400'), 2000);
+  const first = await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home });
+  const again = await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home });
+  expect(first).toEqual({ files: ['SpringBoard-2026-10-22-235802.ips'], dropped: 0 });
+  expect(again).toEqual(first);
+});
+
+test('copySpringBoardCrashReports finds this simulator among many newer reports of other simulators', async () => {
+  report('', 'SpringBoard-2026-10-22-235700.ips', own('2026-10-22 23:57:00.0000 -0400'), 120_000);
+  for (let i = 0; i < 30; i++) {
+    report(
+      '',
+      `SpringBoard-2026-10-22-2358${String(i).padStart(2, '0')}.ips`,
+      ips('com.apple.CoreSimulator.SimDevice.OTHER', '2026-10-22 23:58:10.0000 -0400'),
+      10_000 + i,
+    );
   }
-  expect(readdirSync(dest)).toEqual([]);
+  const { files } = await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home });
+  expect(files).toEqual(['SpringBoard-2026-10-22-235700.ips']);
 });

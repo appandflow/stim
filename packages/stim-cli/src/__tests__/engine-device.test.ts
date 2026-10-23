@@ -238,14 +238,19 @@ describe('ensureBooted: ios', () => {
       return commands;
     }
     let savedHome: string | undefined;
+    let savedProfile: string | undefined;
     beforeEach(() => {
       savedHome = process.env.HOME;
+      savedProfile = process.env.USERPROFILE;
       process.env.HOME = tmpHome;
+      process.env.USERPROFILE = tmpHome;
       mkdirSync(join(tmpHome, 'Library/Logs/DiagnosticReports'), { recursive: true });
     });
     afterEach(() => {
       if (savedHome === undefined) delete process.env.HOME;
       else process.env.HOME = savedHome;
+      if (savedProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = savedProfile;
     });
     const ensure = (out: string[] = []) =>
       ensureBooted({
@@ -301,6 +306,21 @@ describe('ensureBooted: ios', () => {
       expect(records[0]).toMatchObject({ files: [], level: 'info' });
       expect(records[1]).toMatchObject({ level: 'warn', deviceId: 'U1' });
       expect(records[2]).toMatchObject({ boot: 'restart' });
+    });
+
+    test('attributes the boot, copy and restart records of a named slot to it', async () => {
+      deadShellExecutor({ rows: [''], recoversOnBoot: true });
+      await ensureBooted({
+        projectPath: tmpHome,
+        platform: 'ios',
+        slot: 'tablet',
+        device: { deviceUdid: 'U1', owned: true, booted: 'U1' },
+        timeoutMs: 5000,
+        pollMs: 1,
+      });
+      const records = deviceLog();
+      expect(records.length).toBeGreaterThan(4);
+      expect(records.every((record) => record.slot === 'tablet')).toBe(true);
     });
 
     test('waits out a respawn without restarting the simulator', async () => {
