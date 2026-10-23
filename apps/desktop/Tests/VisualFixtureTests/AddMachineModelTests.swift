@@ -81,6 +81,8 @@ final class AddMachineModelTests: XCTestCase {
     var version = "1.21.0"
     var health: Tailnet.Health?
 
+    var readServer: (doctor: (String) async throws -> DoctorReport, settings: () async throws -> SettingsPayload)?
+
     func make(workspace: Bool = true, sample: SampleBuildModel? = nil, machines: BuildMachinesModel? = nil) -> AddMachineModel {
       let model = AddMachineModel(
         checkout: workspace ? "/fixture" : nil,
@@ -104,8 +106,13 @@ final class AddMachineModelTests: XCTestCase {
             defer { self.doctorInFlight -= 1 }
             if self.doctorDelay != .zero { try? await Task.sleep(for: self.doctorDelay) }
             if self.shouldFailDoctor { throw Failure.refused }
+            if let server = self.readServer { return try await server.doctor(cwd) }
             return try self.report()
-          }, readSettings: { try self.payload() },
+          },
+          readSettings: {
+            if let server = self.readServer { return try await server.settings() }
+            return try self.payload()
+          },
           writeSetting: { key, value in
             if key == "remote.machines", self.shouldFailHostWrite { throw Failure.refused }
             self.writes.append((key, value))
@@ -232,6 +239,41 @@ final class AddMachineModelTests: XCTestCase {
     model.selectedId = "nMini"
     await model.pick()
     XCTAssertEqual(model.wizard.capabilities, [.build, .deviceHost])
+  }
+
+  @MainActor func testNextReachesTheCommandWhileTheLocalServerRefusesForAFullConnection() async throws {
+    let harness = Harness()
+    let server = FullConnectionServer(
+      settings: try JSONSerialization.data(withJSONObject: [
+        "files": [:], "unknown": [], "settings": [["key": "remote.machines", "value": [], "layers": [:]]],
+      ]))
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/tmp/add-machine-test.sock"), clientName: "test", clientVersion: "1",
+      transport: { _, onEvent in
+        server.onEvent = onEvent
+        return server
+      })
+    client.start()
+    defer { client.stop() }
+    await waitUntil { client.isOpen }
+    let home = "/tmp/add-machine-home"
+    let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": home]) }
+    let reader = MachineAccessReader(cli: cli) { (client, home) }
+    harness.readServer = (
+      doctor: { try await reader.report(cwd: $0, ask: false) },
+      settings: { try await readServerSettings(cli: await cli.value, connection: (client, home), cwd: "/tmp") }
+    )
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    server.refuseNext = 1
+    await model.pick()
+    XCTAssertNil(model.error)
+    server.refuseNext = 2
+    await model.next()
+    XCTAssertNil(model.error)
+    XCTAssertEqual(model.wizard.phase, .command)
   }
 
   @MainActor func testRequestsFollowSettingsAndTicketEnvironmentDoesNotLeakIntoPollOrCancel() async throws {
@@ -950,5 +992,64 @@ final class AddMachineModelTests: XCTestCase {
     await model.refresh()
     if model.wizard.phase == .approved { return }
     try? await Task.sleep(for: .milliseconds(10))
+  }
+}
+
+@MainActor private final class FullConnectionServer: ServerTransport {
+  var onEvent: (@MainActor (ServerTransportEvent) -> Void)?
+  var refuseNext = 0
+  private let settings: Data
+
+  init(settings: Data) { self.settings = settings }
+
+  func close() {}
+
+  func send(_ text: String) {
+    guard case .object(let request)? = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)),
+      let id = request["id"], case .string(let method)? = request["method"]
+    else { return }
+    if method != "hello", method != "desktop.reports.invalidate", refuseNext > 0 {
+      refuseNext -= 1
+      return answer([
+        "id": id,
+        "error": .object([
+          "code": .string("limit-exceeded"), "message": .string("A connection can run 4 requests at a time."),
+        ]),
+      ])
+    }
+    switch method {
+    case "hello":
+      answer([
+        "id": id,
+        "result": .object([
+          "protocol": .number(1),
+          "server": .object([
+            "id": .string("home"), "name": .string("Mac"), "version": .string("1"), "stim": .string("1"),
+          ]),
+          "capabilities": .array([.string("read")]),
+          "features": .array([.string("desktop-reports"), .string("desktop-settings")]),
+        ]),
+      ])
+    case "desktop.reports.get":
+      answer([
+        "id": id,
+        "result": .object([
+          "pending": .bool(false),
+          "value": .object([
+            "project": .string("/fixture"), "findings": .array([]), "remoteMachines": .array([]),
+            "deviceHosts": .array([]),
+          ]),
+        ]),
+      ])
+    case "desktop.settings.get":
+      answer(["id": id, "result": (try? JSONDecoder().decode(JSONValue.self, from: settings)) ?? .null])
+    default:
+      answer(["id": id, "result": .object([:])])
+    }
+  }
+
+  private func answer(_ message: [String: JSONValue]) {
+    guard let data = try? JSONEncoder().encode(JSONValue.object(message)) else { return }
+    onEvent?(.text(String(decoding: data, as: UTF8.self)))
   }
 }
