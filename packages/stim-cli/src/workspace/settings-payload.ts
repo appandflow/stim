@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import {
   coerceSettingText,
   isJsonObject,
+  replacementAdvice,
   SETTING_SCOPES,
   SETTINGS,
   settingValueError,
@@ -237,7 +238,12 @@ function unknownEntries(context: SettingsContext): SettingsPayload['unknown'] {
   return sources.flatMap(({ scope, file, settings }) =>
     file === null
       ? []
-      : unknownSettingKeys(settings).map((key) => ({ key, scope, file, value: valueAt(settings, key) })),
+      : unknownSettingKeys(settings).map((key) => {
+          const value = valueAt(settings, key);
+          const command = replacementAdvice(key, value)?.command;
+          const entry = { key, scope, file, value };
+          return command ? Object.assign(entry, { replacement: command }) : entry;
+        }),
   );
 }
 

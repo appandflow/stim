@@ -4,7 +4,7 @@ export default {
 
 If Stim is not installed globally, replace stim with npx stim.
 
-ios --remote <machine> shares remote.machines and its separate device-host
+ios --remote <placement> shares remote.machines and its separate device-host
 approval. Read guide lifecycle hosted-ios for simulator placement and Metro.
 
 Run from the directory containing Package.swift. This prototype builds one
@@ -108,7 +108,7 @@ Apple Swift, xcrun and xcodebuild selections can be reproduced; custom launchers
 require the checkout and otherwise miss safely. SWIFT_EXEC and SWIFT_EXEC_MANIFEST
 compiler overrides are resolved and versioned separately and require the checkout.
 The SDK selected by SDKROOT or SWIFTPM_SDKROOT_macosx is checked by real path and build version. Explicit local placement,
-remote build mode off, disabled pool members and remoteBuildCache
+disabled pool members and remoteBuildCache
 false skip peer lookup. Older workers keep their normal compilation path.
 --plan validates the Swift Package directory, macos settings, development plist
 and declared resources without building, signing, stopping or launching
@@ -140,17 +140,16 @@ line instead of when the app exits.
 
 BUILD OFFLOAD
 
---remote-build <auto|local|name> overrides STIM_REMOTE_BUILD and the
+--remote-build <local|auto|remote|remote-only|name> overrides STIM_REMOTE_BUILD and the
 machine setting remote.build (default auto). local builds here; a name
-requires the matching configured and paired remote Mac, ignoring remote.buildMode
-and this Mac's capacity. Any failure is STIM_OFFLOAD_REFUSED without a local xcodebuild, Gradle or
+requires the matching configured and paired remote Mac, ignoring this Mac's capacity. Any failure is STIM_OFFLOAD_REFUSED without a local xcodebuild, Gradle or
 SwiftPM compile or another machine. Invalid, unlisted or unpaired selections
 refuse before stopping the app or changing its build record. See stim guide errors STIM_OFFLOAD_REFUSED.
 
-With remote.build auto, remote.buildMode places these SwiftPM Debug builds:
-auto builds here while this Mac has capacity, force uses an approved build
-machine when one accepts, and off builds here when local remains in the automatic
-build pool. remote.buildPoolDisabled excludes members from automatic placement,
+remote.build places these SwiftPM Debug builds: auto builds here while this Mac has
+capacity, remote uses the first approved build machine in remote.machines order that
+accepts and otherwise builds here, remote-only never builds here and refuses when none
+accepts, and local builds here. remote.buildPoolDisabled excludes members from automatic placement,
 including its local fallback. Explicit local or named placement bypasses membership.
 Configure remote.machines
 and approve build access as described in stim guide settings. The worker needs
@@ -172,8 +171,8 @@ identity comes from the worker's toolchain. Any other combination keeps the matc
 The client validates the development plist and resource entries before asking a machine. It verifies
 the returned archive's sha256, bundle identifier, executable, declared resources
 and ad hoc signature
-before replacing the owned bundle, then launches locally as usual. With auto, every offload
-failure falls back to the local build, including force. Failed staging preserves
+before replacing the owned bundle, then launches locally as usual. With auto or remote, every offload
+failure falls back to the local build. Failed staging preserves
 the previous bundle. No failed artifact is promoted or cached. The build record
 is unchanged by invalid, unlisted or unpaired setup refusals. It
 carries buildMachine (selected) and builtOn (here or the machine, absent until
@@ -335,7 +334,7 @@ used.
 
 ON ANOTHER MAC
 
-stim macos --remote <machine> builds the Debug app on this Mac and runs it on an
+stim macos --remote <machine> or macos.remote builds the Debug app on this Mac and runs it on an
 approved remote Mac over the tailnet, without SSH. The Mac must be listed
 in remote.machines and approved: stim doctor --fix makes a setup ticket, a
 person on that Mac runs stim-server setup with that ticket and expiry (guide
@@ -344,10 +343,28 @@ only with the stim-server that proves it holds that key.
 A refusal or an unreachable host fails the command; it never launches here
 instead.
 
-The --remote value is a remote Mac name from remote.machines. macOS refuses
-eas and proxy because it has neither backend. It also refuses auto until
-automatic placement ships. These reserved names are case-insensitive and
-trimmed; they refuse with STIM_BAD_ARG before state access or a connection.
+The --remote flag and the macos.remote setting take the placement words of
+ios.remote and a remote Mac name from remote.machines; the flag overrides the
+setting:
+
+  local        launch here (the default when neither is set)
+  auto         launch here unless this Mac is busy (host memory pressure or load
+               per core at or above server.maxLoadPerCore), then on the first
+               approved Mac in remote.machines order that has room
+  remote       on the first approved Mac in remote.machines order that has room
+               and a load per core under its own server.maxLoadPerCore, here only
+               when none does
+  remote-only  the same, never here: with no such Mac the command refuses with
+               STIM_HOSTING_REFUSED and the reason each Mac was skipped, so a
+               macOS app never takes focus on this Mac
+  <machine>    exactly that Mac, with no fallback
+
+A placement word picks the Mac on a new launch and keeps the recorded one while an
+app runs there, until stim stop. The command prints a placement: line with the
+choice and the skipped Macs. macOS refuses eas and proxy because it has neither
+backend. Reserved names are case-insensitive and trimmed; they refuse with
+STIM_BAD_ARG before state access or a connection. The device pool switches
+(remote.devicePoolDisabled) also apply to automatic macOS placement.
 
 Logs: the host records the hosted app's stdout, stderr and exit like a local run.
 stim logs, including --errors, --json and --follow, asks the host over the same

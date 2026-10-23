@@ -1,16 +1,21 @@
 import type { StimContext } from '@stim-cli/core';
 import {
   automaticMachineEnabled,
+  type AutomaticPlacement,
   type HostedAndroidChoice,
   type HostedDeviceSelectors,
   type HostedIosChoice,
 } from '@stim-cli/core/state';
-import type { EasFallbackCheck } from './placement.ts';
+import type { EasFallbackCheck, PlacementOffer } from './placement.ts';
 import { automaticDevicePlacement, probeHost } from './auto-placement.ts';
 import { readHostedNative } from './ios-state.ts';
 import { hostingMachines } from './machines.ts';
 
 type Choice = HostedIosChoice | HostedAndroidChoice;
+
+function planChoice(choice: PlacementOffer['choice']): Choice | null {
+  return choice && ('runtime' in choice || 'systemImage' in choice) ? choice : null;
+}
 
 export type PlannedDevice =
   | { kind: 'local'; placement: string }
@@ -28,6 +33,7 @@ export async function planHostedDevice({
   slot,
   platform,
   machine,
+  placement = 'auto',
   selectors,
   sameKey,
   eas,
@@ -39,6 +45,8 @@ export async function planHostedDevice({
   slot: string;
   platform: 'ios' | 'android';
   machine: string;
+  /** Which automatic placement `machine: 'auto'` stands for. */
+  placement?: AutomaticPlacement;
   selectors: HostedDeviceSelectors;
   /** Whether the choice keys the build as this machine's own device would; null when this machine's key is unknown. */
   sameKey: (choice: Choice) => boolean | null | Promise<boolean | null>;
@@ -58,7 +66,8 @@ export async function planHostedDevice({
     const result = await probe(name, platform, selectors, undefined, operation?.signal);
     if ('failure' in result.probe)
       return { kind: 'unknown', reason: `${name} did not give a ${platform} device (${result.probe.failure})` };
-    const { choice, declined } = result.probe.offer;
+    const { declined } = result.probe.offer;
+    const choice = planChoice(result.probe.offer.choice);
     if (!choice)
       return {
         kind: 'unknown',
@@ -71,19 +80,19 @@ export async function planHostedDevice({
     const recorded = readHostedNative(root, platform, slot)[slot];
     if (recorded) return await named(recorded.machine);
     const placed = await automatic(
-      { root, slot, platform, selectors, noWait: false, signal: operation?.signal, ...(eas ? { eas } : {}) },
+      { root, slot, platform, placement, selectors, noWait: false, signal: operation?.signal, ...(eas ? { eas } : {}) },
       { read: () => ({}), write: () => {} },
     );
     if (placed.placement.decision === 'eas')
       return {
         kind: 'unknown',
-        reason: `auto would run on an EAS Simulator now (${placed.placement.reason}), which --plan cannot read without a session`,
+        reason: `${placement} would run on an EAS Simulator now (${placed.placement.reason}), which --plan cannot read without a session`,
       };
     if (placed.target)
       return {
         kind: 'hosted',
         choice: placed.target.choice,
-        placement: `on ${placed.target.host.machine}, as auto would now`,
+        placement: `on ${placed.target.host.machine}, as ${placement} would now`,
       };
     const names = ((await machines()) ?? []).filter((name) => automaticMachineEnabled('device', name));
     operation?.signal.throwIfAborted();
@@ -91,19 +100,20 @@ export async function planHostedDevice({
       names.map((name) => probe(name, platform, selectors, undefined, operation?.signal)),
     );
     const compared = await Promise.all(
-      offers.map(async ({ probe: each }) =>
-        'offer' in each && each.offer.choice && (await sameKey(each.offer.choice)) === false ? [each.machine] : [],
-      ),
+      offers.map(async ({ probe: each }) => {
+        const choice = 'offer' in each ? planChoice(each.offer.choice) : null;
+        return choice && (await sameKey(choice)) === false ? [each.machine] : [];
+      }),
     );
     const differs = compared.flat();
     if (differs.length)
       return {
         kind: 'local',
-        placement: `this machine; auto may use ${differs.join(', ')}, which builds for another architecture, so its key differs`,
+        placement: `this machine; ${placement} may use ${differs.join(', ')}, which builds for another architecture, so its key differs`,
       };
     return {
       kind: 'local',
-      placement: names.length ? `this machine; auto may use ${names.join(', ')}` : 'this machine',
+      placement: names.length ? `this machine; ${placement} may use ${names.join(', ')}` : 'this machine',
     };
   } catch (error) {
     operation?.signal.throwIfAborted();

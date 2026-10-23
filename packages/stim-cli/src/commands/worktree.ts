@@ -14,6 +14,7 @@ import {
   resolveSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
+  inertSettingWarning,
   unknownSettingKeys,
   type SettingsObject,
 } from '../workspace/settings.ts';
@@ -292,7 +293,7 @@ export async function warmWorktreeTarget(opts: {
         return null;
       }
       for (const key of unknownSettingKeys(settings)) {
-        out(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
+        out(chalk.yellow(inertSettingWarning(settings, key)));
       }
       return settings;
     };

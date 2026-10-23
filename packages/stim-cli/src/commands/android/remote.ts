@@ -161,6 +161,7 @@ export async function selectAndroidPlacement({
       root: args.root,
       slot: args.slot,
       platform: 'android',
+      ...(selected.placement ? { placement: selected.placement } : {}),
       ...(appMode === 'process' ? { appMode } : {}),
       selectors,
       buildMachine,
@@ -168,7 +169,15 @@ export async function selectAndroidPlacement({
       ...(eas ? { eas } : {}),
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
-    log?.(devicePlacementRecord({ platform: 'android', fromFlag: fromFlag, easFallback: Boolean(eas), placed }));
+    log?.(
+      devicePlacementRecord({
+        platform: 'android',
+        selected: selected.placement,
+        fromFlag: fromFlag,
+        easFallback: Boolean(eas),
+        placed,
+      }),
+    );
     if (placed.placement.decision === 'eas')
       return {
         target: {

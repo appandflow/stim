@@ -87,11 +87,29 @@ interface FakeHost {
   logQueries: Record<string, unknown>[];
   logsRefused: boolean;
   installed: { state: string; launched: true | 'unverified' | null; notice?: string };
+  offer: Record<string, unknown>;
   attachReply?: { state: string; notice?: string } | { error: { code: string; message: string } };
   silentMethods: Set<string>;
   forgetSession: string | null;
   stopSession: () => void;
   close: () => Promise<void>;
+}
+
+function macosOffer({ declined = null, loadPerCore = 0.4 }: { declined?: string | null; loadPerCore?: number } = {}) {
+  return {
+    platform: 'macos',
+    choice: { architecture: 'arm64', macosVersion: '27.0' },
+    declined,
+    resources: {
+      cpus: 10,
+      loadPerCore,
+      maxLoadPerCore: 2,
+      memoryFreeBytes: 1e9,
+      memoryPressure: 'normal',
+      workerDiskFreeBytes: 1e10,
+    },
+    capacity: { running: 0, max: 0, available: null },
+  };
 }
 
 /** A hosting Mac that speaks the device-host contract for macOS sessions. */
@@ -118,6 +136,7 @@ async function fakeHost(): Promise<FakeHost> {
     logQueries: [],
     logsRefused: false,
     installed: { state: 'installed', launched: true },
+    offer: macosOffer(),
     stopSession: () => void (session = { ...session, state: 'stopped' }),
     close: () => new Promise((done) => server.close(() => done())),
   };
@@ -142,6 +161,7 @@ async function fakeHost(): Promise<FakeHost> {
           }),
         );
       }
+      if (method === 'device-host.offer') return reply(host.offer);
       if (method === 'device-host.reserve') {
         session = { id: randomUUID(), platform: 'macos', state: 'preparing', appSlot: 3, device: null, ...params };
         return reply(session);
@@ -283,12 +303,10 @@ test('macos rejects reserved remote backends and the retired option before state
   const cwd = process.cwd();
   process.chdir(root);
   try {
-    for (const machine of ['eas', 'proxy', 'auto', ' EAS ', ' PrOxY ', ' AuTo ']) {
+    for (const machine of ['eas', 'proxy', ' EAS ', ' PrOxY ']) {
       await expect(program.parseAsync(['node', 'stim', 'macos', '--remote', machine])).rejects.toMatchObject({
         code: 'STIM_BAD_ARG',
-        message: expect.stringContaining(
-          machine.trim().toLowerCase() === 'auto' ? 'automatic placement' : 'no eas or proxy backend',
-        ),
+        message: expect.stringContaining('no eas or proxy backend'),
       });
     }
     await expect(program.parseAsync(['node', 'stim', 'macos', '--host', 'mini'])).rejects.toMatchObject({
@@ -557,6 +575,58 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     },
   );
 
+  describe('macos.remote placement', () => {
+    const configure = (macos: Record<string, unknown>) =>
+      writeFileSync(
+        join(root, '.stim.json'),
+        JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist', ...macos } }),
+      );
+
+    test.each(['remote-only', 'remote', 'mini'])(
+      'macos.remote %s launches the app on the hosting Mac that offers a macOS session',
+      async (remote) => {
+        configure({ remote });
+        const record = await runMacos(testContext(), root, () => {});
+        expect(record.host).toMatchObject({ machine: 'mini' });
+        expect(host.methods).toContain('device-host.reserve');
+        expect(readMacosRecord(root)?.host?.machine).toBe('mini');
+      },
+    );
+
+    test('macos.remote remote-only refuses instead of launching here when no Mac takes the app', async () => {
+      configure({ remote: 'remote-only' });
+      host.offer = macosOffer({ declined: 'every hosted device reservation is occupied' });
+      const notes: string[] = [];
+      await expect(runMacos(testContext(), root, (line) => notes.push(line))).rejects.toMatchObject({
+        code: 'STIM_HOSTING_REFUSED',
+        message: expect.stringContaining('remote-only never runs here'),
+      });
+      expect(host.methods).not.toContain('device-host.reserve');
+      expect(spawned).toEqual([]);
+      expect(readMacosRecord(root)).toBeNull();
+    });
+
+    test('macos.remote remote-only skips a Mac past its own load limit', async () => {
+      configure({ remote: 'remote-only' });
+      host.offer = macosOffer({ loadPerCore: 2.5 });
+      await expect(runMacos(testContext(), root, () => {})).rejects.toMatchObject({
+        code: 'STIM_HOSTING_REFUSED',
+        message: expect.stringContaining('saturated'),
+      });
+      expect(spawned).toEqual([]);
+    });
+
+    test('a recorded hosted app keeps its Mac when the placement word is run again', async () => {
+      configure({ remote: 'remote-only' });
+      await runMacos(testContext(), root, () => {});
+      const offers = host.methods.filter((method) => method === 'device-host.offer').length;
+      host.offer = macosOffer({ declined: 'busy now' });
+      const record = await runMacos(testContext(), root, () => {});
+      expect(record.host?.machine).toBe('mini');
+      expect(host.methods.filter((method) => method === 'device-host.offer')).toHaveLength(offers);
+    });
+  });
+
   test('over-limit macos.arguments refuse before the host reserves a session', async () => {
     writeFileSync(
       join(root, '.stim.json'),
@@ -630,7 +700,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   ])(
     '%s: the toolchain match with this Mac applies only when the app stays on its builder',
     async (_name, buildKey, runsOnWorker) => {
-      writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'], buildMode: 'force' } }));
+      writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'], build: 'remote' } }));
       vi.spyOn(buildMachines, 'pairedMachines').mockReturnValue([
         {
           machine: 'mini',

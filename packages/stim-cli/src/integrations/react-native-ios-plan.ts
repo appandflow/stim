@@ -182,6 +182,7 @@ export async function planReactNativeIos(
       slot,
       platform: 'ios',
       machine: iosRemote.machine,
+      ...(iosRemote.placement ? { placement: iosRemote.placement } : {}),
       selectors: hostedIosSelectors(
         resolveDeviceType(opts.deviceType, settings),
         resolveRuntime(opts.runtime, settings),

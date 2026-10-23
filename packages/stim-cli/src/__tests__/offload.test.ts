@@ -8,13 +8,14 @@ import {
   buildPlacementSettings,
   parseBuildMachineOption,
   requireConfiguredMachine,
+  requireLocalBuild,
   resolveBuildMachine,
   resolveBuildPlacement,
 } from '../offload/selection.ts';
 import { withAmbientContext } from '@stim-cli/core';
 import { testContext } from './_context.ts';
 import { manifestDigest } from '../offload/manifest.ts';
-import type { MachineCapacity, OffloadMode, BuildMachineCredential } from '@stim-cli/core/state';
+import type { MachineCapacity, BuildMachineCredential } from '@stim-cli/core/state';
 import {
   BuildConnection,
   chooseBuildMachine,
@@ -99,7 +100,7 @@ function capacity(overrides: Partial<BuildOffer['capacity']> = {}): BuildOffer['
 }
 
 describe('offloadPlacement', () => {
-  const base = { mode: 'auto' as const, machines: 1, here: IDLE, unsupported: null };
+  const base = { machines: 1, here: IDLE, unsupported: null };
 
   it.each([
     ['auto, a free slot and low load', base, false, 'load 0.3/core, 0 of 3 build slots busy here'],
@@ -121,20 +122,21 @@ describe('offloadPlacement', () => {
       true,
       'this machine is busy: load at or above 2/core (load 8.2/core, 0 builds)',
     ],
-    ['force on an idle machine', { ...base, mode: 'force' as const }, true, 'remote.buildMode is force'],
+    ['remote on an idle machine', { ...base, selected: 'remote' }, true, 'remote machines come first'],
     [
-      'off on a saturated machine',
-      { ...base, mode: 'off' as const, here: { ...IDLE, builds: 3 } },
+      'local on a saturated machine',
+      { ...base, selected: 'local', here: { ...IDLE, builds: 3 } },
       false,
-      'remote.buildMode is off',
+      '--remote-build local',
     ],
-    ['force with no machine', { ...base, mode: 'force' as const, machines: 0 }, false, 'no remote machine is paired'],
+    ['remote with no machine', { ...base, selected: 'remote', machines: 0 }, false, 'no remote machine is paired'],
     [
-      'force for a device build',
-      { ...base, mode: 'force' as const, unsupported: 'device builds build here' },
+      'remote for a device build',
+      { ...base, selected: 'remote', unsupported: 'device builds build here' },
       false,
       'device builds build here',
     ],
+    ['remote-only on an idle machine', { ...base, selected: 'remote-only' }, true, 'remote-only never builds here'],
   ])('%s', (_, input, offload, reason) => {
     expect(offloadPlacement(input)).toMatchObject({ offload, reason });
   });
@@ -142,8 +144,8 @@ describe('offloadPlacement', () => {
   it.each([
     ['auto, a free slot and low load', {}, 'this-mac-free'],
     ['auto, every slot busy', { here: { ...IDLE, builds: 3 } }, 'this-mac-busy'],
-    ['force', { mode: 'force' as const }, 'forced'],
-    ['off', { mode: 'off' as const }, 'mode-off'],
+    ['remote', { selected: 'remote' }, 'remote'],
+    ['remote-only', { selected: 'remote-only' }, 'remote-only'],
     ['no paired machine', { machines: 0 }, 'no-remote-mac'],
     ['an unsupported build', { unsupported: 'device builds build here' }, 'unsupported'],
     ['--remote-build local', { selected: 'local' }, 'local-selected'],
@@ -151,23 +153,37 @@ describe('offloadPlacement', () => {
   ])('gives a stable code for %s', (_, input, code) => {
     expect(offloadPlacement({ ...base, ...input }).code).toBe(code);
   });
+
+  it.each([
+    ['no paired machine', { machines: 0 }],
+    ['an unsupported build', { unsupported: 'device builds build here' }],
+  ])('remote-only refuses instead of building here for %s', (_, input) => {
+    expect(() => offloadPlacement({ ...base, selected: 'remote-only', ...input })).toThrow(
+      expect.objectContaining({ code: 'STIM_OFFLOAD_REFUSED', message: expect.stringContaining('remote-only') }),
+    );
+  });
+
+  it('remote builds here when no machine is paired, and a pool without local sends the build away', () => {
+    expect(offloadPlacement({ ...base, selected: 'remote', machines: 0 }).offload).toBe(false);
+    expect(offloadPlacement({ ...base, selected: 'remote', localEnabled: false, machines: 1 }).offload).toBe(true);
+  });
 });
 
 describe('pickOffer', () => {
   const pick = (
     offers: Array<BuildOffer | null>,
-    { mode = 'auto', here = { ...IDLE, builds: 3 } }: { mode?: OffloadMode; here?: MachineCapacity } = {},
+    { selected = 'auto', here = { ...IDLE, builds: 3 } }: { selected?: string; here?: MachineCapacity } = {},
     target: BuildTarget = IOS,
   ) =>
     pickOffer({
-      mode,
+      selected,
       here,
       target,
       offers: offers.map((each, index) => ({ machine: `mac${index}`, offer: each, failure: 'unreachable' })),
     });
 
   it('refuses any toolchain difference, a missing runtime, a busy machine and a full disk in either mode', () => {
-    for (const mode of ['auto', 'force'] as const) {
+    for (const selected of ['auto', 'remote'] as const) {
       for (const refused of [
         offer({ toolchain: { compat: 2 } }),
         offer({ toolchain: { cocoapods: '1.17.0' } }),
@@ -180,7 +196,7 @@ describe('pickOffer', () => {
         offer({ capacity: capacity({ diskFreeBytes: 1024 ** 3, declined: '1.0 GB free, builds need 10.0 GB' }) }),
         offer({ capacity: { running: 1, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } }),
       ]) {
-        expect(pick([refused], { mode }).order).toEqual([]);
+        expect(pick([refused], { selected }).order).toEqual([]);
       }
     }
     for (const compat of [undefined, 1])
@@ -218,12 +234,20 @@ describe('pickOffer', () => {
       [],
     ],
     [
-      'auto, saturated by load here, machine no less loaded',
+      'auto, saturated by load here, machine at its own limit',
       'auto',
       { ...IDLE, maxBuilds: 0, loadPerCore: 2.4 },
       capacity({ loadPerCore: 2.4 }),
       null,
-      ['mac0: no less loaded (load 2.4/core there, 2.4/core here)'],
+      ['mac0: saturated: load 2.4/core there, at or above 2/core'],
+    ],
+    [
+      'auto, saturated by load here, machine with a higher limit',
+      'auto',
+      { ...IDLE, maxBuilds: 0, loadPerCore: 6 },
+      capacity({ loadPerCore: 3, maxLoadPerCore: 4 }),
+      0,
+      [],
     ],
     [
       'auto, both saturated',
@@ -249,18 +273,33 @@ describe('pickOffer', () => {
       null,
       ['mac0: capacity unknown (older stim-server) while this machine has a free slot'],
     ],
-    ['force, idle here, machine more loaded', 'force', IDLE, capacity({ loadPerCore: 1.9 }), 0, []],
-    ['force, older machine', 'force', IDLE, { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 }, 0, []],
+    ['remote, idle here, machine more loaded', 'remote', IDLE, capacity({ loadPerCore: 1.9 }), 0, []],
     [
-      'force, machine declines',
-      'force',
+      'remote, machine at its limit',
+      'remote',
+      IDLE,
+      capacity({ loadPerCore: 2.1 }),
+      null,
+      ['mac0: saturated: load 2.1/core there, at or above 2/core'],
+    ],
+    [
+      'remote-only, older machine',
+      'remote-only',
+      IDLE,
+      { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 },
+      0,
+      [],
+    ],
+    [
+      'remote, machine declines',
+      'remote',
       IDLE,
       capacity({ builds: 2, maxBuilds: 2, declined: 'all 2 build slots busy' }),
       null,
       ['mac0: busy (all 2 build slots busy; load 0.2/core, 2 of 2 build slots busy)'],
     ],
-  ] as const)('%s', (_, mode, here, offered, index, reasons) => {
-    const picked = pick([offer({ capacity: offered })], { mode, here });
+  ] as const)('%s', (_, selected, here, offered, index, reasons) => {
+    const picked = pick([offer({ capacity: offered })], { selected, here });
     expect({ order: picked.order, reasons: picked.reasons }).toEqual({
       order: index === null ? [] : [index],
       reasons,
@@ -332,22 +371,53 @@ describe('pickOffer', () => {
     ]);
   });
 
-  it('ranks the warmest machine first, then the least loaded, and names the machines it passed over', () => {
+  it('keeps the remote.machines order, whatever each machine holds warm or how loaded it is', () => {
     const cold = offer();
-    const warm = offer({ warm: { checkout: true, dependencies: true, build: false } });
+    const warm = offer({ warm: { checkout: true, dependencies: true, build: true } });
     const ranked = pick([cold, null, warm]);
-    expect({ order: ranked.order, reasons: ranked.reasons }).toEqual({ order: [2, 0], reasons: ['mac1: unreachable'] });
+    expect({ order: ranked.order, reasons: ranked.reasons }).toEqual({ order: [0, 2], reasons: ['mac1: unreachable'] });
     const loaded = offer({ capacity: capacity({ loadPerCore: 1.4 }) });
     const older = offer({ capacity: { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } });
-    expect(pick([older, loaded, cold]).order).toEqual([2, 1, 0]);
+    expect(pick([older, loaded, cold]).order).toEqual([0, 1, 2]);
   });
 
-  it('does not rank checkout or legacy build-folder flags ahead of a less loaded worker', () => {
-    const unverified = offer({
-      warm: { checkout: true, dependencies: false, build: true },
-      capacity: capacity({ loadPerCore: 1.4 }),
+  it('skips a loaded first machine for an idle second one, and fills the first before the second', () => {
+    const saturated = offer({ capacity: capacity({ loadPerCore: 2.6 }) });
+    const busy = offer({ capacity: capacity({ builds: 2, maxBuilds: 2, declined: 'all 2 build slots busy' }) });
+    const idle = offer({ capacity: capacity({ loadPerCore: 0.1 }) });
+    const warmer = offer({
+      capacity: capacity({ loadPerCore: 1.2 }),
+      warm: { checkout: true, dependencies: true, build: true },
     });
-    expect(pick([unverified, offer()]).order).toEqual([1, 0]);
+    for (const selected of ['auto', 'remote', 'remote-only']) {
+      expect(pick([saturated, idle], { selected }).order).toEqual([1]);
+      expect(pick([busy, idle], { selected }).order).toEqual([1]);
+      expect(pick([warmer, idle], { selected }).order).toEqual([0, 1]);
+    }
+    const ceiling = offer({ capacity: capacity({ loadPerCore: 3, maxLoadPerCore: 4 }) });
+    expect(pick([ceiling, idle], { selected: 'remote' }).order).toEqual([0, 1]);
+  });
+
+  it('puts a machine that holds the exact completed artifact ahead of the order', () => {
+    const fingerprint = 'a'.repeat(64);
+    const artifact = {
+      fingerprint,
+      cacheKey: `swiftpm-peer-${fingerprint}`,
+      name: 'App.app',
+      size: 10,
+      sha256: 'b'.repeat(64),
+    };
+    const picked = pickOffer({
+      selected: 'remote',
+      here: IDLE,
+      target: IOS,
+      artifact: 'swiftpm',
+      offers: [
+        { machine: 'first', offer: offer() },
+        { machine: 'second', offer: offer({ artifact }) },
+      ],
+    });
+    expect(picked.order).toEqual([1, 0]);
   });
 });
 
@@ -513,8 +583,8 @@ describe('pickOffer for an Xcode the worker does not select', () => {
 
 describe('pickOffer for Android', () => {
   const pickAndroid = (each: BuildOffer) =>
-    pickOffer({ mode: 'force', here: IDLE, target: ANDROID, offers: [{ machine: 'mac0', offer: each }] }).order[0] ??
-    null;
+    pickOffer({ selected: 'remote', here: IDLE, target: ANDROID, offers: [{ machine: 'mac0', offer: each }] })
+      .order[0] ?? null;
 
   it('takes a machine whose JDK major and SDK packages match, whatever its CPU, Xcode or JDK vendor', () => {
     expect(pickAndroid(offer({ toolchain: { xcode: null, cocoapods: null, runtimes: [] } }))).toBe(0);
@@ -656,7 +726,7 @@ describe('pickOffer for Android', () => {
 
     it('names the downloads in the placement of the machine that takes the build', () => {
       const { candidates } = pickOffer({
-        mode: 'force',
+        selected: 'remote',
         here: IDLE,
         target: ANDROID,
         offers: [{ machine: 'mac0', offer: offer({ toolchain: { ...missingNdk, androidLicenses: true } }) }],
@@ -739,7 +809,7 @@ describe('macOS build compatibility', () => {
       size: 10,
       sha256: 'b'.repeat(64),
     };
-    const options = { mode: 'auto' as const, here: IDLE, target, artifact: 'swiftpm' as const, cacheOnly: true };
+    const options = { here: IDLE, target, artifact: 'swiftpm' as const, cacheOnly: true };
     expect(
       pickOffer({
         ...options,
@@ -794,7 +864,7 @@ describe('macOS build compatibility', () => {
         size: 10,
         sha256: 'b'.repeat(64),
       };
-      const options = { mode: 'auto' as const, here: IDLE, artifact: 'swiftpm' as const, cacheOnly: true };
+      const options = { here: IDLE, artifact: 'swiftpm' as const, cacheOnly: true };
       const offers = [{ machine: 'mini', offer: offer({ artifact, toolchain: other }) }];
       expect(pickOffer({ ...options, target: onWorker, offers }).order).toEqual([0]);
       expect(pickOffer({ ...options, target, offers }).order).toEqual([]);
@@ -878,6 +948,9 @@ describe('explicit build placement', () => {
     [undefined, '  ', undefined, 'auto'],
     [' AUTO ', 'mini', 'local', 'auto'],
     ['Local', 'mini', 'auto', 'local'],
+    [undefined, undefined, 'remote', 'remote'],
+    [' Remote-Only ', 'mini', 'local', 'remote-only'],
+    [undefined, 'REMOTE', 'mini', 'remote'],
   ])('resolves flag %s, env %s and setting %s without losing precedence', (flag, env, setting, expected) => {
     expect(resolveBuildMachine(flag, env, setting)).toBe(expected);
   });
@@ -901,6 +974,17 @@ describe('explicit build placement', () => {
     );
     expect(() => requireConfiguredMachine('local', undefined)).not.toThrow();
     expect(() => requireConfiguredMachine('auto', undefined)).not.toThrow();
+    expect(() => requireConfiguredMachine('remote', undefined)).not.toThrow();
+    expect(() => requireConfiguredMachine('remote-only', ['other'])).not.toThrow();
+  });
+
+  it('remote-only never lets a build fall back to this machine, remote does', () => {
+    expect(() => requireLocalBuild('remote-only', 'mini: busy')).toThrow(
+      expect.objectContaining({ code: 'STIM_OFFLOAD_REFUSED', message: expect.stringContaining('mini: busy') }),
+    );
+    expect(() => requireLocalBuild('remote')).not.toThrow();
+    expect(() => requireLocalBuild('auto')).not.toThrow();
+    expect(() => requireLocalBuild('local')).not.toThrow();
   });
 
   it.each(['mini', 'Mini', 'MINI:7443'])(
@@ -916,13 +1000,13 @@ describe('explicit build placement', () => {
     expect(() => parseBuildMachineOption('')).toThrow(expect.objectContaining({ code: 'commander.invalidArgument' }));
   });
 
-  it('strict placement ignores local load and remote.buildMode off, but still requires a pairing', () => {
-    const base = { selected: 'mini', mode: 'off' as const, here: IDLE, machines: 1, unsupported: null };
+  it('strict placement ignores local load, but still requires a pairing', () => {
+    const base = { selected: 'mini', here: IDLE, machines: 1, unsupported: null };
     expect(offloadPlacement(base).offload).toBe(true);
     expect(() => offloadPlacement({ ...base, machines: 0 })).toThrow(
       expect.objectContaining({ code: 'STIM_OFFLOAD_REFUSED' }),
     );
-    expect(offloadPlacement({ ...base, selected: 'local', mode: 'force' }).offload).toBe(false);
+    expect(offloadPlacement({ ...base, selected: 'local' }).offload).toBe(false);
   });
 
   it.each([
@@ -933,7 +1017,7 @@ describe('explicit build placement', () => {
     'the build cache is off',
     'the runtime of simulator U1 is unknown',
   ])('strict placement refuses unsupported build: %s', (unsupported) => {
-    expect(() => offloadPlacement({ selected: 'mini', mode: 'off', here: IDLE, machines: 1, unsupported })).toThrow(
+    expect(() => offloadPlacement({ selected: 'mini', here: IDLE, machines: 1, unsupported })).toThrow(
       expect.objectContaining({
         code: 'STIM_OFFLOAD_REFUSED',
         message: `mini: ${unsupported}, so a named remote machine cannot take it`,
@@ -941,26 +1025,21 @@ describe('explicit build placement', () => {
     );
   });
 
-  it.each(['auto', 'local'])(
-    '%s keeps unsupported Release and device builds here even when remote.buildMode is force',
-    (selected) => {
-      for (const unsupported of ['Release builds build here', 'device builds build here']) {
-        expect(offloadPlacement({ selected, mode: 'force', here: IDLE, machines: 1, unsupported }).offload).toBe(false);
-      }
-    },
-  );
+  it.each(['auto', 'remote', 'local'])('%s keeps unsupported Release and device builds here', (selected) => {
+    for (const unsupported of ['Release builds build here', 'device builds build here']) {
+      expect(offloadPlacement({ selected, here: IDLE, machines: 1, unsupported }).offload).toBe(false);
+    }
+  });
 
   it('strict offers bypass auto load gating and cannot rank another worker as a runner up', () => {
     const offers = [
       { machine: 'other', offer: offer({ warm: { checkout: true, dependencies: true, build: true } }) },
       { machine: 'mini', offer: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) },
     ];
-    expect(pickOffer({ selected: 'mini', mode: 'off', here: IDLE, offers, target: IOS }).order).toEqual([1]);
-    expect(pickOffer({ selected: 'mini', mode: 'auto', here: IDLE, offers, target: IOS }).order).toEqual([1]);
+    expect(pickOffer({ selected: 'mini', here: IDLE, offers, target: IOS }).order).toEqual([1]);
     expect(
       pickOffer({
         selected: 'mini',
-        mode: 'auto',
         here: IDLE,
         offers: [{ ...offers[1]!, offer: null, failure: 'unreachable' }, offers[0]!],
         target: IOS,
@@ -976,7 +1055,6 @@ describe('explicit build placement', () => {
   ])('strict offers keep safety checks for %s instead of choosing another worker', (_reason, blocked) => {
     const picked = pickOffer({
       selected: 'mini',
-      mode: 'force',
       here: IDLE,
       offers: [
         { machine: 'mini', offer: blocked },
@@ -1027,7 +1105,6 @@ describe('strict client routing', () => {
       projectRoot: root,
       selected: 'mini',
       target: IOS,
-      mode: 'off',
       here: IDLE,
       machines: credentials,
       note: () => {},
@@ -1041,7 +1118,6 @@ describe('strict client routing', () => {
       projectRoot: root,
       selected: 'auto',
       target: IOS,
-      mode: 'force',
       here: IDLE,
       machines: credentials,
       note: () => {},
@@ -1083,7 +1159,6 @@ describe('strict client routing', () => {
       projectRoot: root,
       selected: 'auto',
       target: IOS,
-      mode: 'force',
       here: IDLE,
       machines: [credentials[0]!],
       note: () => {},
@@ -1159,24 +1234,22 @@ describe('strict client routing', () => {
 test('excluded local builds require a remote regardless of relative load and refuse unsupported fallback', () => {
   const base = {
     selected: 'auto',
-    mode: 'auto' as const,
     machines: 1,
     here: IDLE,
     unsupported: null,
     localEnabled: false,
   };
   expect(offloadPlacement(base).offload).toBe(true);
-  for (const override of [{ machines: 0 }, { unsupported: 'Release builds build here' }, { mode: 'off' as const }])
+  for (const override of [{ machines: 0 }, { unsupported: 'Release builds build here' }])
     expect(() => offloadPlacement({ ...base, ...override })).toThrow('local is disabled');
   expect(offloadPlacement({ ...base, selected: 'local' }).offload).toBe(false);
   expect(
     pickOffer({
       selected: 'auto',
-      mode: 'auto',
       here: IDLE,
       localEnabled: false,
       target: IOS,
-      offers: [{ machine: 'mini', offer: offer({ capacity: capacity({ loadPerCore: 9 }) }) }],
+      offers: [{ machine: 'mini', offer: offer({ capacity: capacity({ loadPerCore: 1.9 }) }) }],
     }).order,
   ).toEqual([0]);
 });

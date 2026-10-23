@@ -105,7 +105,6 @@ export interface StimConfig {
     machines?: unknown;
     easMaxDurationMinutes?: unknown;
     build?: unknown;
-    buildMode?: unknown;
     buildPoolDisabled?: unknown;
     devicePoolDisabled?: unknown;
   };

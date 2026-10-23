@@ -19,14 +19,24 @@ const choice = {
   runtimeId: 'ios27',
   architecture: 'arm64' as const,
 };
-const offered = (machine: string, load: number | null = 0.5, memory = 100): PlacementProbe => ({
+const offered = (
+  machine: string,
+  load: number | null = 0.5,
+  memory = 100,
+  host: { maxLoadPerCore?: number; available?: number } = {},
+): PlacementProbe => ({
   machine,
   offer: {
     platform: 'ios',
     choice,
     declined: null,
-    capacity: { available: 1 },
-    resources: { loadPerCore: load, memoryFreeBytes: memory, memoryPressure: 'normal' },
+    capacity: { available: host.available ?? 1 },
+    resources: {
+      loadPerCore: load,
+      ...(host.maxLoadPerCore ? { maxLoadPerCore: host.maxLoadPerCore } : {}),
+      memoryFreeBytes: memory,
+      memoryPressure: 'normal',
+    },
   },
 });
 const full: PlacementHere = { ...here, devices: { count: 3, max: 3, queued: 0 } };
@@ -70,37 +80,39 @@ test.each([
   { loadPerCore: 3 },
   { memoryPressure: 'warning' as const },
   { budgetRefusal: 'committed memory exceeds budget' },
-])('with local room a busy machine selects only a less loaded host: %j', (busy) => {
+])('with local room a busy machine places on the first host under its own load limit: %j', (busy) => {
   const local = { ...here, ...busy };
-  expect(
-    decide(local, [
-      offered('equal', local.loadPerCore),
-      offered('lower', local.loadPerCore - 0.1),
-      offered('higher', local.loadPerCore + 1),
-    ]),
-  ).toMatchObject({
+  const limited = offered('limited', 3, 100, { maxLoadPerCore: 4 });
+  expect(decide(local, [offered('equal', 3), offered('over', 4), offered('under', 1.9), limited])).toMatchObject({
     kind: 'host',
-    machines: [{ machine: 'lower' }],
-    skipped: [{ machine: 'equal' }, { machine: 'higher' }],
+    machines: [{ machine: 'under' }, { machine: 'limited' }],
+    skipped: [
+      { machine: 'equal', code: 'load' },
+      { machine: 'over', code: 'load' },
+    ],
   });
 });
 
-test('ranking prefers the explicit remote machine, then load, free memory and configuration order', () => {
+test('ranking prefers the explicit remote machine, then the remote.machines order, not load or free memory', () => {
   const offers = [
-    offered('first', 1, 200),
-    offered('second', 1, 200),
-    offered('less-memory', 1, 100),
-    offered('lower-load', 0.5, 10),
-    offered('builder', 5, 1),
+    offered('first', 1.5, 100),
+    offered('second', 0.1, 200),
+    offered('builder', 1.9, 1),
+    offered('saturated', 5, 500),
   ];
   const result = decide(full, offers, { buildMachine: 'builder' });
-  expect(result.kind === 'host' && result.machines.map((each) => each.machine)).toEqual([
-    'builder',
-    'lower-load',
-    'first',
-    'second',
-    'less-memory',
+  expect(result.kind === 'host' && result.machines.map((each) => each.machine)).toEqual(['builder', 'first', 'second']);
+  expect(result.skipped).toMatchObject([{ machine: 'saturated', code: 'load' }]);
+});
+
+test('a host past its own load limit is skipped when this machine is full, and an older host uses this machine limit', () => {
+  const result = decide(full, [
+    offered('older', 2.5),
+    offered('own', 3, 100, { maxLoadPerCore: 4 }),
+    offered('idle', 0.2),
   ]);
+  expect(result.kind === 'host' && result.machines.map((each) => each.machine)).toEqual(['own', 'idle']);
+  expect(result.skipped).toMatchObject([{ machine: 'older', code: 'load', reason: expect.stringContaining('2/core') }]);
 });
 
 test('unknown host load is usable only when the local cap or queue cannot take the run', () => {
@@ -109,8 +121,8 @@ test('unknown host load is usable only when the local cap or queue cannot take t
     kind: 'local',
     skipped: [{ machine: 'unknown', reason: expect.stringContaining('load unknown') }],
   });
-  const result = decide(full, [offered('unknown', null), offered('known', 10)]);
-  expect(result.kind === 'host' && result.machines.map((each) => each.machine)).toEqual(['known', 'unknown']);
+  const result = decide(full, [offered('unknown', null), offered('known', 1)]);
+  expect(result.kind === 'host' && result.machines.map((each) => each.machine)).toEqual(['unknown', 'known']);
 });
 
 test('fallback includes every declined, incompatible, full, pressured and unreachable host', () => {
@@ -229,7 +241,7 @@ test('a full machine marks the local result so the caller asks EAS, and keeps th
 
 test('an excluded local device never becomes a fallback or triggers EAS without the existing capacity condition', () => {
   const excluded = { ...here, localEnabled: false };
-  expect(decide(excluded, [offered('slower', 9)])).toMatchObject({ kind: 'host', machines: [{ machine: 'slower' }] });
+  expect(decide(excluded, [offered('slower', 1.9)])).toMatchObject({ kind: 'host', machines: [{ machine: 'slower' }] });
   expect(decide({ ...excluded, devices: { ...here.devices, count: null } })).toMatchObject({ kind: 'host' });
   expect(decide(excluded, [], { eas: { usable: true } })).toMatchObject({ kind: 'refused' });
   expect(decide({ ...full, localEnabled: false }, [], { eas: { usable: true } })).toMatchObject({ kind: 'eas' });
@@ -242,5 +254,90 @@ test('an excluded local device never becomes a fallback or triggers EAS without 
   expect(decide(excluded, [{ machine: 'mini', failure: 'offline' }])).toMatchObject({
     kind: 'refused',
     skipped: [{ machine: 'mini', reason: 'offline' }],
+  });
+});
+
+describe('remote and remote-only placement', () => {
+  const place = (placement: 'auto' | 'remote' | 'remote-only', local = here, offers = [offered('mini')], extra = {}) =>
+    decide(local, offers, { placement, ...extra });
+  const machines = (result: ReturnType<typeof decide>) =>
+    result.kind === 'host' && result.machines.map((e) => e.machine);
+
+  it('remote places on a host although this machine has room, where auto stays local', () => {
+    expect(place('auto').kind).toBe('local');
+    expect(place('remote')).toMatchObject({
+      kind: 'host',
+      code: 'placed',
+      machines: [{ machine: 'mini', reason: expect.stringContaining('remote tries remote machines first') }],
+    });
+    expect(place('remote', { ...here, devices: { count: null, max: 3, queued: 0 } }).kind).toBe('host');
+  });
+
+  it('remote takes the first host in order under its load limit and the second when the first is loaded or full', () => {
+    const full1 = offered('first', 0.3, 100, { available: 0 });
+    expect(machines(place('remote', here, [offered('first', 0.3), offered('second', 0.1)]))).toEqual([
+      'first',
+      'second',
+    ]);
+    expect(machines(place('remote', here, [offered('first', 2.5), offered('second', 0.1)]))).toEqual(['second']);
+    expect(machines(place('remote', here, [full1, offered('second', 0.1)]))).toEqual(['second']);
+  });
+
+  it('remote runs here only when no host admits, and never from a host load that is merely higher than this machine', () => {
+    expect(place('remote', here, [{ machine: 'mini', failure: 'unreachable' }])).toMatchObject({
+      kind: 'local',
+      code: 'no-host-admits',
+      skipped: [{ machine: 'mini', reason: 'unreachable' }],
+    });
+    expect(place('remote', { ...here, loadPerCore: 0.1 }, [offered('mini', 1.9)]).kind).toBe('host');
+    expect(place('remote', here, []).kind).toBe('local');
+  });
+
+  it('remote waits in the local queue when every host is out and this machine is full', () => {
+    expect(place('remote', full, [{ machine: 'mini', failure: 'unreachable' }])).toMatchObject({
+      kind: 'local',
+      atCapacity: true,
+      reason: expect.stringContaining('waiting locally'),
+    });
+  });
+
+  it('remote-only never runs here: it refuses when no host admits and places on one that does', () => {
+    expect(machines(place('remote-only', here, [offered('first', 2.5), offered('second', 0.1)]))).toEqual(['second']);
+    expect(place('remote-only', here, [{ machine: 'mini', failure: 'unreachable' }])).toMatchObject({
+      kind: 'refused',
+      code: 'pool-unavailable',
+      reason: expect.stringContaining('remote-only never runs here'),
+      skipped: [{ machine: 'mini', reason: 'unreachable' }],
+    });
+    expect(place('remote-only', here, [])).toMatchObject({ kind: 'refused' });
+    expect(place('remote-only', here, [offered('mini', 3)])).toMatchObject({ kind: 'refused' });
+  });
+
+  it('remote-only ignores whether this machine is full, empty or cannot count its devices', () => {
+    for (const local of [here, full, { ...here, devices: { count: null, max: 3, queued: 0 } }])
+      expect(place('remote-only', local, [offered('mini')])).toMatchObject({ kind: 'host' });
+  });
+
+  it('places a macOS app with the same order, and a macOS offer answers only for macOS', () => {
+    const mac = (machine: string, load: number): PlacementProbe => ({
+      machine,
+      offer: {
+        platform: 'macos',
+        choice: { architecture: 'arm64', macosVersion: '27.0' },
+        declined: null,
+        capacity: { available: null },
+        resources: { loadPerCore: load, memoryFreeBytes: 100, memoryPressure: 'normal' },
+      },
+    });
+    const local = { ...here, devices: { count: 0, max: 0, queued: 0 } };
+    const result = decideDevicePlacement({
+      platform: 'macos',
+      placement: 'remote-only',
+      here: local,
+      noWait: false,
+      offers: [mac('first', 2.2), mac('second', 0.4), offered('ios-only')],
+    });
+    expect(result).toMatchObject({ kind: 'host', machines: [{ machine: 'second' }] });
+    expect(result.skipped.map((each) => each.machine)).toEqual(['first', 'ios-only']);
   });
 });

@@ -21,6 +21,8 @@ import {
   CAPACITY_REFUSAL_LIMIT,
   CAPACITY_REFUSAL_MAX_AGE_MS,
   PLACEMENT_DECISIONS,
+  PLACEMENT_WORDS,
+  REPLACED_SETTINGS,
 } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
@@ -492,6 +494,19 @@ test('the settings topic documents every registered setting and its environment 
   assert(body);
   const names = SETTINGS.flatMap((setting) => (setting.env ? [setting.key, setting.env] : [setting.key]));
   expect(names.filter((name) => !body.includes(name))).toEqual([]);
+});
+
+test('the placement words are documented for every workload, and a removed setting is not', () => {
+  for (const body of [renderTopic('settings'), renderTopic('macos'), renderSection('lifecycle', 'hosted-ios')]) {
+    assert(body);
+    expect(PLACEMENT_WORDS.filter((word) => !body.includes(word))).toEqual([]);
+    for (const key of Object.keys(REPLACED_SETTINGS)) expect(body).not.toContain(key);
+  }
+  const settings = renderTopic('settings');
+  assert(settings);
+  expect(settings).toContain(`stim settings set remote.machines '["fast-mini","slow-mini"]'`);
+  for (const env of Object.values(REPLACED_SETTINGS).flatMap((each) => (each.env ? [each.env] : [])))
+    expect(settings).not.toContain(env);
 });
 
 test('the static skill is only the agent guide router', () => {

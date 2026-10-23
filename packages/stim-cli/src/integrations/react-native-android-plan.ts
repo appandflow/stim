@@ -253,6 +253,7 @@ export async function planReactNativeAndroid(
       slot,
       platform: 'android',
       machine: target.machine,
+      ...(target.placement ? { placement: target.placement } : {}),
       selectors: {
         ...(target.systemImage ? { systemImage: target.systemImage } : {}),
         ...(target.deviceProfile ? { deviceProfile: target.deviceProfile } : {}),

@@ -1,4 +1,11 @@
-import type { HostedAndroidChoice, HostedIosChoice } from '@stim-cli/core/state';
+import {
+  mayRunHere,
+  prefersRemote,
+  type AutomaticPlacement,
+  type HostedAndroidChoice,
+  type HostedIosChoice,
+  type HostedMacosChoice,
+} from '@stim-cli/core/state';
 
 export interface PlacementHere {
   localEnabled?: boolean;
@@ -10,11 +17,17 @@ export interface PlacementHere {
 }
 
 export interface PlacementOffer {
-  platform: 'ios' | 'android';
-  choice: HostedIosChoice | HostedAndroidChoice | null;
+  platform: 'ios' | 'android' | 'macos';
+  choice: HostedIosChoice | HostedAndroidChoice | HostedMacosChoice | null;
   declined: string | null;
   capacity: { available: number | null };
-  resources: { loadPerCore: number | null; memoryFreeBytes: number; memoryPressure: string | null };
+  /** `maxLoadPerCore` is the host's own `server.maxLoadPerCore`; a stim-server that predates it reports none. */
+  resources: {
+    loadPerCore: number | null;
+    maxLoadPerCore?: number;
+    memoryFreeBytes: number;
+    memoryPressure: string | null;
+  };
 }
 
 export type PlacementProbe = { machine: string } & ({ offer: PlacementOffer } | { failure: string });
@@ -46,7 +59,8 @@ export function decideDevicePlacement(
   inputs:
     | { sticky: { machine: string } | { local: true } }
     | {
-        platform: 'ios' | 'android';
+        platform: 'ios' | 'android' | 'macos';
+        placement?: AutomaticPlacement;
         here: PlacementHere;
         offers: PlacementProbe[];
         buildMachine?: string;
@@ -67,23 +81,26 @@ export function decideDevicePlacement(
     }
     return { kind: 'local', code: 'sticky', reason: "this workspace's device runs here", skipped: [] };
   }
-  const { platform, here, offers, buildMachine, noWait, eas } = inputs;
+  const { platform, placement = 'auto', here, offers, buildMachine, noWait, eas } = inputs;
+  const remoteFirst = prefersRemote(placement);
   const { count, max, queued } = here.devices;
   const room = max === 0 || (count !== null && count < max);
-  const localEnabled = here.localEnabled !== false;
+  const localEnabled = here.localEnabled !== false && mayRunHere(placement);
   const cannotTake = !localEnabled || !room || queued > 0;
   const atCapacity = count !== null && (!room || queued > 0);
   const usage = max > 0 ? `${count} of ${max} devices in use` : `${count} devices in use, no device cap`;
-  const localReason = !localEnabled
-    ? 'local is disabled in remote.devicePoolDisabled'
-    : count === null
-      ? 'cannot tell how many devices run here; local boot admission decides'
-      : cannotTake
-        ? `${usage}${queued ? `, ${queued} runs queued ahead` : ''}`
-        : (here.budgetRefusal ??
-          (here.memoryPressure !== 'normal'
-            ? `host memory pressure ${here.memoryPressure ?? 'unknown'} here`
-            : `load ${here.loadPerCore.toFixed(1)}/core here, ${usage}`));
+  const localReason = !mayRunHere(placement)
+    ? 'remote-only never runs here'
+    : !localEnabled
+      ? 'local is disabled in remote.devicePoolDisabled'
+      : count === null
+        ? 'cannot tell how many devices run here; local boot admission decides'
+        : cannotTake
+          ? `${usage}${queued ? `, ${queued} runs queued ahead` : ''}`
+          : (here.budgetRefusal ??
+            (here.memoryPressure !== 'normal'
+              ? `host memory pressure ${here.memoryPressure ?? 'unknown'} here`
+              : `load ${here.loadPerCore.toFixed(1)}/core here, ${usage}`));
   const nowhere = (
     code: string,
     reason: string,
@@ -100,9 +117,16 @@ export function decideDevicePlacement(
       : { kind: 'refused', code: 'pool-unavailable', reason, skipped: why, atCapacity: true };
   };
   if (!offers.length) return nowhere('no-remote-mac', 'no remote machines configured; ' + localReason);
-  if (localEnabled && count === null) return local('device-count-unknown', localReason);
-  if (!cannotTake && here.memoryPressure === 'normal' && !here.budgetRefusal && here.loadPerCore < here.maxLoadPerCore)
+  if (localEnabled && count === null && !remoteFirst) return local('device-count-unknown', localReason);
+  if (
+    !remoteFirst &&
+    !cannotTake &&
+    here.memoryPressure === 'normal' &&
+    !here.budgetRefusal &&
+    here.loadPerCore < here.maxLoadPerCore
+  )
     return local('this-mac-free', localReason);
+  const ceiling = (offer: PlacementOffer) => offer.resources.maxLoadPerCore ?? here.maxLoadPerCore;
   const skipped: PlacementSkip[] = [];
   const admitted: { machine: string; offer: PlacementOffer; index: number }[] = [];
   offers.forEach((probe, index) => {
@@ -117,24 +141,18 @@ export function decideDevicePlacement(
       else if (offer.resources.memoryPressure !== 'normal')
         [code, reason] = ['memory', 'host memory pressure unknown or elevated'];
       else if (offer.capacity.available === 0) [code, reason] = ['no-capacity', 'no hosted device capacity available'];
-      else if (!cannotTake && (offer.resources.loadPerCore === null || offer.resources.loadPerCore >= here.loadPerCore))
+      else if (offer.resources.loadPerCore !== null && offer.resources.loadPerCore >= ceiling(offer))
         [code, reason] = [
           'load',
-          offer.resources.loadPerCore === null
-            ? 'host load unknown while this machine has room'
-            : 'host is not less loaded than this machine',
+          `saturated: load ${offer.resources.loadPerCore.toFixed(1)}/core there, at or above ${ceiling(offer)}/core`,
         ];
+      else if (placement === 'auto' && !cannotTake && offer.resources.loadPerCore === null)
+        [code, reason] = ['load', 'host load unknown while this machine has room'];
       else admitted.push({ machine: probe.machine, offer, index });
     }
     if (reason) skipped.push({ machine: probe.machine, code, reason });
   });
-  admitted.sort(
-    (a, b) =>
-      Number(b.machine === buildMachine) - Number(a.machine === buildMachine) ||
-      (a.offer.resources.loadPerCore ?? Infinity) - (b.offer.resources.loadPerCore ?? Infinity) ||
-      b.offer.resources.memoryFreeBytes - a.offer.resources.memoryFreeBytes ||
-      a.index - b.index,
-  );
+  admitted.sort((a, b) => Number(b.machine === buildMachine) - Number(a.machine === buildMachine) || a.index - b.index);
   if (!admitted.length)
     return nowhere(
       'no-host-admits',
@@ -144,7 +162,7 @@ export function decideDevicePlacement(
     );
   const machines = admitted.map(({ machine, offer }) => ({
     machine,
-    reason: `${localReason}; ${machine}${machine === buildMachine ? ' is the explicit remote machine,' : ''} load ${offer.resources.loadPerCore === null ? 'unknown' : offer.resources.loadPerCore.toFixed(1) + '/core'}`,
+    reason: `${remoteFirst && !cannotTake ? `${placement} tries remote machines first` : localReason}; ${machine}${machine === buildMachine ? ' is the explicit remote machine,' : ''} load ${offer.resources.loadPerCore === null ? 'unknown' : offer.resources.loadPerCore.toFixed(1) + '/core'}`,
   }));
   return { kind: 'host', code: 'placed', machines, reason: machines[0]!.reason, skipped };
 }

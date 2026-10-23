@@ -5,7 +5,8 @@ import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
 import { LOG_ROTATE_BYTES, ambientEnv, type StimContext } from '@stim-cli/core';
 import { processContext, runProcessOperation } from '../cli-operation.ts';
-import { validHostedAppArguments, type MacosAppRecord, type MacosBuild } from '@stim-cli/core/state';
+import { placementWord, validHostedAppArguments, type MacosAppRecord, type MacosBuild } from '@stim-cli/core/state';
+import { automaticDevicePlacement, devicePlacementLine } from '../device-host/auto-placement.ts';
 import { connectHost, placeHostedMacos } from '../device-host/hosted-macos.ts';
 import {
   NO_BUILD_PROGRESS,
@@ -39,33 +40,26 @@ import {
   workspaceAgentDeviceDir,
 } from '../workspace/paths.ts';
 import { findProjectRoot } from '../workspace/project.ts';
-import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
+import {
+  resolveProjectSettingsAsync,
+  settingShapeErrors,
+  settingValueAt,
+  SETTING_SHAPE_REMEDY,
+} from '../workspace/settings.ts';
 import { recordWorkspaceUseAsync, writeWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 
 /**
- * Builds the Debug app and launches it here, or with `remote` on that approved remote Mac. A named host never falls
- * back to a local launch.
+ * Builds the Debug app and launches it where `remoteFlag` or `macos.remote` says: here, on one named approved remote
+ * Mac with no fallback, or on the Mac an automatic placement word chooses. A recorded hosted app keeps its Mac.
  */
 export async function runMacos(
   context: StimContext,
   root: string,
   note: (line: string) => void = console.error,
-  remote?: string,
+  remoteFlag?: string,
   buildMachineFlag?: string,
 ): Promise<MacosAppRecord> {
-  const backend = remote?.trim().toLowerCase();
-  if (backend === 'eas' || backend === 'proxy')
-    throw Object.assign(
-      new Error('stim macos --remote takes a remote Mac name from remote.machines; macOS has no eas or proxy backend.'),
-      { code: 'STIM_BAD_ARG' },
-    );
-  if (backend === 'auto')
-    throw Object.assign(
-      new Error(
-        'stim macos --remote auto is not available yet: automatic placement has not shipped. Name a hosting Mac from remote.machines.',
-      ),
-      { code: 'STIM_BAD_ARG' },
-    );
+  refuseDeviceBackend(remoteFlag);
   if (process.platform !== 'darwin') throw new Error('stim macos requires a Mac with Swift installed.');
   root = realpathSync(root);
   const operation = projectRegistry.selectMacos(root);
@@ -83,6 +77,9 @@ export async function runMacos(
   const selected = resolveBuildPlacement(buildMachineFlag);
   if (selected.failure) throw Object.assign(new Error(selected.failure.message), selected.failure);
   const buildMachine = selected.selected;
+  const configured = settingValueAt(settings, 'macos.remote');
+  const requested = remoteFlag ?? (typeof configured === 'string' ? configured : undefined);
+  refuseDeviceBackend(requested);
   const macos = await (await operation.load()).prepare(context, settings);
   await ensureWorkspaceStorageAsync(root, context.signal);
   return withNativeBuildRun(
@@ -96,6 +93,7 @@ export async function runMacos(
         'macos-launch',
         async () => {
           const previous = requiredMacosRecord(root);
+          const remote = await macosHost({ requested, previous, root, buildMachine, note, signal: context.signal });
           if (previous?.host && previous.host.machine !== remote) {
             throw new Error(
               `This workspace's macOS app runs on ${previous.host.machine}. Run stim stop first, then stim macos${remote ? ` --remote ${remote}` : ''}.`,
@@ -189,6 +187,50 @@ export async function runMacos(
     },
     { write: note },
   );
+}
+
+function refuseDeviceBackend(requested: string | undefined): void {
+  if (requested !== undefined && ['eas', 'proxy'].includes(requested.trim().toLowerCase()))
+    throw Object.assign(
+      new Error(
+        'stim macos --remote and macos.remote take local, auto, remote, remote-only or a remote Mac name from remote.machines; macOS has no eas or proxy backend.',
+      ),
+      { code: 'STIM_BAD_ARG' },
+    );
+}
+
+async function macosHost({
+  requested,
+  previous,
+  root,
+  buildMachine,
+  note,
+  signal,
+}: {
+  requested: string | undefined;
+  previous: MacosAppRecord | null | undefined;
+  root: string;
+  buildMachine: string;
+  note: (line: string) => void;
+  signal: AbortSignal;
+}): Promise<string | undefined> {
+  if (requested === undefined) return undefined;
+  const word = placementWord(requested);
+  if (word === 'local') return undefined;
+  if (word === null) return requested.trim();
+  if (previous?.host) return previous.host.machine;
+  const placed = await automaticDevicePlacement({
+    root,
+    slot: 'default',
+    platform: 'macos',
+    placement: word,
+    selectors: {},
+    buildMachine,
+    noWait: false,
+    signal,
+  });
+  note(phaseLine('placement:', devicePlacementLine(placed.placement, placed.skipped)));
+  return placed.placement.decision === 'hosted' ? placed.placement.machine : undefined;
 }
 
 async function buildBundle(
@@ -343,12 +385,15 @@ export default function macosCommand(program: Command): void {
     .description('Build and launch an owned Swift Package macOS Debug app.')
     .option(
       '--remote-build <value>',
-      'Build on auto, local, or one named machine; a name refuses without fallback',
+      'Build on local, auto, remote (remote machines first), remote-only (never here), or one named machine; a name refuses without fallback',
       parseBuildMachineOption,
     )
     .option('--json', 'print one launch or plan payload; build output goes to stderr')
     .option('--plan', 'validate the next SwiftPM Debug build without building or launching')
-    .option('--remote <machine>', 'run it on this approved remote Mac from remote.machines')
+    .option(
+      '--remote <placement>',
+      'run it here (local), on the Mac a placement word chooses (auto, remote, remote-only), or on one approved remote Mac from remote.machines',
+    )
     .action(async (options: { json?: boolean; plan?: boolean; remote?: string; remoteBuild?: string }) => {
       const root = findProjectRoot(process.cwd());
       if (options.plan) {

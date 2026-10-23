@@ -38,6 +38,7 @@ import {
   readJsonObject,
   readHostedSessions,
   parseHostedOfferRequest,
+  maxLoadPerCore,
   parseHostedNativeOffer,
   parseHostedLocalDeviceCount,
   hostedAppAttempt,
@@ -268,6 +269,7 @@ export class DeviceHost {
       return {
         result: {
           ...native,
+          resources: { ...native.resources, maxLoadPerCore: maxLoadPerCore() },
           declined,
           capacity: {
             running,

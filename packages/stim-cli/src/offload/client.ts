@@ -21,11 +21,11 @@ import {
   requireAutomaticMachine,
   isJsonObject,
   runId,
-  OFFLOAD_MODES,
+  mayRunHere,
+  placementWord,
   saturation,
   type BuildMachineCredential,
   type MachineCapacity,
-  type OffloadMode,
 } from '@stim-cli/core/state';
 import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-facts.ts';
 import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE } from '../engine/ccache.ts';
@@ -92,24 +92,19 @@ const CHUNK_BYTES = 60 * 1024;
 const MAX_BUFFERED = 8 * 1024 * 1024;
 const DIGEST_BYTES = 32;
 
-function offloadMode(env: NodeJS.ProcessEnv = ambientContext()?.env ?? process.env): OffloadMode {
-  const raw = env.STIM_REMOTE_BUILD_MODE || loadConfig()?.remote?.buildMode;
-  return OFFLOAD_MODES.includes(raw as OffloadMode) ? (raw as OffloadMode) : 'auto';
-}
-
 export function buildPlacementCandidates(selected: string): {
-  mode: OffloadMode;
   machines: BuildMachineCredential[];
   localEnabled: boolean;
 } {
   const config = loadConfig();
+  const word = placementWord(selected);
   return {
-    localEnabled: selected !== 'auto' || automaticMachineEnabled('build', 'local', config),
-    mode: selected === 'local' ? 'off' : offloadMode(),
+    localEnabled:
+      word === null || word === 'local' || (mayRunHere(word) && automaticMachineEnabled('build', 'local', config)),
     machines:
-      selected === 'local'
+      word === 'local'
         ? []
-        : namedBuildMachine(selected)
+        : word === null
           ? pairedMachines([selected]).slice(0, 1)
           : pairedMachines().filter((entry) => automaticMachineEnabled('build', entry.machine, config)),
   };
@@ -139,10 +134,10 @@ export function placementLoad(choice: { offer: BuildOffer }): string {
 /**
  * Whether a build may go to a remote machine at all, before any machine is asked. `auto` keeps the build here while
  * this machine has a free `concurrency.maxBuilds` slot and its load per core is under `server.maxLoadPerCore`.
- * A named selection ignores local capacity and mode, and refuses an unsupported build or missing pairing.
+ * `remote` always tries the remote machines first and `remote-only` never builds here. A named selection ignores
+ * local capacity, and refuses an unsupported build or missing pairing.
  */
 export function offloadPlacement({
-  mode,
   machines,
   here,
   unsupported,
@@ -150,30 +145,28 @@ export function offloadPlacement({
   selected = 'auto',
 }: {
   selected?: string;
-  mode: OffloadMode;
   machines: number;
   here: MachineCapacity;
   unsupported: string | null;
   localEnabled?: boolean;
 }): { offload: boolean; code: string; reason: string } {
-  if (namedBuildMachine(selected)) {
+  const word = placementWord(selected);
+  if (word === null) {
     if (unsupported) throw new OffloadRefusal(selected, `${unsupported}, so a named remote machine cannot take it`);
     if (machines === 0) throw new OffloadRefusal(selected, 'no remote machine is paired');
     return { offload: true, code: 'named', reason: `selected with --remote-build ${selected}` };
   }
-  if (selected === 'local') return { offload: false, code: 'local-selected', reason: '--remote-build local' };
-  if (!localEnabled) {
-    const reason =
-      mode === 'off'
-        ? 'remote.buildMode is off'
-        : (unsupported ?? (machines === 0 ? 'no enabled remote machine is paired' : null));
-    if (reason) throw new OffloadRefusal('auto', `${reason}; local is disabled in remote.buildPoolDisabled`);
-    return { offload: true, code: 'local-disabled', reason: 'local is disabled in remote.buildPoolDisabled' };
+  if (word === 'local') return { offload: false, code: 'local-selected', reason: '--remote-build local' };
+  if (!localEnabled || !mayRunHere(word)) {
+    const why =
+      word === 'remote-only' ? 'remote-only never builds here' : 'local is disabled in remote.buildPoolDisabled';
+    const reason = unsupported ?? (machines === 0 ? 'no enabled remote machine is paired' : null);
+    if (reason) throw new OffloadRefusal(selected, `${reason}; ${why}`);
+    return { offload: true, code: word === 'remote-only' ? 'remote-only' : 'local-disabled', reason: why };
   }
-  if (mode === 'off') return { offload: false, code: 'mode-off', reason: 'remote.buildMode is off' };
   if (machines === 0) return { offload: false, code: 'no-remote-mac', reason: 'no remote machine is paired' };
   if (unsupported) return { offload: false, code: 'unsupported', reason: unsupported };
-  if (mode === 'force') return { offload: true, code: 'forced', reason: 'remote.buildMode is force' };
+  if (word === 'remote') return { offload: true, code: 'remote', reason: 'remote machines come first' };
   const busy = saturation(here);
   return busy
     ? { offload: true, code: 'this-mac-busy', reason: `this machine is busy: ${busy} (${capacityText(here)})` }
@@ -270,15 +263,15 @@ export function offerProblems(offer: BuildOffer, target: BuildTarget): OffloadPr
 }
 
 /**
- * The asked machines that can take the build, best first, and one reason per machine that cannot. A machine with any
- * `offerProblems` never takes it. In `auto`, a machine must also be expected to build faster than this machine: while
- * every local build slot is busy any machine that accepts will do, otherwise its load per core must be lower than
- * this machine's. A named selection considers only that machine and skips this local-capacity gating.
- * A machine that reports no load (a stim-server older than capacity) takes an `auto` build only while
- * every local slot is busy. Matching dependency installations rank first, then load.
+ * The asked machines that can take the build, in the order they should be tried, and one reason per machine that
+ * cannot. A machine with any `offerProblems` never takes it, nor does one whose load per core is at or above its own
+ * `server.maxLoadPerCore` (this machine's setting stands in for a stim-server that does not report it). Machines that
+ * can take it keep the order of `remote.machines`, so the first one with a free slot under its load threshold gets
+ * the build; only a machine that already holds the exact completed artifact goes ahead of that order. A named
+ * selection considers only that machine. In `auto` a machine that reports no load (a stim-server older than capacity)
+ * takes the build only while every local slot is busy.
  */
 export function pickOffer({
-  mode,
   here,
   offers,
   target,
@@ -287,7 +280,6 @@ export function pickOffer({
   artifact,
   cacheOnly = false,
 }: {
-  mode: OffloadMode;
   here: MachineCapacity;
   selected?: string;
   localEnabled?: boolean;
@@ -303,7 +295,7 @@ export function pickOffer({
     reasons.push(`${machine}: ${msg}`);
     candidates.push({ machine, code, msg, ...(detail ? { detail } : {}) });
   };
-  const ranked: Array<{ index: number; score: number; load: number }> = [];
+  const ranked: Array<{ index: number; cached: boolean }> = [];
   offers.forEach(({ machine, offer, failure }, index) => {
     if (namedBuildMachine(selected) && machine !== selected) return;
     if (!offer) return skip(machine, 'unreachable', failure ?? 'no offer');
@@ -311,7 +303,7 @@ export function pickOffer({
       matchingArtifact(offer, artifact) &&
       (artifact !== 'swiftpm' || toolchainMismatches(target, offer.toolchain).length === 0)
     ) {
-      ranked.push({ index, score: Number.POSITIVE_INFINITY, load: 0 });
+      ranked.push({ index, cached: true });
       candidates.push({ machine, code: 'artifact-hit', msg: 'has the exact completed artifact' });
       return;
     }
@@ -325,17 +317,15 @@ export function pickOffer({
         problems.map((problem) => problem.code),
       );
     }
-    const load = offer.capacity.loadPerCore;
-    if (selected === 'auto' && localEnabled && mode === 'auto' && !slotsFull) {
-      if (typeof load !== 'number') {
-        return skip(machine, 'load', 'capacity unknown (older stim-server) while this machine has a free slot');
-      }
-      if (load >= here.loadPerCore) {
-        return skip(machine, 'load', `no less loaded (load ${load}/core there, ${here.loadPerCore}/core here)`);
-      }
+    const { loadPerCore: load, maxLoadPerCore } = offer.capacity;
+    const ceiling = maxLoadPerCore ?? here.maxLoadPerCore;
+    if (typeof load === 'number' && !namedBuildMachine(selected) && load >= ceiling) {
+      return skip(machine, 'load', `saturated: load ${load}/core there, at or above ${ceiling}/core`);
     }
-    const score = Number(offer.warm.dependencies);
-    ranked.push({ index, score, load: typeof load === 'number' ? load : Number.POSITIVE_INFINITY });
+    if (selected === 'auto' && localEnabled && !slotsFull && typeof load !== 'number') {
+      return skip(machine, 'load', 'capacity unknown (older stim-server) while this machine has a free slot');
+    }
+    ranked.push({ index, cached: false });
     const notes = toolchainNotes(target, offer.toolchain).map((each) => each.reason);
     candidates.push({
       machine,
@@ -346,7 +336,7 @@ export function pickOffer({
       ].join('; '),
     });
   });
-  ranked.sort((a, b) => b.score - a.score || a.load - b.load);
+  ranked.sort((a, b) => Number(b.cached) - Number(a.cached));
   return { order: ranked.map((each) => each.index), reasons, candidates };
 }
 
@@ -739,13 +729,12 @@ interface OfferingMachine {
  * refuses `build.start`, `offloadBuild` moves this choice to the next one in place.
  */
 export interface OffloadChoice extends OfferingMachine {
-  mode: OffloadMode;
+  selected: string;
   here: MachineCapacity;
   target: BuildTarget;
   offerMs: number;
   identity: RepoIdentity;
   runnersUp: OfferingMachine[];
-  automatic?: boolean;
   cacheOnly?: boolean;
   gradleArtifact?: BuildGradleArtifactQuery;
   reactNativeArtifact?: BuildReactNativeArtifactQuery;
@@ -866,7 +855,6 @@ async function probeMachine(
 export async function chooseBuildMachine({
   projectRoot,
   target,
-  mode,
   here,
   note,
   machines = pairedMachines(),
@@ -880,7 +868,6 @@ export async function chooseBuildMachine({
 }: {
   projectRoot: string;
   target: BuildTarget;
-  mode: OffloadMode;
   here: MachineCapacity;
   note: (line: string) => void;
   machines?: BuildMachineCredential[];
@@ -946,9 +933,8 @@ export async function chooseBuildMachine({
     ),
   );
   const { order, reasons, candidates } = pickOffer({
-    localEnabled: selected !== 'auto' || automaticMachineEnabled('build', 'local'),
+    localEnabled: buildPlacementCandidates(selected).localEnabled,
     selected,
-    mode,
     here,
     target,
     artifact: swiftpmQuery
@@ -982,13 +968,12 @@ export async function chooseBuildMachine({
   });
   return {
     ...first!,
-    mode,
+    selected,
     here,
     target,
     offerMs: Date.now() - started,
     identity,
     runnersUp: rest,
-    automatic: selected === 'auto',
     cacheOnly,
     ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
     ...(reactNativeQuery ? { reactNativeArtifact: reactNativeQuery } : {}),
@@ -1524,11 +1509,10 @@ export async function offloadBuild(
       });
       if ('failure' in probe) return fail(probe.failure);
       const placement = pickOffer({
-        mode: choice.mode,
         here: choice.here,
         target: choice.target,
-        selected: choice.automatic ? 'auto' : choice.machine,
-        localEnabled: !choice.automatic || automaticMachineEnabled('build', 'local'),
+        selected: choice.selected,
+        localEnabled: buildPlacementCandidates(choice.selected).localEnabled,
         offers: [{ machine: choice.machine, offer: probe.offer }],
       });
       if (placement.order.length === 0) {
@@ -1599,7 +1583,7 @@ export async function offloadBuild(
       return true;
     };
     for (;;) {
-      if (choice.automatic && !automaticMachineEnabled('build', choice.machine)) {
+      if (!namedBuildMachine(choice.selected) && !automaticMachineEnabled('build', choice.machine)) {
         const reason = `${choice.machine} is disabled in remote.buildPoolDisabled`;
         if (moveOn(reason)) continue;
         return fail(reason);
@@ -1644,7 +1628,7 @@ export async function offloadBuild(
       workerStarted = Date.now();
       early = [];
       choice.connection.onProgress((event) => (job === null ? early.push(event) : handle(event)));
-      if (choice.automatic) requireAutomaticMachine('build', choice.machine);
+      if (!namedBuildMachine(choice.selected)) requireAutomaticMachine('build', choice.machine);
       checkCancelled();
       const reply = await choice.connection.request('build.start', {
         repo: identity.repo,

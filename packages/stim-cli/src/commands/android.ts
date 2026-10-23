@@ -193,7 +193,7 @@ export function registerAndroid(program: Command): void {
     .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
     .option(
       '--remote-build <value>',
-      'Build on auto, local, or one named machine; a name refuses without fallback',
+      'Build on local, auto, remote (remote machines first), remote-only (never here), or one named machine; a name refuses without fallback',
       parseBuildMachineOption,
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
@@ -233,10 +233,12 @@ export function registerAndroid(program: Command): void {
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this machine is full or busy; local runs here, whatever android.remote says',
+      'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this machine is full or busy; remote tries remote.machines in order first and runs here only when none takes it; remote-only never runs here; local runs here, whatever android.remote says',
       (value) => {
         if (!parseMachine(value))
-          throw new InvalidArgumentError('expected eas, proxy, auto, local, or a tailnet machine name');
+          throw new InvalidArgumentError(
+            'expected eas, proxy, local, auto, remote, remote-only, or a tailnet machine name',
+          );
         return value;
       },
     )

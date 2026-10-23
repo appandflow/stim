@@ -5,7 +5,11 @@ import {
   machineCapacity,
   parseHostedChoice,
   parseHostedNativeOffer,
+  type AutomaticPlacement,
   type DevicePlacement,
+  type HostedAndroidChoice,
+  type HostedIosChoice,
+  type HostedMacosChoice,
   type HostedDeviceSelectors,
   type HostedNativePlacement,
   type HostedIosDevice,
@@ -32,7 +36,7 @@ import {
 
 export async function probeHost(
   machine: string,
-  platform: 'ios' | 'android',
+  platform: 'ios' | 'android' | 'macos',
   selectors: HostedDeviceSelectors,
   appMode?: HostedAppOffer['mode'],
   signal?: AbortSignal,
@@ -44,7 +48,7 @@ export async function probeHost(
     host = await connectHost(machine, 3000, true, signal);
     signal?.addEventListener('abort', cancel, { once: true });
     signal?.throwIfAborted();
-    requireHostedAppMode(host, platform, appMode);
+    if (platform !== 'macos') requireHostedAppMode(host, platform, appMode);
     const offer = await call(host, 'device-host.offer', { platform, ...selectors }, Math.max(1, deadline - Date.now()));
     signal?.throwIfAborted();
     const resources = isJsonObject(offer.resources) ? offer.resources : {};
@@ -52,21 +56,23 @@ export async function probeHost(
       ...offer,
       resources: { ...resources, loadPerCore: resources.loadPerCore ?? 0 },
     });
-    let choice =
+    let choice: HostedIosChoice | HostedAndroidChoice | HostedMacosChoice | null =
       platform === 'ios'
         ? offer.platform === 'ios'
           ? parseHostedChoice(offer.choice)
           : null
-        : parsed?.platform === 'android'
+        : parsed?.platform === platform
           ? parsed.choice
           : null;
     if (
       choice &&
+      platform !== 'macos' &&
       ('runtime' in choice
         ? (selectors.deviceType && selectors.deviceType !== choice.deviceType) ||
           (selectors.runtime && selectors.runtime.replace(/^iOS /, '') !== choice.runtime.replace(/^iOS /, ''))
-        : (selectors.systemImage && selectors.systemImage !== choice.systemImage) ||
-          (selectors.deviceProfile && selectors.deviceProfile !== choice.deviceProfile))
+        : 'systemImage' in choice &&
+          ((selectors.systemImage && selectors.systemImage !== choice.systemImage) ||
+            (selectors.deviceProfile && selectors.deviceProfile !== choice.deviceProfile)))
     )
       choice = null;
     if (!isJsonObject(offer.capacity) || (offer.declined !== null && typeof offer.declined !== 'string'))
@@ -80,6 +86,11 @@ export async function probeHost(
           declined: offer.declined,
           capacity: { available: typeof offer.capacity.available === 'number' ? offer.capacity.available : null },
           resources: {
+            ...(typeof resources.maxLoadPerCore === 'number' &&
+            Number.isFinite(resources.maxLoadPerCore) &&
+            resources.maxLoadPerCore > 0
+              ? { maxLoadPerCore: resources.maxLoadPerCore }
+              : {}),
             loadPerCore:
               typeof resources.loadPerCore === 'number' &&
               Number.isFinite(resources.loadPerCore) &&
@@ -91,7 +102,9 @@ export async function probeHost(
           },
         },
       },
-      ...(choice ? { target: { host, choice, session: null } } : {}),
+      ...(choice && ('runtime' in choice || 'systemImage' in choice)
+        ? { target: { host, choice, session: null } }
+        : {}),
     };
   } catch (error) {
     signal?.throwIfAborted();
@@ -102,11 +115,17 @@ export async function probeHost(
   }
 }
 
-function hosted(target: HostedNativeTarget, code: string, reason: string, skipped: PlacementSkip[] = []) {
-  target.selection = { selected: 'auto', reason };
+function hosted(
+  target: HostedNativeTarget | null,
+  machine: string,
+  code: string,
+  reason: string,
+  skipped: PlacementSkip[] = [],
+) {
+  if (target) target.selection = { selected: 'auto', reason };
   return {
     target,
-    placement: { decision: 'hosted' as const, machine: target.host.machine, reason },
+    placement: { decision: 'hosted' as const, machine, reason },
     code,
     skipped,
   };
@@ -125,6 +144,7 @@ export async function automaticDevicePlacement(
     root,
     slot,
     platform,
+    placement = 'auto',
     selectors,
     appMode,
     buildMachine,
@@ -135,7 +155,9 @@ export async function automaticDevicePlacement(
   }: {
     root: string;
     slot: string;
-    platform: 'ios' | 'android';
+    /** `macos` is placed on a hosting machine for `stim macos`, which keeps its own record of where the app runs. */
+    platform: 'ios' | 'android' | 'macos';
+    placement?: AutomaticPlacement;
     selectors: HostedDeviceSelectors;
     appMode?: HostedAppOffer['mode'];
     buildMachine?: string;
@@ -152,7 +174,7 @@ export async function automaticDevicePlacement(
     resume = prepareHostedNative,
     peek = () =>
       peekDeviceSlots({
-        platform,
+        platform: platform === 'macos' ? 'ios' : platform,
         project: getProject(root),
         slot,
         ...(localSims ? { sources: { sims: localSims } } : {}),
@@ -179,10 +201,9 @@ export async function automaticDevicePlacement(
   skipped: PlacementSkip[];
   sticky?: true;
 }> {
-  const recorded: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice> | undefined = read(root, platform, slot)[
-    slot
-  ];
-  if (recorded) {
+  const recorded: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice> | undefined =
+    platform === 'macos' ? undefined : read(root, platform, slot)[slot];
+  if (recorded && platform !== 'macos') {
     const target = await resume(recorded.machine, selectors, recorded, platform, true, appMode);
     if (target)
       return {
@@ -198,7 +219,7 @@ export async function automaticDevicePlacement(
       };
     await write(root, slot, null, platform);
   }
-  const devices = peek();
+  const devices = platform === 'macos' ? { count: 0, max: 0, queued: 0, localLive: false } : peek();
   if (devices.localLive)
     return { ...local('sticky', decideDevicePlacement({ sticky: { local: true } }).reason), sticky: true };
   const configured = await machines();
@@ -221,7 +242,7 @@ export async function automaticDevicePlacement(
     budgetRefusal: await budget(root),
   };
   signal?.throwIfAborted();
-  const inputs = (offers: PlacementProbe[]) => ({ platform, here, offers, buildMachine, noWait });
+  const inputs = (offers: PlacementProbe[]) => ({ platform, placement, here, offers, buildMachine, noWait });
   const notProbed = entries.map((machine) => ({ machine, failure: 'not probed' }));
   const early = decideDevicePlacement(inputs(notProbed));
   const probes =
@@ -230,20 +251,29 @@ export async function automaticDevicePlacement(
       : await Promise.all(entries.map((machine) => probe(machine, platform, selectors, appMode, signal)));
   const offers = probes.length ? probes.map((each) => each.probe) : notProbed;
   let decision = decideDevicePlacement(inputs(offers));
-  if ((decision.kind === 'local' || decision.kind === 'refused') && decision.atCapacity && eas)
+  if (
+    (decision.kind === 'local' || decision.kind === 'refused') &&
+    decision.atCapacity &&
+    eas &&
+    placement !== 'remote-only'
+  )
     decision = decideDevicePlacement({ ...inputs(offers), eas: await eas() });
   if (decision.kind === 'refused')
     throw Object.assign(
       new Error(devicePlacementLine({ decision: 'local', reason: decision.reason }, decision.skipped)),
       {
         code: 'STIM_HOSTING_REFUSED',
-        remedy: 'Enable an available member in remote.devicePoolDisabled or select a machine explicitly.',
+        remedy:
+          placement === 'remote-only'
+            ? 'Wait for a remote machine in remote.machines to have room, check stim doctor for the ones that are unreachable or unapproved, or select a placement that may run here.'
+            : 'Enable an available member in remote.devicePoolDisabled or select a machine explicitly.',
       },
     );
   if (decision.kind === 'eas') return viaEas(decision.code, decision.reason, decision.skipped);
   if (decision.kind === 'local') return local(decision.code, decision.reason, decision.skipped);
-  const target = probes.find((each) => each.probe.machine === decision.machines[0]!.machine)!.target!;
-  return hosted(target, decision.code, decision.reason, decision.skipped);
+  const machine = decision.machines[0]!.machine;
+  const target = probes.find((each) => each.probe.machine === machine)?.target ?? null;
+  return hosted(target, machine, decision.code, decision.reason, decision.skipped);
 }
 
 export function devicePlacementLine(placement: DevicePlacement, skipped: PlacementSkip[]): string {

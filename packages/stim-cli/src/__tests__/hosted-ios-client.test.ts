@@ -1467,7 +1467,7 @@ test.each([undefined, 'mini', 'local'])(
             choice: device,
             declined: null,
             capacity: { available: 1 },
-            resources: { memoryPressure: 'normal', loadPerCore: machine === 'mini' ? 0.1 : 4, memoryFreeBytes: 100 },
+            resources: { memoryPressure: 'normal', loadPerCore: machine === 'mini' ? 0.1 : 1.5, memoryFreeBytes: 100 },
           },
         };
       };

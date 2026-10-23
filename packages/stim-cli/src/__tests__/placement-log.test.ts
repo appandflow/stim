@@ -12,11 +12,10 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-placement-log-'));
   process.env.STIM_HOME = home;
   delete process.env.STIM_REMOTE_BUILD;
-  delete process.env.STIM_REMOTE_BUILD_MODE;
 });
 afterEach(() => {
   delete process.env.STIM_HOME;
-  delete process.env.STIM_REMOTE_BUILD_MODE;
+  delete process.env.STIM_REMOTE_BUILD;
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -49,21 +48,28 @@ test('stim logs --source placement selects the records a run writes next to its 
 });
 
 test('a build record names each setting that applied and the layer it came from', () => {
-  process.env.STIM_REMOTE_BUILD_MODE = 'force';
+  process.env.STIM_REMOTE_BUILD = 'remote';
   const record = buildPlacementRecord({
     platform: 'android',
-    buildMachine: 'auto',
-    chose: { machine: 'mini', reason: 'remote.buildMode is force' },
+    buildMachine: 'remote',
+    chose: { machine: 'mini', reason: 'remote machines come first' },
   });
-  expect(record.settings).toEqual([
-    { key: 'remote.build', value: 'auto', from: 'default' },
-    { key: 'remote.buildMode', value: 'force', from: 'env' },
-  ]);
+  expect(record.settings).toEqual([{ key: 'remote.build', value: 'remote', from: 'env' }]);
   expect(record).toMatchObject({
     level: 'info',
     event: 'build_placement',
     choice: { machine: 'mini', code: 'placed' },
   });
+});
+
+test('a device record names the placement word that applied', () => {
+  const record = devicePlacementRecord({
+    platform: 'android',
+    selected: 'remote-only',
+    fromFlag: false,
+    placed: { placement: { machine: 'mini', reason: 'first with room' }, code: 'placed', skipped: [] },
+  });
+  expect(record.settings).toEqual([{ key: 'android.remote', value: 'remote-only', from: 'setting' }]);
 });
 
 test('a device record carries each skipped host with its code and the choice made', () => {

@@ -7301,15 +7301,15 @@ describe('run statistics', () => {
       requestedAt: '2026-09-01T00:00:00.000Z',
     };
     writeFileSync(buildMachinesFile(), JSON.stringify({ version: 2, machines: [credential] }));
-    process.env.STIM_REMOTE_BUILD_MODE = 'off';
+    process.env.STIM_REMOTE_BUILD = 'local';
     const { runs, recordStats } = recorder();
     try {
       await run({}, { recordStats });
     } finally {
-      delete process.env.STIM_REMOTE_BUILD_MODE;
+      delete process.env.STIM_REMOTE_BUILD;
     }
 
-    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'remote.buildMode is off' });
+    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: '--remote-build local' });
   });
 
   test('a failed iOS build cancels its parallel queued device and records the wait before returning', async () => {
@@ -8164,6 +8164,32 @@ describe('iOS placement on a hosting Mac', () => {
     },
   );
 
+  test.each(['auto', 'remote', 'remote-only'] as const)(
+    '--remote %s asks automatic placement with that word instead of naming a machine',
+    async (word) => {
+      const automatic = vi
+        .fn<typeof automaticDevicePlacement>()
+        .mockRejectedValue(Object.assign(new Error('no host'), { code: 'STIM_HOSTING_REFUSED' }));
+      const prepare = vi.fn<() => never>();
+      const result = await run(
+        { remote: word, json: true },
+        { automaticDevicePlacement: automatic, prepareHostedIos: prepare },
+      );
+      expect(parseFirst(result.logs).code).toBe('STIM_HOSTING_REFUSED');
+      expect(automatic).toHaveBeenCalledWith(expect.objectContaining({ platform: 'ios', placement: word }));
+      expect(prepare).not.toHaveBeenCalled();
+    },
+  );
+
+  test('ios.remote remote-only places automatically when no flag is passed', async () => {
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'ios', { remote: 'remote-only' });
+    const automatic = vi
+      .fn<typeof automaticDevicePlacement>()
+      .mockRejectedValue(Object.assign(new Error('no host'), { code: 'STIM_HOSTING_REFUSED' }));
+    await run({ json: true }, { automaticDevicePlacement: automatic });
+    expect(automatic).toHaveBeenCalledWith(expect.objectContaining({ placement: 'remote-only' }));
+  });
+
   test('an auto budget refusal keeps the build baseline and creates no failed history', async () => {
     const baseline = lastBuildRecord({
       startedAt: '2026-10-06T12:00:00Z',
@@ -8861,12 +8887,12 @@ describe('strict remote machine selection', () => {
     },
   );
 
-  test.each(['auto', 'off'])(
-    'a named worker refusal preserves provider context when configured mode is %s',
+  test.each(['auto', 'local'])(
+    'a named worker refusal preserves provider context when the configured build placement is %s',
     async (mode) => {
       reserve();
       configureMini();
-      writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', mode);
+      writeConfigSetting({ scope: 'machine' }, 'remote.build', mode);
       const choose = vi
         .spyOn(offloadClient, 'chooseBuildMachine')
         .mockResolvedValue('mini: it turned this machine away');
@@ -8987,7 +9013,7 @@ describe('strict remote machine selection', () => {
     async (configuration) => {
       reserve();
       configureMini();
-      writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
+      writeConfigSetting({ scope: 'machine' }, 'remote.build', 'remote');
       const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
       const result = await run({ remoteBuild: 'local', configuration });
       expect(result.exitCode).toBeNull();
@@ -9000,7 +9026,7 @@ describe('strict remote machine selection', () => {
   test('auto still builds a Release cache miss here without contacting a paired worker', async () => {
     reserve();
     configureMini();
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
+    writeConfigSetting({ scope: 'machine' }, 'remote.build', 'remote');
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
     const result = await run({ remoteBuild: 'auto', configuration: 'Release' });
     expect(result.exitCode).toBeNull();

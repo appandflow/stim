@@ -119,12 +119,16 @@ KEYS STIM READS
                         embedded JS, no Metro, cache keyed -release-sim, and
                         a JS-bundle swap on cache hits. The \`--configuration\`
                         flag overrides this per invocation. Unset means Debug.
-  ios.remote            "proxy", "eas", or a named approved Mac from
-                        remote.machines, with the same meaning as --remote.
-                        "auto" places on an approved Mac when this machine is full or
-                        busy. Unset runs here; "local" runs here even when a
-                        lower layer says otherwise. A --device run ignores
-                        it. See lifecycle hosted-ios.
+  ios.remote            where the simulator runs, with the same meaning as
+                        --remote: "local" here, even when a lower layer says
+                        otherwise; "auto" here, and on an approved Mac from
+                        remote.machines when this machine is full or busy;
+                        "remote" on the first approved Mac in remote.machines
+                        order with room, here only when none takes it;
+                        "remote-only" the same but never here; a named
+                        approved Mac exactly that Mac; "proxy" or "eas" a
+                        remote device backend. Unset runs here. A --device run
+                        ignores it. See lifecycle hosted-ios.
   ios.projectPath       directory under the app holding a bare React Native
                         app's Xcode project and Podfile; default "ios". "."
                         is the app directory itself (RNTester's layout).
@@ -345,14 +349,13 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         password, handed to apksigner through its
                         environment, never its command line. Unset means
                         the debug keystore's fixed "android".
-  android.remote        "proxy", "eas", or a named approved Mac in
-                        remote.machines; "auto" places on an approved Mac when
-                        this machine is full or busy. Unset runs here; "local"
-                        runs here even when a lower layer says otherwise.
-                        A --device run ignores it. See lifecycle
-                        hosted-android.
-  remote.easFallback    true lets "auto" (ios.remote, android.remote or
-                        --remote auto) run the simulator or emulator on a
+  android.remote        where the emulator runs, with the same words as
+                        ios.remote: "local", "auto", "remote", "remote-only",
+                        a named approved Mac in remote.machines, "proxy" or
+                        "eas". Unset runs here. A --device run ignores it. See
+                        lifecycle hosted-android.
+  remote.easFallback    true lets "auto" or "remote" (ios.remote, android.remote
+                        or --remote) run the simulator or emulator on a
                         billed EAS Simulator when this machine is at its
                         concurrency.maxDevices cap (or has runs queued) and no
                         remote.machines entry takes the run, instead of waiting
@@ -486,6 +489,16 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         compiled into Contents/Resources before signing
   macos.resources       map of Contents/Resources destinations to source paths
                         relative to Package.swift; see stim guide macos
+  macos.remote          where stim macos launches the app, with the words of
+                        ios.remote except "eas" and "proxy": "local" here;
+                        "auto" here unless this machine is busy, then an
+                        approved Mac in remote.machines; "remote" on the
+                        first approved Mac in order with room, here only when
+                        none takes it; "remote-only" the same but never here,
+                        which keeps the app from taking focus on this Mac; a
+                        named Mac exactly that Mac. The --remote flag
+                        overrides it. A recorded hosted app keeps its Mac
+                        until stim stop. Unset runs here. See stim guide macos.
   web.url               the page \`stim web\` opens in the owned Chrome, an
                         http:// or https:// URL. {port:<label>} becomes the
                         workspace's named port (allocated like \`stim ports
@@ -543,8 +556,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         them from the environment or the machine layers.
 
 Each setting takes its documented type: string, array of strings, number,
-boolean, or object. ios.remote and android.remote accept backend names or
-tailnet machine names. metro.tunnel, web.viewport,
+boolean, or object. ios.remote, android.remote, macos.remote and remote.build
+accept placement words (local, auto, remote, remote-only) or tailnet machine
+names, and ios.remote and android.remote also the backend names. metro.tunnel, web.viewport,
 optimizations.android.compilerCache and optimizations.android.pch take only
 their listed choices. A value of the wrong
 type or outside those choices is refused by name on every command that resolves
@@ -776,6 +790,21 @@ simulator sessions on, by MagicDNS name with an optional serve port (default
   stim settings set remote.machines '["janics-mac-mini"]'
   stim doctor --fix
 
+The order of \`remote.machines\` is the priority order for every workload: the
+build, simulator, emulator and macOS app each go to the first listed machine that
+has approval, a free slot and a 5-minute load per core under that machine's own
+\`server.maxLoadPerCore\`, and the next one in order only when it does not. A
+machine at its caps, over its load limit, unreachable or lacking approval is
+skipped; load does not rank the machines that qualify, so the first one fills
+before the next is used. Put the fastest machine first and set the order with
+one command; \`stim doctor\` prints it as \`placement order\` and gives each
+machine a \`priority\` in its JSON:
+
+  stim settings set remote.machines '["fast-mini","slow-mini"]'
+
+A host reports its own load limit in its device offer; a stim-server older than
+that does not, and this machine's \`server.maxLoadPerCore\` stands in for it.
+
 Automatic membership is separate from approval. In Desktop Settings > Remote
 Machines, use Builds enabled and Simulators enabled for this machine or a
 configured remote. The equivalent machine settings list the excluded members;
@@ -863,9 +892,9 @@ An invalid remote.machines setting reports an error and preserves every saved cr
 replaced machine, run it, then re-add the name to request a new approval.
 A definite revoked or lapsed request can be requested again with --fix.
 An in-progress approval inspection reports busy rather than replacing its
-pending token. \`stim macos --remote <machine>\` runs a macOS app on an
-approved remote Mac (stim guide macos); \`ios\` and \`android\` do not yet
-place sessions on these Macs. To view or control a hosted macOS app, a person
+pending token. \`stim macos --remote <placement>\` or \`macos.remote\` runs a macOS
+app on an approved remote Mac (stim guide macos), and \`ios.remote\` and
+\`android.remote\` place simulators and emulators on them. To view or control a hosted macOS app, a person
 on that Mac approves Screen & System Audio Recording and Device Control and Data
 Access (Accessibility on macOS 26 and earlier) for Stim Host, the app
 \`stim-server service install\` runs the server under.
@@ -912,18 +941,27 @@ builds, or the build messages change; their Stim builds can differ. A
 stim-server too old to report one needs the same Stim build as this machine.
 
 \`remote.build\` (machine scope, default auto) selects placement for
-\`ios\`, \`android\` and \`macos\`. \`--remote-build <auto|local|name>\`
+\`ios\`, \`android\` and \`macos\`. \`--remote-build <local|auto|remote|remote-only|name>\`
 overrides STIM_REMOTE_BUILD, which overrides the setting. A blank environment
-value is unset. Trimmed auto/local are case-insensitive. Machine names match
+value is unset. Trimmed placement words are case-insensitive. Machine names match
 configured names case-insensitively, with port 7443 when omitted; reports use
 the configured entry.
 
-  auto   follows remote.buildMode, considering only enabled automatic pool members
-  local  builds only on this machine for this invocation
-  name   requires a matching entry in remote.machines, already paired and
-         approved for builds; ignores remote.buildMode and this machine's load/slot gating
+  local        builds only on this machine for this invocation
+  auto         (default) here while this machine has capacity, a remote
+               machine from remote.machines when it does not; only enabled
+               automatic pool members count
+  remote       on the first remote machine in remote.machines order that
+               accepts the build, here only when none does
+  remote-only  the same, never here: when no remote machine accepts the build
+               it refuses with STIM_OFFLOAD_REFUSED
+  name         requires a matching entry in remote.machines, already paired and
+               approved for builds; ignores this machine's load/slot gating
 
 A name never prompts for pairing, tries another remote machine or falls back here.
+remote-only refuses instead of building here for a build that cannot leave this
+machine (device, Release, an unknown simulator runtime, the build cache off), and
+when no pairing or approval exists.
 Any refusal or failure is STIM_OFFLOAD_REFUSED with the remote machine and reason.
 Device, Release/non-Debug, --remote, Android CAS compiler builds, builds with
 the build cache off, and an unknown simulator runtime cannot build there and
@@ -949,26 +987,29 @@ Copyable agent prompt:
   Run stim ios --remote-build janics-mac-mini. If it refuses, report the
   STIM_OFFLOAD_REFUSED reason and remedy; do not retry with another placement.
 
-With remote.build auto, \`remote.buildMode\` decides where an iOS simulator Debug build or an Android
-emulator debug build or a stim macos SwiftPM Debug build compiles:
+Which remote machine takes a build that leaves this machine follows the order of
+\`remote.machines\`: the first machine that accepts it, meaning it has a free slot
+(\`concurrency.maxBuilds\`), enough disk, a matching toolchain, and a load per core
+under its own \`server.maxLoadPerCore\`. A machine past its limit is skipped like a
+full one and the next in order is tried; the first machine fills to its caps before
+the next one gets a build. A machine that already holds the exact completed
+artifact goes ahead of the order, since that needs no build. With \`auto\` the
+build leaves this machine only when it is busy:
 
   auto   (default) here while this machine has capacity: a free
          \`concurrency.maxBuilds\` slot (always, with no build limit) and a
-         load per core under \`server.maxLoadPerCore\`. Otherwise on a
-         remote machine that accepts the build and is expected to be faster:
-         while every slot here is busy, any remote machine that accepts; while only
-         the load is high, one whose load per core is lower than this
-         machine's. A machine too old to report its load counts only while every
-         slot here is busy.
-  force  on a remote machine whenever one accepts it
-  off    here when local remains enabled in the automatic build pool
+         load per core under \`server.maxLoadPerCore\`. Otherwise on the first
+         remote machine in order that accepts the build. A machine too old to
+         report its load counts only while every slot here is busy.
+  remote on the first remote machine in order that accepts the build, whatever
+         load this machine is under; here only when none does
+  remote-only  as remote, but when none does the build refuses
 
-For React Native and Expo, among machines that can take a new build, a matching dependency installation
-ranks before load. The worker checks the requested project, lockfile, install
-arguments and the major of the Node the app pins, and verifies that its modules
-and install marker remain present.
-Older workers' dependency hints and mere checkout or build-folder presence do
-not influence this ranking. Exact completed-artifact hits still come first.
+A worker that holds a matching dependency installation does not rank ahead of an
+earlier machine in the order; it only saves the install on the machine that gets
+the build. The worker checks the requested project, lockfile, install arguments
+and the major of the Node the app pins, and verifies that its modules and install
+marker remain present.
 
 The worker installs dependencies with the lockfile nearest the app: the first
 pnpm-lock.yaml, yarn.lock or package-lock.json in its directory or above it in
@@ -993,10 +1034,11 @@ Load per core is the 5-minute load average divided by the CPU count; a machine's
 native builds are its Stim runs in prebuild, pods or compile on that machine, not
 the ones it offloaded.
 \`server.maxLoadPerCore\` (default 2) is also the busy threshold for
-automatic iOS and Android device placement. It is the load per core at which a machine
-counts as saturated, both here and on a remote machine.
+automatic iOS, Android and macOS placement. It is the load per core at which a
+machine counts as saturated: each machine applies its own value, and a remote
+machine past it is skipped like a full one.
 
-STIM_REMOTE_BUILD_MODE overrides it for one command. Device, Release and
+Device, Release and
 \`--remote eas|proxy\` builds, Android builds with the Apple Clang CAS compiler cache,
 and iOS/Android runs with the build cache off, always build here. Hosted iOS
 Debug builds can use a separate --remote-build, targeting the hosting Mac's
@@ -1009,7 +1051,7 @@ verified compile; remote output is not published under an unverified client key.
 An offloaded iOS/Android build first runs prebuild (and \`pod install\` for iOS) here,
 then asks every paired machine what it can build. It takes one whose Stim
 build matches this Mac and, for iOS and macOS, CPU matches the target simulator, with enough disk, that does not decline,
-preferring the one that already holds this repository, then the least loaded,
+taking the first in remote.machines order that qualifies,
 and moves to the next one in that order when a machine that offered fails the
 sync or refuses to start the build.
 After a local and configured-provider miss, native Xcode simulator builds can

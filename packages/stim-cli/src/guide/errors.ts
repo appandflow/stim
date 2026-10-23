@@ -389,6 +389,11 @@ and no enabled remote can finish this build, or when the build requires a local
 compiler. Enable local or choose an explicit --remote-build placement. Existing
 builds are not interrupted and a cache hit needs no compiler.
 
+remote-only never builds here: it refuses when no remote machine in remote.machines
+can take the build, naming each machine and why it was skipped, and for a build that
+cannot leave this machine. Rerun with --remote-build remote to allow a local build
+when no remote machine can take it.
+
 A named --remote-build selection is strict. The message names the machine
 and why it cannot take or finish the build: not configured or paired, approval
 pending or denied, unreachable, changed pinned server key, a stim-server
@@ -412,7 +417,7 @@ Run stim doctor --fix to ask for build access if not paired. Check
 stim settings get remote.machines. A person on the worker approves this machine
 by running the stim-server setup command doctor --fix printed, with its ticket
 and expiry (guide settings). Agents never run setup or approve requests.
-Rerun with --remote-build auto for normal placement and local fallback, or
+Rerun with --remote-build auto or remote for placement with local fallback, or
 --remote-build local to keep the build here.
 `,
     },

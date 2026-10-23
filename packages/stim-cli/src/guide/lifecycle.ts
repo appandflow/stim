@@ -503,9 +503,9 @@ If Stim is not installed globally, replace stim with npx stim.
 
 A person on the host approves device-host access, separately from build, read
 and control. The setup in hosted-ios also serves Android. android.remote sets
-a workspace default. eas and proxy remain backends. --remote auto or
-android.remote = auto places automatically; see hosted-ios for the shared
-policy. No flag or setting runs on this machine.
+a workspace default. eas and proxy remain backends. --remote auto, remote or
+remote-only (or the same android.remote value) places automatically; see
+hosted-ios for the shared policy. No flag or setting runs on this machine.
 
 A named Mac is strict: refusal, unreachable, declined or failed preparation
 returns STIM_HOSTING_REFUSED without fallback. --device with --remote
@@ -653,28 +653,38 @@ If Stim is not installed globally, replace stim with npx stim.
   stim reload ios
   stim stop
 
-The same setup serves macos --remote. Approval is separate from build, read
+The same setup serves macos --remote and macos.remote. Approval is separate from build, read
 and phone control. Set ios.remote to the machine name for a default (machine scope for every app on this machine);
 no flag or setting runs here. eas and proxy keep their remote backend meanings.
 --remote auto (or ios.remote = auto / android.remote = auto) stays here when
 there is a free concurrency.maxDevices slot (0 means unlimited), no device
 waiter ahead, normal host memory pressure, no budget shortfall,
 and 5-minute load per core below server.maxLoadPerCore. Without remote.machines,
-auto is local. An unknown local device count also stays local; boot admission
+auto and remote are local and remote-only refuses. An unknown local device count also stays local; boot admission
 still decides. The default without a flag or setting stays local. remote.devicePoolDisabled excludes
 members from new automatic placement only; an excluded local member is never a
 fallback. Existing sessions keep their owner and named placement bypasses the pool.
 See stim guide settings for separate build/device membership controls.
 
+--remote remote (or ios.remote = remote) skips that local check and asks the hosts
+first, in remote.machines order; the simulator runs here only when none admits
+it, with the same wait and EAS fallback as auto. --remote remote-only never runs
+here: when no host admits the run it refuses with STIM_HOSTING_REFUSED, naming each
+skipped host and its reason, and neither waits in the local queue nor uses EAS.
+Excluding local in remote.devicePoolDisabled has the same effect on auto and remote.
+
 Otherwise Stim asks every approved remote.machines host in parallel, skipping
 one that tailscale status reports as running an OS other than macOS, with a
 3-second probe timeout and this run's model/runtime or image/profile selectors.
-A compatible choice, no declined reason, normal memory pressure and available
-capacity are required. With a free local slot, a host must report a lower load;
-with a full cap or a queue ahead, an admitted host with unknown load is allowed.
-Hosts rank by the build preference (flag > STIM_REMOTE_BUILD > remote.build)
-when it names a machine, then lowest load, most free memory and remote.machines order. Automatic build
-offload resolves later, after the device architecture is known.
+A compatible choice, no declined reason, normal memory pressure, available
+capacity and a load per core under the host's own server.maxLoadPerCore are
+required (a host that reports no limit uses this machine's). With a free local
+slot, a host with unknown load is skipped; with a full cap or a queue ahead, an
+admitted host with unknown load is allowed. Admitted hosts are tried in order:
+the host named by the build preference (flag > STIM_REMOTE_BUILD > remote.build)
+when it names a machine, then remote.machines order, so the first listed host with
+room fills before the next gets a run. Load and free memory do not rank hosts.
+Automatic build offload resolves later, after the device architecture is known.
 
 When no host admits and this machine is at its concurrency.maxDevices cap (or runs
 are queued ahead), remote.easFallback (default false; EAS Simulator is billed)
@@ -691,7 +701,7 @@ metro.tunnel off; on an Expo tunnel, run stim start --remote first). A recorded
 EAS session is not sticky: once this machine has room, auto runs here and the
 session bills until stim stop or remote.easMaxDurationMinutes. If any check fails, or the
 setting is off, auto runs here and may wait in the existing FIFO device
-slot queue; --no-wait and --wait 0 refuse with STIM_AT_CAPACITY. The placement
+slot queue; --no-wait and --wait 0 refuse with STIM_AT_CAPACITY (remote-only has no local queue and refuses with STIM_HOSTING_REFUSED). The placement
 line explains the decision, the skipped hosts and why EAS was not used
 (machine "eas"). JSON progress goes to stderr.
 The same decision, with a reason code per host, is a src: placement record in
@@ -703,8 +713,8 @@ A reserve refusal after a successful offer can race with another run. It fails
 with STIM_HOSTING_REFUSED naming the host and asking to retry. Stim does not
 try the next host or local placement after the build has targeted that host's
 architecture, and never falls back once a hosted session exists. A named machine remains strict. --device
-cannot combine with --remote auto, and a --device run ignores ios.remote and
-android.remote. eas/proxy and macOS placement are unchanged.
+cannot combine with --remote auto, remote or remote-only, and a --device run ignores ios.remote and
+android.remote. eas/proxy placement is unchanged; macOS placement follows macos.remote (stim guide macos).
 --simulator-app is honoured locally with auto and ignored with a note on a host.
 Placement measures budgets without reclaiming; only a new local run reclaims.
 Android --remote <machine> uses an owned emulator on that Mac; see hosted-android.
@@ -2198,8 +2208,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
-  ios             --remote-build <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|auto|machine>
-  android         --remote-build <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
+  ios             --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|local|auto|remote|remote-only|machine>
+  android         --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas|local|auto|remote|remote-only|machine>
   ios/android --wait bounds owned-device slot waits (default 600s), or physical
   leases with --device (default 60s). Remote targets do not join this local
   slot queue. --no-wait refuses a full/queued owned

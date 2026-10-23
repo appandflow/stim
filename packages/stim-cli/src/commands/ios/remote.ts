@@ -7,7 +7,12 @@ import { devicePlacementLine } from '../../device-host/auto-placement.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import chalk from 'chalk';
 import { phaseLine } from '../../command-output.ts';
-import { type DevicePlacement, type HostedIosPlacement, type HostedAppOffer } from '@stim-cli/core/state';
+import {
+  type AutomaticPlacement,
+  type DevicePlacement,
+  type HostedIosPlacement,
+  type HostedAppOffer,
+} from '@stim-cli/core/state';
 import {
   parseIosRemote,
   remoteEasFallbackSetting,
@@ -42,7 +47,12 @@ export function resolveIosRemote({
   physical: boolean;
   recorded?: HostedIosPlacement;
 }):
-  | { machine: string | null; backend: RemoteDeviceBackend | null; recorded?: HostedIosPlacement }
+  | {
+      machine: string | null;
+      placement?: AutomaticPlacement;
+      backend: RemoteDeviceBackend | null;
+      recorded?: HostedIosPlacement;
+    }
   | { failure: FailArgs } {
   const target = opts.remote !== undefined ? parseIosRemote(opts.remote) : physical ? null : remoteIosSetting(settings);
   const machine = target?.kind === 'machine' ? target.machine : null;
@@ -53,7 +63,12 @@ export function resolveIosRemote({
         message: `This workspace's iOS simulator runs on ${recorded.machine}; run stim stop first.`,
       },
     };
-  return { machine, backend: !physical && target?.kind === 'backend' ? target.backend : null, recorded };
+  return {
+    machine,
+    ...(target?.kind === 'machine' && target.placement ? { placement: target.placement } : {}),
+    backend: !physical && target?.kind === 'backend' ? target.backend : null,
+    recorded,
+  };
 }
 
 export function selectIosTarget({
@@ -164,6 +179,7 @@ export async function selectIosPlacement(
       root,
       slot,
       platform: 'ios',
+      placement: selection.placement,
       ...(localSims ? { localSims } : {}),
       selectors: hostedIosSelectors(deviceType, runtime),
       appMode,
@@ -189,7 +205,15 @@ export async function selectIosPlacement(
         : {}),
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
-    log?.(devicePlacementRecord({ platform: 'ios', fromFlag: opts.remote !== undefined, easFallback, placed }));
+    log?.(
+      devicePlacementRecord({
+        platform: 'ios',
+        selected: selection.placement,
+        fromFlag: opts.remote !== undefined,
+        easFallback,
+        placed,
+      }),
+    );
     if (placed.placement.decision === 'eas')
       return {
         ...selection,

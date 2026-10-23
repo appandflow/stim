@@ -299,13 +299,13 @@ machine. They carry no arguments, tokens or tickets.
 Placement records use src: placement and sit in the run's build log
 (build-*.ndjson), so a new run replaces the previous run's. A run writes one
 record per decision it makes (a build that compiles and has a remote machine to
-consider, or ios/android --remote auto), with event build_placement,
+consider, or ios/android --remote auto|remote|remote-only), with event build_placement,
 device_placement or placement_fallback. A cache hit, a project with no paired
 remote machine and a named --remote target write none:
   stim logs --source placement
   stim logs --source placement --json
 Fields: kind (build or device), platform, settings [{ key, value, from }] with
-from flag, env, setting or default (remote.build and remote.buildMode for a
+from flag, env, setting or default (remote.build for a
 build, ios.remote or android.remote, plus remote.easFallback when it is on, for
 a device), candidates [{ machine, code,
 msg, detail? }], choice { machine, code, msg } with machine local when the run

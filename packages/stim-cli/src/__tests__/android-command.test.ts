@@ -1254,6 +1254,19 @@ describe('explicit remote backend behavior', () => {
     expect(h.calls.ensureDevice.length).toBe(1);
   });
 
+  test.each(['auto', 'remote', 'remote-only'] as const)(
+    '--remote %s asks automatic placement with that word',
+    async (word) => {
+      const automatic = vi
+        .fn<typeof automaticDevicePlacement>()
+        .mockRejectedValue(Object.assign(new Error('no host'), { code: 'STIM_HOSTING_REFUSED' }));
+      const h = harness({ remoteDevice: word, automaticDevicePlacement: automatic });
+      const result = await h.run();
+      expect(result.ok).toBe(false);
+      expect(automatic).toHaveBeenCalledWith(expect.objectContaining({ platform: 'android', placement: word }));
+    },
+  );
+
   test('auto on a full machine with remote.easFallback creates the EAS Simulator session --remote eas would', async () => {
     const backends: unknown[] = [];
     const checkEasFallback = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
@@ -6573,12 +6586,12 @@ describe('run statistics', () => {
     writeFileSync(buildMachinesFile(), JSON.stringify({ version: 2, machines: [credential] }));
   }
 
-  async function runWithMode(mode: string, overrides: Parameters<typeof harness>[0]) {
-    process.env.STIM_REMOTE_BUILD_MODE = mode;
+  async function runWithBuild(selected: string, overrides: Parameters<typeof harness>[0]) {
+    process.env.STIM_REMOTE_BUILD = selected;
     try {
       return await harness(overrides).run();
     } finally {
-      delete process.env.STIM_REMOTE_BUILD_MODE;
+      delete process.env.STIM_REMOTE_BUILD;
     }
   }
 
@@ -6586,15 +6599,15 @@ describe('run statistics', () => {
     pairMini();
     const { runs, recordStats } = recorder();
 
-    expect((await runWithMode('off', { recordStats })).ok).toBe(true);
-    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'remote.buildMode is off' });
+    expect((await runWithBuild('local', { recordStats })).ok).toBe(true);
+    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: '--remote-build local' });
   });
 
   test('a fallback that no machine caused counts against none', async () => {
     pairMini();
     const { runs, recordStats } = recorder();
 
-    expect((await runWithMode('force', { recordStats })).ok).toBe(true);
+    expect((await runWithBuild('remote', { recordStats })).ok).toBe(true);
     expect(runs[0]?.run.placement).toEqual({
       decision: 'fell-back',
       reason: expect.stringMatching(/^this app is not in a git checkout/),
@@ -6605,7 +6618,7 @@ describe('run statistics', () => {
     pairMini();
     const { runs, recordStats } = recorder();
 
-    await runWithMode('force', { recordStats, resolveCached: () => fakeApk(), build: never('the build') });
+    await runWithBuild('remote', { recordStats, resolveCached: () => fakeApk(), build: never('the build') });
     expect(runs[0]?.run).not.toHaveProperty('placement');
   });
 
@@ -7386,7 +7399,7 @@ describe('strict remote machine selection', () => {
     'local overrides force mode for %s and records the actual local compile',
     async (variant) => {
       configureMini();
-      writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
+      writeConfigSetting({ scope: 'machine' }, 'remote.build', 'remote');
       const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
       const h = harness({ buildMachine: 'local', variant });
       expect((await h.run()).ok).toBe(true);
@@ -7401,7 +7414,7 @@ describe('strict remote machine selection', () => {
 
   test('auto still builds a Release cache miss here without contacting a paired worker', async () => {
     configureMini();
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
+    writeConfigSetting({ scope: 'machine' }, 'remote.build', 'remote');
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
     const h = harness({ buildMachine: 'auto', variant: 'release' });
     expect((await h.run()).ok).toBe(true);

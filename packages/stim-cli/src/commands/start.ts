@@ -72,6 +72,7 @@ import {
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
   tunnelModeSetting,
+  inertSettingWarning,
   unknownSettingKeys,
   type ProjectSettingsContext,
   type SettingsObject,
@@ -447,7 +448,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         });
       }
       for (const key of unknownSettingKeys(settings)) {
-        note(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
+        note(chalk.yellow(inertSettingWarning(settings, key)));
       }
       const cacheProviderError = cacheProviderSettingError(settings);
       if (cacheProviderError) note(chalk.yellow(`Warning: ${cacheProviderError} No cache provider is used.`));
