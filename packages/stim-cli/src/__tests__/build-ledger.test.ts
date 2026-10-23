@@ -5,6 +5,7 @@ import { BUILD_LEDGER_CAP, buildLedgerFile, readBuildLedger } from '@stim-cli/co
 import {
   appendBuildLedger,
   appendCapped,
+  errorRemedy,
   buildLedgerRecord,
   writeBuildLedger,
   type BuildLedgerRun,
@@ -162,6 +163,14 @@ describe('buildLedgerRecord', () => {
     );
     expect(record.level).toBe('warn');
     expect(record.outcome).toBe('cancelled');
+  });
+});
+
+describe('errorRemedy', () => {
+  test('reads the remedy a thrown error carries', () => {
+    expect(errorRemedy(Object.assign(new Error('x'), { remedy: 'Run stim doctor' }))).toBe('Run stim doctor');
+    expect(errorRemedy(new Error('x'))).toBeUndefined();
+    expect(errorRemedy('x')).toBeUndefined();
   });
 });
 

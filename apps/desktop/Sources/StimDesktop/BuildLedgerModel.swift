@@ -9,12 +9,25 @@ final class BuildLedgerModel: ObservableObject {
 
   private let cli: Task<StimCLI, Never>
 
+  private let polls: Bool
+
   init(cli: Task<StimCLI, Never>) {
     self.cli = cli
+    polls = true
   }
 
+  #if DEBUG
+    /// A model that shows `items` and never runs the CLI, for fixtures.
+    init(items: [LedgerBuild]) {
+      cli = Task { StimCLI(environment: [:]) }
+      polls = false
+      self.items = items
+      loaded = true
+    }
+  #endif
+
   func poll() async {
-    while !Task.isCancelled {
+    while polls && !Task.isCancelled {
       await refresh()
       try? await Task.sleep(for: .seconds(30))
     }

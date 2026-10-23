@@ -15,6 +15,7 @@ import {
   tapBuildLog,
   type BuildProgress,
 } from '../engine/build-progress.ts';
+import { errorRemedy } from '../engine/build-ledger.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
@@ -251,14 +252,14 @@ async function buildBundle(
         : {}),
     };
     await writeWorkspaceStateAsync(root, { macos: { ...record, supervisor: undefined, build } });
-    recordMacosBuild(root, build, progress.steps());
+    recordMacosBuild(root, build, progress.steps(), errorRemedy(error));
     throw error;
   } finally {
     writer.close();
   }
 }
 
-function recordMacosBuild(root: string, build: MacosBuild, compileSteps: number | null): void {
+function recordMacosBuild(root: string, build: MacosBuild, compileSteps: number | null, remedy?: string): void {
   recordFinishedBuild(root, {
     platform: 'macos',
     status: build.state === 'ok' ? 'ok' : 'failed',
@@ -275,7 +276,7 @@ function recordMacosBuild(root: string, build: MacosBuild, compileSteps: number 
     offloadedTo: build.offloadedTo,
     offloadFallback: build.offloadFallback,
     ...(compileSteps === null ? {} : { compileSteps }),
-    ...(build.error ? { ledger: { message: build.error } } : {}),
+    ...(build.error ? { ledger: { message: build.error, remedy } } : {}),
   });
 }
 

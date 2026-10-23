@@ -4,6 +4,8 @@ import SwiftUI
 /// Every native build this Mac recorded, newest first, from `stim logs --source builds`.
 struct BuildsView: View {
   @ObservedObject var history: BuildLedgerModel
+  /// The build that starts open.
+  var opens: String?
   @State private var filter = LedgerFilter()
   @State private var visibleCount = 50
 
@@ -31,7 +33,7 @@ struct BuildsView: View {
           .frame(maxWidth: .infinity)
           .padding(.top, Space.huge)
         } else {
-          LedgerBuildList(days: days, limit: visibleCount)
+          LedgerBuildList(days: days, limit: visibleCount, selected: opens)
           if visibleCount < days.reduce(0, { $0 + $1.items.count }) {
             Button("Show Older Builds") { visibleCount += 50 }
               .buttonStyle(.stim())
@@ -112,6 +114,12 @@ struct LedgerBuildList: View {
   var days: [(day: Date, items: [LedgerBuild])]
   var limit: Int
   @State private var selected: String?
+
+  init(days: [(day: Date, items: [LedgerBuild])], limit: Int, selected: String? = nil) {
+    self.days = days
+    self.limit = limit
+    _selected = State(initialValue: selected)
+  }
   @Environment(\.calendar) private var calendar
   @Environment(\.timeZone) private var timeZone
   @Environment(\.locale) private var locale

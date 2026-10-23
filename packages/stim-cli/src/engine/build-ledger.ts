@@ -54,6 +54,12 @@ function wholePhaseMs(phases: Record<string, number> | undefined): Record<string
   return out;
 }
 
+/** The remedy a thrown error carries, when it carries one. */
+export function errorRemedy(error: unknown): string | undefined {
+  const remedy = typeof error === 'object' && error !== null && 'remedy' in error ? error.remedy : undefined;
+  return typeof remedy === 'string' && remedy !== '' ? remedy : undefined;
+}
+
 export function buildLedgerRecord(run: BuildLedgerRun): BuildLedgerRecord {
   const { record, extras, outcome } = run;
   const platform = record.platform === 'ios' || record.platform === 'android' ? record.platform : 'macos';
