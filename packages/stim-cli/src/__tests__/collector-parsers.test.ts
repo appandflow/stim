@@ -34,7 +34,7 @@ import {
 } from '../collector/ios-device.ts';
 import { isAppLaunchError } from '../command-output.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
-import { makeExecutor } from './_factories.ts';
+import { makeChildProcess, makeExecutor } from './_factories.ts';
 
 function isNotNull<T>(value: T | null): value is T {
   return value !== null;
@@ -683,7 +683,7 @@ describe('android: logcat -v time', () => {
     expect(await sample()).toBe(null);
   });
 
-  test('the clock sample and the pid reads leave the event loop free for the log stream', async () => {
+  test('the clock sample and the pid reads use the async executor with their adb argument lists', async () => {
     const asyncCalls: string[][] = [];
     const exec = makeExecutor({
       runFile: () => {
@@ -710,6 +710,28 @@ describe('android: logcat -v time', () => {
       ['-s', 'serial', 'shell', 'pidof', '-s', 'com.x'],
       ['-s', 'serial', 'shell', 'pidof', '-s', 'com.x'],
     ]);
+  });
+
+  test('an adb read still in flight when the collector stops is killed instead of orphaned', async () => {
+    const killed: Array<NodeJS.Signals | number | undefined> = [];
+    const child = makeChildProcess({
+      kill: (signal?: NodeJS.Signals | number) => {
+        killed.push(signal);
+        return true;
+      },
+    });
+    const exec = makeExecutor({
+      runFileAsync: (_file, _args, options) => {
+        options.onSpawn?.(child);
+        return new Promise<string>(() => {});
+      },
+    });
+    const stopping = new AbortController();
+    void androidClockOffset('serial', { exec, signal: stopping.signal });
+    void waitForAppPid({ serial: 'serial', packageName: 'com.x', exec, signal: stopping.signal });
+    expect(killed).toEqual([]);
+    stopping.abort();
+    expect(killed).toEqual(['SIGKILL', 'SIGKILL']);
   });
 
   test('parsePidof reads the single pid, and nothing from empty output', () => {

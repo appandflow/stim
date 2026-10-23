@@ -861,7 +861,7 @@ describe('runCollector reattach seams', () => {
     result.finish(0, 'info', 'done', 'collector_stopped');
   });
 
-  test('a pid change reported while a reattach reads the device clock attaches one stream', async () => {
+  test('a newer pid reported while a reattach reads the device clock replaces it instead of adding a stream', async () => {
     const started: ChildProcess[] = [];
     const pendingClocks: Array<() => void> = [];
     let samples = 0;
@@ -891,14 +891,38 @@ describe('runCollector reattach seams', () => {
     firstStream.emit('exit', 0, null);
     await until(() => pendingClocks.length === 1, { label: 'the reattach clock read' });
     assert(reportPid);
-    void reportPid(4200);
+    void reportPid(4300);
     await until(() => pendingClocks.length === 2, { label: 'the second clock read' });
     for (const release of pendingClocks) release();
     await until(() => started.length === 2, { label: 'the reattached stream' });
     await new Promise((r) => setTimeout(r, 50));
-    expect(started.map((c) => c.pid)).toEqual([3132, 4200]);
+    expect(started.map((c) => c.pid)).toEqual([3132, 4300]);
     assert(result);
     result.finish(0, 'info', 'done', 'collector_stopped');
+  });
+
+  test('finish aborts the adb reads the collector still has in flight', async () => {
+    let readSignal: AbortSignal | undefined;
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: (_serial, { signal }) => {
+        readSignal = signal;
+        return null;
+      },
+      pidOf: () => 3132,
+      pidWatchMs: 60000,
+      startStream: ({ pid: streamPid }) => fakeChild(streamPid),
+      attachSignals: false,
+      onExit: () => {},
+    });
+    assert(result);
+    expect(readSignal?.aborted).toBe(false);
+    result.finish(0, 'info', 'done', 'collector_stopped');
+    expect(readSignal?.aborted).toBe(true);
   });
 
   test('a stream that ends with no app left is still the end of the collector', async () => {

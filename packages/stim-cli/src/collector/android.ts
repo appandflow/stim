@@ -1,5 +1,5 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import { type Executor, getExecutor } from '../exec.ts';
+import { type ExecOptions, type Executor, getExecutor } from '../exec.ts';
 import { androidToolCwd } from '../devices/android.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 
@@ -128,9 +128,21 @@ export function logcatArgs(serial: string, pid: number | string): string[] {
   return ['-s', serial, 'logcat', '--pid', String(pid), '-v', 'time,epoch'];
 }
 
+function killOnAbort(signal?: AbortSignal): Pick<ExecOptions, 'onSpawn'> {
+  if (!signal) return {};
+  return {
+    onSpawn(child) {
+      const kill = () => child.kill('SIGKILL');
+      signal.addEventListener('abort', kill, { once: true });
+      child.once('close', () => signal.removeEventListener('abort', kill));
+      if (signal.aborted) kill();
+    },
+  };
+}
+
 export async function androidClockOffset(
   serial: string,
-  { exec = getExecutor(), now = Date.now }: { exec?: Executor; now?: () => number } = {},
+  { exec = getExecutor(), now = Date.now, signal }: { exec?: Executor; now?: () => number; signal?: AbortSignal } = {},
 ): Promise<number | null> {
   const before = now();
   try {
@@ -138,6 +150,7 @@ export async function androidClockOffset(
       await exec.runFileAsync('adb', ['-s', serial, 'shell', 'date', '+%s%3N'], {
         timeoutMs: 1000,
         cwd: androidToolCwd(),
+        ...killOnAbort(signal),
       })
     ).trim();
     const after = now();
@@ -159,12 +172,15 @@ export function parsePidof(text: unknown): number | null {
 async function resolveAppPid(
   serial: string,
   packageName: string,
-  { exec = null }: { exec?: Executor | null } = {},
+  { exec = null, signal }: { exec?: Executor | null; signal?: AbortSignal } = {},
 ): Promise<number | null> {
   const e = exec || getExecutor();
   try {
     return parsePidof(
-      await e.runFileAsync('adb', ['-s', serial, 'shell', 'pidof', '-s', packageName], { timeoutMs: 10_000 }),
+      await e.runFileAsync('adb', ['-s', serial, 'shell', 'pidof', '-s', packageName], {
+        timeoutMs: 10_000,
+        ...killOnAbort(signal),
+      }),
     );
   } catch {
     return null;
@@ -184,6 +200,7 @@ export async function waitForAppPid({
   timeoutMs = 30000,
   pollMs = 500,
   exec = null,
+  signal,
   now = Date.now,
   sleep = defaultSleep,
 }: {
@@ -192,12 +209,13 @@ export async function waitForAppPid({
   timeoutMs?: number;
   pollMs?: number;
   exec?: Executor | null;
+  signal?: AbortSignal;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }): Promise<PidResolution> {
   const deadline = now() + timeoutMs;
   for (;;) {
-    const pid = await resolveAppPid(serial, packageName, { exec });
+    const pid = await resolveAppPid(serial, packageName, { exec, signal });
     if (pid) return { ok: true, pid };
     if (now() >= deadline) {
       return {
@@ -248,6 +266,7 @@ export function watchAppPid({
   pid,
   intervalMs = null,
   exec = null,
+  signal,
   onChange,
   resolve = resolveAppPid,
   setTimer = setTimeout,
@@ -258,11 +277,12 @@ export function watchAppPid({
   pid: number | null;
   intervalMs?: number | null;
   exec?: Executor | null;
+  signal?: AbortSignal;
   onChange: (nextPid: number) => void | Promise<void>;
   resolve?: (
     serial: string,
     packageName: string,
-    opts: { exec?: Executor | null },
+    opts: { exec?: Executor | null; signal?: AbortSignal },
   ) => number | null | Promise<number | null>;
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (t: ReturnType<typeof setTimeout>) => void;
@@ -276,7 +296,7 @@ export function watchAppPid({
     if (stopped) return;
     let next: number | null = null;
     try {
-      next = await resolve(serial, packageName, { exec });
+      next = await resolve(serial, packageName, { exec, signal });
     } catch {}
     if (next && next !== current) {
       current = next;
@@ -295,7 +315,7 @@ export function watchAppPid({
     },
     async probe() {
       try {
-        return await resolve(serial, packageName, { exec });
+        return await resolve(serial, packageName, { exec, signal });
       } catch {
         return null;
       }
