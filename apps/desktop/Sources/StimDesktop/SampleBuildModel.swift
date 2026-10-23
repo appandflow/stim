@@ -151,20 +151,6 @@ final class SampleBuildModel {
           let timings = try await dependencies.timings(folder)
           try Task.checkCancellation()
           test.apply(.timings(timings))
-          test.apply(.localStart)
-          let began = dependencies.now()
-          let local = try await dependencies.run(
-            StimCommand([platform, "--remote-build", "local", "--no-build-cache", "--json"], cwd: folder),
-            { line in self.receive(line) })
-          try Task.checkCancellation()
-          if let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: local.stdout) {
-            test.apply(.fail(code: refusal.code, message: refusal.message, remedy: refusal.remedy))
-          } else {
-            test.apply(
-              .localFinished(
-                passed: try OffloadResult.localPassed(local.stdout, exit: local.exit, stderr: local.stderr),
-                ms: dependencies.now().timeIntervalSince(began) * 1000))
-          }
         }
       } catch is CancellationError {
       } catch {
@@ -258,7 +244,7 @@ final class SampleBuildModel {
       for event in events { test.apply(event) }
       self.lines = lines
       switch test.state {
-      case .offloading, .offloaded, .localBuilding: running = true
+      case .offloading: running = true
       default: running = false
       }
       sampleReady = events.contains {
