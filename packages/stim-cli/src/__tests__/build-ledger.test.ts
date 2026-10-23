@@ -10,6 +10,8 @@ import {
   writeBuildLedger,
   type BuildLedgerRun,
 } from '../engine/build-ledger.ts';
+import { lastBuildRecord as androidLastBuildRecord } from '../commands/android/result.ts';
+import { iosLedgerDevice } from '../commands/ios/result.ts';
 import { recordFinishedBuild, startBuildProgress } from '../engine/build-progress.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
@@ -183,6 +185,20 @@ describe('buildLedgerRecord', () => {
   });
 });
 
+describe('the device of a record', () => {
+  test('a name that is a serial or UDID is left out', () => {
+    expect(iosLedgerDevice({ deviceName: 'iPhone 15', deviceUdid: '00008110-001A', runtime: 'iOS 26' })).toEqual({
+      name: 'iPhone 15',
+      runtime: 'iOS 26',
+    });
+    expect(iosLedgerDevice({ deviceName: '00008110-001A', deviceUdid: '00008110-001A' })).toBeNull();
+    const android = (deviceName: string) =>
+      androidLastBuildRecord({ startedAt: 'T', status: 'ok', deviceName, deviceSerial: 'R5CT1234' }).ledger;
+    expect(android('Pixel 8')).toEqual({ device: { name: 'Pixel 8' } });
+    expect(android('R5CT1234')).toBeUndefined();
+  });
+});
+
 describe('errorRemedy', () => {
   test('reads the remedy a thrown error carries', () => {
     expect(errorRemedy(Object.assign(new Error('x'), { remedy: 'Run stim doctor' }))).toBe('Run stim doctor');
@@ -218,7 +234,15 @@ describe('the ledger file', () => {
   });
 
   test('keeps the last 500 records in order and reads them oldest first', () => {
-    for (let i = 0; i < BUILD_LEDGER_CAP + 3; i++) {
+    mkdirSync(join(home, 'builds'));
+    writeFileSync(
+      buildLedgerFile(),
+      Array.from(
+        { length: BUILD_LEDGER_CAP },
+        (_, i) => `${JSON.stringify(buildLedgerRecord(run({ id: `run-${i}`, now: T0 + i })))}\n`,
+      ).join(''),
+    );
+    for (let i = BUILD_LEDGER_CAP; i < BUILD_LEDGER_CAP + 3; i++) {
       appendBuildLedger(buildLedgerRecord(run({ id: `run-${i}`, now: T0 + i })));
     }
     const records = readBuildLedger();
