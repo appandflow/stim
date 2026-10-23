@@ -180,16 +180,23 @@ RULES DURING THE LOOP
   you do other work.
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
+- The build cache counts an installed package by its name and version, so it
+  cannot see a file you edit inside node_modules/. Change a dependency's native
+  code with a patch (patch-package or pnpm patch), which is hashed, or run ios or
+  android with --no-build-cache --remote-build local to compile it here. See
+  guide lifecycle builds.
 - For stale Metro transforms or file-map state, use stim start --reset-cache.
   It restarts only this app's verified owned Metro, preserving devices and other
   apps' caches. See guide lifecycle for reset scope.
-- Reload is not part of the normal workflow. Use stim reload on an owned local
-  simulator or emulator when an error screen remains after the fix, and on
+- Reload is not part of the normal workflow. Use stim reload when an error
+  screen remains after the fix on an owned local simulator or emulator, a
+  physical device (an EAS Simulator session when its app connects to Metro), and on
   Android after a failed first bundle load. It reloads JavaScript and never
   restarts the app. An iOS app whose first bundle failed never connects to
   Metro, so reload cannot reach it and says to use the device's own Reload
-  control. For a physical device that reached Metro, use agent-device metro
-  reload with the reported port. The detected iOS Local Network first-load
+  control. With no owned launch recorded, reload goes through this workspace's
+  Metro to the apps connected to it, so an app that never connected is not
+  reached. The detected iOS Local Network first-load
   remedy uses UI automation instead because that app never established a Metro
   connection.
 - A successful stim reload confirms that the request was sent, not that new
@@ -385,7 +392,7 @@ FULL TOPIC LIST
   stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit
   stim guide lifecycle            # the ordered flow, consent rules, and capacity
   stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof
-  stim guide lifecycle readiness  # add optional app readiness logs; no package required
+  stim guide lifecycle readiness  # add recommended app readiness logs; no package required
   stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints
   stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits
   stim guide lifecycle budget     # disk and memory budgets, automatic reclaim

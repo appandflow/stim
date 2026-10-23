@@ -181,6 +181,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: "Directory under the app that holds a bare React Native app's Xcode project and Podfile",
   },
   {
+    key: 'ios.simslim',
+    type: { kind: 'choice', choices: ['on', 'off'] },
+    scopes: EVERY,
+    default: 'off',
+    description:
+      "Slim every Stim-owned iOS simulator with SimSlim's default categories when no ios.simslimProfile is set; off in a project opts that app out",
+  },
+  {
     key: 'ios.simslimProfile',
     type: RELATIVE_PATH,
     scopes: PROJECT,
@@ -362,7 +370,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: 30,
     description:
-      'Minutes an owned simulator or emulator stays idle before the workspace supervisor shuts it down; 0 never',
+      'Minutes an owned simulator or emulator stays idle before the workspace supervisor, or automatic maintenance when no supervisor runs, shuts it down; 0 never',
   },
   {
     key: 'devices.reclaimIdleMinutes',
@@ -647,7 +655,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 1,
     env: 'STIM_MAINTENANCE_LOG_MAX_MB',
-    description: 'Machine maintenance log rotation size in MiB',
+    description: 'Machine maintenance and gc log rotation size in MiB',
   },
   {
     key: 'maintenance.logRetentionDays',
@@ -655,7 +663,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 30,
     env: 'STIM_MAINTENANCE_LOG_RETENTION_DAYS',
-    description: 'Retention of the rotated machine maintenance log in days',
+    description: 'Retention of the rotated machine maintenance and gc logs in days',
   },
   {
     key: 'maintenance.logChecks',
@@ -705,6 +713,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Finished-worktree check interval in minutes',
   },
   {
+    key: 'maintenance.idleCheckMinutes',
+    type: { kind: 'number', integer: true, minimum: 1 },
+    scopes: MACHINE,
+    default: 5,
+    env: 'STIM_MAINTENANCE_IDLE_CHECK_MINUTES',
+    description:
+      'Interval in minutes of the check that shuts down owned simulators and emulators idle for devices.idleShutdownMinutes, also with no dev server running',
+  },
+  {
     key: 'maintenance.sweepHours',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,
@@ -714,11 +731,12 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'maintenance.olderThanDays',
-    type: { kind: 'number', integer: true, minimum: 1 },
+    type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,
     default: 7,
     env: 'STIM_MAINTENANCE_OLDER_THAN_DAYS',
-    description: 'Age in days for the age sweep: unused workspace build outputs and shared cache entries',
+    description:
+      'Days unused before the age sweep removes it: workspace build outputs, shared cache entries, parked simulators and emulators, and, with maintenance.removeIdleWorktrees, clean pushed linked worktrees; 0 turns those age removals off',
   },
   {
     key: 'maintenance.deviceIdleDays',
@@ -781,6 +799,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     env: 'STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES',
     description:
       'Remove clean linked worktrees whose branch or pull request finished, under gc.worktreeGraceMinutes, and at disk pressure level 3 clean, pushed ones with no commits of their own',
+  },
+  {
+    key: 'maintenance.removeIdleWorktrees',
+    type: BOOLEAN,
+    scopes: MACHINE,
+    default: false,
+    env: 'STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES',
+    description:
+      'In the age sweep, also remove clean, pushed linked worktrees whose branch is not merged once no Stim command has used them for maintenance.olderThanDays, with their git-ignored files; needs maintenance.removeFinishedWorktrees',
   },
   {
     key: 'maintenance.keep',
@@ -928,6 +955,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: false,
     description:
       'When ios.remote or android.remote is auto, this machine is at its concurrency.maxDevices cap and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can',
+  },
+  {
+    key: 'remote.easMaxDurationMinutes',
+    type: { kind: 'number', integer: true, minimum: 1 },
+    scopes: MACHINE,
+    default: 30,
+    description:
+      "Maximum minutes of each EAS Simulator session Stim creates, after which EAS stops it and stops billing; stim stop and gc --delete end a session sooner. EAS rejects a value above the account plan's session limit",
   },
   {
     key: 'remote.build',

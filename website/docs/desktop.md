@@ -263,8 +263,9 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   animation speed and reads the setting back; Shake sends a shake event to the
   foreground app. Android animation settings are unchanged.
 - **Device sound.** Stim mutes each owned local simulator and emulator when it
-  boots it. While **Control** is on, a simulator's options have **Sound** and an
-  Android emulator's have **Media sound**, which turn that device's audio on
+  boots it, and a running simulator that SimSlim reboots. While **Control** is
+  on, a simulator's options have **Sound** and an Android emulator's have
+  **Media sound**, which turn that device's audio on
   until it next boots. Media sound changes music and video volume only; alarms
   and ringtones keep their Android settings. It needs Android 15 or later; on
   older images startup warns that it could not mute the emulator. Your Mac's
@@ -322,11 +323,13 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   simulators, and running a generated `stim-server setup` command in Terminal on
   that Mac. Running it there, and answering its Y/n question for each request, is
   the approval. Desktop mirrors the setup live and waits for both approvals.
-  A remote machine on another Stim build offers **Install This Mac's Build**. It
+  A remote machine on an incompatible Stim build offers **Install This Mac's Build**. It
   installs this Mac's npm release there, or this checkout's own build when the
   machine allows it with `server.acceptClientBuilds`. The update goes over the
   tailnet, with no ssh, and the old server comes back if the new one does not
   start. **Settings > Remote Machines** can keep them on this Mac's Stim version automatically.
+  The install only moves a machine forward: when the machine runs a newer Stim than
+  this Mac, the button is replaced by a note to update Stim Desktop.
   A removed selection returns to **This Mac**; remote selections have no local
   cleanup actions. Select checklist items to enable **Free space**;
   cleanup previews or confirms the selection before deleting anything.
@@ -342,6 +345,12 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   report and shows its age and the error. If the server lacks storage-report
   support, update Stim and restart its local server. Storage reads share the
   same response limit and do not retry through the CLI.
+- **Cleanup history.** **Settings > App > Cleanup History** lists every run that deleted
+  or changed something, newest first: `stim gc` from this app, an agent or a terminal,
+  automatic maintenance, and the budget check before a build. A row shows what started
+  the run, when, how many items it cleared, kept and failed, and the bytes freed; expand it
+  for each item's path and the reason a kept or failed item was left. It reads
+  `stim logs --source gc --json`, so it needs a Stim version that writes the gc log.
 - **Workspace Changes.** Click the workspace header's Git chip, then **Review
   changes**, to browse staged, unstaged and new files. The built-in viewer loads
   each patch when you select its file, with a 200-file list and 256 KiB preview
@@ -383,8 +392,16 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   content pane has room for all four, and wrap on smaller panes. Device cards
   stay centered, fill available width up to 640 points, and form extra columns
   only when full-width cards fit.
-- **Notifications and cleanup.** Alerts for stuck agents and builds that keep failing, and
-  automatic removal of worktrees after their pull request merges. The **Needs
+- **Notifications and cleanup.** Alerts for stuck agents and builds that keep failing.
+  Cleanup is Stim's own automatic maintenance, which runs from the CLI whether
+  Desktop is open or not; **Settings > App > Automatic Maintenance** shows its
+  mode and last pass, and sets how long something stays unused before it is
+  cleaned up (`maintenance.olderThanDays`) and when idle devices shut down
+  (`devices.idleShutdownMinutes`), and whether idle unmerged worktrees are
+  removed (`maintenance.removeIdleWorktrees`, off by default). The worktree
+  switch, **Never** for the cleanup age and Cleanup History need a Stim newer
+  than 1.25.0; with an older one they say to update Stim. See
+  [automatic maintenance](./build-caches.md#automatic-maintenance). The **Needs
   you** category lists only what agents cannot handle, such as a doctor
   finding, a signing failure or an expired device lease, with **Run**, **Copy
   command**, **Fix**, **Open Logs** or **Show in Finder** on its row in
@@ -637,6 +654,8 @@ supported. Binary video uses its existing stream format.
 When an agent creates a workspace while Desktop is open, a "New workspace"
 card appears at the bottom left with **Show**, once per workspace. It reads
 "Building iOS" or "Building Android" while that workspace's build runs.
+Turn off **Settings > App > Show new workspace cards** to stop these cards;
+Notifications and the other cards are unchanged.
 
 Stim prints an `Open in Stim: https://stim.appandflow.com/open?...` link when it
 starts work. The link contains a persistent Stim-home ID and the registered
@@ -667,7 +686,7 @@ least one local or configured, approved remote member. Explicit placement is unc
 See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for CLI controls.
 
 **Settings > Remote Machines** lists your remote machines with a status
-(**Approved**, **Waiting for approval**, **Unreachable**, **Needs update** or the reason it is not offloading),
+(**Approved**, **Waiting for approval**, the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading),
 a line with its running builds and free disk, any problem that keeps builds on
 this Mac with its fix, what each does (**Builds**, **Simulators**) and **Remove...**. It updates itself; there is no Refresh button. With none, it
 offers **Add Remote Machine…**, which guides you through five steps:
@@ -686,8 +705,8 @@ Builds without Hosted simulators. For Linux its command first runs the two
 `sudo` steps a [Linux worker](./remote-machines.md#linux-worker) needs; for
 Windows it is a PowerShell command that needs no administrator rights.
 
-Only a problem that stops the chosen capability blocks the Tools step. A Stim
-build mismatch, which **Install This Mac's Build** fixes, is one. Other tool
+No tool result disables **Next** on the Tools step; the machine stays added. A Stim
+build mismatch, which **Install This Mac's Build** fixes, is shown in red. Other tool
 differences, such as a different project-selected CocoaPods or missing Android tools, are
 warnings that say what they cost and offer copyable fixes.
 
@@ -695,9 +714,9 @@ The last step offers a **Try it** agent prompt and `stim ios --remote-build
 <machine>`. It sets **Builds** (`remote.buildMode`, Auto by default for your
 first remote machine). With Hosted simulators chosen, it also sets **Simulators**
 (`ios.remote` and `android.remote` for this Mac). **Run a
-test build with a sample app** runs the optional sample test in Desktop's own
-pinned Expo SDK 58 sample. Desktop also uses that sample for setup requests if
-you have no listed workspace. The wizard removes it when it closes.
+test build with a sample app** builds Desktop's own pinned Expo SDK 58 sample
+on the new Mac, as an optional test. Desktop also uses that sample for setup
+requests if you have no listed workspace. The wizard removes it when it closes.
 Cancel removes only settings the wizard added and shows revoke commands for the
 worker Mac. **Remove** in Remote Machines shows the optional cleanup to run on that
 Mac.
@@ -736,7 +755,10 @@ package app that has not run as a macOS app yet, and `stim logs --errors` when a
 errors. Only applicable tips appear. One tip stays for the calendar day;
 the next day picks the least recently shown applicable tip, with unseen tips
 first. **Next Tip** cycles through the remaining choices. The X hides the card
-until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
+until tomorrow. Turn off **Settings > App > Show tips** to disable tips and the lightbulb suggestion
+banners in the bottom-left stack; the Machine page card stays. Turn off **Offer the tutorial** to
+remove the tutorial tip and the setup guide's **Take the Tutorial** button, and to stop the tutorial
+panel from opening on its own. **Help > Stim Tutorial…** still opens it.
 
 Tips and suggestions share state for remote machines, phone pairing, and
 hosted simulators. A shown, permanently dismissed, or currently snoozed

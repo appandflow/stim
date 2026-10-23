@@ -4,10 +4,13 @@ import type { IosRuntimePlan } from './launch.ts';
 import { automaticDevicePlacement } from '../../device-host/auto-placement.ts';
 import { checkEasFallback } from '../../engine/eas-fallback.ts';
 import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
-import { readHostedIos, writeHostedIos } from '../../device-host/ios-state.ts';
+import { hostedMetroPortProbe } from '../../device-host/hosted-native.ts';
+import { readHostedIos, writeHostedIosAsync } from '../../device-host/ios-state.ts';
+import { followHostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { buildIos, discoverXcodeProject } from '../../integrations/react-native-build.ts';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
+import { memoizedFingerprint } from '../../cache/fingerprint-memo.ts';
 import {
   fingerprintProject,
   resolveBuild,
@@ -15,7 +18,14 @@ import {
   type BuildStore,
   untrackedNativeFiles,
 } from '../../cache/build-cache.ts';
-import { getConcurrencyLimits, getProject, recordIosSchemeApprovals, upsertProject } from '../../workspace/config.ts';
+import {
+  getConcurrencyLimits,
+  getProject,
+  recordIosSchemeApprovals,
+  upsertProject,
+  withConfigLockAsync,
+  type ProjectRecord,
+} from '../../workspace/config.ts';
 import { clearOtherUserApps, installIosApp, launchIosApp } from '../../engine/app-install.ts';
 import { verifyLaunch, verifyReleaseLaunch } from '../../engine/launch-verify.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
@@ -25,7 +35,13 @@ import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
 import { budgetGate } from '../../budget.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
 import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
-import { clearIosAppData, listIosRuntimesAsync, listIosRuntimes, listAllIosSims } from '../../devices/ios.ts';
+import {
+  clearIosAppData,
+  listIosRuntimesAsync,
+  listIosRuntimes,
+  listAllIosSims,
+  type IosSimSnapshot,
+} from '../../devices/ios.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable,
@@ -69,13 +85,13 @@ import {
   settingsLayers,
   settingOriginScope,
 } from '../../workspace/settings.ts';
-import { writeWorkspaceLaunch } from '../../supervisor/state.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../../workspace/workspace-state.ts';
+import { writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
+import { readWorkspaceState, writeWorkspaceStateAsync } from '../../workspace/workspace-state.ts';
 import { gitCommonDirAsync, repoRootAsync } from '../../workspace/worktree.ts';
 import { warmMetro } from '../../engine/metro-warmup.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { startDevServer } from '../start.ts';
-import { devClientScheme, devClientTakesDevMenuParams } from '../dev-client.ts';
+import { devClientScheme, devClientTakesDevMenuParams, hasDevClient } from '../dev-client.ts';
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
@@ -85,8 +101,9 @@ export interface IosDeps {
   checkEasFallback: typeof checkEasFallback;
   prepareHostedIos: typeof prepareHostedIos;
   placeHostedIos: typeof placeHostedIos;
+  hostedMetroPortProbe: typeof hostedMetroPortProbe;
   readHostedIos: typeof readHostedIos;
-  writeHostedIos: typeof writeHostedIos;
+  writeHostedIos: typeof writeHostedIosAsync;
   resolveEasDevelopmentBuild: typeof resolveEasDevelopmentBuild;
   resolveRemoteContext: typeof resolveRemoteContext;
   ensureMetroReachable: typeof ensureMetroReachable;
@@ -105,15 +122,17 @@ export interface IosDeps {
   detectBundleId: typeof detectBundleId;
   detectIsExpo: typeof detectIsExpo;
   devClientScheme: typeof devClientScheme;
+  hasDevClient: typeof hasDevClient;
   devClientTakesDevMenuParams: typeof devClientTakesDevMenuParams;
   getProject: typeof getProject;
-  upsertProject: typeof upsertProject;
+  upsertProject: (...args: Parameters<typeof upsertProject>) => Promise<ProjectRecord>;
   recordIosSchemeApprovals: typeof recordIosSchemeApprovals;
   checkDeviceCapacity: typeof checkDeviceCapacity;
   budgetGate: typeof budgetGate;
   ensureOwnedDevice: typeof ensureOwnedDevice;
   listIosRuntimes: (options?: {
     signal?: AbortSignal;
+    snapshot?: IosSimSnapshot;
   }) => ReturnType<typeof listIosRuntimes> | Promise<ReturnType<typeof listIosRuntimes>>;
   listAllIosSims: typeof listAllIosSims;
   ensureBooted: typeof ensureBooted;
@@ -124,6 +143,7 @@ export interface IosDeps {
   pidExists: typeof pidExists;
   getConcurrencyLimits: typeof getConcurrencyLimits;
   fingerprintProject: typeof fingerprintProject;
+  memoizedFingerprint: typeof memoizedFingerprint;
   untrackedNativeFiles: typeof untrackedNativeFiles;
   resolveBuild: typeof resolveBuild;
   storeBuild: BuildStore;
@@ -173,11 +193,12 @@ export interface IosDeps {
   launchIosApp: typeof launchIosApp;
   verifyLaunch: typeof verifyLaunch;
   verifyReleaseLaunch: typeof verifyReleaseLaunch;
+  followHostedLaunchLogs: typeof followHostedLaunchLogs;
   ensureWorkspaceStorage: typeof ensureWorkspaceStorageSafely;
   replaceCollector: typeof replaceCollector;
   stopPreviousCollector: typeof stopPreviousCollector;
-  writeWorkspaceLaunch: typeof writeWorkspaceLaunch;
-  writeWorkspaceState: typeof writeWorkspaceState;
+  writeWorkspaceLaunch: typeof writeWorkspaceLaunchAsync;
+  writeWorkspaceState: typeof writeWorkspaceStateAsync;
   createWriter: typeof createNdjsonWriter;
   recordStats: typeof recordRunStats;
   recordCapacityRefusal: typeof recordCapacityRefusal;
@@ -191,8 +212,9 @@ export const DEFAULT_DEPS: IosDeps = {
   checkEasFallback,
   prepareHostedIos,
   placeHostedIos,
+  hostedMetroPortProbe,
   readHostedIos,
-  writeHostedIos,
+  writeHostedIos: writeHostedIosAsync,
   resolveEasDevelopmentBuild,
   findProjectRoot,
   resolveSettings,
@@ -203,9 +225,10 @@ export const DEFAULT_DEPS: IosDeps = {
   detectBundleId,
   detectIsExpo,
   devClientScheme,
+  hasDevClient,
   devClientTakesDevMenuParams,
   getProject,
-  upsertProject,
+  upsertProject: (...args) => withConfigLockAsync(() => upsertProject(...args)),
   recordIosSchemeApprovals,
   checkDeviceCapacity,
   budgetGate,
@@ -227,6 +250,7 @@ export const DEFAULT_DEPS: IosDeps = {
   pidExists,
   getConcurrencyLimits,
   fingerprintProject,
+  memoizedFingerprint,
   untrackedNativeFiles,
   resolveBuild,
   storeBuild,
@@ -273,11 +297,12 @@ export const DEFAULT_DEPS: IosDeps = {
   launchIosApp,
   verifyLaunch,
   verifyReleaseLaunch,
+  followHostedLaunchLogs,
   ensureWorkspaceStorage: ensureWorkspaceStorageSafely,
   replaceCollector,
   stopPreviousCollector,
-  writeWorkspaceLaunch,
-  writeWorkspaceState,
+  writeWorkspaceLaunch: writeWorkspaceLaunchAsync,
+  writeWorkspaceState: writeWorkspaceStateAsync,
   createWriter: createNdjsonWriter,
   recordStats: recordRunStats,
   recordCapacityRefusal,

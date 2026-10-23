@@ -7,10 +7,11 @@ export async function validateMacosArtifactPlatform(
   bundle: string,
   product: string,
   signal: AbortSignal,
+  nodeArch: string = process.arch,
 ): Promise<void> {
   const binary = join(bundle, 'Contents', 'MacOS', product);
   const options = { timeoutMs: 30_000, signal, declareFor: context };
-  const architecture = process.arch === 'x64' ? 'x86_64' : process.arch;
+  const architecture = nodeArch === 'x64' ? 'x86_64' : nodeArch;
   const archs = await getExecutor().runFileAsync('xcrun', ['lipo', '-archs', binary], options);
   const platform = await getExecutor().runFileAsync(
     'xcrun',

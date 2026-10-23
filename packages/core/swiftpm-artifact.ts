@@ -1,6 +1,7 @@
 import type { BuildSwiftpmArtifactQuery } from './protocol.ts';
 import { isJsonObject } from './state/json-file.ts';
 import { validMacosResourceDestination } from './macos-resources.ts';
+import { stimIdentity } from './react-native-artifact.ts';
 
 const text = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= 4096 && !value.includes('\0');
@@ -16,15 +17,17 @@ const normalized = (values: string[]) => [...new Set(values)].toSorted();
 export function swiftpmArtifactQuery(value: unknown): BuildSwiftpmArtifactQuery | null {
   if (
     !isJsonObject(value) ||
-    Object.keys(value).some((key) => !['project', 'sourceDigest', 'stimBuild', 'inputs', 'build'].includes(key)) ||
+    Object.keys(value).some(
+      (key) => !['project', 'sourceDigest', 'stimBuild', 'compat', 'inputs', 'build'].includes(key),
+    ) ||
     typeof value.project !== 'string' ||
     (value.project !== '' && !path(value.project)) ||
     typeof value.sourceDigest !== 'string' ||
-    !/^[a-f0-9]{64}$/.test(value.sourceDigest) ||
-    !text(value.stimBuild) ||
-    value.stimBuild.length > 256
+    !/^[a-f0-9]{64}$/.test(value.sourceDigest)
   )
     return null;
+  const stim = stimIdentity(value);
+  if (!stim) return null;
   const { inputs, build } = value;
   if (
     !isJsonObject(inputs) ||
@@ -55,7 +58,7 @@ export function swiftpmArtifactQuery(value: unknown): BuildSwiftpmArtifactQuery 
   return {
     project: value.project,
     sourceDigest: value.sourceDigest,
-    stimBuild: value.stimBuild,
+    ...stim,
     inputs: {
       complete: true,
       ignored: normalized(inputs.ignored),

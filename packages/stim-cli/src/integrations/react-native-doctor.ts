@@ -62,14 +62,15 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
       return async () => {
         const targets: BuildTarget[] = [];
         if (checksIos) {
-          const [local, runtime] = await Promise.all([iosToolchainAsync(root), iosRuntime()]);
-          targets.push({ platform: 'ios', local, runtime, cocoapodsPinned: bundlerPin(root) !== null });
+          const iosDir = resolveIosProjectDir(settings, root).dir;
+          const [local, runtime] = await Promise.all([iosToolchainAsync(root, iosDir), iosRuntime()]);
+          targets.push({ platform: 'ios', local, runtime, cocoapodsPinned: bundlerPin(root, iosDir) !== null });
         }
         if (checksAndroid) {
           targets.push({
             platform: 'android',
             local: operation ? await androidToolchainAsync(operation.env) : androidToolchain(),
-            requires: androidRequirements(root),
+            requires: androidRequirements(root, androidDir),
           });
         }
         return targets;

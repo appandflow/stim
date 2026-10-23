@@ -1,10 +1,24 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { podEnvForRubyAsync, readRubyVersion } from '../engine/deps.ts';
 import {
   androidToolchainAsync,
+  jdkCandidates,
+  jdkHomes,
+  listXcodeApps,
+  parseXcodeVersionPlist,
+  useJdkMajor,
   iosToolchainAsync,
   macosToolchainAsync,
   workerToolchain,
@@ -67,7 +81,7 @@ test.skipIf(process.platform !== 'darwin')(
   'the CocoaPods comparison follows the project Ruby while Xcode keeps the machine environment',
   async () => {
     writeFileSync(join(root, '.ruby-version'), 'ruby-3.3.4\n');
-    expect(await iosToolchainAsync(root)).toMatchObject({
+    expect(await iosToolchainAsync(root, root)).toMatchObject({
       cocoapods: '1.16.2',
       xcode: 'Xcode 27.0',
       simulatorSdk: '27.0',
@@ -78,9 +92,9 @@ test.skipIf(process.platform !== 'darwin')(
 test.skipIf(process.platform !== 'darwin')(
   'without a project Ruby the probe and pod install both use the login shell gems',
   async () => {
-    expect((await iosToolchainAsync(root)).cocoapods).toBe('1.17.0');
+    expect((await iosToolchainAsync(root, root)).cocoapods).toBe('1.17.0');
     writeFileSync(join(root, '.ruby-version'), '3.2.0\n');
-    const probed = (await iosToolchainAsync(root)).cocoapods;
+    const probed = (await iosToolchainAsync(root, root)).cocoapods;
     const built = execFileSync(join(root, 'bin', 'pod'), ['--version'], {
       env: await podEnvForRubyAsync(readRubyVersion(root)),
       encoding: 'utf-8',
@@ -92,8 +106,26 @@ test.skipIf(process.platform !== 'darwin')(
 
 test.skipIf(process.platform !== 'darwin')('an unreadable login shell keeps the caller environment', async () => {
   vi.stubEnv('SHELL', join(root, 'missing-shell'));
-  expect((await iosToolchainAsync(root)).cocoapods).toBe('1.16.2');
+  expect((await iosToolchainAsync(root, root)).cocoapods).toBe('1.16.2');
 });
+
+test.skipIf(process.platform !== 'darwin')(
+  'the CocoaPods comparison reads the version pod install runs in the iOS directory',
+  async () => {
+    const ios = join(root, 'ios');
+    mkdirSync(ios);
+    executable(
+      join(root, 'bin'),
+      'pod',
+      `console.log(process.cwd() === require('node:fs').realpathSync(${JSON.stringify(ios)}) ? '1.16.2' : '1.17.0');`,
+    );
+    expect((await iosToolchainAsync(root, ios)).cocoapods).toBe('1.16.2');
+
+    writeFileSync(join(ios, 'Gemfile'), "gem 'cocoapods', '1.15.2'\n");
+    writeFileSync(join(ios, 'Gemfile.lock'), 'GEM\n  specs:\n    cocoapods (1.15.2)\n');
+    expect((await iosToolchainAsync(root, ios)).cocoapods).toBe('1.15.2');
+  },
+);
 
 test('native Xcode discovery preserves required facts without invoking unrelated platform or Ruby tools', async () => {
   const runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0';
@@ -121,6 +153,7 @@ test('native Xcode discovery preserves required facts without invoking unrelated
         },
       });
     if (file === 'xcrun' && args[1] === 'iphonesimulator') return '27.0';
+    if (file === 'xcode-select') return '/Applications/Xcode.app/Contents/Developer\n';
     if (native) throw new Error(`Native Xcode discovery invoked unrelated ${file} ${args.join(' ')}`);
     if (file === 'xcrun' && args[1] === 'macosx') return '26.6';
     if (file === 'pod') return '1.16.2';
@@ -128,7 +161,7 @@ test('native Xcode discovery preserves required facts without invoking unrelated
     throw new Error(`Unexpected probe ${file} ${args.join(' ')}`);
   };
   setExecutor(makeExecutor({ runFileQuiet: probe, runFileAsync: async (file, args) => probe(file, args) }));
-  expect(await iosToolchainAsync(root, 'xcode')).toMatchObject({
+  expect(await iosToolchainAsync(root, null)).toMatchObject({
     xcode: 'Xcode 27.0',
     simulatorSdk: '27.0',
     cocoapods: null,
@@ -161,7 +194,7 @@ test.skipIf(process.platform !== 'darwin')('async native Xcode comparison skips 
   const body = `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'invoked'); process.exit(1);`;
   executable(join(root, 'bin'), 'pod', body);
   executable(root, 'login-shell', body);
-  await expect(iosToolchainAsync(root, 'xcode')).resolves.toMatchObject({
+  await expect(iosToolchainAsync(root, null)).resolves.toMatchObject({
     cocoapods: null,
     xcode: 'Xcode 27.0',
     simulatorSdk: '27.0',
@@ -225,3 +258,132 @@ test('native Gradle discovery reads JDK and SDK facts without Apple or Ruby prob
     runtimes: [],
   });
 });
+
+test('the Gradle offer reports the SDK directory and whether its licenses are accepted', () => {
+  const sdk = join(root, 'android-sdk');
+  mkdirSync(join(sdk, 'platforms', 'android-35'), { recursive: true });
+  vi.stubEnv('ANDROID_HOME', sdk);
+  setExecutor(makeExecutor({ runFileQuiet: () => null }));
+  expect(workerToolchain(null, 'gradle')).toMatchObject({ androidLicenses: false, androidHome: sdk });
+  mkdirSync(join(sdk, 'licenses'));
+  writeFileSync(join(sdk, 'licenses', 'android-sdk-license'), '\n');
+  expect(workerToolchain(null, 'gradle').androidLicenses).toBe(false);
+  writeFileSync(join(sdk, 'licenses', 'android-sdk-license'), '\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n');
+  expect(workerToolchain(null, 'gradle').androidLicenses).toBe(true);
+  rmSync(join(sdk, 'platforms'), { recursive: true });
+  expect(workerToolchain(null, 'gradle')).toMatchObject({ androidSdk: null });
+  expect(workerToolchain(null, 'gradle')).not.toHaveProperty('androidLicenses');
+});
+
+function fakeJdk(parent: string, name: string, version: string, jre = false): string {
+  const home = join(parent, name);
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, 'release'), `JAVA_VERSION="${version}"\n`);
+  if (!jre) {
+    mkdirSync(join(home, 'bin'));
+    writeFileSync(join(home, 'bin', process.platform === 'win32' ? 'javac.exe' : 'javac'), '');
+  }
+  return home;
+}
+
+test('a worker lists the JDK majors it can build on and builds with the one a job names', () => {
+  const jdks = join(root, 'jvms');
+  const jdk25 = fakeJdk(jdks, 'jdk-25', '25.0.1');
+  const jdk17 = fakeJdk(jdks, 'zulu-17', '17.0.18');
+  const jdk17Other = fakeJdk(jdks, 'temurin-17', '17.0.9');
+  const jre21 = fakeJdk(jdks, 'jre-21', '21.0.3', true);
+  const jdk8 = fakeJdk(jdks, 'jdk-8', '1.8.0_402');
+  mkdirSync(join(jdks, 'broken'));
+  expect([...jdkHomes([jdk25, join(jdks, 'broken'), jre21, jdk17, jdk17Other, jdk8])]).toEqual([
+    ['25', jdk25],
+    ['17', jdk17],
+    ['8', jdk8],
+  ]);
+  mkdirSync(join(root, 'home', '.sdkman', 'candidates', 'java', '21.0.5-tem'), { recursive: true });
+  expect(jdkCandidates({ JAVA_HOME: jdk25 }, 'linux', join(root, 'home'))).toEqual(
+    expect.arrayContaining([jdk25, join(root, 'home', '.sdkman', 'candidates', 'java', '21.0.5-tem')]),
+  );
+
+  const env: NodeJS.ProcessEnv = { JAVA_HOME: jdk25 };
+  expect(useJdkMajor('25', env, [jdk25, jdk17])).toBeNull();
+  expect(env.JAVA_HOME).toBe(jdk25);
+  expect(useJdkMajor('17', env, [jdk25, jdk17])).toBeNull();
+  expect(env.JAVA_HOME).toBe(jdk17);
+  expect(useJdkMajor('21', env, [jdk25, jdk17])).toBe('This machine has no JDK 21 to build on.');
+  expect(env.JAVA_HOME).toBe(jdk17);
+
+  vi.stubEnv('JAVA_HOME', jdk25);
+  vi.stubEnv('ANDROID_HOME', join(root, 'no-sdk'));
+  setExecutor(makeExecutor({ runFileQuiet: () => null }));
+  expect(workerToolchain(null, 'gradle')).toMatchObject({ jdk: '25', jdks: expect.arrayContaining(['25']) });
+});
+
+const VERSION_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+\t<key>BuildVersion</key>
+\t<string>2</string>
+\t<key>CFBundleShortVersionString</key>
+\t<string>27.1</string>
+\t<key>ProductBuildVersion</key>
+\t<string>27A9275</string>
+</dict>
+</plist>
+`;
+
+test('the Xcode apps of a worker come from version.plist, with the license checks run only when asked', () => {
+  expect(parseXcodeVersionPlist(VERSION_PLIST)).toEqual({ version: '27.1', build: '27A9275' });
+  expect(parseXcodeVersionPlist('')).toEqual({ version: null, build: null });
+  const applications = realpathSync(mkdtempSync(join(root, 'apps-')));
+  for (const name of ['Xcode-27.1.app', 'Xcode-26.4.app'])
+    mkdirSync(join(applications, name, 'Contents', 'Developer'), { recursive: true });
+  writeFileSync(join(applications, 'Xcode-27.1.app', 'Contents', 'version.plist'), VERSION_PLIST);
+  mkdirSync(join(applications, 'Xcodes.app', 'Contents', 'MacOS'), { recursive: true });
+  mkdirSync(join(applications, 'Notes'), { recursive: true });
+  symlinkSync(join(applications, 'Xcode-27.1.app'), join(applications, 'Xcode.app'));
+  expect(listXcodeApps(false, applications)).toEqual([
+    { path: join(applications, 'Xcode-26.4.app'), version: null, build: null },
+    { path: join(applications, 'Xcode-27.1.app'), version: '27.1', build: '27A9275' },
+  ]);
+  const calls: string[] = [];
+  setExecutor(
+    makeExecutor({
+      runFileQuiet: (_file, args, options) => {
+        calls.push(`${options.env?.DEVELOPER_DIR?.split('/').at(-3)} ${args.join(' ')}`);
+        return args[0] === '-license' && options.env?.DEVELOPER_DIR?.includes('26.4') ? null : '';
+      },
+    }),
+  );
+  expect(listXcodeApps(true, applications).map(({ license, firstLaunch }) => ({ license, firstLaunch }))).toEqual([
+    { license: false, firstLaunch: true },
+    { license: true, firstLaunch: true },
+  ]);
+  expect(calls).toContain('Xcode-26.4.app -license check');
+});
+
+test.skipIf(process.platform !== 'darwin')(
+  'the developer directory is what xcode-select prints, including the Command Line Tools',
+  () => {
+    setExecutor(
+      makeExecutor({
+        runFileQuiet: (file) => (file === 'xcode-select' ? '/Library/Developer/CommandLineTools\n' : null),
+      }),
+    );
+    expect(workerToolchain(null, 'xcode')).toMatchObject({
+      developerDir: '/Library/Developer/CommandLineTools',
+      xcode: null,
+      simulatorSdk: null,
+    });
+  },
+);
+
+test.skipIf(process.platform !== 'darwin')(
+  'a DEVELOPER_DIR in the environment hides the developer directory, which xcode-select cannot change',
+  () => {
+    vi.stubEnv('DEVELOPER_DIR', '/nonexistent');
+    setExecutor(makeExecutor({ runFileQuiet: () => null }));
+    const report = workerToolchain(null, 'xcode');
+    expect(report).not.toHaveProperty('developerDir');
+    expect(report).not.toHaveProperty('xcodeApps');
+  },
+);

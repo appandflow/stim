@@ -176,13 +176,6 @@ export function platformName(platform: string): string {
   return platform === 'ios' ? 'iOS' : platform === 'web' ? t`Web` : platform === 'android' ? t`Android` : t`Unknown`;
 }
 
-export function deviceSource(device: DeviceRef): string {
-  if (device.platform === 'macos') return t`macOS app`;
-  if (device.platform === 'web') return t`Chrome`;
-  if (device.platform === 'ios') return device.physical ? t`iOS device` : t`iOS Simulator`;
-  return device.physical ? t`Android device` : t`Android Emulator`;
-}
-
 export function shortUrl(url: string): string {
   return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
 }

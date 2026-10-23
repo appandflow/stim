@@ -17,7 +17,10 @@ import type { NdjsonRecord } from '../ndjson.ts';
 import {
   runId,
   buildCriteria,
+  gcLogDir,
+  readGcLog,
   compileGrep,
+  fileSizes,
   followLogs,
   logFiles,
   parseSince,
@@ -96,7 +99,9 @@ interface SourcesResult {
 export function validateSources(sources: string | string[] | undefined | null): SourcesResult {
   if (sources === undefined || sources === null) return { sources: undefined };
   const list = Array.isArray(sources) ? sources : [sources];
-  if (list.includes('all')) return { sources: [...SOURCES] };
+  if (list.includes('gc') && list.length > 1)
+    return { error: '--source gc reads the machine-wide gc log and cannot be combined with other sources.' };
+  if (list.includes('all')) return { sources: SOURCES.filter((source) => source !== 'gc') };
   const unknown = list.filter((s) => !SOURCES.includes(s));
   if (unknown.length > 0) {
     return {
@@ -183,7 +188,7 @@ export default function logsCommand(program: Command): void {
     )
     .option(
       '--source <s...>',
-      'Only these sources: metro, client, device, build, agent, maintenance, placement, or all',
+      'Only these sources: metro, client, device, build, agent, maintenance, placement, or all; gc alone reads the machine-wide gc log of what gc and maintenance cleared',
     )
     .option('--level <l>', `Minimum level: ${LEVELS.join(', ')}`)
     .option('--since <d>', 'Only records newer than this, e.g. 30s, 5m, 2h')
@@ -196,6 +201,12 @@ export default function logsCommand(program: Command): void {
     .option('--follow', 'Keep streaming new records until interrupted')
     .option('--json', 'Emit the raw records, one per line (valid NDJSON; zero matches is zero bytes, exit 0)')
     .action(async (opts: LogsOptions) => {
+      const requested = [opts.source ?? []].flat();
+      if (requested.length === 1 && requested[0] === 'gc') {
+        const { minLevel, tail } = validateOptions(opts);
+        printGcLog(opts, opts.errors ? 'error' : minLevel, tail);
+        return;
+      }
       const root = findCommandWorkspace(process.cwd());
       if (!root) {
         refuseNoProject({ json: false });
@@ -203,36 +214,7 @@ export default function logsCommand(program: Command): void {
       }
       const dir = workspaceLogsDir(root);
 
-      let sources: string[] | undefined;
-      if (opts.source !== undefined) {
-        const checked = validateSources(opts.source);
-        if (checked.error) fail(checked.error);
-        sources = checked.sources;
-      }
-
-      let minLevel: string | undefined;
-      if (opts.level !== undefined) {
-        const checked = validateLevel(opts.level);
-        if (checked.error) fail(checked.error);
-        minLevel = checked.level;
-      }
-
-      if (opts.since !== undefined) {
-        const parsed = parseSince(opts.since);
-        if (parsed.error) fail(parsed.error);
-      }
-
-      let tail: number | undefined;
-      if (opts.tail !== undefined) {
-        const parsed = parseTail(opts.tail);
-        if (parsed.error) fail(parsed.error);
-        tail = parsed.n;
-      }
-
-      if (opts.grep !== undefined) {
-        const compiled = compileGrep(opts.grep);
-        if (compiled.error) fail(compiled.error);
-      }
+      const { sources, minLevel, tail } = validateOptions(opts);
 
       requireLogsWorkspace(root, dir);
 
@@ -273,6 +255,7 @@ export default function logsCommand(program: Command): void {
       };
       const { view, readAgent, hostedReachable } = await openWorkspaceLogs(context, query, Boolean(opts.follow));
       const offsets = opts.follow ? view.sizes : null;
+      const identities = opts.follow ? view.identities : null;
       let timeline: NdjsonRecord[] = [];
       let rawRecords: NdjsonRecord[];
       try {
@@ -334,6 +317,7 @@ export default function logsCommand(program: Command): void {
       const stop = followLogs({
         dir,
         offsets,
+        identities,
         criteria,
         onRecord: emit,
         errorContext: opts.errors ? (opts.json ? 'field' : 'msg') : undefined,
@@ -355,6 +339,66 @@ export default function logsCommand(program: Command): void {
       process.on('SIGINT', finish);
       process.on('SIGTERM', finish);
     });
+}
+
+function validateOptions(opts: LogsOptions): { sources?: string[]; minLevel?: string; tail?: number } {
+  let sources: string[] | undefined;
+  if (opts.source !== undefined) {
+    const checked = validateSources(opts.source);
+    if (checked.error) fail(checked.error);
+    sources = checked.sources;
+  }
+
+  let minLevel: string | undefined;
+  if (opts.level !== undefined) {
+    const checked = validateLevel(opts.level);
+    if (checked.error) fail(checked.error);
+    minLevel = checked.level;
+  }
+
+  if (opts.since !== undefined) {
+    const parsed = parseSince(opts.since);
+    if (parsed.error) fail(parsed.error);
+  }
+
+  let tail: number | undefined;
+  if (opts.tail !== undefined) {
+    const parsed = parseTail(opts.tail);
+    if (parsed.error) fail(parsed.error);
+    tail = parsed.n;
+  }
+
+  if (opts.grep !== undefined) {
+    const compiled = compileGrep(opts.grep);
+    if (compiled.error) fail(compiled.error);
+  }
+  return { sources, minLevel, tail };
+}
+
+function printGcLog(opts: LogsOptions, minLevel: string | undefined, tail: number | undefined): void {
+  const emit = (record: NdjsonRecord) =>
+    console.log(
+      opts.json
+        ? JSON.stringify(record)
+        : formatRecord(record, { paint: record.level ? LEVEL_COLOURS[record.level] : undefined }),
+    );
+  const query = { sources: ['gc'], minLevel, since: opts.since, grep: opts.grep };
+  const offsets = opts.follow ? fileSizes(gcLogDir()) : null;
+  const records = queryLogs({ ...query, records: readGcLog(), tail });
+  for (const record of records) emit(record);
+  if (!opts.follow) {
+    if (records.length === 0 && !opts.json) console.error(chalk.dim(`No matching log records in ${gcLogDir()}`));
+    return;
+  }
+  const stop = followLogs({ dir: gcLogDir(), offsets, criteria: buildCriteria(query), onRecord: emit });
+  const finish = () => {
+    stop();
+    stopReader();
+    process.exit(0);
+  };
+  const stopReader = watchStdoutReader(finish);
+  process.on('SIGINT', finish);
+  process.on('SIGTERM', finish);
 }
 
 function fail(message: string): never {

@@ -167,10 +167,12 @@ console.log(facts.strategy, facts.targets);
 ```
 
 `reload({ platform?, signal?, beforeReload? })` requests a JavaScript reload in
-the live iOS/Android app or reloads the owned Chrome page. Select `ios`, `android`
+the live iOS/Android app (owned, on a physical device or in an EAS Simulator
+session) or reloads the owned Chrome page. Select `ios`, `android`
 or `web` when more than one platform is live. The result is the flat
-`stim reload --json` payload: `platform`, `deviceId`, `deviceName`, `appId`,
-`metroPort`, `strategy`, `targets` and `reverseRestored`.
+`stim reload --json` payload: `platform`, `deviceId`, `deviceName`, `appId`
+(`null` for an app Stim did not launch), `metroPort`, `strategy`, `targets` and
+`reverseRestored`.
 
 A dispatched request does not prove completion. Verify the expected UI and
 inspect logs; a Metro broadcast can reach other connected clients.
@@ -324,9 +326,12 @@ Execution is bounded to 120 seconds, with up to 35 seconds for owned cleanup.
 Desktop uses the private `desktop-machine-access` subscription on its own bundled
 server; phone, network and other local connections cannot request access through it.
 
-`gc({ cache?, olderThan?, worktrees? })` returns the GC JSON dry-run report.
+`gc({ cache?, olderThan?, worktrees?, measureBuildState? })` returns the GC JSON dry-run report.
 It never deletes resources or shuts down idle devices. `olderThan` is a whole
 number of days, and `cache` and `worktrees` have the CLI's scope semantics.
+`measureBuildState: false` reports each worktree's `buildState` sizes only from
+the disk-usage cache: a size measured over an hour ago, or before its directory
+changed, is `null`, and no `du` runs.
 Invalid scopes reject with `StimError` and their remedy. Reports can refresh
 their own measured-usage caches. An explicit `home` or `STIM_HOME` preserves
 the CLI's scoped-home restrictions on machine-global resources.
@@ -363,12 +368,14 @@ refuses with `STIM_CLAIM_UNAVAILABLE` instead of a cancellation or timeout
 error. Child cleanup errors name the launcher PID; unverifiable processes and descendants
 are left untouched. On POSIX, a launcher that exited before identity capture can only
 finish successfully once its process group is proven gone.
-After a termination request, cleanup waits at most one second for a child to
-close. Overall cleanup has a 35 second budget, including temporary-worktree
+After a termination request, cleanup waits for a child to close, then for its
+process group to exit: each wait is 5 seconds times the host's load per CPU,
+from 5 to 15 seconds. Overall cleanup has a 35 second budget, including temporary-worktree
 removal; unfinished cleanup returns `STIM_CLAIM_UNAVAILABLE` and leaves
 unresolved resources in place. Credential refresh waits asynchronously and
 checks cancellation before writing.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
+A probe's time limit counts only the probe itself; PowerShell's startup and exit each have their own 30 second limit.
 
 ## Settings
 

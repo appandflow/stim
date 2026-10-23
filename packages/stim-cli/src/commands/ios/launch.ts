@@ -49,6 +49,7 @@ import {
   simulatorConsolePaths,
 } from '../../diagnostics/native-crash.ts';
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
+import type { HostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
 
 interface VerifyIosRunArgs {
   operation?: StimContext;
@@ -75,6 +76,7 @@ interface VerifyIosRunArgs {
   remoteDevice: boolean;
   metroOrigin: string | null;
   enterActivity?: BuildProgress['activity'];
+  hostedLogs?: Omit<HostedLaunchLogs, 'stop'>;
 }
 
 interface IosRuntimeRoute {
@@ -230,7 +232,7 @@ async function verifyIosProcessRun({
   return { state: crashes.length || processCheck?.reason === 'exited' ? LAUNCH_FATAL : LAUNCH_UNVERIFIED };
 }
 
-async function verifyIosMetroRun({
+export async function verifyIosMetroRun({
   operation,
   root,
   slot,
@@ -254,17 +256,20 @@ async function verifyIosMetroRun({
   remoteDevice,
   metroOrigin,
   enterActivity,
+  hostedLogs,
 }: VerifyIosRunArgs): Promise<{ state: boolean | string; warning?: string; unattributed?: boolean }> {
   const runCommand = nativeRunCommand('ios', slot, { physical, deviceId: udid });
   const readNativeCrashes = () =>
-    remoteDevice
-      ? []
-      : captureNativeCrashes(
-          { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
-          logsDir,
-          operation?.signal,
-          operation?.env,
-        );
+    hostedLogs
+      ? hostedLogs.readNativeCrashes()
+      : remoteDevice
+        ? []
+        : captureNativeCrashes(
+            { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
+            logsDir,
+            operation?.signal,
+            operation?.env,
+          );
   const deviceProcess = async (): Promise<boolean | null> => {
     const running = await d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
     return running.state === 'unknown' ? null : running.state === 'running';
@@ -285,6 +290,8 @@ async function verifyIosMetroRun({
         platform: 'ios',
         mode: workspaceDevServerMode(root, isExpo),
         readNativeCrashes,
+        readDeviceRecords: hostedLogs?.readDeviceRecords,
+        deviceLogsThrough: hostedLogs?.deviceLogsThrough,
         processAlive: remoteDevice
           ? null
           : physical
@@ -356,15 +363,18 @@ async function verifyIosMetroRun({
       'verify',
       `bundle loaded` +
         (verification.processAlive === true ? ', process alive' : '') +
-        (verification.readiness ? '' : ', stable for 3s -- the first screen may still be rendering') +
+        (verification.readiness
+          ? ''
+          : verification.jsRunning
+            ? ', app JavaScript running -- the first screen may still be rendering'
+            : ', stable for 3s -- the first screen may still be rendering') +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
     const hasAppErrors = reportLaunchErrors(verification.errors ?? [], note, root);
     if (hasAppErrors && verification.processAlive === true && metroPort !== null) {
-      const reloadRemedy =
-        physical || remoteDevice
-          ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
-          : 'run `stim reload ios`.';
+      const reloadRemedy = remoteDevice
+        ? `run \`agent-device metro reload --metro-port ${metroPort}\`.`
+        : 'run `stim reload ios`.';
       note(
         chalk.yellow(
           phaseLine(
@@ -646,7 +656,7 @@ async function readRunExecutable(
   return executable;
 }
 
-function recordIosReloadTarget({
+async function recordIosReloadTarget({
   d,
   root,
   physical,
@@ -671,10 +681,10 @@ function recordIosReloadTarget({
   runtimeKind: IosRuntimeKind;
   launchedAt: number;
   note: (line: string) => void;
-}): void {
+}): Promise<void> {
   if (physical || remoteDevice) return;
   try {
-    d.writeWorkspaceLaunch(root, 'ios', {
+    await d.writeWorkspaceLaunch(root, 'ios', {
       appId: bundleId,
       deviceId: udid,
       metroPort,
@@ -791,7 +801,7 @@ export async function finishIosRun({
     });
   }
 
-  if (bundleId) d.upsertProject(root, { bundleId });
+  if (bundleId) await d.upsertProject(root, { bundleId });
 
   enterPhase('device');
   if (bootPending()) enterActivity('booting');
@@ -963,7 +973,7 @@ export async function finishIosRun({
         build: { ...buildFailure, appPath, bundleId },
       });
     }
-    if (adopting) d.clearIosAdoptionPending(root, slot);
+    if (adopting) await d.clearIosAdoptionPending(root, slot);
     installSkipped = Boolean(installed?.skipped);
     const artifactDuration =
       installed?.artifactDurationMs === undefined
@@ -978,7 +988,7 @@ export async function finishIosRun({
     if (!remoteDevice && installed?.devClientPreparationDurationMs !== undefined) {
       phase('install', `dev client prepared (${formatDuration(installed.devClientPreparationDurationMs)})`);
     }
-    if (installed.schemeApprovals) d.recordIosSchemeApprovals(root, udid, installed.schemeApprovals, slot);
+    if (installed.schemeApprovals) await d.recordIosSchemeApprovals(root, udid, installed.schemeApprovals, slot);
 
     dropSwapDir();
 
@@ -1038,7 +1048,7 @@ export async function finishIosRun({
     phase('launch', `${bundleId!}${restartedAppNote(launched.restartedPid)} ${launchTimer()}`);
   }
 
-  recordIosReloadTarget({
+  await recordIosReloadTarget({
     d,
     root,
     slot,

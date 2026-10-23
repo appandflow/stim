@@ -114,6 +114,7 @@ public struct TipInputs {
   /// The Phone app feature flag; without it no phone tip applies.
   public var phoneApp = false
   public var tutorialCompleted = false
+  public var tutorialOffered = true
   public var sidebar = SidebarOptions()
   public var rows = 0
   public var workspaces: [Workspace] = []
@@ -182,7 +183,7 @@ public enum Tips {
     switch topic {
     case .buildMachine: noMacPaired(inputs) && inputs.peers?.isEmpty == false
     case .phone: inputs.phoneApp && inputs.pairedPhones == 0
-    case .tutorial: !inputs.tutorialCompleted
+    case .tutorial: inputs.tutorialOffered && !inputs.tutorialCompleted
     case .hideWorkspaces: inputs.sidebar.hiddenWorkspaces.isEmpty && inputs.rows > manyRows
     case .statusFilter: inputs.sidebar.statuses == StatusFilter.defaultSelection
     case .replay: replayArchive(inputs) != nil

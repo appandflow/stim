@@ -171,7 +171,7 @@ Cache providers must settle after cancellation. If cleanup cannot finish within
 35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
 directory; it does not delete files a broken provider may still be writing.
 
-`doctor({ platform?, record? })` and `gc({ cache?, olderThan?, worktrees? })` read their CLI
+`doctor({ platform?, record? })` and `gc({ cache?, olderThan?, worktrees?, measureBuildState? })` read their CLI
 JSON reports with a 60 second execution budget and optional `signal`. Doctor
 never repairs; its `stim.runningPath` is null. By default it does not record a
 check. Pass `record: true` to register the supported iOS/Android project and record
@@ -188,8 +188,9 @@ refuses with `STIM_CLAIM_UNAVAILABLE` instead of a cancellation or timeout
 error. Child cleanup errors name the launcher PID; unverifiable processes and descendants
 are left untouched. On POSIX, a launcher that exited before identity capture can only
 finish successfully once its process group is proven gone.
-After a termination request, cleanup waits at most one second for a child to
-close. Overall cleanup has a 35 second budget, including temporary-worktree
+After a termination request, cleanup waits for a child to close, then for its
+process group to exit: each wait is 5 seconds times the host's load per CPU,
+from 5 to 15 seconds. Overall cleanup has a 35 second budget, including temporary-worktree
 removal; unfinished cleanup returns `STIM_CLAIM_UNAVAILABLE` and leaves
 unresolved resources in place. Credential refresh waits asynchronously and
 checks cancellation before writing.

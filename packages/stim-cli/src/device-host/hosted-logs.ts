@@ -4,7 +4,8 @@ import { LOG_ROTATE_BYTES, withDirLockAsync, ambientWrite } from '@stim-cli/core
 import { isJsonObject, parseHostedLogsCursor, type HostedLogsCursor } from '@stim-cli/core/state';
 import { deviceSlotFileKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { macosDir } from '../macos/state.ts';
-import { createNdjsonWriter } from '../ndjson.ts';
+import { androidLogGroups, isAndroidCrashText } from '../collector/android.ts';
+import { createNdjsonWriter, readNdjsonGenerations, type NdjsonRecord } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { call, type HostConnection } from './hosted-client.ts';
 
@@ -35,6 +36,15 @@ function readCursor(root: string, session: string, target: LogTarget): HostedLog
 const sameCursor = (a: HostedLogsCursor | undefined, b: HostedLogsCursor | undefined): boolean =>
   JSON.stringify(Object.entries(a ?? {}).toSorted()) === JSON.stringify(Object.entries(b ?? {}).toSorted());
 
+// A crash run split across two pulled pages keeps native_crash only on the page with its header.
+function androidCrashRecords(records: Record<string, unknown>[]): Set<object> {
+  return new Set(
+    androidLogGroups(records as NdjsonRecord[])
+      .filter((group) => isAndroidCrashText(group.map((record) => record.msg ?? '').join('\n')))
+      .flat(),
+  );
+}
+
 async function commitPage(
   root: string,
   session: string,
@@ -54,10 +64,17 @@ async function commitPage(
           maxBytes: LOG_ROTATE_BYTES,
         });
         try {
+          const crashes = target.platform === 'android' ? androidCrashRecords(records) : new Set<object>();
           for (const record of records)
             writer.write(
               target.platform !== 'macos'
-                ? { ...record, src: 'device', platform: target.platform, slot: target.slot, event: 'hosted_native_log' }
+                ? {
+                    ...record,
+                    src: 'device',
+                    platform: target.platform,
+                    slot: target.slot,
+                    event: crashes.has(record) ? 'native_crash' : 'hosted_native_log',
+                  }
                 : record,
             );
         } finally {
@@ -86,7 +103,7 @@ export async function pullHostedMacosLogs(
   maxPages: number = MAX_PAGES,
   final = false,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<number | undefined> {
   const deadline = Date.now() + (final ? 30_000 : 120_000);
   let checkpoint: number | undefined;
   let progressAt = 0;
@@ -117,10 +134,10 @@ export async function pullHostedMacosLogs(
       throw new Error(`${host.machine} answered device-host.logs.query with an unexpected result.`);
     signal?.throwIfAborted();
     await commitPage(root, placement.session, before, result.records, cursor, target);
-    if (!result.more) return;
     const nextCheckpoint = typeof result.checkpoint === 'number' ? result.checkpoint : undefined;
+    if (!result.more) return nextCheckpoint;
     if (sameCursor(cursor, before) && nextCheckpoint === checkpoint) {
-      if (target.platform === 'macos' && !final) return;
+      if (target.platform === 'macos' && !final) return undefined;
       throw new Error('Hosted native logs made no progress; keeping the logs already copied here.');
     }
     checkpoint = nextCheckpoint;
@@ -131,6 +148,7 @@ export async function pullHostedMacosLogs(
         ? 'Final native log copy reached its time or page bound; the host keeps collected logs after stop.'
         : 'Hosted native logs still have unread pages; run stim logs again.',
     );
+  return undefined;
 }
 
 export async function pullHostedNativeLogs(
@@ -141,10 +159,14 @@ export async function pullHostedNativeLogs(
   final = false,
   platform: 'ios' | 'android' = 'ios',
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<number | undefined> {
   if (!host.connection.supports(platform === 'ios' ? 'hosted-ios-data' : 'hosted-android-data'))
     throw new Error(
       `${host.machine} needs a newer stim-server to collect hosted ${platform === 'ios' ? 'iOS' : 'Android'} native logs.`,
     );
-  await pullHostedMacosLogs(root, placement, host, { platform, slot }, final ? 1024 : MAX_PAGES, final, signal);
+  return await pullHostedMacosLogs(root, placement, host, { platform, slot }, final ? 1024 : MAX_PAGES, final, signal);
+}
+
+export function readHostedNativeLogs(root: string, platform: 'ios' | 'android', slot: string): NdjsonRecord[] {
+  return readNdjsonGenerations(hostLogFile(root, { platform, slot }));
 }

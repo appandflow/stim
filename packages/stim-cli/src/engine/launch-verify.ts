@@ -18,6 +18,7 @@ export type VerifyLaunchResult = {
   mode: string | null;
   waitedMs: number;
   readiness?: AppReadiness;
+  jsRunning?: true;
 };
 
 export const RELEASE_VERIFY_WAIT_MS = 3000;
@@ -90,8 +91,12 @@ export const LAUNCH_BUNDLING = 'bundling';
 export const LAUNCH_FATAL = 'fatal';
 
 export const VERIFY_TIMEOUT_MS = 20000;
+export const MANIFEST_GRACE_MS = 15000;
+export const MANIFEST_VERIFY_TIMEOUT_MS = 60000;
 export const STABILITY_WINDOW_MS = 3000;
+const JS_RUNNING_SETTLE_MS = 500;
 const VERIFY_POLL_MS = 500;
+const DEVICE_LOG_LAG_LIMIT_MS = 10_000;
 
 const BUNDLE_EVENTS = new Set([
   'bundle_build_started',
@@ -141,6 +146,39 @@ export function isBundleRequestProof(
   return BUNDLE_URL_PATH.test(rec.msg);
 }
 
+const JS_RUNNING = /^Running "[^"]*"/;
+
+function isJsRunning(record: NdjsonRecord, platform: 'ios' | 'android' | null): boolean {
+  return (
+    record.src === 'device' &&
+    record.platform === platform &&
+    (record.level === 'info' || record.level === 'debug') &&
+    typeof record.msg === 'string' &&
+    JS_RUNNING.test(record.msg)
+  );
+}
+
+function jsRunningSince(
+  signals: NdjsonRecord[],
+  since: number | null,
+  runtimeWaiting: boolean,
+  platform: 'ios' | 'android' | null,
+): number | null {
+  if (since === null || runtimeWaiting) return null;
+  const running = signals.find((record) => Number(record.ts) >= since && isJsRunning(record, platform));
+  return running ? Number(running.ts) : null;
+}
+
+function settledWindowEnd(stabilityDeadline: number | null, jsRunningAt: number | null): number | null {
+  return stabilityDeadline !== null && jsRunningAt !== null
+    ? Math.min(stabilityDeadline, jsRunningAt + JS_RUNNING_SETTLE_MS)
+    : stabilityDeadline;
+}
+
+function jsRunningFields(jsRunningAt: number | null): { jsRunning?: true } {
+  return jsRunningAt === null ? {} : { jsRunning: true };
+}
+
 function expoBundleLine(msg: string) {
   return /\bBundl(?:ing|ed)\b/.test(msg);
 }
@@ -170,6 +208,26 @@ async function nativeLaunchFailure({
     : null;
 }
 
+function manifestDeadline(
+  records: NdjsonRecord[],
+  { startedAt, timeoutMs }: { startedAt: number; timeoutMs: number },
+): number {
+  const base = startedAt + timeoutMs;
+  const open = new Set<unknown>();
+  let servedAt: number | null = null;
+  for (const record of records.toSorted((a, b) => Number(a.ts) - Number(b.ts))) {
+    if (record.event === 'manifest_request_started') {
+      open.add(record.requestId);
+    } else {
+      open.delete(record.requestId);
+      if (record.event === 'manifest_request_finished') servedAt = Number(record.ts);
+    }
+  }
+  const cap = startedAt + Math.max(timeoutMs, MANIFEST_VERIFY_TIMEOUT_MS);
+  if (open.size > 0) return cap;
+  return servedAt === null ? base : Math.min(cap, Math.max(base, servedAt + MANIFEST_GRACE_MS));
+}
+
 export async function verifyLaunch({
   slot,
   appPid,
@@ -190,6 +248,7 @@ export async function verifyLaunch({
   processAlive = null,
   onReadinessPending = null,
   onActivity,
+  deviceLogsThrough,
   now = Date.now,
   sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
 }: {
@@ -217,6 +276,11 @@ export async function verifyLaunch({
    * record time.
    */
   onActivity?: ((name: 'bundling' | 'waiting-ready' | null, at: number) => void) | null;
+  /**
+   * The time through which the device records are complete, for a device log copied from another machine. The
+   * stability and readiness windows end only once the copy covers them, or `DEVICE_LOG_LAG_LIMIT_MS` after they end.
+   */
+  deviceLogsThrough?: (() => number | null) | null;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
 } = {}): Promise<VerifyLaunchResult> {
@@ -224,8 +288,15 @@ export async function verifyLaunch({
   const read = readRecords || (() => readMetroRecords(logsDir));
   const readDevice = readDeviceRecords || (() => readNdjson(logsDir, 'device.ndjson'));
   const readClient = readClientRecords || (() => readNdjson(logsDir, 'client.ndjson'));
+  const deviceNow = () => {
+    const at = now();
+    return deviceLogsThrough
+      ? Math.max(Math.min(at, deviceLogsThrough() ?? -Infinity), at - DEVICE_LOG_LAG_LIMIT_MS)
+      : at;
+  };
   const startedAt = now();
-  const bundleDeadline = startedAt + Math.max(0, timeoutMs);
+  const baseTimeoutMs = Math.max(0, timeoutMs);
+  let bundleDeadline = startedAt + baseTimeoutMs;
   let proof: NdjsonRecord | null = null;
   let activity: NdjsonRecord | null = null;
   let stabilityDeadline: number | null = null;
@@ -250,6 +321,12 @@ export async function verifyLaunch({
       (record) => after(record, since) && (slot === undefined || (record.slot ?? 'default') === slot),
     );
     const clientRecords = readClient().filter((record) => after(record, since) && !platformShared);
+    bundleDeadline = manifestDeadline(
+      metroRecords.filter(
+        (record) => String(record.event).startsWith('manifest_request_') && (!platform || record.platform === platform),
+      ),
+      { startedAt, timeoutMs: baseTimeoutMs },
+    );
     if (now() >= nextCrashCheck) {
       nextCrashCheck = now() + 2000;
       const crash = await nativeLaunchFailure({
@@ -317,6 +394,8 @@ export async function verifyLaunch({
     const runtimeWaiting = runtimeLoadingAt !== null && runtimeStartedAt === null;
     const completedAt = proof ? Math.max(Number(proof.ts), runtimeStartedAt ?? 0) : null;
     if (completedAt !== null) stabilityDeadline = completedAt + Math.max(0, stabilityMs);
+    const jsRunningAt = jsRunningSince(signals, completedAt, runtimeWaiting, platform);
+    const windowEnd = settledWindowEnd(stabilityDeadline, jsRunningAt);
     const readinessDeadline = completedAt !== null ? completedAt + APP_READINESS_TIMEOUT_MS : bundleDeadline;
     if (pendingAt === null) {
       const pending = signals.find(
@@ -366,7 +445,7 @@ export async function verifyLaunch({
       };
     }
 
-    if (proof && stabilityDeadline !== null && (pendingAt !== null || now() >= stabilityDeadline)) {
+    if (proof && windowEnd !== null && (pendingAt !== null || deviceNow() >= windowEnd)) {
       const errorSince = pendingAt === null ? Number(proof.ts ?? since ?? 0) : Number(since ?? 0);
       const errors = [
         ...metroRecords.filter((record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform)),
@@ -389,7 +468,7 @@ export async function verifyLaunch({
       }
       const actionableErrors = errors.filter((record) => !isIosConnectionRefusal(record, platform));
       const appErrors = actionableErrors.some(isAppLaunchError);
-      if ((!runtimeWaiting && pendingAt === null) || appErrors || ready || now() >= readinessDeadline) {
+      if ((!runtimeWaiting && pendingAt === null) || appErrors || ready || deviceNow() >= readinessDeadline) {
         return {
           verified: true,
           record: proof,
@@ -398,6 +477,7 @@ export async function verifyLaunch({
           mode,
           waitedMs,
           ...(pendingAt !== null ? { readiness: appErrors ? 'error' : ready ? 'ready' : 'timed-out' } : {}),
+          ...jsRunningFields(jsRunningAt),
         };
       }
     }
@@ -423,8 +503,8 @@ export async function verifyLaunch({
       ? bundleDeadline
       : proof && pendingAt !== null
         ? readinessDeadline
-        : (stabilityDeadline ?? bundleDeadline);
-    await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
+        : (windowEnd ?? bundleDeadline);
+    await sleep(Math.min(pollMs, Math.max(0, deadline - deviceNow())));
   }
 }
 

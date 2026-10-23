@@ -141,8 +141,9 @@ project's own `metro.config.js` calls `sharedCacheStores()` from
 `@stim-cli/metro`.
 
 `metro.warmupUrl.ios` and `metro.warmupUrl.android` replace the bundle URL that
-`ios` and `android` prefetch while the native build runs. Unset, Stim uses
-Expo's manifest or the bare React Native default. Give an HTTP(S) URL or a path
+`ios` and `android` prefetch while the native build runs. Unset, Stim uses the
+app's most recent bundle request on that platform from the workspace's metro
+log (skipped when its entry file no longer exists), then Expo's manifest or the bare React Native default. Give an HTTP(S) URL or a path
 ending in `.bundle` with the app's full query, including a matching `platform`.
 Stim keeps the path and query but always requests this workspace's Metro port.
 The setting only changes the prefetch, not the app. Setting
@@ -176,6 +177,26 @@ A model or runtime the machine value names that no installed toolchain offers
 refuses with `STIM_BAD_ARG`, the same way an unresolvable per-project or
 per-invocation value does, and the message names the machine layer so it is
 clear where to fix it.
+
+### SimSlim for every owned simulator
+
+`ios.simslim` takes `on` or `off`, default `off`, and can be set at any layer.
+Set it on the machine layer to slim every Stim-owned iOS simulator on that Mac
+with SimSlim's default service categories, without adding a profile to each
+app:
+
+```sh
+stim settings set ios.simslim on --scope machine
+```
+
+A project `ios.simslimProfile` still applies in place of the defaults, whatever
+`ios.simslim` says. A workspace, repo, or committed `ios.simslim` of `off` opts
+that app out and restores stock services on its simulator. SimSlim's defaults
+disable push, StoreKit, iCloud, Safari sync, Mail, Calendar and Contacts
+services among others, so move an app that needs them to a profile that keeps
+those categories or to `off`. Install SimSlim once per Mac with
+`brew install mobai-app/tap/simslim`; without it `doctor` reports the gap and
+`stim ios` boots normally with a one-line note.
 
 ### Android AVD overrides
 
@@ -333,6 +354,14 @@ last configured, approved member of either pool. A remote that Tailscale reports
 running an OS other than macOS never counts for the device pool. Excluding local
 prevents local fallback. See [automatic machine pools](./remote-machines.md#automatic-machine-pools).
 
+`remote.easMaxDurationMinutes` (default 30) is the number of minutes after which EAS
+stops each EAS Simulator session Stim creates, for `--remote eas` and
+`remote.easFallback`. It bounds the cost of a session that nobody ended, such as one
+whose workspace was deleted by hand. `stim stop` and `stim gc --delete` still end a
+session sooner, and a later run replaces an expired one. EAS rejects a value above
+the account plan's session limit. A run reuses a live session without checking how
+much of the cap is left.
+
 `remote.machines` names the remote machines this machine may build on and host owned
 simulator sessions on, by MagicDNS name and optional serve port (default 7443).
 Name each node and port once. Set it with
@@ -406,7 +435,7 @@ and unknown simulator runtime builds refuse a named worker on a cache miss.
 Invalid values, unlisted names and unpaired names refuse at setup before the
 cache is consulted, without a build record or failed-run stats. A listed paired
 name with a cache hit needs no build and contacts no worker. Prebuild and pod
-install still run on this machine before a named offload. `stim status` and its JSON
+install still run on this machine before a named offload; for `stim ios` the worker's toolchain is checked first. `stim status` and its JSON
 record `buildMachine` (the selected value) and `builtOn` (`here` or the worker
 name, absent when no build ran). Ctrl-C cancels the worker build and starts no
 local xcodebuild, Gradle or SwiftPM compile.
@@ -446,19 +475,24 @@ architecture and runtime.
 
 In `auto`, an offloaded iOS/Android build runs prebuild (and `pod install` for iOS) here, then asks
 every paired machine what it can build. Stim picks one whose Stim build
-matches and, for iOS and macOS, whose CPU architecture matches the target simulator, with at least 10 GB free, that does
+compatibility version matches and, for iOS and macOS, whose CPU architecture matches the target simulator, with at least 10 GB free, that does
 not decline, preferring the one that already holds this repository, then the
 least loaded. When a machine that offered fails the sync or refuses to start
 the build, for example because it got busy meanwhile, Stim tries the next one
 in that order:
 
 - For iOS, its Xcode and simulator SDK must match, and it needs an iPhone
-  simulator on the target runtime. Its project-selected CocoaPods must match too, unless the
-  project's `Gemfile.lock` pins CocoaPods: both machines then run that version
-  through Bundler, so the machine needs only Bundler on its stim-server `PATH`
-  and installs the pinned gems itself on the first build. The comparison uses
+  simulator on the target runtime. A missing or different global CocoaPods keeps `auto`
+  placement from choosing the machine for a project that does not pin it, unless the
+  machine already holds the exact artifact. The placement line says why and
+  `stim doctor` shows the install command. A named `--remote-build` still sends the build;
+  a `pod install` that fails there reports "pod install failed" with the fix on that
+  machine. When the project's `Gemfile.lock`, in `ios/` or the project root, pins CocoaPods, both machines run that version
+  through Bundler, so the machine needs Bundler on its stim-server `PATH`
+  and installs the pinned gems itself on the first build. This machine's side of
+  the comparison runs `pod --version` in the directory `pod install` runs in. The comparison uses
   `.ruby-version` when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.
-- For macOS, its Xcode and macOS SDK must match. The worker needs network
+- For macOS, its Xcode and macOS SDK must match, unless `--remote-build` and `--remote` name the same Mac, which builds and runs the app and then needs only the same Stim build compatibility version (see [macOS development](./macos.md#run-it-on-another-mac)). The worker needs network
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally. Completed
   caching requires `macos.artifactInputs` and a locally verified compile; remote
@@ -466,7 +500,9 @@ in that order:
 - For Android, its CPU architecture may differ, so an x86_64 Linux or Windows machine
   running stim-server can build for an Apple silicon Mac. Its JDK major version must match (the vendor may differ), and
   its Android SDK must hold the NDK, build-tools and compile platform that the
-  project's React Native version names in `gradle/libs.versions.toml`. Gradle
+  project's React Native version names in `gradle/libs.versions.toml`, or have
+  its licenses accepted so Gradle downloads what is missing on the first build
+  (unless the project sets `android.builder.sdkDownload=false`). Gradle
   and the Android Gradle plugin come from the synced project. It builds with
   this machine's variant, target ABI, Gradle build cache, PCH and compiler cache
   choices, so the APK matches the ABI-narrowed cache key.
@@ -518,10 +554,12 @@ remote machine's `concurrency.maxBuilds` slots, so a local `stim ios` or
 slot is freed when the build ends, is cancelled, or its process is gone. Delete
 a client's directory there to reclaim its space.
 
-For Android builds, start stim-server on the remote machine with `JAVA_HOME`
-pointing at a JDK of the same major version as the clients (otherwise it
-uses the macOS default JDK, which `java_home` may not find, for example with
-Homebrew's `openjdk@17`) and `ANDROID_HOME` at its Android SDK (default
+For Android builds, the remote machine builds on an installed JDK of the same
+major version as the client (found in the system JVM directories, Homebrew,
+Android Studio and SDKMAN) even when its default JDK is another one; a machine
+with none gets the install command as the fix. Start stim-server with
+`JAVA_HOME` at such a JDK only to choose it for every build, and with
+`ANDROID_HOME` at its Android SDK (default
 `~/Library/Android/sdk`, or `~/Android/Sdk` on Linux). After an Android build, the client's Gradle daemon
 stays warm for `server.gradleDaemonIdleMinutes` (default 30; `0` stops it
 when each build ends), so the client's next build skips a JVM start of about
@@ -545,7 +583,11 @@ reports the process, its health, the route, Stim Host's permissions and
 whether its Stim build matches the `stim` on PATH. Doctor points to this
 command when a named machine does not answer.
 
-Offload needs the same Stim build on both machines. To move the remote machine's
+Offload needs Stim releases with the same build compatibility version on both
+machines. It changes only in a release that changes what a worker builds, how it
+builds, or the build messages, so two machines on different Stim builds usually
+offload to each other. A stim-server too old to report its compatibility version
+needs the same Stim build as this machine. To move the remote machine's
 service to another build, run one of these there:
 
 ```bash
@@ -625,7 +667,9 @@ stim settings set budget.minFreeDiskGb 40
 ```
 
 Without waiting for a budget, `devices.idleShutdownMinutes` shuts down a
-workspace's owned simulators and emulators once they have been idle that long.
+workspace's owned simulators and emulators once they have been idle that long,
+through the workspace's dev server supervisor or, with no supervisor, through
+automatic maintenance every `maintenance.idleCheckMinutes` (5).
 It is on by default at 30 minutes; see
 [idle shutdown](./owned-devices.md#idle-shutdown).
 
@@ -769,9 +813,11 @@ build holds its claim on it or that claim is unresolved.
 `maintenance.urgentFreeDiskGb`, `maintenance.criticalFreeDiskGb` and
 `maintenance.pressureProtectMinutes` set the
 [disk pressure levels](./build-caches.md#disk-pressure-levels). `caches.ccacheMaxGb` is
-passed to ccache, which evicts by itself. `maintenance.sweepHours` and
-`maintenance.olderThanDays` set the daily sweep of idle build outputs and old
-cache entries; `maintenance.deviceIdleDays` sets how long a workspace stays idle
+passed to ccache, which evicts by itself. `maintenance.sweepHours` (24) sets how
+often the age sweep runs. `maintenance.olderThanDays` (7; 0 turns these off) is how long
+something stays unused before that sweep removes it: workspace build outputs,
+shared cache entries, parked simulators and emulators, and clean, pushed linked
+worktrees (only with `maintenance.removeIdleWorktrees`, off by default); `maintenance.deviceIdleDays` sets how long a workspace stays idle
 before that sweep deletes its owned simulators and emulators (0 turns it off);
 `maintenance.gradleVersionIdleDays` (7) sets how long a Gradle version no project pins stays unmodified before level 3 stops the idle Gradle and Kotlin daemons that keep it and deletes it (0 turns that off);
 `maintenance.removeFinishedWorktrees` controls the worktree

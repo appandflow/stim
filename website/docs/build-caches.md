@@ -109,9 +109,77 @@ Debug simulator build or a `--remote` build ends in its architecture (`-arm64`
 or `-x86-64`). A local iOS Release simulator build compiles every architecture
 the project lists and has no suffix.
 
+Stim runs `@expo/fingerprint` with its default `balanced` preset, the one the
+project's own Expo uses:
+
+- An installed dependency counts by its name and version, not by its files. So
+  does a config plugin loaded from `node_modules`.
+- A package linked from outside `node_modules` counts by its files: a workspace
+  package, a `link:` dependency, or a local Expo module. A `file:` dependency
+  that the package manager copies into `node_modules` counts by version.
+- `patches/`, a committed `ios/` or `android/`, the evaluated app config, its
+  local config plugins and the files it names count by their contents. Stim also
+  hashes the `patches/` and `.yarn/patches/` directories next to a monorepo's
+  lockfile, and the patch hashes `pnpm-lock.yaml` records, wherever the patch
+  files live.
+- The app's `version`, `ios.buildNumber` and `android.versionCode`, `eas.json`,
+  `.easignore` and the path overrides in `react-native.config.js` are left out.
+  A Release cache hit keeps the version it was built with.
+
+To hash the files of every native dependency, set `preset: 'strict'` in
+`fingerprint.config.js`. That costs about twice the fingerprint's CPU time.
+
+:::warning[Edits inside node_modules]
+
+Stim does not see an edit you make directly to a dependency's files, such as
+`node_modules/<package>/ios/*.m`, a podspec or `build.gradle`. The key stays the
+same, so the next run installs the cached app without your change. Make the
+change a patch with `patch-package` or `pnpm patch`; Stim hashes patches. To try
+an edit before you make it a patch, build it fresh on this machine:
+
+<StimTabs
+code={`stim ios --no-build-cache --remote-build local
+stim android --no-build-cache --remote-build local`}
+/>
+
+`--no-build-cache` alone can place the build on a paired build machine. That
+machine installs dependencies from the lockfile, so its build does not include
+your edit. The fresh build is stored under the same key in the machine-wide
+cache, and handed to a configured cache provider, so every worktree reuses it,
+edit included, until the dependency's version or patches change. Undo the edit
+with another `--no-build-cache` build.
+
+:::
+
 `stim ios` and `stim android` first check the machine-wide artifact cache. A hit
 installs the saved `.app` or `.apk`. A miss runs the native build and stores the
 result. Two matching misses use one build through a single-flight lock.
+
+Computing the fingerprint evaluates the app config and runs autolinking. After a
+full fingerprint, Stim records it under a static digest of the tree in
+`$STIM_HOME/fingerprint-memo` (`~/.stim` by default), shared by every worktree.
+The digest covers several inputs:
+
+- the git blob ids of the tracked native inputs, and the contents of untracked,
+  modified and ignored ones;
+- the app config's sources and the files and directories they name;
+- each installed package's path and version, and the lockfile;
+- the environment variables the config and its `.env` files read.
+
+A later run whose tree has the same digest, in any worktree, uses the record and
+prints `matches a recorded fingerprint of this tree`. A full fingerprint then
+runs in the background at low priority. If it disagrees, Stim drops the record
+and prints a warning at the end of the run; run the command again to use the
+current tree.
+
+A config that the digest cannot follow always gets a full fingerprint. That
+includes dynamic imports, `process.env` used other than by literal name, file,
+process or network access while the config is evaluated, and `dotenv`. Local
+config plugins count as evaluated, except that the files a plugin reads are not
+tracked when it applies mods; Stim assumes it reads them at prebuild, and the
+background check catches one that puts them in the config. The
+record is never used after `expo prebuild` or `pod install`, on a build machine,
+in `stim doctor`, or with `--no-build-cache`.
 
 After local and configured-provider misses, development builds can reuse an
 exact completed archive from an enabled paired build worker with
@@ -451,15 +519,18 @@ minute while a dev server or Stim Desktop is running even when no command does. 
 would remove, under the caps and floors in
 [settings](./settings.md#automatic-maintenance). In `report` mode it only
 measures, plans and logs.
-Disk and memory pressure are checked every minute, Stim-owned directory sizes
-every hour, finished worktrees every 15 minutes and the age sweep once a day.
+Disk and memory pressure are checked every minute, idle devices every
+`maintenance.idleCheckMinutes` (5), Stim-owned directory sizes every hour,
+finished worktrees every 15 minutes and the age sweep once a day.
 On macOS the memory signal is the sysctl pressure level, with no signal when
 sysctl fails. Only other platforms use `os.freemem()`. Memory pressure is
-recorded; below disk pressure level 3 a pass never shuts down idle devices or
-dev servers or stops helpers.
+recorded; below disk pressure level 3 a pass never stops dev servers or
+helpers. The idle check shuts down owned simulators and emulators idle for
+their workspace's `devices.idleShutdownMinutes`, also when no dev server runs;
+see [idle shutdown](./owned-devices.md#idle-shutdown).
 Removing a finished worktree or orphaned directory does tear down that
 workspace's own dev server, owned devices and Chrome profile, as `gc --delete` does.
-Size, worktree and sweep checks defer under high host load. The size scan covers
+Size, idle, worktree and sweep checks defer under high host load. The size scan covers
 workspace build outputs, native build and Metro caches, ccache, Swift
 compilation cache, and other registered Stim caches. It also records the disk of
 each owned and parked simulator and emulator, which `stim status` reports as
@@ -481,12 +552,28 @@ stops the disk-driven ones once free space is back above the floor:
    on-disk content store, whose entries live inside shared database files, so
    Stim cannot remove only the entries a running build does not need.
 5. Linked worktrees whose branch or pull request finished, by the same rules as
-   `stim gc --delete` and `gc.worktreeGraceMinutes`.
-6. Owned simulators and emulators of a finished worktree that is kept, such as
+   `stim gc --delete` and `gc.worktreeGraceMinutes`. With
+   `maintenance.removeIdleWorktrees true` (off by default), the daily sweep also
+   removes clean, pushed linked worktrees unused for `maintenance.olderThanDays`,
+   as `stim gc --delete --worktrees --older-than <days>` removes them. A dirty
+   worktree, one with unpushed commits, the source checkout and one whose last
+   use is unknown are never removed. `maintenance.removeFinishedWorktrees false`
+   turns off both.
+6. Parked simulators and emulators unused for `maintenance.olderThanDays` in the
+   daily sweep, deleted through centralized teardown after their ownership is
+   checked again.
+7. Owned simulators and emulators of a finished worktree that is kept, such as
    a dirty one, once idle for `gc.worktreeGraceMinutes`, and of any workspace
    idle for `maintenance.deviceIdleDays` (3 days) in the daily sweep. Idle
    means no dev server, native run, build, lease, managed lock, driven or busy
    device, and no recorded use. The next run recreates them.
+
+The daily sweep runs in the background of Stim commands every `maintenance.sweepHours` (24), never at a
+set hour, and waits while the host load is over `maintenance.maxLoadPerCore`.
+`maintenance.olderThanDays` (7) is the age for steps 2, 3, 5 and 6; set it to 0
+and the sweep removes nothing in them by age. Step 1, step 7 (which
+`maintenance.deviceIdleDays` controls), finished worktrees, and the cap and
+low-disk parts of steps 2 and 3 still run.
 
 A pass keeps a workspace that is in use, holds a lock, was used within
 `maintenance.protectRecentHours`, or is the workspace of the command that
@@ -504,7 +591,7 @@ When free disk keeps falling, maintenance escalates:
 | Level | When                                                                                           | What a pass adds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | ----- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1     | Under `budget.minFreeDiskGb` (20 GB)                                                           | The steps above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 2     | Under `maintenance.urgentFreeDiskGb` (12 GB), or level 1 could not get back above the floor    | Build outputs of workspaces unused for `maintenance.pressureProtectMinutes` (10 minutes) instead of `protectRecentHours`; parked simulators and emulators; build directories of idle worktrees (`ios/build`, `android/app/build`, `android/build`, `android/.gradle`, SwiftPM `.build`, at the worktree root, a project root, or `apps/*` and `packages/*`); owned simulators and emulators of workspaces idle for the short window; Stim temp directories and xctrace recordings in TMPDIR unmodified for 24 hours, with the checks of `stim gc --delete`.                                                                                                                                                                                                                                              |
+| 2     | Under `maintenance.urgentFreeDiskGb` (12 GB), or level 1 could not get back above the floor    | Build outputs of workspaces unused for `maintenance.pressureProtectMinutes` (10 minutes) instead of `protectRecentHours`; parked simulators and emulators; build directories of idle worktrees (`ios/build`, `android/app/build`, `android/build`, `android/.gradle`, SwiftPM `.build`, at the worktree root, a project root, or `apps/*` and `packages/*`); owned simulators and emulators of workspaces idle for the short window; Stim temp directories, xctrace recordings and SwiftPM temp directories in TMPDIR unmodified for 24 hours, with the checks of `stim gc --delete`.                                                                                                                                                                                                                    |
 | 3     | Under `maintenance.criticalFreeDiskGb` (6 GB) or `budget.hardFloorDiskGb`, where builds refuse | The Swift compilation cache; finished worktrees, and clean, pushed worktrees with no commits of their own beyond the default branch, with the short window as their grace period, unless `maintenance.removeFinishedWorktrees` is false; workspaces whose dev server runs but that are otherwise inactive for the short window, whose dev server stops and whose owned simulators and emulators are deleted; `node_modules` and `ios/Pods` of idle linked worktrees, never the source checkout; idle Gradle and Kotlin daemons, as `gc --delete --cache gradle-daemons` stops them, only when they are all that keeps an unpinned Gradle version, and then Gradle version caches and wrapper distributions no registered project pins, once unmodified for `maintenance.gradleVersionIdleDays` (7) days. |
 
 Each step re-measures free disk first and stops once it is back above its
@@ -536,6 +623,15 @@ In report mode actions and explaining skips are logged only when newly planned.
 In on mode every action taken, failure and explaining skip is logged with its
 size, and pass records carry the bytes freed. Removed worktrees and orphaned
 directories appear in the machine log only.
+Every run that deletes or changes something also appends one record per item
+to the machine gc log, `$STIM_HOME/gc/gc.ndjson`: `stim gc --delete`, `--idle`
+and `--cache`, each maintenance action taken, and what the budget gate reclaims
+before a build. A dry run writes nothing. Each record has the run, the trigger
+(`manual`, `desktop`, `maintenance` or `budget`), the item's kind, label, path,
+bytes freed and status (`done`, `kept` or `failed`), and the reason a kept or
+failed item was left. It rotates and expires with the maintenance log. Read it
+from any directory with `stim logs --source gc`, add `--json` for raw records
+or `--errors` for failures.
 The hook skips every `stim gc` invocation, and live or unresolved claims.
 `stim gc` without `--delete` prints the maintenance plan itself. Failed attempts
 back off for at least one minute; child crash logs are truncated above 64 KiB.

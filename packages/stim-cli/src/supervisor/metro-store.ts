@@ -105,11 +105,13 @@ export function metroStoreConfirmedRoot(line: string): string | null {
 
 export function expoMetroStoreEnv({
   root,
+  port,
   storeRoot,
   adapterPath,
   existingOverride,
 }: {
   root: string;
+  port: number;
   storeRoot: string;
   adapterPath: string;
   existingOverride?: string | null;
@@ -118,6 +120,7 @@ export function expoMetroStoreEnv({
     EXPO_OVERRIDE_METRO_CONFIG: adapterPath,
     STIM_METRO_STORE: storeRoot,
     STIM_PROJECT_ROOT: root,
+    STIM_METRO_PORT: String(port),
     ...(existingOverride ? { STIM_EXPO_METRO_CONFIG: existingOverride } : {}),
   };
 }

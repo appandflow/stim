@@ -6,14 +6,19 @@ import {
   artifactsMatch,
   deviceHoldsApk,
   deviceHoldsBundle,
+  deviceTailProbeScript,
   hashBundle,
   hashFile,
   parseAppContainerPath,
   parseDeviceSha256,
+  parseDeviceTailProbe,
   parseInstalledApkPath,
 } from '../engine/installed-artifact.ts';
 
+import { writeSignedApk, type SignedApk } from './_signed-apk.ts';
+
 const SHA = 'a'.repeat(64);
+const EMPTY_SHA = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
 let dir: string;
 
@@ -187,6 +192,77 @@ describe('hashBundle', () => {
   });
 });
 
+describe('deviceHoldsApk with a recorded signed tail', () => {
+  const adb = (...args: string[]) => ['adb', '-s', 'emulator-5584', 'shell', ...args];
+  const answer = (size: number, sha: string) => `path /data/app/a/base.apk\nsize ${size}\n${sha}  -\n`;
+
+  function setup(output: (apk: SignedApk) => string, extra: Record<string, string> = {}) {
+    const apkPath = join(dir, 'app-debug.apk');
+    const apk = writeSignedApk(apkPath);
+    const exec = recordingExec({ outputs: { 'tail -c': output(apk), ...extra } });
+    const held = () => deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec });
+    return { apk, exec, held };
+  }
+
+  test('the same size and tail digest skip the install in one adb call that never hashes the whole APK', async () => {
+    const { apk, exec, held } = setup((a) => answer(a.size, a.tailSha256));
+    expect(await held()).toBe(true);
+    expect(exec.calls).toEqual([adb(deviceTailProbeScript('com.example.app', apk.size - apk.tailOffset))]);
+  });
+
+  test.each([
+    ['a different tail digest', (a: SignedApk) => answer(a.size, SHA)],
+    ['a different size', (a: SignedApk) => answer(1, a.tailSha256)],
+  ])('%s means a different APK: reinstall, with no whole-file hash', async (_label, output) => {
+    const { exec, held } = setup(output);
+    expect(await held()).toBe(false);
+    expect(exec.calls).toHaveLength(1);
+  });
+
+  test('a package that is not installed, or installed in splits, is never a match', async () => {
+    expect(await setup(() => '').held()).toBe(false);
+    const split = setup((a) => answer(a.size, a.tailSha256) + answer(a.size, a.tailSha256));
+    expect(await split.held()).toBe(false);
+    expect(split.exec.calls).toHaveLength(1);
+  });
+
+  test('a device that cannot answer falls back to hashing the whole installed APK', async () => {
+    const { exec, held } = setup(() => 'tail: not found\n', {
+      'pm path': 'package:/data/app/a/base.apk\n',
+      'sha256sum /data': `${SHA}  /data/app/a/base.apk\n`,
+    });
+    expect(await held()).toBe(false);
+    expect(exec.calls.map((call) => call.at(-1))).toEqual([
+      expect.stringContaining('tail -c'),
+      'com.example.app',
+      '/data/app/a/base.apk',
+    ]);
+  });
+
+  test('an APK with no recorded tail keeps the whole-file comparison', async () => {
+    const apkPath = join(dir, 'plain.apk');
+    writeFileSync(apkPath, 'apk bytes');
+    const exec = recordingExec({
+      outputs: {
+        'pm path': 'package:/data/app/a/base.apk\n',
+        sha256sum: `${hashFile(apkPath)}  /data/app/a/base.apk\n`,
+      },
+    });
+    expect(await deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec })).toBe(
+      true,
+    );
+    expect(exec.calls.map((call) => call.at(-1))).toEqual(['com.example.app', '/data/app/a/base.apk']);
+  });
+
+  test('a package name the device shell could misread is never put in the tail script', async () => {
+    const apkPath = join(dir, 'app-debug.apk');
+    writeSignedApk(apkPath);
+    const exec = recordingExec();
+    await deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example; reboot', apkPath }, { exec });
+    expect(exec.calls.flat().some((part) => part.includes('tail -c'))).toBe(false);
+  });
+});
+
 describe('deviceHoldsApk', () => {
   function localApk(body = 'apk bytes') {
     const path = join(dir, 'app-debug.apk');
@@ -260,6 +336,40 @@ describe('deviceHoldsApk', () => {
     expect(await deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec })).toBe(
       false,
     );
+  });
+});
+
+describe('parseDeviceTailProbe', () => {
+  const probe = (path: string, size: string, sha: string) => `path ${path}\nsize ${size}\n${sha}  -\n`;
+
+  test('one installed APK is its size and tail digest', () => {
+    expect(parseDeviceTailProbe(probe('/data/app/a/base.apk', '1234', SHA))).toEqual({
+      installs: 1,
+      size: 1234,
+      tailSha256: SHA,
+    });
+  });
+
+  test('no output is a package that is not installed, and several APKs are a split install', () => {
+    expect(parseDeviceTailProbe('')).toEqual({ installs: 0 });
+    expect(
+      parseDeviceTailProbe(probe('/data/app/a/base.apk', '1', SHA) + probe('/data/app/a/split_x.apk', '2', SHA)),
+    ).toEqual({ installs: 'split' });
+  });
+
+  test.each([
+    [
+      'an error line among the answers',
+      `tail: /data/app/a/base.apk: No such file or directory\n${probe('/a', '1', SHA)}`,
+    ],
+    [
+      'the digest of an empty input, which is what a missing tail produces',
+      probe('/data/app/a/base.apk', '1', EMPTY_SHA),
+    ],
+    ['a size that is not a number', probe('/data/app/a/base.apk', 'x', SHA)],
+    ['no digest', 'path /data/app/a/base.apk\nsize 1\nsha256sum: not found\n'],
+  ])('%s is not an answer', (_label, text) => {
+    expect(parseDeviceTailProbe(text)).toBe(null);
   });
 });
 

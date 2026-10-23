@@ -311,6 +311,33 @@ test.each([false, true])(
   },
 );
 
+test('while it waits for the requesting machine, setup says so and then confirms the connection', async () => {
+  const f = fixture();
+  f.client.spends = false;
+  const sleep = f.deps.sleep;
+  f.deps.sleep = async (ms) => {
+    await sleep(ms);
+    if (f.deps.now() >= now + 5000 && !f.records.some((r) => r.id === 'build-id')) f.records.push(record('build'));
+  };
+  expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(0);
+  const waiting = f.stdout.findIndex((line) => line.includes('Stim Desktop sends this automatically'));
+  const connected = f.stdout.findIndex((line) => /approved .* for builds/.test(line));
+  expect(waiting).toBeGreaterThanOrEqual(0);
+  expect(connected).toBeGreaterThan(waiting);
+  expect(
+    f.snapshots.some((j) =>
+      j.steps.some((s) => s.id === 'approve' && s.detail?.startsWith('Waiting for the requesting')),
+    ),
+  ).toBe(true);
+});
+
+test('a requesting machine that never connects still gets the waiting line before the ticket expires', async () => {
+  const f = fixture();
+  f.client.spends = false;
+  expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(2);
+  expect(f.stdout.some((line) => line.includes('Stim Desktop sends this automatically'))).toBe(true);
+});
+
 test.each([false, true])(
   'no --yes with tty=%s cannot turn an unanswered or N confirmation into approval',
   async (tty) => {

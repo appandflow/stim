@@ -148,11 +148,11 @@ preparation, `git status --short` may show only the draft
    uncommitted and untagged. If any of that fails it puts the manifests
    back at the version they had, so a failed run is never half-bumped.
 
-   Nothing else moves. The packages depend on each other through pnpm's
-   `workspace:` protocol, so there is no dependency range to bump: pnpm
-   substitutes the real version when it packs (verified in step 3).
+   Nothing else moves. The packages depend on each other as `workspace:*`, so
+   there is no dependency range to bump: pnpm packs each internal dependency
+   as the exact release version, never a `^` range (verified in step 3).
    `pnpm run release:prep --check` audits that shape -- package versions in
-   lockstep, every internal range a bare `workspace:` range -- without changing
+   lockstep, every internal range exactly `workspace:*` -- without changing
    anything.
 
    Confirm all packages moved:
@@ -188,7 +188,7 @@ preparation, `git status --short` may show only the draft
 
 3. **Verify each npm tarball** ships only what should ship, that each one
    carries its own README, and that every `@stim-cli/*` and `stim` dependency
-   names a real version. Pack with `pnpm`, never `npm`: the release workflow publishes
+   names the exact release version, with no `^` or `~`. Pack with `pnpm`, never `npm`: the release workflow publishes
    pnpm-packed tarballs, and `npm pack` prints the unsubstituted `workspace:`
    ranges rather than what actually publishes.
 
@@ -421,7 +421,8 @@ repeat the affected gate rather than waiving it.
 
    Send the `url` (the run page has Review deployments -> `release` ->
    Approve and deploy). The workflow packs the package tarballs with pnpm, checks
-   that no `workspace:` range survived the pack, skips an exact package version
+   that every packed `stim` and `@stim-cli/*` dependency is exactly the tag
+   version (no `workspace:`, `^` or `~`), skips an exact package version
    that already exists, computes the dist-tag (section 1) and publishes every
    package to it. Its `smoke` job then waits, up to 15 minutes per check, for
    the registry to serve each version, its tarball and the dist-tag, and runs
@@ -462,6 +463,9 @@ repeat the affected gate rather than waiving it.
 - Leave every `package.json` at the just-released version. The next release
   bumps them as part of its own section 2, step 1; we don't carry a `-dev`
   suffix between releases.
+- Cut the Stim Desktop release for this version now, at the release commit
+  that `vX.Y.Z` points to, so the bundled CLI and server equal the published
+  packages. See [apps/desktop/RELEASING.md](./apps/desktop/RELEASING.md).
 
 ## Stim Host releases
 

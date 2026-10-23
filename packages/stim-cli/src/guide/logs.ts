@@ -69,6 +69,7 @@ FLAGS
                   shared untagged Metro and app client records (not the web
                   page's); default also includes untagged legacy records
   --source <s...>  metro, client, device, build, agent, maintenance, placement (one or more), or all.
+                   gc alone reads the machine-wide gc log (GC LOG below).
                    An unknown value is REJECTED rather than quietly matching
                    nothing.
   --level <l>      minimum level: debug, info, warn, error, fatal
@@ -175,6 +176,10 @@ serve bounded log queries.
   the safe direction: a client redbox that Fast Refresh already fixed keeps
   being reported until the next launch.
 
+  RUN FAILURES. A run that builds or reuses an app and then fails before the app
+  is running adds one build record with event run_failed, its code and the
+  phase it failed in, so \`status\` and \`logs --errors\` agree.
+
   OUTPUT. Every logs command, including --errors and --follow, shows full captured
   error, component and native stacks, with no frame or message-length limit.
   --errors shows the first 20 matching error records, plus stack context.
@@ -241,6 +246,27 @@ Add --errors to --source maintenance to show only maintenance_failure events;
 failures before a later launch marker are hidden. Machine passes are reported in
 status and maintenance/maintenance.ndjson; this command reads workspace logs.
 
+GC LOG
+stim logs --source gc reads $STIM_HOME/gc/gc.ndjson from any directory: one
+record per item that a gc run, a maintenance action or the budget gate
+cleared, kept or failed to clear. It cannot be combined with other sources,
+and --source all does not include it. --errors shows the failed items.
+Each record has src: gc, level (info, or error for a failed item), msg and
+  runId    the stim invocation, or the pass id of maintenance.ndjson
+  trigger  manual (stim gc in a terminal), desktop (STIM_DESKTOP_APP is set, so also a gc run through a stim-server Desktop started),
+           maintenance, or budget (the disk, memory or workspace check before
+           start, ios and android)
+  via      maintenance only: the command whose run started the pass
+  options  gc only: delete, worktrees, olderThan, cache, idleMs
+  kind     what the item was (the kind of gc --json results, plus devServer
+           for a dev server the budget gate stops; maintenance also writes
+           buildDirectory and dependencies)
+  status   done, kept or failed
+  label, id, path, bytes, detail
+           name, identifier, absolute path when the item is one, bytes freed,
+           and the reason a kept or failed item was left
+Records of one run share runId. See stim guide cleanup, WHAT WAS CLEARED.
+
 REMOTE REQUEST RECORDS
 A request to another machine that fails is a warn record with src: build in the
 run's build log: remote_connect_failed { host, capability, ms, timeoutMs, msg,
@@ -300,7 +326,17 @@ they stay in the local logs. These records carry no tokens.
 
 WHAT WRITES WHAT
   maintenance.ndjson   workspace maintenance actions, failures and explaining skips
-  metro.ndjson         the bundler, in every supervisor mode
+  $STIM_HOME/gc/gc.ndjson  machine-wide, not in a workspace: what gc, maintenance
+                       and the budget gate cleared (stim logs --source gc)
+  metro.ndjson         the bundler, in every supervisor mode. Stim's
+                       middleware adds one record per bundle request
+                       (bundle_response_started, _progress, _finished,
+                       _failed; _started carries the request's path and
+                       query as url, which the next warmup prefetches)
+                       and, on Expo, one per dev-client manifest
+                       request (manifest_request_started, _finished,
+                       _failed: debug level, with platform and requestId;
+                       launch verification reads them as progress)
   client.ndjson        in-app console logs and redboxes -- BARE PROJECTS ONLY.
                        In expo-child and command-child mode everything the
                        dev server prints lands in metro.ndjson with raw: true,
@@ -325,7 +361,7 @@ WHAT WRITES WHAT
                        The count does not attribute unknown OS errors to the app.
                        Known JavaScript errors also print individually: Android
                        ReactNativeJS records, and iOS com.facebook.react.log /
-                       javascript records. These can interrupt an optional
+                       javascript records. These can interrupt a recommended
                        readiness wait even without a client or Metro copy.
                        Client and Metro errors still print individually.
                        A native app that loaded its bundle but reported app errors

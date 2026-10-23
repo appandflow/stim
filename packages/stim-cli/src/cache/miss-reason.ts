@@ -13,7 +13,7 @@ import {
   type WorkspaceState,
 } from '@stim-cli/core/state';
 import { gitCommonDirOnDisk } from '../workspace/worktree.ts';
-import { cacheRoot, diffFingerprintSources, storedSources, type SourceChange } from './build-cache.ts';
+import { cacheRoot, diffFingerprintSources, packageIn, storedSources, type SourceChange } from './build-cache.ts';
 
 const MISS_CHANGE_CAP = 20;
 
@@ -111,11 +111,6 @@ const CATEGORY_RANK: Record<BuildMissCategory, number> = {
   'package-scripts': 8,
   autolinking: 9,
 };
-
-function packageIn(path: string): string | null {
-  const matches = [...path.matchAll(/(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/g)];
-  return matches.at(-1)?.[1] ?? null;
-}
 
 function describeChange({ name, change, reasons }: SourceChange): { category: BuildMissCategory; label: string } {
   const pkg = packageIn(name);

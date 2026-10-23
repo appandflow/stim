@@ -56,8 +56,10 @@ final class AddMachineModel {
   private var preferredMachineID: String?
   private var prefersHostedSimulators = false
   var selectedId: String?
+  private(set) var existingId: String?
   var manualPort = ""
   var isFixture = false
+  var fixtureRegistered: ([String], [BuildMachineStatus]?)?
   private var tailscaleRead = false
   var checkingTailscale: Bool { !isFixture && !tailscaleRead }
   private let checkout: String?
@@ -67,6 +69,7 @@ final class AddMachineModel {
   @ObservationIgnored private var modeWritten = false
   @ObservationIgnored private var stopped = false
   @ObservationIgnored private var checkingJournal = false
+  @ObservationIgnored private var doctorRunning = false
   @ObservationIgnored private var checkingTools = false
   @ObservationIgnored private var clock = SetupRefreshClock()
 
@@ -139,12 +142,30 @@ final class AddMachineModel {
   }
 
   var selected: Tailnet.Peer? { peers.first { $0.id == selectedId } }
+
+  func added(_ peer: Tailnet.Peer) -> AddedMachine? {
+    let check = machines?.check(in: checkout)
+    let known = fixtureRegistered ?? (machines?.entries ?? [], check?.problem == nil ? check?.statuses : nil)
+    return OffloadMachines.added(peer.mac, entries: known.0, statuses: known.1)
+  }
+  var checkingAdded: Bool { machines?.isBusy == true }
+  private var selectablePeers: [Tailnet.Peer] { peers.filter { added($0) == nil } }
+  var existingPeer: Tailnet.Peer? { peers.first { $0.id == existingId && added($0) != nil } }
+
+  func choose(_ peer: Tailnet.Peer) {
+    if added(peer) == nil {
+      existingId = nil
+      selectedId = peer.id
+    } else {
+      existingId = peer.id
+    }
+  }
   var reachability: Tailnet.Reachability {
     Tailnet.reachability(statusJSON: statusJSON, peer: selected, install: tailscaleInstall)
   }
   enum MacList: Equatable { case empty, offlineOnly, available }
   var macList: MacList {
-    peers.isEmpty ? .empty : peers.contains(where: \.online) ? .available : .offlineOnly
+    selectablePeers.isEmpty ? .empty : selectablePeers.contains(where: \.online) ? .available : .offlineOnly
   }
   var tailscaleRunning: Bool { reachability != .tailscaleMissing && reachability != .tailscaleStopped }
   var known: SetupKnown {
@@ -202,16 +223,17 @@ final class AddMachineModel {
     guard !busy else { return }
     if doctorPath != nil, wizard.ticket != nil { wizard.hasWorkspace = true }
     if dueOnly {
-      for read in clock.due(wizard.refreshes(page: page), now: now) { await refresh(read) }
+      for read in clock.due(wizard.refreshes(page: page, now: now), now: now) { await refresh(read) }
     } else {
       var done: Set<SetupRefresh> = []
-      while let read = wizard.refreshes(page: page).first(where: { !done.contains($0) }) {
+      while let read = wizard.refreshes(page: page, now: now).first(where: { !done.contains($0) }) {
         done.insert(read)
         clock.ran(read, now: now)
         await refresh(read)
       }
     }
     if page == .setup, wizard.ticket != nil, wizard.phase != .cancelled { await send(.tick) }
+    if page == .setup, wizard.advancesToTools(now: now) { await openTools() }
   }
 
   private func refresh(_ read: SetupRefresh) async {
@@ -253,7 +275,7 @@ final class AddMachineModel {
   }
 
   private func applyPreselection() {
-    if selectedId == nil, let preferredMachineID, peers.contains(where: { $0.id == preferredMachineID }) {
+    if selectedId == nil, let preferredMachineID, selectablePeers.contains(where: { $0.id == preferredMachineID }) {
       selectedId = preferredMachineID
     }
   }
@@ -310,6 +332,7 @@ final class AddMachineModel {
     guard version != nil, selfNode != nil, !busy else { return }
     busy = true
     defer { busy = false }
+    error = nil
     do {
       sample?.prepare()
       if checkout == nil, let sample {
@@ -423,7 +446,16 @@ final class AddMachineModel {
 
   @discardableResult private func runDoctor(ask: Bool, ticket: String? = nil) async throws -> Bool {
     guard !isFixture, let checkout = doctorPath else { return false }
-    let report = try await dependencies.doctor(checkout, ask, ticket)
+    while doctorRunning { try await Task.sleep(for: .milliseconds(50)) }
+    doctorRunning = true
+    let report: DoctorReport
+    do {
+      report = try await dependencies.doctor(checkout, ask, ticket)
+      doctorRunning = false
+    } catch {
+      doctorRunning = false
+      throw error
+    }
     await send(.doctorReported(build: match(report.remoteMachines), host: match(report.deviceHosts)))
     return true
   }
@@ -478,7 +510,7 @@ final class AddMachineModel {
     }
     return rows
   }
-  var toolsBlock: Bool { tools.contains { $0.blocks } }
+  var installStatus: BuildMachineStatus? { buildsAndroidOnly ? androidStatus : toolsStatus }
 
   func openTools() async {
     guard wizard.phase == .approved else { return }
@@ -500,6 +532,7 @@ final class AddMachineModel {
         androidStatus = match(report.remoteMachines)
         androidFindings = report.findings
         error = nil
+        if let androidStatus { await machines?.readRemoteServers([androidStatus]) }
       } catch { self.error = error.localizedDescription }
       return
     }
@@ -508,6 +541,7 @@ final class AddMachineModel {
       toolsStatus = match(report.remoteMachines)
       toolFindings = report.findings
       error = nil
+      if let toolsStatus { await machines?.readRemoteServers([toolsStatus]) }
     } catch {
       self.error = error.localizedDescription
       return
@@ -676,9 +710,7 @@ final class AddMachineModel {
             """.utf8))
       default:
         page = [.summaryAuto, .summaryNever, .summaryUndo, .summarySkippedAfterFailure].contains(fixture) ? .summary : .test
-        var events: [BuildTest.Event] = [
-          .prepared, .start, .offload(.success), .timings(times), .localStart, .localFinished(passed: true, ms: 250000),
-        ]
+        var events: [BuildTest.Event] = [.prepared, .start, .offload(.success), .timings(times)]
         switch fixture {
         case .testPreparingSample: events = []
         case .sampleFailed:
@@ -688,8 +720,6 @@ final class AddMachineModel {
               remedy: nil)
           ]
         case .offloading: events = [.prepared, .start, .progress("Syncing the sample checkout")]
-        case .offloaded: events.removeLast(2)
-        case .localBuilding: events.removeLast()
         case .testFailed:
           let refusal = try! JSONDecoder().decode(
             CommandRefusal.self,
@@ -708,7 +738,7 @@ final class AddMachineModel {
         }
         sample?.fixture(
           events,
-          lines: fixture == .offloading || fixture == .localBuilding
+          lines: fixture == .offloading
             ? [
               .init(text: "$ stim ios --remote-build mini --no-build-cache --json", kind: .command),
               .init(text: "offer accepted; syncing checkout", kind: .output),

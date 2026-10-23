@@ -793,3 +793,28 @@ test.skipIf(process.platform !== 'darwin')('iOS crash reports come from the oper
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('human log rendering stays linear on a record with one very long line', async () => {
+  const long = 'a'.repeat(30_000);
+  const codeFrame = {
+    src: 'metro',
+    ts: 1000,
+    level: 'error',
+    msg: `SyntaxError: big.ts: Unexpected token (1:30000)\n> 1 | export const big = "${long}" + (;\n    |   ^`,
+  };
+  const frame = { src: 'device', ts: 1001, level: 'error', msg: `Error: boom\n    at ${'@'.repeat(30_000)}` };
+  const started = performance.now();
+  const rendered: string[] = [];
+  for (const record of [codeFrame, frame]) {
+    const diagnosed = await errorDiagnostics([record], {
+      root: '/app',
+      logsDir: '/app',
+      port: null,
+      timeline: [record],
+    });
+    rendered.push(launchErrorPreview(diagnosed, '/app', { full: true }).join('\n'));
+  }
+  expect(performance.now() - started).toBeLessThan(500);
+  expect(rendered[0]).toContain(`export const big = "${long}"`);
+  expect(rendered[1]).toContain('@'.repeat(30_000));
+});

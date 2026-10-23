@@ -25,6 +25,7 @@ export interface MaintenanceSettings {
   metroCacheMaxGb: number;
   swiftCompilationCacheMaxGb: number;
   worktreeCheckMinutes: number;
+  idleCheckMinutes: number;
   sweepHours: number;
   olderThanDays: number;
   deviceIdleDays: number;
@@ -33,6 +34,7 @@ export interface MaintenanceSettings {
   criticalFreeDiskGb: number;
   pressureProtectMinutes: number;
   removeFinishedWorktrees: boolean;
+  removeIdleWorktrees: boolean;
   gradleVersionIdleDays: number;
 }
 

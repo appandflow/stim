@@ -1,6 +1,6 @@
 {
   "name": "@stim-cli/cache-s3",
-  "version": "1.23.0",
+  "version": "1.25.0",
   "description": "Optional S3-compatible file, native artifact and Metro cache provider for Stim.",
   "license": "MIT",
   "repository": {
@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1149.0",
-    "@stim-cli/cache": "workspace:^",
+    "@stim-cli/cache": "workspace:*",
     "tar": "^7.5.22"
   },
   "engines": {

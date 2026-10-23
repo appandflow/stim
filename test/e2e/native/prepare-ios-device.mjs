@@ -4,7 +4,7 @@ import { ensureOwnedDevice, ensureBooted } from '../../../packages/stim-cli/src/
 import { readCommittedSettings } from '../../../packages/stim-cli/src/workspace/settings.ts';
 
 if (!process.env.STIM_HOME) throw new Error('Native QA preparation requires an isolated STIM_HOME.');
-const [path, slot = 'default', deviceType] = process.argv.slice(2);
+const [path, slot = 'default'] = process.argv.slice(2);
 const projectPath = realpathSync(path);
 const settings = readCommittedSettings(projectPath);
 if (!settings.ios?.simslimProfile) throw new Error('Native QA preparation requires an explicit SimSlim profile.');
@@ -15,7 +15,6 @@ const device = await ensureOwnedDevice({
   projectPath,
   slot,
   settings,
-  flags: deviceType ? { deviceType } : {},
   out,
   note: out,
 });

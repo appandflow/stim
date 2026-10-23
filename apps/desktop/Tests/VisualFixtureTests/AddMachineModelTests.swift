@@ -19,6 +19,12 @@ final class AddMachineModelTests: XCTestCase {
     var mode: String?
     var modeOrigin: String? = "default"
     var grantReady = false
+    var journalDone = false
+    var statusState: String?
+    var doctorDelay: Duration = .zero
+    var doctorInFlight = 0
+    var doctorMaxInFlight = 0
+    var journalSteps: [SetupJournal.Step] = []
     var journalExpiryOffset: TimeInterval = 0
     var peerId = "nMini"
     var peers: String?
@@ -49,7 +55,8 @@ final class AddMachineModelTests: XCTestCase {
       func statuses(_ entries: [String], id: String) -> [[String: Any]] {
         entries.map {
           [
-            "machine": $0, "state": grantReady ? "approved" : "pending", "deviceId": id, "dnsName": "mini.tail.test",
+            "machine": $0, "state": statusState ?? (grantReady ? "approved" : "pending"), "deviceId": id,
+            "dnsName": "mini.tail.test",
             "offloadable": true, "problems": toolProblems[platform ?? ""] ?? [],
           ]
         }
@@ -61,11 +68,23 @@ final class AddMachineModelTests: XCTestCase {
           "deviceHosts": statuses(hosts, id: "h"),
         ]))
     }
+    func machinesModel() -> BuildMachinesModel {
+      let cli = Task { StimCLI(environment: [:], override: "/usr/bin/false") }
+      return BuildMachinesModel(
+        cli: cli,
+        settings: MachineSettingsStore(
+          read: { try await self.payload() },
+          write: { _, _, _, _ in throw Failure.refused }),
+        statsReader: StatsReader(cli: cli, server: { nil }),
+        machineAccess: { _, _ in try self.report() })
+    }
     var version = "1.21.0"
     var health: Tailnet.Health?
 
-    func make(workspace: Bool = true, sample: SampleBuildModel? = nil) -> AddMachineModel {
-      AddMachineModel(
+    var readServer: (doctor: (String) async throws -> DoctorReport, settings: () async throws -> SettingsPayload)?
+
+    func make(workspace: Bool = true, sample: SampleBuildModel? = nil, machines: BuildMachinesModel? = nil) -> AddMachineModel {
+      let model = AddMachineModel(
         checkout: workspace ? "/fixture" : nil,
         dependencies: .init(
           status: { self.status }, health: { _, _ in self.health },
@@ -74,16 +93,26 @@ final class AddMachineModelTests: XCTestCase {
             return .journal(
               SetupJournal(
                 ticket: SetupTicket.generate(now: self.now.addingTimeInterval(self.journalExpiryOffset)),
-                capabilities: [.build, .deviceHost], steps: [],
-                granted: self.grantReady ? [.init(capability: .build, id: "b"), .init(capability: .deviceHost, id: "h")] : []))
+                capabilities: [.build, .deviceHost], steps: self.journalSteps,
+                granted: self.grantReady ? [.init(capability: .build, id: "b"), .init(capability: .deviceHost, id: "h")] : [],
+                done: self.journalDone))
           },
           doctor: { cwd, ask, ticket in
             self.doctorPaths.append(cwd)
             self.asks.append((ask, ticket))
             self.steps.append(ask ? "ask" : "readDoctor")
+            self.doctorInFlight += 1
+            self.doctorMaxInFlight = max(self.doctorMaxInFlight, self.doctorInFlight)
+            defer { self.doctorInFlight -= 1 }
+            if self.doctorDelay != .zero { try? await Task.sleep(for: self.doctorDelay) }
             if self.shouldFailDoctor { throw Failure.refused }
+            if let server = self.readServer { return try await server.doctor(cwd) }
             return try self.report()
-          }, readSettings: { try self.payload() },
+          },
+          readSettings: {
+            if let server = self.readServer { return try await server.settings() }
+            return try self.payload()
+          },
           writeSetting: { key, value in
             if key == "remote.machines", self.shouldFailHostWrite { throw Failure.refused }
             self.writes.append((key, value))
@@ -101,6 +130,8 @@ final class AddMachineModelTests: XCTestCase {
             return try self.report(platform: platform)
           }, now: { self.now },
           ticket: { SetupTicket.generate(now: $0) }), sample: sample)
+      model.machines = machines
+      return model
     }
     private enum Failure: Error { case refused }
   }
@@ -130,6 +161,59 @@ final class AddMachineModelTests: XCTestCase {
     }
   }
 
+  @MainActor func testAMachineAlreadyInRemoteMachinesShowsItsDoctorStateAndIsNotASetupTarget() async throws {
+    let harness = Harness()
+    harness.grantReady = true
+    harness.builds = ["mini"]
+    harness.peers =
+      #""m":{"ID":"nMini","HostName":"Mini","DNSName":"mini.tail.test.","OS":"macOS","Online":false},"#
+      + #""o":{"ID":"nOther","HostName":"Other","DNSName":"other.tail.test.","OS":"macOS","Online":true}"#
+    let machines = harness.machinesModel()
+    await machines.refresh(checkout: "/fixture")
+    let model = harness.make(machines: machines)
+    await model.refreshPeers()
+    let mini = try XCTUnwrap(model.peers.first { $0.id == "nMini" })
+    let other = try XCTUnwrap(model.peers.first { $0.id == "nOther" })
+
+    XCTAssertFalse(mini.online)
+    XCTAssertEqual(model.added(mini)?.status?.title, "Approved")
+    XCTAssertNil(model.added(other))
+
+    model.choose(other)
+    XCTAssertEqual(model.selectedId, "nOther")
+    model.choose(mini)
+    XCTAssertEqual(model.selectedId, "nOther")
+    XCTAssertEqual(model.existingPeer?.id, "nMini")
+    model.choose(other)
+    XCTAssertNil(model.existingPeer)
+  }
+
+  @MainActor func testMacListIgnoresAddedMachinesAndOnlyNamesMachinesThatCanStillBeAdded() async {
+    let harness = Harness()
+    harness.builds = ["mini"]
+    let off = #""o":{"ID":"nOld","HostName":"Old","DNSName":"old.tail.test.","OS":"macOS","Online":false}"#
+    let mini = #""m":{"ID":"nMini","HostName":"Mini","DNSName":"mini.tail.test.","OS":"macOS","Online":true}"#
+    let machines = harness.machinesModel()
+    await machines.refresh(checkout: "/fixture")
+    let model = harness.make(machines: machines)
+    for (peers, expected) in [(mini, AddMachineModel.MacList.empty), ("\(off),\(mini)", .offlineOnly)] {
+      harness.peers = peers
+      await model.refreshPeers()
+      XCTAssertEqual(model.macList, expected, peers)
+    }
+  }
+
+  @MainActor func testDiscoveryNeverPreselectsAMachineAlreadyInRemoteMachines() async {
+    let harness = Harness()
+    harness.builds = ["mini"]
+    let machines = harness.machinesModel()
+    await machines.refresh(checkout: "/fixture")
+    let model = harness.make(machines: machines)
+    model.preselect(machineID: "nMini", hostedSimulators: false)
+    await model.refreshPeers()
+    XCTAssertNil(model.selectedId)
+  }
+
   @MainActor func testDiscoveryPreselectionWaitsForPeersAndRequiresTheUserToPick() async {
     let harness = Harness()
     let model = harness.make()
@@ -157,6 +241,41 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(model.wizard.capabilities, [.build, .deviceHost])
   }
 
+  @MainActor func testNextReachesTheCommandWhileTheLocalServerRefusesForAFullConnection() async throws {
+    let harness = Harness()
+    let server = FullConnectionServer(
+      settings: try JSONSerialization.data(withJSONObject: [
+        "files": [:], "unknown": [], "settings": [["key": "remote.machines", "value": [], "layers": [:]]],
+      ]))
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/tmp/add-machine-test.sock"), clientName: "test", clientVersion: "1",
+      transport: { _, onEvent in
+        server.onEvent = onEvent
+        return server
+      })
+    client.start()
+    defer { client.stop() }
+    await waitUntil { client.isOpen }
+    let home = "/tmp/add-machine-home"
+    let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": home]) }
+    let reader = MachineAccessReader(cli: cli) { (client, home) }
+    harness.readServer = (
+      doctor: { try await reader.report(cwd: $0, ask: false) },
+      settings: { try await readServerSettings(cli: await cli.value, connection: (client, home), cwd: "/tmp") }
+    )
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    server.refuseNext = 1
+    await model.pick()
+    XCTAssertNil(model.error)
+    server.refuseNext = 2
+    await model.next()
+    XCTAssertNil(model.error)
+    XCTAssertEqual(model.wizard.phase, .command)
+  }
+
   @MainActor func testRequestsFollowSettingsAndTicketEnvironmentDoesNotLeakIntoPollOrCancel() async throws {
     let harness = Harness()
     let model = harness.make()
@@ -180,6 +299,108 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertNil(harness.mode)
     XCTAssertEqual(harness.asks.last?.0, true)
     XCTAssertNil(harness.asks.last?.1)
+  }
+
+  @MainActor func testWizardSendsTheRequestsAndMovesToToolsWithoutAnotherNextPress() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    XCTAssertEqual(harness.builds, ["mini:7447"])
+    XCTAssertNotNil(harness.asks.first(where: { $0.0 })?.1, "the ticket's request went out with no further action")
+    harness.grantReady = true
+    await checkUntilApproved(model)
+    XCTAssertEqual(model.page, .setup, "approved, but the machine is still finishing setup")
+    harness.journalDone = true
+    await model.refresh()
+    XCTAssertEqual(model.page, .tools)
+    XCTAssertEqual(model.wizard.phase, .approved)
+  }
+
+  @MainActor func testRequestGoesOutAtOnceWhenTheMachineStartsWaitingForThisMac() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    let asked = { harness.asks.filter { $0.0 && $0.1 != nil }.count }
+    let before = asked()
+    harness.journalSteps = [
+      .init(
+        id: "approve", state: .running, title: "Access approval",
+        detail: "Waiting for the requesting machine to connect. Stim Desktop sends this automatically.")
+    ]
+    await model.refresh()
+    XCTAssertEqual(asked(), before + 1)
+    await model.refresh()
+    XCTAssertEqual(asked(), before + 1, "one request per signal, not one per poll")
+  }
+
+  @MainActor func testALapsedRequestIsAskedAgainFromAPollReadWithoutHangingTheWizard() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    let asks = { harness.asks.filter { $0.0 && $0.1 != nil }.count }
+    let before = asks()
+    harness.statusState = "lapsed"
+    harness.now = harness.now.addingTimeInterval(31)
+    var finished = false
+    Task {
+      await model.refresh()
+      finished = true
+    }
+    await waitUntil { finished }
+    XCTAssertTrue(finished, "the re-ask a poll read triggers must not wait for that read to end")
+    XCTAssertGreaterThan(asks(), before)
+    XCTAssertFalse(model.busy)
+  }
+
+  @MainActor func testADoctorRunNeverOverlapsAnotherOne() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    harness.doctorDelay = .milliseconds(300)
+    async let poll: Void = model.refresh()
+    try? await Task.sleep(for: .milliseconds(100))
+    await model.send(.cancel)
+    await poll
+    XCTAssertEqual(harness.doctorMaxInFlight, 1, "a button press during a poll read waits for it")
+  }
+
+  @MainActor func testExpiredTicketSendsNoMoreRequestsAndAsksForANewCommand() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    harness.now = harness.now.addingTimeInterval(31 * 60)
+    await model.refresh()
+    XCTAssertEqual(model.wizard.phase, .expiredCommand)
+    XCTAssertEqual(model.wizard.failure(now: harness.now), .expired)
+    let asks = harness.asks.filter { $0.0 }.count
+    await model.refresh()
+    await model.refresh()
+    XCTAssertEqual(harness.asks.filter { $0.0 }.count, asks, "no request is sent after the ticket expired")
   }
 
   @MainActor func testBackgroundPollReadsDoctorDuringSetupBesideTheJournal() async throws {
@@ -567,9 +788,7 @@ final class AddMachineModelTests: XCTestCase {
             var stdout = ""
             switch command.arguments.first {
             case "ios":
-              stdout =
-                command.arguments.contains("local")
-                ? "{\"launched\":true}" : "{\"offloadedTo\":\"mini:7447\",\"launched\":true}"
+              stdout = "{\"offloadedTo\":\"mini:7447\",\"launched\":true}"
             case "stop": stops += 1
             default: break
             }
@@ -666,7 +885,7 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertTrue(harness.toolCalls.contains("android"), "Builds covers Android, so its tools are checked without asking")
     XCTAssertNotNil(model.tools.first { $0.id == "jdk" }?.state.fix)
     XCTAssertFalse(model.tools.contains { $0.detail?.contains("Android builds off") == true })
-    XCTAssertFalse(model.toolsBlock)
+    XCTAssertFalse(model.tools.contains { $0.blocks })
     await model.openSummary()
     XCTAssertEqual(model.page, .summary)
   }
@@ -727,7 +946,12 @@ final class AddMachineModelTests: XCTestCase {
     await model.openTools()
     XCTAssertEqual(Set(harness.toolCalls), ["android"])
     XCTAssertFalse(model.tools.contains { ["xcode", "runtime", "cocoapods"].contains($0.id) })
-    XCTAssertTrue(model.toolsBlock, "a \(os) machine without a JDK cannot take any build")
+    XCTAssertTrue(model.tools.contains { $0.blocks }, "a \(os) machine without a JDK cannot take any build")
+    await model.openSummary()
+    XCTAssertEqual(model.page, .summary, "a red tool row never stops the wizard")
+    await model.finish()
+    XCTAssertTrue(model.finished)
+    XCTAssertEqual(harness.builds, ["mini"], "the machine stays added")
     XCTAssertEqual(model.testPlatform, "android")
   }
 
@@ -766,5 +990,64 @@ final class AddMachineModelTests: XCTestCase {
     await model.refresh()
     if model.wizard.phase == .approved { return }
     try? await Task.sleep(for: .milliseconds(10))
+  }
+}
+
+@MainActor private final class FullConnectionServer: ServerTransport {
+  var onEvent: (@MainActor (ServerTransportEvent) -> Void)?
+  var refuseNext = 0
+  private let settings: Data
+
+  init(settings: Data) { self.settings = settings }
+
+  func close() {}
+
+  func send(_ text: String) {
+    guard case .object(let request)? = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)),
+      let id = request["id"], case .string(let method)? = request["method"]
+    else { return }
+    if method != "hello", method != "desktop.reports.invalidate", refuseNext > 0 {
+      refuseNext -= 1
+      return answer([
+        "id": id,
+        "error": .object([
+          "code": .string("limit-exceeded"), "message": .string("A connection can run 4 requests at a time."),
+        ]),
+      ])
+    }
+    switch method {
+    case "hello":
+      answer([
+        "id": id,
+        "result": .object([
+          "protocol": .number(1),
+          "server": .object([
+            "id": .string("home"), "name": .string("Mac"), "version": .string("1"), "stim": .string("1"),
+          ]),
+          "capabilities": .array([.string("read")]),
+          "features": .array([.string("desktop-reports"), .string("desktop-settings")]),
+        ]),
+      ])
+    case "desktop.reports.get":
+      answer([
+        "id": id,
+        "result": .object([
+          "pending": .bool(false),
+          "value": .object([
+            "project": .string("/fixture"), "findings": .array([]), "remoteMachines": .array([]),
+            "deviceHosts": .array([]),
+          ]),
+        ]),
+      ])
+    case "desktop.settings.get":
+      answer(["id": id, "result": (try? JSONDecoder().decode(JSONValue.self, from: settings)) ?? .null])
+    default:
+      answer(["id": id, "result": .object([:])])
+    }
+  }
+
+  private func answer(_ message: [String: JSONValue]) {
+    guard let data = try? JSONEncoder().encode(JSONValue.object(message)) else { return }
+    onEvent?(.text(String(decoding: data, as: UTF8.self)))
   }
 }

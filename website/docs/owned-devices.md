@@ -332,6 +332,18 @@ your app's needs: disabled services can affect tests. Current SimSlim 0.8
 requires iOS 18.5 or newer. Run `stim guide lifecycle simslim` for installation
 and profile setup; `doctor` recommends it without applying it automatically.
 
+To slim every Stim-owned simulator on a Mac without a profile per app, run
+`stim settings set ios.simslim on --scope machine`. A project profile still wins,
+and `ios.simslim` set to `off` in a project opts that app out. The first slim of
+a simulator reboots it once; an already slim simulator is left alone, and a
+rerun on the same boot with an unchanged profile skips SimSlim entirely. A manual
+`simslim off` on a running simulator is not noticed until it reboots or the
+profile changes. A running
+simulator is slimmed on the next `stim ios`, without a boot first, and Stim mutes
+it again after that reboot. A parked simulator is slimmed when Stim adopts it.
+Hosted simulators on a named Mac are never changed. If `simslim` is not
+installed, `doctor` reports it and `stim ios` boots without it.
+
 A simulator can report Booted and show SpringBoard while process startup is
 stalled. Stim checks a bounded process spawn before installation and bounds
 local launch calls. When macOS reports elevated memory pressure, diagnostics
@@ -345,8 +357,11 @@ output, current memory pressure, and highest observed pressure roughly every
 15 seconds. Recovery advice appears when pressure first reaches warning or
 critical, and again only when the level changes. Boot failures retain the highest pressure and the number of
 unavailable readings. Unknown readings are not treated as normal, and pressure
-does not prove the cause of a timeout. The boot deadline remains ten minutes,
-but synchronous CLI work can delay observations, progress, and timeout handling.
+does not prove the cause of a timeout. The boot deadline remains ten minutes
+and also covers SpringBoard finishing its startup after `simctl bootstatus`
+returns, so a slow host spends that time in the boot step, where the last boot
+output reads `waiting for SpringBoard`, rather than in the app launch.
+Synchronous CLI work can delay observations, progress, and timeout handling.
 Diagnostics report observation gaps over 30 seconds; pressure during those gaps
 is unobserved, even when surrounding readings are normal.
 
@@ -390,6 +405,8 @@ the command itself.
 | Gradle or Kotlin daemon | `stim gc --delete --cache gradle-daemons` | stops idle daemons; the next build starts one  |
 
 Any other abnormal process is named with its size only; ask before quitting it.
+Boot does not wait for the `top` read: the pressure message prints at once and the
+named processes follow on a second memory line when `top` finishes.
 Doctor skips this check when `STIM_HOME` is set, because processes are
 machine-global.
 While pressure stays elevated, the automatic maintenance check also records the
@@ -421,9 +438,19 @@ Physical devices are never touched. `stim status` shows
 
 The supervisor checks once a minute and reads the setting when it starts, so
 restart the dev server with `stim stop` and `stim start` after changing it.
-The supervisor path does not check after `stim stop` or for release runs,
-which have no supervisor. When `metro.idleStopMinutes` is shorter, the dev
-server's idle stop shuts down the devices idle that long first.
+When `metro.idleStopMinutes` is shorter, the dev server's idle stop shuts down
+the devices idle that long first.
+
+With `maintenance.mode on`, the default,
+[automatic maintenance](./build-caches.md#automatic-maintenance) applies the
+same setting to devices with no supervisor, such as those of release runs or of
+a dev server that exited. Every `maintenance.idleCheckMinutes` (5) a Stim command
+starts a background check that shuts down each owned device idle for its
+workspace's `devices.idleShutdownMinutes`, read fresh each time. It uses the same
+idle rules, rechecks under the workspace's native-run lock, records the same
+`shut down after 30m idle` status and `device_idle_shutdown` log record, and
+never touches the workspace of the command that started the check. It covers
+what Stim Desktop's **Shut down idle devices** option does.
 
 Queue reclaim is a separate, faster path. With `concurrency.maxDevices` set,
 the waiting run uses its own effective `devices.reclaimIdleMinutes`, default 10, to shut down the
@@ -480,7 +507,10 @@ names refuse at setup before checking the cache. See [machine settings](./settin
 The app builds locally by default; `--eas-profile` can instead download an
 [EAS development build](./eas-builds.md). `stim start --remote` creates the
 Metro route required by the remote device. Remote EAS sessions can incur cost
-independently of the build source. Stim prepares the app before it creates or
+independently of the build source. Stim has EAS stop every session it creates
+after `remote.easMaxDurationMinutes` (machine setting, default 30), which ends a
+session whose workspace was deleted by hand; the next run replaces an expired
+session. EAS rejects a value above the account plan's session limit. Stim prepares the app before it creates or
 reconnects the session, so a failed build starts no session and the install
 follows the connection directly.
 
@@ -628,6 +658,8 @@ back through it in the Stim phone app.
   3 days (`maintenance.deviceIdleDays`) otherwise, and `gc.worktreeGraceMinutes`
   for a workspace whose worktree is finished but kept. A workspace pinned with
   `maintenance.keep` keeps its devices. `stim status` shows the disk they use.
+  Its daily age sweep also deletes parked simulators and emulators parked for
+  `maintenance.olderThanDays` (7 days; 0 never), through centralized teardown.
 - `stim gc` reports stale and orphaned resources. `stim gc --json` prints the
   same report as one JSON object.
 - `stim gc --delete` removes verified resources from the report, including
@@ -707,10 +739,13 @@ and resets its preferences, and on Android it runs `pm clear`. It does this on
 every adoption, whichever workspace parked the device. The reset preferences
 of an iOS expo-dev-client app hold only the two that hide the Expo dev menu and
 its Tools button, so the menu stays off when an agent or a crash relaunches
-the app. Stim then compares the installed app with the requested build byte
-for byte and skips the install when they match, so a new worktree running the
+the app. Stim then compares the installed app with the requested build and
+skips the install when they match, so a new worktree running the
 same build as the parked device boots it warm and launches without copying the
-app. App-group
+app. On iOS it hashes both bundles. On Android it compares the installed APK's
+size and the SHA-256 of its signing block, central directory and end record
+with values recorded when the build was cached, so the check is one `adb shell`
+call instead of reading the whole APK. App-group
 containers, photos, the pasteboard and Simulator settings are not cleared.
 
 Android adoption requires the same system image, disk size and AVD creation
@@ -746,7 +781,14 @@ Debug build worker. A named host never falls back: `STIM_HOSTING_REFUSED` names
 unreachable, declined or uncertain placement and its reason.
 
 Metro stays on this machine. Its supervisor runs a private tailnet gateway to the
-host's loopback bridge; no `stim start --remote` is needed. `metro.tunnel` and
+host's loopback bridge; no `stim start --remote` is needed. For an Expo dev
+client the bridge listens on this machine's Metro port, because the dev server
+writes that port into the manifest's bundle URL. When the iOS run starts Metro,
+it asks the host first and picks a port free on both Macs, moving the workspace's
+recorded port if the host uses it. A Metro that is already running on a port the
+host uses, or a `metro.port` pin the host uses, refuses before the build: run
+`stim stop`, then `stim ios --remote <mac>` without `stim start`, or pin a port
+free on both Macs. `metro.tunnel` and
 `metro.publicUrl` are ignored, and non-Debug runs skip Metro. Hosted Debug runs
 require a running supervisor with private gateway support before reserving a
 simulator; `--no-metro-check` refuses with `STIM_BAD_ARG`. If Metro is missing or

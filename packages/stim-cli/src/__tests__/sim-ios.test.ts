@@ -788,6 +788,67 @@ test.each(['Booting', 'Booted'])(
   },
 );
 
+async function bootWaitingForSpringBoard(startsAfterMs: number) {
+  vi.useFakeTimers();
+  const messages: string[] = [];
+  const started = Date.now();
+  setExecutor({
+    runFile: (_file, args = []) => {
+      if (args.includes('notifyutil')) {
+        return `com.apple.springboard.finishedstartup ${Date.now() - started >= startsAfterMs ? 4242 : 0}\n`;
+      }
+      return args[0] === '-n' ? '1' : bootSimList('Booted');
+    },
+    runFileQuiet: () => '',
+    spawn: () => makeExitingChild(),
+  });
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  let settled = false;
+  const outcome = bootIosSim('UDID-A', { timeoutMs: 60000, out: (message) => messages.push(message) })
+    .catch((error: Error) => error)
+    .finally(() => (settled = true));
+  await vi.advanceTimersByTimeAsync(44000);
+  const settledEarly = settled;
+  await vi.advanceTimersByTimeAsync(17000);
+  return { settledEarly, result: await outcome, messages };
+}
+
+test('bootIosSim finishes only once SpringBoard has started, after bootstatus', async () => {
+  try {
+    const { settledEarly, result, messages } = await bootWaitingForSpringBoard(45000);
+    expect(settledEarly).toBe(false);
+    expect(result).toBeUndefined();
+    expect(messages[0]).toContain('Last boot output: waiting for SpringBoard');
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});
+
+test('bootIosSim fails at the boot deadline when SpringBoard never starts', async () => {
+  try {
+    const { result } = await bootWaitingForSpringBoard(Infinity);
+    expect((result as Error).message).toMatch(
+      /UDID-A did not finish booting within 60s\. Last boot output: waiting for SpringBoard/,
+    );
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});
+
+test('bootIosSim does not fail the boot when the SpringBoard state is unreadable', async () => {
+  setExecutor({
+    runFile: (_file, args = []) => {
+      if (args.includes('notifyutil')) throw new Error('notifyutil: No such file or directory');
+      return bootSimList('Booted');
+    },
+    runFileQuiet: () => '',
+    spawn: () => makeExitingChild(),
+  });
+  await expect(bootIosSim('UDID-A', { openViewer: false })).resolves.toBeUndefined();
+});
+
 test('bootIosSim reports a sim that vanished from the device list', async () => {
   bootstatusExecutor(['hang'], () => JSON.stringify({ devices: {} }));
   await expect(bootIosSim('UDID-A', { attemptMs: 20 })).rejects.toThrow(/UDID-A reports "missing"/);

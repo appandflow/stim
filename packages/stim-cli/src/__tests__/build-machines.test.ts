@@ -7,7 +7,15 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import { inspectBuildMachines, resolveEndpoint, type Endpoint } from '../offload/build-machines.ts';
 import { findPeer, parseMachine, realIo, type HelloReply, type MachineAuth } from '../offload/tailnet.ts';
 import { startProtocol1Server } from './_noise-server.ts';
+import { createServer, type Server } from 'node:http';
+import type { PeerStartup } from '../offload/diagnosis.ts';
 import { getConfigPath } from '../workspace/config.ts';
+
+function listenPort(server: Server): number {
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('the server is not listening');
+  return address.port;
+}
 
 let home: string;
 
@@ -139,7 +147,7 @@ describe('inspectBuildMachines', () => {
     const { machines } = await inspectBuildMachines({ fix: false }, io, ['mini', 'nope', 'bad;name']);
     expect(machines).toEqual([
       { machine: 'mini', state: 'not-asked', dnsName: 'mini.tail1.ts.net' },
-      { machine: 'nope', state: 'not-on-tailnet' },
+      { machine: 'nope', state: 'not-on-tailnet', diagnosis: expect.objectContaining({ code: 'peer-not-found' }) },
       { machine: 'bad;name', state: 'invalid' },
     ]);
     expect(calls).toEqual([]);
@@ -239,6 +247,152 @@ describe('inspectBuildMachines', () => {
       await old.close();
       const { machines } = await inspectBuildMachines({ fix: false }, io(), ['mini']);
       expect(machines).toEqual([expect.objectContaining({ state: 'unreachable' })]);
+    });
+  });
+
+  describe('naming the layer an unreachable machine stopped at', () => {
+    let upstream: Server;
+    let upstreamPort: number;
+    let upstreamStatus = 502;
+    beforeEach(async () => {
+      upstream = createServer((_request, response) => response.writeHead(426).end());
+      upstream.on('upgrade', (_request, socket) => {
+        socket.end(`HTTP/1.1 ${upstreamStatus} Nope\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+      });
+      await new Promise<void>((done) => upstream.listen(0, '127.0.0.1', done));
+      upstreamPort = listenPort(upstream);
+    });
+    afterEach(() => new Promise<void>((done) => upstream.close(() => done())));
+
+    const realConnection = (extra: Record<string, unknown> = {}) => ({
+      status: () => status(),
+      hello: (_endpoint: Endpoint, auth: MachineAuth) =>
+        realIo.hello(
+          { url: `ws://127.0.0.1:${upstreamPort}`, servername: 'mini', host: `127.0.0.1:${upstreamPort}` },
+          auth,
+        ),
+      ...extra,
+    });
+
+    it('says stim-server is not running when the serve route answers 502', async () => {
+      await approvedCredential();
+      upstreamStatus = 502;
+      const { findings, machines } = await inspectBuildMachines({ fix: false }, realConnection(), ['mini']);
+      expect(machines).toEqual([
+        expect.objectContaining({
+          state: 'unreachable',
+          diagnosis: expect.objectContaining({ layer: 'server', code: 'server-not-running' }),
+        }),
+      ]);
+      expect(findings).toHaveLength(1);
+    });
+
+    it('says stim-server is not ready, with the cause its /health gives, on a 503', async () => {
+      await approvedCredential();
+      upstreamStatus = 503;
+      const startup = async (): Promise<PeerStartup | null> => ({ state: 'degraded', cause: 'home-unreadable' });
+      const withCause = await inspectBuildMachines({ fix: false }, realConnection({ startup }), ['mini']);
+      const without = await inspectBuildMachines({ fix: false }, realConnection({ startup: async () => null }), [
+        'mini',
+      ]);
+      const [reported] = withCause.machines;
+      expect(reported).toMatchObject({
+        state: 'unreachable',
+        diagnosis: { layer: 'server', code: 'server-not-ready' },
+      });
+      expect(reported?.diagnosis?.message).not.toBe(without.machines[0]?.diagnosis?.message);
+    });
+
+    it('still names a 503 from a stim-server whose /health says nothing', async () => {
+      await approvedCredential();
+      upstreamStatus = 503;
+      const { machines } = await inspectBuildMachines({ fix: false }, realConnection({ startup: async () => null }), [
+        'mini',
+      ]);
+      expect(machines).toEqual([
+        expect.objectContaining({ diagnosis: expect.objectContaining({ code: 'server-not-ready' }) }),
+      ]);
+    });
+
+    it('says the route is missing when nothing accepts connections on the port', async () => {
+      await approvedCredential();
+      await new Promise<void>((done) => upstream.close(() => done()));
+      upstream = createServer();
+      const { machines } = await inspectBuildMachines({ fix: false }, realConnection(), ['mini']);
+      expect(machines).toEqual([
+        expect.objectContaining({ diagnosis: expect.objectContaining({ layer: 'route', code: 'route-missing' }) }),
+      ]);
+    });
+
+    it('names an offline peer, with when it was last seen, before the connection', async () => {
+      await approvedCredential();
+      const offline = status();
+      Object.assign(offline.Peer.key1, { Online: false, LastSeen: new Date(Date.now() - 3 * 3_600_000).toISOString() });
+      const { machines } = await inspectBuildMachines(
+        { fix: false },
+        { ...fakeIo([{ failed: 'no reply in time', transport: { kind: 'silent' } }]).io, status: () => offline },
+        ['mini'],
+      );
+      expect(machines).toEqual([
+        expect.objectContaining({
+          diagnosis: expect.objectContaining({
+            layer: 'peer',
+            code: 'peer-offline',
+            message: expect.stringContaining('3 h ago'),
+          }),
+        }),
+      ]);
+    });
+
+    it('names a silent route behind a Mac that answers tailscale ping as stim-server not answering', async () => {
+      await approvedCredential();
+      const { machines } = await inspectBuildMachines(
+        { fix: false },
+        {
+          ...fakeIo([{ failed: 'no reply in time', transport: { kind: 'silent' } }]).io,
+          ping: async () => true,
+        },
+        ['mini'],
+      );
+      expect(machines).toEqual([
+        expect.objectContaining({ diagnosis: expect.objectContaining({ code: 'server-no-answer' }) }),
+      ]);
+    });
+
+    it('names an online peer that does not answer', async () => {
+      await approvedCredential();
+      const online = status();
+      Object.assign(online.Peer.key1, { Online: true });
+      const { machines } = await inspectBuildMachines(
+        { fix: false },
+        { ...fakeIo([{ failed: 'no reply in time', transport: { kind: 'silent' } }]).io, status: () => online },
+        ['mini'],
+      );
+      expect(machines).toEqual([
+        expect.objectContaining({
+          diagnosis: expect.objectContaining({ code: 'peer-no-answer' }),
+        }),
+      ]);
+    });
+
+    it.each([
+      ['NeedsLogin', 'tailscale-logged-out'],
+      ['Stopped', 'tailscale-stopped'],
+      [null, 'tailscale-unavailable'],
+    ])('tells Tailscale %s apart from the peer and the server', async (backendState, code) => {
+      const { findings, machines } = await inspectBuildMachines(
+        { fix: false },
+        {
+          ...fakeIo([]).io,
+          status: () => null,
+          rawStatus: () => (backendState === null ? null : { BackendState: backendState }),
+        },
+        ['mini'],
+      );
+      expect(machines).toEqual([
+        { machine: 'mini', state: 'tailscale-off', diagnosis: expect.objectContaining({ layer: 'tailscale', code }) },
+      ]);
+      expect(findings).toHaveLength(1);
     });
   });
 
@@ -363,6 +517,139 @@ describe('inspectBuildMachines', () => {
       { code: 'build-machine-busy', level: 'note' },
     ]);
     expect(findings[0]!.fix).toContain('run `stim-server service update --release <version>`');
+  });
+
+  it('reports a package Gradle downloads as a note that does not stop the build, and a blocker with commands otherwise', async () => {
+    await approvedCredential();
+    const note = {
+      code: 'ndk' as const,
+      reason: 'NDK 27.1.12297006 is not installed there; Gradle downloads it on the first build (about 1-2 GB)',
+    };
+    const blocker = {
+      code: 'build-tools' as const,
+      reason: 'no build-tools 37.0.0 there, and its SDK licenses are not accepted',
+      lead: 'accept the SDK licenses so Gradle downloads the package, or install it',
+      commands: [
+        '/sdk/cmdline-tools/latest/bin/sdkmanager --licenses',
+        '/sdk/cmdline-tools/latest/bin/sdkmanager "build-tools;37.0.0"',
+      ],
+    };
+    const run = (problems: (typeof blocker)[], notes: (typeof note)[]) =>
+      inspectBuildMachines(
+        { fix: false, check: () => Promise.resolve({ capacity: null, problems, notes }) },
+        fakeIo([approved()]).io,
+        ['mini'],
+      );
+    const taken = await run([], [note]);
+    expect(taken.machines).toEqual([expect.objectContaining({ offloadable: true, reasons: [], notes: [note] })]);
+    expect(taken.findings).toEqual([
+      expect.objectContaining({
+        code: 'build-machine-ndk',
+        level: 'note',
+        detail: `The build goes there anyway: ${note.reason}.`,
+        fix: null,
+      }),
+    ]);
+    const blocked = await run([blocker], []);
+    expect(blocked.machines).toEqual([expect.objectContaining({ offloadable: false, reasons: [blocker.reason] })]);
+    expect(blocked.findings).toEqual([
+      expect.objectContaining({
+        code: 'build-machine-build-tools',
+        level: 'cost',
+        fix: [
+          'On mini, accept the SDK licenses so Gradle downloads the package, or install it:',
+          ...blocker.commands,
+        ].join('\n'),
+      }),
+    ]);
+  });
+
+  it('fixes a JDK mismatch with an install command, and a stim-server that lists no JDKs with the JAVA_HOME restart', async () => {
+    await approvedCredential();
+    const run = (problem: { code: 'jdk'; reason: string; commands?: string[]; lead?: string }) =>
+      inspectBuildMachines(
+        { fix: false, check: () => Promise.resolve({ capacity: null, problems: [problem] }) },
+        fakeIo([approved()]).io,
+        ['mini'],
+      );
+    const listed = await run({
+      code: 'jdk',
+      reason: 'JDK 25 there, 17 here',
+      commands: ['brew install --cask zulu@17'],
+      lead: 'install JDK 17; Stim uses it automatically, no restart needed',
+    });
+    expect(listed.findings[0]?.fix).toBe(
+      'On mini, install JDK 17; Stim uses it automatically, no restart needed:\nbrew install --cask zulu@17',
+    );
+    const old = await run({ code: 'jdk', reason: 'JDK 25 there, 17 here' });
+    expect(old.findings[0]?.fix).toBe(
+      "Start stim-server on mini with JAVA_HOME at a JDK of the same major version as this machine's.",
+    );
+  });
+
+  it('gives the install command of a missing CocoaPods as the fix', async () => {
+    await approvedCredential();
+    const { findings } = await inspectBuildMachines(
+      {
+        fix: false,
+        check: () =>
+          Promise.resolve({
+            capacity: null,
+            problems: [
+              {
+                code: 'cocoapods',
+                reason: 'no CocoaPods there, CocoaPods 1.16.2 here',
+                commands: ['brew install cocoapods'],
+                lead: 'install CocoaPods',
+              },
+            ],
+          }),
+      },
+      fakeIo([approved()]).io,
+      ['mini'],
+    );
+    expect(findings).toEqual([
+      expect.objectContaining({
+        code: 'build-machine-cocoapods',
+        fix: 'On mini, install CocoaPods:\nbrew install cocoapods',
+      }),
+    ]);
+  });
+
+  it('fixes a deselected Xcode with the exact command, and a runtime that follows from it with a pointer', async () => {
+    await approvedCredential();
+    const { findings } = await inspectBuildMachines(
+      {
+        fix: false,
+        check: () =>
+          Promise.resolve({
+            capacity: null,
+            problems: [
+              {
+                code: 'xcode',
+                reason: 'no Xcode there: xcode-select points at Command Line Tools',
+                commands: ['sudo xcode-select -s /Applications/Xcode-27.1.app/Contents/Developer'],
+                lead: 'select Xcode-27.1',
+              },
+              { code: 'runtime', reason: 'no iPhone simulator on iOS-27-0 there', followsFrom: 'xcode' },
+              {
+                code: 'cocoapods',
+                reason: 'CocoaPods 1.17.0 there, 1.16.2 here',
+              },
+            ],
+          }),
+      },
+      fakeIo([approved()]).io,
+      ['mini'],
+    );
+    expect(findings.map(({ code, fix }) => ({ code, fix }))).toEqual([
+      {
+        code: 'build-machine-xcode',
+        fix: 'On mini, select Xcode-27.1:\nsudo xcode-select -s /Applications/Xcode-27.1.app/Contents/Developer',
+      },
+      { code: 'build-machine-runtime', fix: 'Fix the xcode problem on mini first; this follows from it.' },
+      expect.objectContaining({ code: 'build-machine-cocoapods' }),
+    ]);
   });
 
   it.each([undefined, null, { name: 'Stim Host', screenRecording: false, accessibility: true }])(

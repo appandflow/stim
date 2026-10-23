@@ -30,15 +30,19 @@ final class NoticeCenter: ObservableObject {
   @Published private(set) var index = 0
   var arrivals = WorkspaceArrivals()
   private let workspaceLifetime: TimeInterval
+  private let defaults: UserDefaults
   private var timers: [Notice.ID: Timer] = [:]
 
-  init(workspaceLifetime: TimeInterval = 60) {
+  init(workspaceLifetime: TimeInterval = 60, defaults: UserDefaults = .standard) {
     self.workspaceLifetime = workspaceLifetime
+    self.defaults = defaults
   }
 
   var current: Notice? { notices.indices.contains(index) ? notices[index] : nil }
 
-  func show(_ notice: Notice) {
+  @discardableResult
+  func show(_ notice: Notice) -> Bool {
+    if notice.newWorkspace != nil, !AppPreferences.showsWorkspaceCards(defaults) { return false }
     if let key = notice.key { remove(key: key) }
     notices.insert(notice, at: 0)
     index = 0
@@ -48,11 +52,12 @@ final class NoticeCenter: ObservableObject {
         MainActor.assumeIsolated { self?.remove(id) }
       }
     }
-    guard NSWorkspace.shared.isVoiceOverEnabled else { return }
+    guard NSWorkspace.shared.isVoiceOverEnabled else { return true }
     let text = [notice.title, notice.detail, "Action: \(notice.actionTitle)"].compactMap { $0 }.joined(separator: ". ")
     NSAccessibility.post(
       element: NSApp as Any, notification: .announcementRequested,
       userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+    return true
   }
 
   func step(_ offset: Int) {
@@ -81,12 +86,6 @@ final class NoticeCenter: ObservableObject {
     onDismiss?()
   }
 
-  func dismissAll() {
-    let dismissed = notices
-    removeAll()
-    for notice in dismissed { notice.onDismiss?() }
-  }
-
   func update(key: String, detail: String) {
     guard let position = notices.firstIndex(where: { $0.key == key }), notices[position].detail != detail else { return }
     notices[position].detail = detail
@@ -105,24 +104,13 @@ final class NoticeCenter: ObservableObject {
 
 struct NoticeStack: View {
   @ObservedObject var center: NoticeCenter
-  var onDismissAll: (() -> Void)? = nil
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     ZStack(alignment: .bottom) {
       if let notice = center.current {
-        let behind = min(center.notices.count - 1, 2)
-        ForEach(Array((0..<behind).reversed()), id: \.self) { depth in
-          Card(fill: Palette.raised, border: Palette.separator, clipsContent: false) {
-            Color.clear
-          }
-          .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
-          .padding(.horizontal, CGFloat(depth + 1) * Space.md)
-          .frame(height: 40)
-          .offset(y: CGFloat(depth + 1) * Space.md)
-          .accessibilityHidden(true)
-        }
-        NoticeCard(notice: notice, center: center, dismissAll: onDismissAll ?? center.dismissAll)
+        NoticeCard(notice: notice, center: center)
+          .background(alignment: .bottom) { edges }
           .id(notice.id)
           .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
       }
@@ -133,23 +121,31 @@ struct NoticeStack: View {
     .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: center.notices.map(\.id))
     .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: center.index)
   }
+
+  private var edges: some View {
+    let behind = min(center.notices.count - 1, 2)
+    return ZStack(alignment: .bottom) {
+      ForEach(Array((0..<behind).reversed()), id: \.self) { depth in
+        Card(fill: Palette.raised, border: Palette.separator, clipsContent: false) {
+          Color.clear
+        }
+        .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+        .padding(.horizontal, CGFloat(depth + 1) * Space.md)
+        .frame(height: 40)
+        .offset(y: CGFloat(depth + 1) * Space.md)
+        .accessibilityHidden(true)
+      }
+    }
+  }
 }
 
 private struct NoticeCard: View {
   var notice: Notice
   @ObservedObject var center: NoticeCenter
-  var dismissAll: () -> Void
 
   var body: some View {
     Banner(tone: notice.tone, icon: notice.icon, style: .floating, onDismiss: { center.dismiss(notice.id) }) {
-      HStack {
-        stepper
-        Spacer(minLength: Space.xs)
-        Button("Dismiss All", action: dismissAll)
-          .buttonStyle(.plain)
-          .textStyle(.caption, weight: .semibold)
-          .foregroundStyle(Palette.secondary)
-      }
+      stepper
       Text(notice.title).font(.stim(.headline)).lineLimit(2, reservesSpace: true)
       Text(notice.detail ?? " ")
         .foregroundStyle(Palette.secondary).lineLimit(1, reservesSpace: true).truncationMode(.middle)

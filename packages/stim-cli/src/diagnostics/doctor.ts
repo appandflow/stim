@@ -65,6 +65,7 @@ import {
   resolveAndroidLayout,
   resolveIosProjectDir,
   type AndroidLayout,
+  iosSimSlimDefaultSetting,
   iosSimSlimProfileSetting,
   projectSettingsContext,
   remoteAndroidSetting,
@@ -421,7 +422,7 @@ export async function checkMainCheckout(
       }
     }
     if (podsState) {
-      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot)}`;
+      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, iosRoot)}`;
       findings.push(
         finding(
           'cost',
@@ -434,7 +435,7 @@ export async function checkMainCheckout(
 
     const broken = brokenPods === undefined && existsSync(podsRoot) ? await brokenPodLinks(podsRoot) : brokenPods || [];
     if (broken.length) {
-      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, '--clean-install')}`;
+      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, iosRoot, '--clean-install')}`;
       findings.push(
         finding(
           'cost',
@@ -924,10 +925,12 @@ async function projectEasBuildDownloadFinding(
 
 export function checkSimSlim({
   configured = false,
+  slimByDefault = false,
   profileError = null,
   onPath = false,
 }: {
   configured?: boolean;
+  slimByDefault?: boolean;
   profileError?: string | null;
   onPath?: boolean;
 } = {}): Finding | null {
@@ -937,6 +940,15 @@ export function checkSimSlim({
       'The SimSlim profile is invalid',
       profileError,
       'Set ios.simslimProfile to a readable JSON profile inside the repository.',
+    );
+  }
+  if (!configured && slimByDefault) {
+    if (onPath) return null;
+    return finding(
+      'cost',
+      'ios.simslim is on, but SimSlim is not installed',
+      '`stim ios` boots owned simulators without SimSlim until the `simslim` command is installed.',
+      'brew install mobai-app/tap/simslim',
     );
   }
   if (!configured) {
@@ -1128,13 +1140,15 @@ export async function runDoctor(
       simslimProfileError = String((error as Error)?.message || error);
     }
   }
+  const simslimByDefault = localIos && iosSimSlimDefaultSetting(projectSettings);
   const simslimFinding =
     !localIos || (!simslimProfile && !simslimProfileError && remoteIosSetting(projectSettings))
       ? null
       : checkSimSlim({
           configured: Boolean(simslimProfile),
+          slimByDefault: simslimByDefault,
           profileError: simslimProfileError,
-          onPath: simslimProfile ? (lookupSimSlim ? lookupSimSlim() : simslimIsOnPath()) : false,
+          onPath: simslimProfile || simslimByDefault ? (lookupSimSlim ? lookupSimSlim() : simslimIsOnPath()) : false,
         });
   const memoryAdvice =
     localIos && !remoteIosSetting(projectSettings) ? hostMemoryPressureAdvice(await memoryPressure()) : null;
@@ -1268,8 +1282,9 @@ export async function reactNativeDoctorFindings({
     options.operation,
   );
 
+  const appProjectFinding = checkAppProject(projectRoot);
   return [
-    checkAppProject(projectRoot),
+    appProjectFinding,
     checkIosHost(platform, host),
     checkXcodeEnvLineEndings(projectRoot, platform, host),
     ...checkStorageLayout(projectRoot, {
@@ -1301,6 +1316,7 @@ export async function reactNativeDoctorFindings({
     easBuildDownloadFinding,
     await readOffloadCandidate(tailnetStatus, now(), host),
     ...remoteFindings,
+    appProjectFinding ? null : checkReadinessMarkers(projectRoot),
   ].filter((value): value is Finding => Boolean(value));
 }
 
@@ -1319,7 +1335,7 @@ export function checkAndroidPathRoom(
     ...finding(
       'cost',
       'The project path leaves no room for Android native object paths',
-      `${androidPathRoomMessage(room)} \`stim android\` refuses to build here with STIM_PATH_TOO_LONG, because Gradle would fail deep inside ninja instead.`,
+      `${androidPathRoomMessage(room)} \`stim android\` refuses to run an emulator here with STIM_PATH_TOO_LONG, before it prepares the device, because Gradle would fail deep inside ninja instead.`,
       androidPathRoomRemedy(room),
     ),
   };
@@ -1393,6 +1409,62 @@ function checkAppProject(projectRoot: string): Finding | null {
   return result;
 }
 
+const READINESS_MARKER = '[stim:readiness]';
+const READINESS_SCAN_LIMIT = 5000;
+const READINESS_SKIPPED_DIRS = new Set([
+  'node_modules',
+  'ios',
+  'android',
+  'macos',
+  'windows',
+  'Pods',
+  'build',
+  'dist',
+  'web-build',
+  'coverage',
+]);
+const JS_SOURCE = /\.[cm]?[jt]sx?$/;
+
+function hasReadinessMarker(projectRoot: string): boolean | null {
+  const dirs = [projectRoot];
+  let scanned = 0;
+  for (let dir = dirs.pop(); dir !== undefined; dir = dirs.pop()) {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!READINESS_SKIPPED_DIRS.has(entry.name)) dirs.push(path);
+        continue;
+      }
+      if (!entry.isFile() || !JS_SOURCE.test(entry.name)) continue;
+      if (++scanned > READINESS_SCAN_LIMIT) return null;
+      try {
+        if (readFileSync(path, 'utf-8').includes(READINESS_MARKER)) return true;
+      } catch {}
+    }
+  }
+  return false;
+}
+
+function checkReadinessMarkers(projectRoot: string): Finding | null {
+  if (hasReadinessMarker(projectRoot) !== false) return null;
+  return {
+    code: 'readiness-markers-missing',
+    ...finding(
+      'note',
+      'The app does not report readiness to Stim',
+      `No \`${READINESS_MARKER}\` marker appears in this app's JavaScript or TypeScript sources outside node_modules. A debug \`stim ios\` or \`stim android\` launch then ends shortly after the app's JavaScript starts running, before the app is usable, and a later startup error shows only in \`stim logs --errors\`.`,
+      "In debug builds, log `[stim:readiness] pending` from the first module the app's entry loads, before the root component, and `[stim:readiness] ready` once the app is usable. `stim guide lifecycle readiness` has the code.",
+    ),
+  };
+}
+
 function agentDeviceIsOnPath(): boolean {
   try {
     return Boolean(getExecutor().findExecutable('agent-device'));
@@ -1432,7 +1504,7 @@ export function checkFingerprintParity({
     'note',
     'This checkout does not fingerprint like a fresh worktree of HEAD',
     `A clean detached worktree of HEAD computes a different @expo/fingerprint hash than this checkout, so worktrees will MISS the cache entries this checkout fills (and vice versa) until the two agree.${differing} ${cause} (To measure this, doctor ran a real fingerprint twice and briefly created a temporary git worktree -- .git/worktrees metadata was touched and cleaned up.)`,
-    'Commit the dirty fingerprint inputs, or list the build-irrelevant ones in .fingerprintignore (same syntax as .gitignore, at the project root; Stim already ignores android/local.properties and android/.idea). Only the ones that genuinely cannot change the native build belong there -- generated reports, local env files, a lockfile whose checksums embed absolute machine paths. Never ignore a real native input (a Podfile, a gradle file, the app config) to force a hit: that trades a slow build for a wrong one.',
+    'Commit the dirty fingerprint inputs, or list the build-irrelevant ones in .fingerprintignore (same syntax as .gitignore, at the project root; Stim already ignores android/local.properties, android/.idea, *.xcodeproj/xcuserdata, and ios/main.jsbundle and ios/assets while a .gitignore pattern matches them). Only the ones that genuinely cannot change the native build belong there -- generated reports, local env files, a lockfile whose checksums embed absolute machine paths. Never ignore a real native input (a Podfile, a gradle file, the app config) to force a hit: that trades a slow build for a wrong one.',
   );
 }
 
@@ -1625,7 +1697,7 @@ export async function detectFingerprintParity(
         : undefined);
   const unsafe = coldFingerprintRunsProjectCode(projectRoot, platform);
   if (unsafe) return unsafe;
-  // @expo/fingerprint 0.20 spawns `npx react-native config` unless this is true or expo-modules-autolinking >= 1.12 resolves.
+  // @expo/fingerprint spawns `npx react-native config` unless this is true or expo-modules-autolinking >= 1.12 resolves.
   const coldFingerprint: typeof createFingerprint = (root, options) =>
     createFingerprint(root, { ...options, useRNCoreAutolinkingFromExpo: true });
 

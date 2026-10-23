@@ -40,4 +40,4 @@ $start.Arguments = '"' + $request.entry + '"'
 $start.UseShellExecute = $false
 $child = [System.Diagnostics.Process]::Start($start)
 $child.WaitForExit()
-[System.Environment]::Exit($child.ExitCode)
+exit $child.ExitCode

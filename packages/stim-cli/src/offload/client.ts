@@ -1,4 +1,4 @@
-import { readFile, readlink } from 'node:fs/promises';
+import { readFile, readlink, realpath } from 'node:fs/promises';
 import { createHash, webcrypto } from 'node:crypto';
 import {
   closeSync,
@@ -54,11 +54,19 @@ import {
 } from './native-source.ts';
 import { nativeGradleTransfer, type GradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
+import type { FingerprintSource } from '@expo/fingerprint';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
-import { namedBuildMachine, OffloadRefusal } from './selection.ts';
+import { namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
-import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
-import { ambientContext, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
+import {
+  toolchainMismatches,
+  toolchainNotes,
+  cocoapodsDifference,
+  type BuildTarget,
+  type OffloadProblem,
+  type WorkerToolchain,
+} from './toolchain.ts';
+import { ambientContext, dependencyLockfile, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
 import type {
   BuildArtifactIdentity,
   BuildOfferParams,
@@ -245,8 +253,13 @@ function matchingArtifact(offer: BuildOffer, identity?: ArtifactLookup): CachedB
 const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
 
 /** Every reason a machine's offer cannot take this build, in either mode; empty when it can. */
-export function offerProblems(offer: BuildOffer, target: BuildTarget): OffloadProblem[] {
+export function offerProblems(offer: BuildOffer, target: BuildTarget, named = false): OffloadProblem[] {
   const problems = toolchainMismatches(target, offer.toolchain);
+  const pods =
+    !named && target.platform === 'ios' && !problems.some(({ code }) => code === 'platform')
+      ? cocoapodsDifference(target, offer.toolchain)
+      : null;
+  if (pods) problems.push(pods);
   const capacity = offer.capacity;
   const { running, max, diskFreeBytes, minDiskFreeBytes, declined } = capacity;
   if (diskFreeBytes !== null && diskFreeBytes < minDiskFreeBytes) {
@@ -309,7 +322,7 @@ export function pickOffer({
       return;
     }
     if (cacheOnly) return skip(machine, 'artifact-miss', 'no matching completed artifact');
-    const problems = offerProblems(offer, target);
+    const problems = offerProblems(offer, target, namedBuildMachine(selected));
     if (problems.length) {
       return skip(
         machine,
@@ -329,10 +342,14 @@ export function pickOffer({
     }
     const score = Number(offer.warm.dependencies);
     ranked.push({ index, score, load: typeof load === 'number' ? load : Number.POSITIVE_INFINITY });
+    const notes = toolchainNotes(target, offer.toolchain).map((each) => each.reason);
     candidates.push({
       machine,
       code: 'accepted',
-      msg: typeof load === 'number' ? `can take the build (load ${load}/core there)` : 'can take the build',
+      msg: [
+        typeof load === 'number' ? `can take the build (load ${load}/core there)` : 'can take the build',
+        ...notes,
+      ].join('; '),
     });
   });
   ranked.sort((a, b) => b.score - a.score || a.load - b.load);
@@ -627,14 +644,15 @@ function repoIdentity(projectRoot: string): RepoIdentity {
 function repositoryIdentity(projectRoot: string, repoRoot: string, common: string): RepoIdentity {
   const digest = createHash('sha256').update(common).digest('hex').slice(0, 12);
   const name = (basename(dirname(common)) || 'repo').replace(/[^A-Za-z0-9._-]/g, '_').replace(/^[^A-Za-z0-9]+/, '');
-  const lock = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json'].find((file) => existsSync(join(repoRoot, file)));
+  const project = relative(repoRoot, realpathSync(projectRoot));
+  const lock = dependencyLockfile(repoRoot, project);
   return {
     repoRoot,
-    project: relative(repoRoot, realpathSync(projectRoot)),
+    project,
     repo: `${name.slice(0, 60) || 'repo'}-${digest}`,
     lockfile: lock
       ? createHash('sha256')
-          .update(readFileSync(join(repoRoot, lock)))
+          .update(readFileSync(join(repoRoot, lock.dir, lock.file)))
           .digest('hex')
       : null,
   };
@@ -807,10 +825,10 @@ async function probeMachine(
       ...(native === 'xcode' && identity.artifact && connection.supports('build-artifact-cache')
         ? { artifact: identity.artifact }
         : {}),
-      ...(identity.swiftpmArtifact && connection.supports('swiftpm-peer-cache')
+      ...(identity.swiftpmArtifact && queriesPeerCache(connection, 'swiftpm-peer-cache')
         ? { swiftpmArtifact: identity.swiftpmArtifact }
         : {}),
-      ...(identity.reactNativeArtifact && connection.supports('react-native-peer-cache')
+      ...(identity.reactNativeArtifact && queriesPeerCache(connection, 'react-native-peer-cache')
         ? { reactNativeArtifact: identity.reactNativeArtifact }
         : {}),
       ...(native === 'gradle' && identity.gradleArtifact && connection.supports('native-gradle-peer-cache')
@@ -839,8 +857,8 @@ async function probeMachine(
     credential,
     connection,
     offer:
-      (identity.swiftpmArtifact && !connection.supports('swiftpm-peer-cache')) ||
-      (identity.reactNativeArtifact && !connection.supports('react-native-peer-cache')) ||
+      (identity.swiftpmArtifact && !queriesPeerCache(connection, 'swiftpm-peer-cache')) ||
+      (identity.reactNativeArtifact && !queriesPeerCache(connection, 'react-native-peer-cache')) ||
       (native === 'gradle' && (!identity.gradleArtifact || !connection.supports('native-gradle-peer-cache')))
         ? { ...offer, artifact: null }
         : offer,
@@ -909,7 +927,7 @@ export async function chooseBuildMachine({
             runCancellationSignal(ambientContext()) ?? ambientContext()?.signal,
           ),
         ),
-        stimBuild: target.local.stimBuild,
+        compat: target.local.compat,
         inputs: swiftpmArtifact.artifactInputs,
         build: {
           product: swiftpmArtifact.product,
@@ -1030,6 +1048,25 @@ export type BuildRequest =
       assetCatalog?: string | null;
     };
 
+function startJdk(choice: OffloadChoice): { jdk?: string } {
+  const { target, connection } = choice;
+  return target.platform === 'android' && target.local.jdk && connection.supports('build-jdk')
+    ? { jdk: target.local.jdk }
+    : {};
+}
+
+function startCompat(choice: OffloadChoice): { compat?: number } {
+  return choice.connection.supports('build-compat') ? { compat: choice.target.local.compat } : {};
+}
+
+/** Peer artifact queries carry `compat`, which a stim-server without `build-compat` refuses. */
+function queriesPeerCache(
+  connection: BuildConnection,
+  feature: 'swiftpm-peer-cache' | 'react-native-peer-cache',
+): boolean {
+  return connection.supports(feature) && connection.supports('build-compat');
+}
+
 function macosBuildParameters(request: Extract<BuildRequest, { platform: 'macos' }>, peerCache: boolean) {
   return {
     ...(request.cacheArtifact === true && peerCache ? { cacheArtifact: true } : {}),
@@ -1078,7 +1115,7 @@ async function peerArtifact(
     )
       throw new Error('The SwiftPM artifact query does not match the build request.');
     if (
-      !choice.connection.supports('swiftpm-peer-cache') ||
+      !queriesPeerCache(choice.connection, 'swiftpm-peer-cache') ||
       manifestDigest(
         await sourceManifest(
           choice.identity.repoRoot,
@@ -1100,7 +1137,7 @@ async function peerArtifact(
       )
     )
       throw new Error('The React Native artifact query does not match the build request.');
-    return choice.connection.supports('react-native-peer-cache')
+    return queriesPeerCache(choice.connection, 'react-native-peer-cache')
       ? matchingArtifact(choice.offer, `react-native-${reactNative.platform}`)
       : null;
   }
@@ -1199,11 +1236,18 @@ async function syncSource(
   onEnter: (phase: string) => void,
   native?: NativeInputSnapshot | GradleTransfer,
   signal?: AbortSignal,
+  ignored: readonly string[] = [],
 ): Promise<
   { files: number; uploaded: number; uploadedBytes: number; syncMs: number; digest: string } | { failure: string }
 > {
   onEnter('sync');
   const syncStarted = Date.now();
+  const ignoredPaths: string[] = [];
+  for (const path of ignored) {
+    const inRepo = relative(identity.repoRoot, join(await realpath(dirname(path)), basename(path)));
+    if (inRepo && !isAbsolute(inRepo) && inRepo !== '..' && !inRepo.startsWith(`..${sep}`))
+      ignoredPaths.push(inRepo.split(sep).join('/'));
+  }
   const manifest =
     native && 'declaration' in native
       ? (await nativeGradleTransfer(join(identity.repoRoot, identity.project), native.declaration, signal)).files
@@ -1214,7 +1258,7 @@ async function syncSource(
             await sourceManifest(identity.repoRoot, false, signal),
             signal,
           )
-        : await sourceManifest(identity.repoRoot, false, signal);
+        : await sourceManifest(identity.repoRoot, false, signal, ignoredPaths);
   if (native && 'declaration' in native && manifestDigest(manifest) !== native.digest)
     return { failure: 'The native Gradle source changed before upload.' };
   const bySha = new Map(manifest.map((file) => [file.sha256, file]));
@@ -1385,6 +1429,35 @@ async function fetchArtifact({
   return { artifactPath, digest, received, declared };
 }
 
+interface FingerprintInputs {
+  sources: readonly FingerprintSource[];
+  ignored: readonly string[];
+  /** The paths, relative to the project, that this Mac's git ignores for the fingerprint. */
+  ignoredPaths?: readonly string[];
+  /** The top-level entries, relative to the project, that this Mac's git tracks although an ignore pattern matches them. */
+  trackedPaths?: readonly string[];
+}
+
+function fingerprintSourcesParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
+  if (!inputs || !connection.supports('fingerprint-sources')) return {};
+  return {
+    fingerprintSources: inputs.sources.map((source) => ({
+      id: source.type === 'contents' ? source.id : source.filePath,
+      hash: source.hash,
+    })),
+  };
+}
+
+function fingerprintIgnoredParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
+  if (!inputs?.ignoredPaths?.length || !connection.supports('fingerprint-ignored')) return {};
+  return { fingerprintIgnored: [...inputs.ignoredPaths] };
+}
+
+function fingerprintTrackedParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
+  if (!inputs?.trackedPaths?.length || !connection.supports('fingerprint-tracked')) return {};
+  return { fingerprintTracked: [...inputs.trackedPaths] };
+}
+
 function keepCorruptCacheMessage(
   failed: Extract<OffloadOutcome, { ok: false }>,
   result: Record<string, unknown>,
@@ -1407,6 +1480,8 @@ export async function offloadBuild(
     onRecord: (record: Record<string, unknown>) => void;
     /** One line about where the build goes, such as the next machine after a refusal. */
     note: (line: string) => void;
+    /** The fingerprint sources behind `expectedFingerprint` and the gitignored files they read, as absolute paths. */
+    fingerprintInputs?: () => Promise<FingerprintInputs>;
   } & (
     | { request: Extract<BuildRequest, { platform: 'macos' }>; expectedFingerprint?: never }
     | { request: Exclude<BuildRequest, { platform: 'macos' }>; expectedFingerprint: string | null }
@@ -1515,6 +1590,12 @@ export async function offloadBuild(
     let syncMs = 0;
     let uploadedBytes = 0;
     let workerStarted = 0;
+    let fingerprintInputs: Promise<FingerprintInputs | null> | undefined;
+    const readFingerprintInputs = () =>
+      (fingerprintInputs ??=
+        !native && request.platform !== 'macos' && input.fingerprintInputs
+          ? input.fingerprintInputs()
+          : Promise.resolve(null));
     const moveOn = (why: string): boolean => {
       const next = choice.runnersUp.shift();
       if (!next) return false;
@@ -1546,7 +1627,15 @@ export async function offloadBuild(
         break;
       }
       if (choice.cacheOnly) return fail('The exact artifact is no longer available.');
-      const synced = await syncSource(choice.connection, identity, onEnter, nativeTransferInput(native), signal);
+      const inputs = await readFingerprintInputs();
+      const synced = await syncSource(
+        choice.connection,
+        identity,
+        onEnter,
+        nativeTransferInput(native),
+        signal,
+        inputs?.ignored,
+      );
       checkCancelled();
       if ('failure' in synced) {
         if (moveOn(synced.failure)) continue;
@@ -1568,6 +1657,9 @@ export async function offloadBuild(
         project: identity.project,
         platform: request.platform,
         fingerprint: request.platform === 'macos' ? synced.digest : expectedFingerprint,
+        ...fingerprintSourcesParam(inputs, choice.connection),
+        ...fingerprintIgnoredParam(inputs, choice.connection),
+        ...fingerprintTrackedParam(inputs, choice.connection),
         ...(native
           ? {
               native: {
@@ -1583,7 +1675,7 @@ export async function offloadBuild(
             }
           : {}),
         ...(request.platform === 'macos'
-          ? macosBuildParameters(request, choice.connection.supports('swiftpm-peer-cache'))
+          ? macosBuildParameters(request, queriesPeerCache(choice.connection, 'swiftpm-peer-cache'))
           : {
               configuration: request.platform === 'ios' ? request.configuration : null,
               scheme: request.platform === 'ios' ? request.scheme : null,
@@ -1591,7 +1683,9 @@ export async function offloadBuild(
               runtime: request.platform === 'ios' ? request.runtime : null,
               packageName: packageName(join(identity.repoRoot, identity.project)),
               isExpo: request.isExpo,
-              ...(!native && request.cacheArtifact === true && choice.connection.supports('react-native-peer-cache')
+              ...(!native &&
+              request.cacheArtifact === true &&
+              queriesPeerCache(choice.connection, 'react-native-peer-cache')
                 ? { cacheArtifact: true }
                 : {}),
               optimizations:
@@ -1599,6 +1693,8 @@ export async function offloadBuild(
               ...(request.platform === 'android' ? { android: request.android } : {}),
             }),
         stimBuild: choice.target.local.stimBuild,
+        ...startCompat(choice),
+        ...startJdk(choice),
       });
       checkCancelled();
       if ('result' in reply) {
@@ -1622,10 +1718,7 @@ export async function offloadBuild(
     connection.onProgress(null);
     const workerMs = cacheHit ? 0 : Date.now() - workerStarted;
     if (result.ok !== true)
-      return keepCorruptCacheMessage(
-        fail(`${String(result.code ?? 'failed')}: ${String(result.message ?? '')}`),
-        result,
-      );
+      return keepCorruptCacheMessage(fail(workerFailureReason(result.code, result.message)), result);
     if (!cacheHit && native && (result.sourceDigest !== sourceDigest || result.fingerprint !== expectedFingerprint))
       return fail('The worker returned a different native source or artifact identity.');
     if (native?.provider === 'gradle' && !ANDROID_PACKAGE.test(String(result.androidPackage ?? '')))
@@ -1782,6 +1875,18 @@ export function machineProblems(offer: BuildOffer, targets: BuildTarget[]): Offl
   return problems;
 }
 
+/** What a build on a machine that would take it does beyond the match, for each of `targets`, labeled like `machineProblems`. */
+export function machineNotes(offer: BuildOffer, targets: BuildTarget[]): OffloadProblem[] {
+  const notes: OffloadProblem[] = [];
+  if (machineProblems(offer, targets).length) return notes;
+  for (const target of targets) {
+    for (const note of toolchainNotes(target, offer.toolchain)) {
+      notes.push(targets.length > 1 ? { ...note, reason: `${PLATFORM_LABEL[target.platform]}: ${note.reason}` } : note);
+    }
+  }
+  return notes;
+}
+
 const DOCTOR_CONNECT_MS = 5000;
 const DOCTOR_OFFER_MS = 8000;
 const PLATFORM_LABEL = { ios: 'iOS', android: 'Android', macos: 'macOS' } as const;
@@ -1796,7 +1901,7 @@ export function offloadCheck(
   targets: () => Promise<BuildTarget[]>,
 ): (
   credential: BuildMachineCredential,
-) => Promise<{ capacity: BuildOffer['capacity'] | null; problems: OffloadProblem[] }> {
+) => Promise<{ capacity: BuildOffer['capacity'] | null; problems: OffloadProblem[]; notes?: OffloadProblem[] }> {
   let identity: Promise<RepoIdentity | string> | undefined;
   const readIdentity = async (): Promise<RepoIdentity | string> => {
     try {
@@ -1827,6 +1932,11 @@ export function offloadCheck(
     if ('failure' in probe) return { capacity: null, problems: [{ code: 'unreachable', reason: probe.failure }] };
     probe.connection.close();
     resolved ??= targets();
-    return { capacity: probe.offer.capacity, problems: machineProblems(probe.offer, await resolved) };
+    const judged = await resolved;
+    return {
+      capacity: probe.offer.capacity,
+      problems: machineProblems(probe.offer, judged),
+      notes: machineNotes(probe.offer, judged),
+    };
   };
 }

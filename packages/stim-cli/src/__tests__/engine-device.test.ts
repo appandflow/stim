@@ -181,14 +181,18 @@ describe('ensureBooted: ios', () => {
     expect(result.reason).not.toMatch(/out of memory|OOM/i);
   });
 
+  const springBoardStarting = 'com.apple.springboard.finishedstartup 0';
+  const springBoardStarted = 'com.apple.springboard.finishedstartup 4242';
   test.each([
-    ['U1', 0, false],
-    ['OTHER', 0, true],
-    ['U1', 60, true],
+    ['U1', 0, [springBoardStarting, springBoardStarting, springBoardStarted], false],
+    ['OTHER', 0, [springBoardStarted], true],
+    ['U1', 60, [springBoardStarted], true],
+    ['U1', 0, [new Error('notifyutil: No such file or directory')], true],
   ] as const)(
-    'boots a shut-down owned sim, waits for the Booted state, and mutes it (%s at %s)',
-    async (reportedUdid, reportedVolume, warns) => {
+    'boots a shut-down owned sim, waits for the Booted state and SpringBoard, and mutes it (%s at %s, case %#)',
+    async (reportedUdid, reportedVolume, springBoard, warns) => {
       let listCalls = 0;
+      let springBoardCalls = 0;
       const commands: string[] = [];
       const notes: string[] = [];
       setExecutor({
@@ -214,6 +218,12 @@ describe('ensureBooted: ios', () => {
               result: { deviceIdentifier: reportedUdid, volume: reportedVolume },
             });
           }
+          if (file === 'xcrun' && args[1] === 'spawn' && args[3] === 'notifyutil') {
+            commands.push([file, ...args].join(' '));
+            const reply = springBoard[Math.min(springBoardCalls++, springBoard.length - 1)];
+            if (reply instanceof Error) throw reply;
+            return reply;
+          }
           return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
             ? this.run!([file, ...args].join(' '))
             : '';
@@ -237,9 +247,14 @@ describe('ensureBooted: ios', () => {
       expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
       expect(commands.indexOf('xcrun simctl boot U1')).toBeLessThan(commands.indexOf('xcrun simctl bootstatus U1 -b'));
       const mute = 'xcrun devicectl device settings audio --device U1 --volume 0 --json-output -';
-      expect(commands.filter((c) => c === mute).length).toBe(1);
-      expect(commands.indexOf('xcrun simctl bootstatus U1 -b')).toBeLessThan(commands.indexOf(mute));
+      const springBoardQuery = 'xcrun simctl spawn U1 notifyutil -g com.apple.springboard.finishedstartup';
+      const started = springBoard.at(-1) === springBoardStarted;
+      expect(commands.filter((c) => c === springBoardQuery).length).toBe(springBoard.length + 1);
+      expect(commands.indexOf('xcrun simctl bootstatus U1 -b')).toBeLessThan(commands.indexOf(springBoardQuery));
+      expect(commands.filter((c) => c === mute).length).toBe(started ? 1 : 0);
+      expect(commands.indexOf(mute) > commands.lastIndexOf(springBoardQuery)).toBe(started);
       expect(notes.some((line) => line.includes('Could not mute this simulator'))).toBe(warns);
+      expect(notes.some((line) => line.includes('simulator muted'))).toBe(!warns);
     },
   );
 
@@ -832,6 +847,47 @@ describe('ensureBooted: android', () => {
     expect(probes >= 5).toBeTruthy();
   });
 
+  test.skipIf(process.platform !== 'darwin')(
+    'Android boot completes while the memory-culprit top read is still running, then names the culprit',
+    async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(0);
+      vi.spyOn(hostMemory, 'readHostMemoryPressure').mockReturnValue('warning');
+      let finishTop: (output: string) => void = () => {};
+      const top = vi.fn<() => Promise<string | null>>(() => new Promise((resolve) => (finishTop = resolve)));
+      const run = (cmd: string) => (cmd === 'emulator -list-avds' ? 'stim-app' : 'List of devices attached');
+      const runQuiet = (cmd: string) =>
+        cmd.includes('sys.boot_completed') ? '1' : cmd.includes('pm path android') ? 'package:/x' : '';
+      const runFileQuiet = (file: string, args: string[] = []) =>
+        file === 'adb' || file === 'emulator' ? runQuiet([file, ...args].join(' ')) : null;
+      setExecutor({
+        runFileQuiet,
+        runFileQuietAsync: async (file, args) => (file === '/usr/bin/top' ? top() : runFileQuiet(file, args)),
+        run,
+        runQuiet,
+        runFile: (file, args = []) => (file === 'adb' || file === 'emulator' ? run([file, ...args].join(' ')) : ''),
+        spawn: () => ({ pid: 987654, unref() {} }),
+      });
+      const events: string[] = [];
+      const resultPromise = ensureBooted({
+        platform: 'android',
+        projectPath: tmpHome,
+        device: { avdName: 'stim-app', consolePort: 5556, owned: true },
+        timeoutMs: 20000,
+        alive: () => true,
+        out: (line) => events.push(line),
+      });
+      await vi.runAllTimersAsync();
+      const result = await resultPromise;
+      expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
+      expect(top).toHaveBeenCalledTimes(1);
+      expect(events.filter((line) => line.includes('host memory pressure'))).toHaveLength(1);
+      expect(events.some((line) => line.includes('fseventsd'))).toBe(false);
+      finishTop(['PID    MEM    COMMAND', '76886  63G    fseventsd', ''].join('\n'));
+      await vi.waitFor(() => expect(events.some((line) => line.includes('fseventsd (pid 76886)'))).toBe(true));
+    },
+  );
+
   test.each([
     ['warning', 'late boot', true, 121000, true],
     ['critical', 'timeout', true, Infinity, true],
@@ -1131,6 +1187,12 @@ function iosExecutor(devices: SimEntry[]) {
       runFileQuiet: () => '',
       run(cmd: string) {
         run.push(cmd);
+        if (/simctl list --json/.test(cmd))
+          return JSON.stringify({
+            ...JSON.parse(DEVICE_TYPES_JSON),
+            ...JSON.parse(RUNTIMES_JSON),
+            ...JSON.parse(simList(devices)),
+          });
         if (/simctl list devicetypes --json/.test(cmd)) return DEVICE_TYPES_JSON;
         if (/simctl list runtimes --json/.test(cmd)) return RUNTIMES_JSON;
         if (/simctl list devices --json/.test(cmd)) return simList(devices);
@@ -1489,7 +1551,7 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
-  test('completing adoption clears both transient adoption fields', () => {
+  test('completing adoption clears both transient adoption fields', async () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', {
@@ -1501,7 +1563,7 @@ describe('ensureOwnedDevice: ios', () => {
         parkedCacheKey: 'fingerprint-debug-sim',
       });
 
-      clearIosAdoptionPending(root);
+      await clearIosAdoptionPending(root);
 
       expect(getProject(root)?.platforms?.ios).toEqual({
         deviceUdid: 'U1',
@@ -1517,9 +1579,9 @@ describe('ensureOwnedDevice: ios', () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
-      recordIosSchemeApprovals(root, 'OTHER', ['bridge-->app']);
+      await recordIosSchemeApprovals(root, 'OTHER', ['bridge-->app']);
       expect(getProject(root)?.platforms?.ios?.schemeApprovals).toBeUndefined();
-      recordIosSchemeApprovals(root, 'U1', ['bridge-->app']);
+      await recordIosSchemeApprovals(root, 'U1', ['bridge-->app']);
 
       setExecutor(iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]).exec);
       const device = await ensureOwnedDevice({
@@ -1601,7 +1663,7 @@ describe('ensureOwnedDevice: ios', () => {
     },
   );
 
-  test('the budget gate, capacity check and device setup of a cache hit share one simulator listing', async () => {
+  test('the budget gate, capacity check and device setup of a cache hit share one simctl list', async () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app (iPhone 17 Pro 26.2)' });
@@ -1641,7 +1703,7 @@ describe('ensureOwnedDevice: ios', () => {
         ok: true,
         udid: 'U1',
       });
-      expect(run.filter((cmd) => cmd.includes('simctl list devices'))).toHaveLength(1);
+      expect(run.filter((cmd) => cmd.includes('simctl list'))).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1744,6 +1806,60 @@ describe('ensureOwnedDevice: ios', () => {
 
       expect(calls).toMatchObject([{ udid: 'U1', profile, previouslyManaged: false }]);
       expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('slims an owned simulator with the defaults when ios.simslim is on and no profile is set', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      setExecutor(exec);
+      const calls: unknown[] = [];
+
+      await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslim: 'on' } },
+        reconcileIosSimulator: async (args) => {
+          calls.push(args);
+          return { managed: true, profile: null };
+        },
+      });
+
+      expect(calls).toMatchObject([{ udid: 'U1', profile: null, slimByDefault: true, previouslyManaged: false }]);
+      expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('does not slim, and restores a managed simulator, when ios.simslim is off', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app', simslimManaged: true });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      setExecutor(exec);
+      const calls: unknown[] = [];
+
+      await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslim: 'off' } },
+        reconcileIosSimulator: async (args) => {
+          calls.push(args);
+          return { managed: false, profile: null };
+        },
+      });
+
+      expect(calls).toMatchObject([{ udid: 'U1', profile: null, slimByDefault: false, previouslyManaged: true }]);
+      expect(getProject(root)?.platforms?.ios?.simslimManaged).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1895,6 +2011,295 @@ describe('ensureOwnedDevice: ios', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test('mutes a created simulator after the SimSlim reconcile has rebooted it', async () => {
+    const root = projectDir();
+    try {
+      const profilePath = join(root, 'simslim.json');
+      writeFileSync(profilePath, '{}\n');
+      const profile = realpathSync(profilePath);
+      const { exec } = iosExecutor([]);
+      const events: string[] = [];
+      setExecutor({
+        ...exec,
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            events.push('mute');
+            return JSON.stringify({
+              info: { outcome: 'success' },
+              result: { deviceIdentifier: 'NEW-UDID', volume: 0 },
+            });
+          }
+          if (file === 'xcrun' && args.includes('notifyutil')) {
+            events.push('springboard');
+            return 'com.apple.springboard.finishedstartup 4242';
+          }
+          return exec.runFile(file, args);
+        },
+      });
+      const notes: string[] = [];
+      const result = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslimProfile: 'simslim.json' } },
+        out: (line) => notes.push(line),
+        reconcileIosSimulator: async () => {
+          events.push('reconcile');
+          return { managed: true, profile };
+        },
+      });
+      await result.booting?.done;
+      expect(events.at(-1)).toBe('mute');
+      expect(events.slice(events.indexOf('reconcile'))).toEqual(['reconcile', 'springboard', 'springboard', 'mute']);
+      expect(events.filter((event) => event === 'mute')).toHaveLength(1);
+      expect(notes.some((line) => line.includes('simulator muted'))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    { name: 'mutes a running simulator that the SimSlim reconcile rebooted', pids: [4242, 4300], muted: true },
+    { name: 'leaves the volume of a running simulator SimSlim did not reboot', pids: [4242, 4242], muted: false },
+  ])('$name', async ({ pids, muted }) => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      const events: string[] = [];
+      let reconciled = false;
+      setExecutor({
+        ...exec,
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            events.push('mute');
+            return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+          }
+          if (file === 'xcrun' && args.includes('notifyutil')) {
+            return `com.apple.springboard.finishedstartup ${pids[reconciled ? 1 : 0]}`;
+          }
+          return exec.runFile(file, args);
+        },
+      });
+      await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslim: 'on' } },
+        reconcileIosSimulator: async () => {
+          events.push('reconcile');
+          reconciled = true;
+          return { managed: true, profile: null };
+        },
+      });
+      expect(events).toEqual(muted ? ['reconcile', 'mute'] : ['reconcile']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  describe('SimSlim rerun on a running simulator', () => {
+    function prepareRunning(springBoardPids: number[]) {
+      const root = projectDir();
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      const events: string[] = [];
+      const pids = [...springBoardPids];
+      setExecutor({
+        ...exec,
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            events.push('mute');
+            return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+          }
+          if (file === 'xcrun' && args.includes('notifyutil')) {
+            return `com.apple.springboard.finishedstartup ${pids.length > 1 ? pids.shift() : pids[0]}`;
+          }
+          return exec.runFile(file, args);
+        },
+      });
+      const notes: string[] = [];
+      const run = (settings: Record<string, unknown>) =>
+        ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings,
+          out: (line) => notes.push(line),
+          reconcileIosSimulator: async (args) => {
+            events.push(`reconcile ${args.profile ?? (args.slimByDefault ? 'default' : 'off')}`);
+            return { managed: Boolean(args.profile) || Boolean(args.slimByDefault), profile: args.profile ?? null };
+          },
+        });
+      return { root, events, notes, run };
+    }
+
+    test('skips SimSlim when the profile and the boot match the last reconcile', async () => {
+      const { root, events, notes, run } = prepareRunning([4242]);
+      try {
+        await run({ ios: { simslim: 'on' } });
+        expect(events).toEqual(['reconcile default']);
+        expect(getProject(root)?.platforms?.ios).toMatchObject({
+          simslimManaged: true,
+          simslimApplied: { profile: 'default', springBoardPid: 4242 },
+        });
+        notes.length = 0;
+        events.length = 0;
+
+        const record = await run({ ios: { simslim: 'on' } });
+        expect(events).toEqual([]);
+        expect(notes.some((line) => line.includes('SimSlim'))).toBe(false);
+        expect(record.simslimApplied).toEqual({ profile: 'default', springBoardPid: 4242 });
+        expect(getProject(root)?.platforms?.ios?.simslimApplied).toEqual({ profile: 'default', springBoardPid: 4242 });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('runs SimSlim again when the simulator has a different boot', async () => {
+      const { root, events, run } = prepareRunning([4242]);
+      try {
+        await run({ ios: { simslim: 'on' } });
+        events.length = 0;
+        setDevice(root, 'ios', {
+          ...getProject(root)?.platforms?.ios,
+          simslimApplied: { profile: 'default', springBoardPid: 1111 },
+        });
+        await run({ ios: { simslim: 'on' } });
+        expect(events).toEqual(['reconcile default']);
+        expect(getProject(root)?.platforms?.ios?.simslimApplied).toEqual({ profile: 'default', springBoardPid: 4242 });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('runs SimSlim again when the profile file changes, and skips again once it is applied', async () => {
+      const { root, events, run } = prepareRunning([4242]);
+      try {
+        const profilePath = join(root, 'simslim.json');
+        writeFileSync(profilePath, '{"a":1}\n');
+        const settings = { ios: { simslimProfile: 'simslim.json' } };
+        await run(settings);
+        events.length = 0;
+        await run(settings);
+        expect(events).toEqual([]);
+
+        writeFileSync(profilePath, '{"a":2}\n');
+        await run(settings);
+        expect(events).toEqual([`reconcile ${realpathSync(profilePath)}`]);
+        events.length = 0;
+        await run(settings);
+        expect(events).toEqual([]);
+
+        await run({ ios: { simslim: 'on' } });
+        expect(events).toEqual(['reconcile default']);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('restores stock services when SimSlim is turned off after a skipped rerun', async () => {
+      const { root, events, run } = prepareRunning([4242]);
+      try {
+        await run({ ios: { simslim: 'on' } });
+        await run({ ios: { simslim: 'on' } });
+        expect(events).toEqual(['reconcile default']);
+        events.length = 0;
+        await run({ ios: { simslim: 'off' } });
+        expect(events).toEqual(['reconcile off']);
+        const ios = getProject(root)?.platforms?.ios;
+        expect(ios?.simslimManaged).toBeUndefined();
+        expect(ios?.simslimApplied).toBeUndefined();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('reconciles a shut-down simulator even when its record matches the pid it will report', async () => {
+      const root = projectDir();
+      try {
+        setDevice(root, 'ios', {
+          deviceUdid: 'U1',
+          owned: true,
+          deviceName: 'stim-app',
+          simslimManaged: true,
+          simslimApplied: { profile: 'default', springBoardPid: 4242 },
+        });
+        const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
+        setExecutor({
+          ...exec,
+          runFile(file, args = []) {
+            if (file === 'xcrun' && args[0] === 'devicectl') {
+              return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+            }
+            if (file === 'xcrun' && args.includes('notifyutil')) return 'com.apple.springboard.finishedstartup 4242';
+            return exec.runFile(file, args);
+          },
+        });
+        const reconciled: string[] = [];
+        const result = await ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: { ios: { simslim: 'on' } },
+          reconcileIosSimulator: async (args) => {
+            reconciled.push(args.udid);
+            return { managed: true, profile: null };
+          },
+        });
+        await result.booting?.done;
+        expect(reconciled).toEqual(['U1']);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('does not record a profile when SimSlim is not installed', async () => {
+      const { root } = prepareRunning([4242]);
+      try {
+        setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app', simslimManaged: true });
+        await ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: { ios: { simslim: 'on' } },
+          reconcileIosSimulator: async () => ({ managed: true, profile: null, notInstalled: true }),
+        });
+        expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+        expect(getProject(root)?.platforms?.ios?.simslimApplied).toBeUndefined();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('forgets the applied profile while a reconcile is in flight', async () => {
+      const { root, run } = prepareRunning([4242]);
+      try {
+        await run({ ios: { simslim: 'on' } });
+        const failing = ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: { ios: { simslim: 'off' } },
+          reconcileIosSimulator: async () => {
+            throw new Error('simslim off failed');
+          },
+        });
+        await expect(failing).rejects.toThrow('simslim off failed');
+        expect(getProject(root)?.platforms?.ios).toMatchObject({ simslimManaged: true });
+        expect(getProject(root)?.platforms?.ios?.simslimApplied).toBeUndefined();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
   });
 
   test.each([false, true])('prepares and joins a boot with the requested viewer (reused=%s)', async (reused) => {

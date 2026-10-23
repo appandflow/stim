@@ -73,6 +73,11 @@ suits a single checkout. Give each worktree its own, in the workspace layer or
 the environment: `stim start` refuses with `STIM_BAD_ARG` when another
 workspace reserves the port or another process holds it.
 
+Another process, such as a second Stim home, can take the port between
+Stim's check and the dev server's bind. Without a pin, `stim start` then
+releases the reservation, reserves another free port and starts again, up to
+three attempts. A pinned port and `--remote` starts are not retried.
+
 <StimTabs code={`stim settings set metro.port 25062 --scope workspace`} />
 
 Changing the pin while this workspace's dev server runs is refused until
@@ -168,16 +173,32 @@ client's watches.
 
 `stim ios` and `stim android` open the installed app, then check launch
 evidence. Debug runs observe Metro; when bundling finishes within the wait
-window, Stim also observes three seconds of launch logs. The summary can report
+window, Stim also observes up to three seconds of launch logs, fewer once the
+app's JavaScript reports `Running "<name>"`. The summary can report
 that bundling is still in progress or that launch is unverified. If the wait
 window closes and the app process is gone, the run fails with `the app process
 exited` and the device log's errors instead. Release runs check process
 liveness without Metro.
 
+The wait for the app's bundle request is 20 seconds. An Expo development
+client asks the dev server for its manifest before it asks for the bundle, and
+Expo recomputes the project fingerprint for every manifest request when the
+app uses the fingerprint runtime version policy, so a loaded machine can spend
+most of the window there. Stim records each manifest request
+from the launched platform in the metro log, as `manifest_request_started`,
+`manifest_request_finished` or `manifest_request_failed` at `debug` level, and
+counts it as progress: the wait stays open while a manifest request is in
+flight and for 15 seconds after one was served, up to 60 seconds after the
+launch, whatever the target; a new or adopted emulator already waits 60 seconds. A manifest is not launch evidence. `launched` is `true` or `"bundling"`
+only after the app's bundle request, and a launch that never makes one still
+ends `unverified`. Bare React Native has no manifest request and keeps the
+20-second window.
+
 When the app is already running, from an earlier run or because the install
-was skipped, Stim restarts it the way Xcode's Run does: `simctl terminate` on
-a simulator, `am force-stop` on an emulator or an Android phone, then a fresh
-launch. The launch line reads `restarted running app (was pid <n>)`, and state
+was skipped, Stim restarts it the way Xcode's Run does: `simctl launch
+--terminate-running-process` on a simulator (a separate `simctl terminate` when a
+dev client opens through a URL), `am force-stop` then a fresh launch on an
+emulator or an Android phone. The launch line reads `restarted running app (was pid <n>)`, and state
 held in the running app is lost. An iPhone run already restarts the app through
 devicectl, and remote targets relaunch it through Agent Device. If the running
 app cannot be stopped, the run fails instead of reusing the old process.
@@ -201,6 +222,10 @@ tree. They are labeled separately. Every `stim logs` command, including
 limits. The separate default limit of 20 error records never shortens a stack.
 Use `--source all` for all log sources, or `--json` for raw records. Text
 truncated by the runtime before capture cannot be restored.
+
+A run that builds or reuses an app and then fails before the app is running adds one
+`build` error record with event `run_failed`, the error code and the phase it failed
+in, so `stim logs --errors` lists the failure that `stim status` shows.
 
 Symbolication is best effort. In development, Stim asks the verified workspace's
 Metro `/symbolicate` endpoint to resolve captured JavaScript coordinates, with a
@@ -261,7 +286,7 @@ Stim does not resymbolicate an older error after a recorded Metro rebuild.
 Historical unsymbolicated JS coordinates require
 the matching bundle/source maps, not an unrelated rebuilt Metro bundle.
 
-### Optional app-declared readiness
+### Recommended app-declared readiness
 
 No package or monitoring SDK is required. In a debug app, emit this once at
 startup, before initialization that can block the first screen:
@@ -309,17 +334,22 @@ imported modules, emit `pending` from an earlier app entry module before loading
 that work. An error before `pending` still uses the default check.
 
 Without an observed `pending`, Stim keeps its default three-second stability
-window after bundle delivery. Managed Metro servers report when the native
-bundle response finishes; build-complete output alone does not close an observed
+window after bundle delivery. The window ends early, half a second after the
+app's React Native runtime logs `Running "<name>"` for this launch on either
+platform. A fatal record or an exited process before the window ends still
+fails the launch. An error after it, such as a first render that takes longer
+than that half second to throw, appears in `stim logs --errors`. Managed Metro
+servers report when the native bundle response finishes; build-complete output alone does not close an observed
 request. Without response capture, Stim falls back to the build-complete marker.
 When Android reports queued JavaScript loading, Stim waits for device JavaScript
 activity before starting stability, bounded by the bundle timeout.
 Debug Android launches on an owned emulator that the run creates, or whose
 adoption from the pool it finishes, get a 60-second bundle timeout, reported in
 the verify phase. Existing emulators,
-remote targets, and physical devices keep the 20-second budget. Fatal errors
+remote targets, and physical devices get 20 seconds, extended up to 60 while an
+Expo development client's manifest request is pending or was just served. Fatal errors
 still end verification immediately.
-A `pending` observed before that window closes opts into waiting for `ready`, up
+A `pending` observed before that window closes, early end included, opts into waiting for `ready`, up
 to 30 seconds after the same completion signal.
 Repeated `pending` logs do not extend the deadline. A matching `ready` can end
 the wait early; an app error or process exit interrupts it. A missing `ready`
@@ -329,8 +359,11 @@ Stim reads exact standalone messages from this app's platform-specific device
 log, after the current launch. Stale, other-platform, error-level, and embedded
 example messages are ignored. Unlabelled shared Metro output cannot identify
 which platform is ready. If device-log capture is unavailable or `pending` is
-not captured in time, the default check applies. Release runs and
-`--no-metro-check` do not use this debug-only integration.
+not captured in time, the default check applies. On a simulator or emulator
+hosted on another Mac (`--remote <machine>`), the device log is the copy Stim
+pulls from that Mac during the launch check, so each window waits up to 10
+seconds for the copy to cover it. Release runs and `--no-metro-check` do not use
+this debug-only integration.
 
 This is the app declaring readiness, not visual verification. It does not alter
 the `launched` JSON field: bundle/process evidence remains separate. Continue
@@ -342,7 +375,7 @@ instructions, run `stim guide lifecycle readiness`.
 Copy this prompt into your coding agent:
 
 ```text
-Add optional Stim app-readiness logs to this app. Read `stim guide agent`,
+Add the recommended Stim app-readiness logs to this app. Read `stim guide agent`,
 then follow `stim guide lifecycle readiness` from the installed CLI. If Stim
 is not installed globally, use `npx stim` instead of `stim`.
 

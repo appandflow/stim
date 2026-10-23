@@ -21,7 +21,7 @@ export { quoteUnitWord, unitLines, unitWords, type UnitLine } from './systemd-un
 export { artifactIn, resolveArtifact, storeArtifact, type StoreArtifactOptions } from './artifact-store.ts';
 export { storeArtifactAsync, type AsyncStoreArtifactOptions } from './artifact-store-async.ts';
 export { compiledHelper } from './compiled-helper.ts';
-export { dependencyInstall, reusableDependencies } from './dependency-install.ts';
+export { dependencyInstall, dependencyLockfile, reusableDependencies } from './dependency-install.ts';
 export { createMetroGateway, createMetroBridge, type MetroBridge } from './metro-bridge.ts';
 
 const warnedRelative = new Set<string>();

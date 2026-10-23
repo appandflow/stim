@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -137,7 +139,7 @@ describe('clearDeviceIdleShutdown', () => {
     delete process.env.STIM_HOME;
   });
 
-  test("a run that boots one slot's device forgets only that slot's idle shutdown", () => {
+  test("a run that boots one slot's device forgets only that slot's idle shutdown", async () => {
     const root = join(stimHome, 'app');
     const record = { at: at(0), idleMinutes: 30 };
     writeWorkspaceState(root, {
@@ -145,13 +147,51 @@ describe('clearDeviceIdleShutdown', () => {
       lastUsedAt: at(0),
     });
 
-    clearDeviceIdleShutdown(root, 'ios');
+    await clearDeviceIdleShutdown(root, 'ios');
     expect(readDeviceIdleShutdowns(readWorkspaceState(root))).toEqual({
       'ios:fold': record,
     });
 
-    clearDeviceIdleShutdown(root, 'ios', 'fold');
+    await clearDeviceIdleShutdown(root, 'ios', 'fold');
     expect(readWorkspaceState(root)).toEqual({ lastUsedAt: at(0) });
+  });
+
+  test('a run waits for a workspace state lock held by another process without blocking the event loop', async () => {
+    const root = join(stimHome, 'app');
+    writeWorkspaceState(root, { [DEVICE_IDLE_SHUTDOWN_KEY]: { ios: { at: at(0), idleMinutes: 30 } } });
+    const holder = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `
+          const { withWorkspaceStateLock } = await import(process.argv[1]);
+          withWorkspaceStateLock(process.argv[2], () => {
+            process.stdout.write('held');
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 600);
+          });
+        `,
+        new URL('../workspace/workspace-state.ts', import.meta.url).href,
+        root,
+      ],
+      { stdio: ['ignore', 'pipe', 'inherit'] },
+    );
+    const exited = once(holder, 'exit');
+    try {
+      await once(holder.stdout, 'data');
+      let ticks = 0;
+      const timer = setInterval(() => ticks++, 20);
+      try {
+        await clearDeviceIdleShutdown(root, 'ios');
+      } finally {
+        clearInterval(timer);
+      }
+      expect(ticks).toBeGreaterThan(5);
+      expect(readDeviceIdleShutdowns(readWorkspaceState(root))).toEqual({});
+    } finally {
+      holder.kill('SIGKILL');
+      await exited;
+    }
   });
 });
 

@@ -10,6 +10,7 @@ struct SetupGuideView: View {
   @EnvironmentObject private var actions: ActionCenter
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @ObservedObject private var flags = FeatureFlagStore.shared
+  @AppStorage(AppPreferences.Key.offersTutorial) private var offersTutorial = true
 
   private var step: SetupStep {
     onboarding.guideStep == .phone && !flags.phoneApp ? .check : onboarding.guideStep
@@ -422,12 +423,14 @@ struct SetupGuideView: View {
           .accessibilityLabel([item.title, stateDescription(item)].filter { !$0.isEmpty }.joined(separator: ", "))
         }
       }
-      Button("Take the Tutorial") {
-        onboarding.finishGuide()
-        OpenRequests.shared.showTutorial(.begin)
+      if offersTutorial {
+        Button("Take the Tutorial") {
+          onboarding.finishGuide()
+          OpenRequests.shared.showTutorial(.begin)
+        }
+        .buttonStyle(.stim(.secondary, .regular))
+        .accessibilityLabel("Take the Stim tutorial")
       }
-      .buttonStyle(.stim(.secondary, .regular))
-      .accessibilityLabel("Take the Stim tutorial")
       if onboarding.report?.needsRelaunch == true {
         restartBanner("The app picks its stim when it starts.", action: onboarding.finishAndRestart)
       }

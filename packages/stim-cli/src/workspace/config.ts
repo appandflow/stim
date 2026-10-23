@@ -195,8 +195,8 @@ export function recordIosSchemeApprovals(
   deviceUdid: string,
   schemeApprovals: string[],
   slot = 'default',
-): void {
-  withConfigLock(() => {
+): Promise<void> {
+  return withConfigLockAsync(() => {
     const cfg = loadConfig();
     const ios = deviceSlotPlatforms(cfg?.projects?.[projectPath], slot)?.ios;
     if (!cfg || !ios?.owned || ios.deviceUdid !== deviceUdid) return;

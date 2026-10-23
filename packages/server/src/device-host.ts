@@ -2,7 +2,7 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { isIP, type AddressInfo } from 'node:net';
+import { connect, isIP, type AddressInfo } from 'node:net';
 import { withDirLock, createMetroBridge, type MetroBridge } from '@stim-cli/core';
 import {
   clearClaimChild,
@@ -134,6 +134,24 @@ function hostedDeviceExclusions(records: HostedDeviceSession[]) {
       ? [{ platform: 'ios' as const, key: hostedDeviceId(record.device) }]
       : [],
   );
+}
+
+/** macOS lets 127.0.0.1 bind beside a wildcard listener and takes its loopback traffic, so probe by connecting. */
+function loopbackAccepts(port: number): Promise<boolean> {
+  const accepts = (host: string) =>
+    new Promise<boolean>((resolve) => {
+      const socket = connect({ host, port });
+      const done = (open: boolean) => {
+        socket.destroy();
+        resolve(open);
+      };
+      socket.setTimeout(1000, () => done(true));
+      socket.once('connect', () => done(true));
+      socket.once('error', (error: NodeJS.ErrnoException) =>
+        done(!['ECONNREFUSED', 'EADDRNOTAVAIL', 'EAFNOSUPPORT', 'ENETUNREACH'].includes(error.code ?? '')),
+      );
+    });
+  return Promise.all([accepts('127.0.0.1'), accepts('::1')]).then((open) => open.includes(true));
 }
 
 /** Owns hosted reservations, not build jobs or viewer connections. Native work runs in the packaged CLI child. */
@@ -608,13 +626,26 @@ export class DeviceHost {
         await this.restoreAndroidMetro(record, owned);
         return { result: { port } };
       }
+      const devClientPort = record.platform === 'ios' ? (params.clientMetroPort as number | undefined) : undefined;
       const bridge = createMetroBridge({ peer, gatewayPort: params.gatewayPort, secret: params.secret });
-      const ready = new Promise<number>((resolve, reject) => {
-        bridge.server.once('error', reject);
-        bridge.server.listen(record.metroPort ?? 0, '127.0.0.1', () =>
-          resolve((bridge.server.address() as AddressInfo).port),
+      const inUse = () =>
+        Object.assign(
+          new Error(
+            `Port ${devClientPort} is in use on the hosting Mac, and an Expo dev client loads its bundle from the client's Metro port.`,
+          ),
+          { code: 'device-busy' as const },
         );
-      });
+      const ready = (async () => {
+        if (devClientPort !== undefined && (await loopbackAccepts(devClientPort))) throw inUse();
+        return new Promise<number>((resolve, reject) => {
+          bridge.server.once('error', (error: NodeJS.ErrnoException) =>
+            reject(devClientPort !== undefined && error.code === 'EADDRINUSE' ? inUse() : error),
+          );
+          bridge.server.listen(devClientPort ?? record.metroPort ?? 0, '127.0.0.1', () =>
+            resolve((bridge.server.address() as AddressInfo).port),
+          );
+        });
+      })();
       const metro: NonNullable<OwnedSession['metro']> = {
         bridge,
         ready,
@@ -641,7 +672,10 @@ export class DeviceHost {
         throw error;
       }
     } catch (error) {
-      return refused('action-failed', (error as Error).message);
+      return refused(
+        (error as { code?: unknown }).code === 'device-busy' ? 'device-busy' : 'action-failed',
+        (error as Error).message,
+      );
     }
   }
 
@@ -688,6 +722,39 @@ export class DeviceHost {
         throw new Error('The session lost its Metro approval while restoring.');
     } finally {
       if (owned.data === settled) delete owned.data;
+    }
+  }
+
+  /** Names the ports a new dev-client bridge could not bind, apart from this client's own dev-client bridges. */
+  async metroPorts(client: string, params: unknown): Promise<AppAnswer<{ busy: number[] }>> {
+    if (this.closed || !this.options.allowed(client))
+      return refused('forbidden', 'Current device-host approval is required.');
+    if (
+      !isJsonObject(params) ||
+      !Array.isArray(params.ports) ||
+      params.ports.length > 256 ||
+      params.ports.some((port) => typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535)
+    )
+      return refused('bad-request', 'Metro ports needs at most 256 TCP ports.');
+    try {
+      const ports = [...new Set(params.ports as number[])];
+      const sessions = new Set(readHostedSessions().flatMap((record) => (record.client === client ? [record.id] : [])));
+      const own = new Set(
+        [...this.owned].flatMap(([id, { metro }]) =>
+          sessions.has(id) && metro?.port !== undefined && metro.port === metro.clientMetroPort ? [metro.port] : [],
+        ),
+      );
+      const busy: number[] = [];
+      const queue = ports.filter((port) => !own.has(port));
+      await Promise.all(
+        Array.from({ length: 16 }, async () => {
+          for (let port = queue.shift(); port !== undefined; port = queue.shift())
+            if (await loopbackAccepts(port)) busy.push(port);
+        }),
+      );
+      return { result: { busy: busy.toSorted((a, b) => a - b) } };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
     }
   }
 

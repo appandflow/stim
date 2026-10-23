@@ -63,7 +63,13 @@ import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
 import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
-import { probeDirectories, STARTUP_PROBE_MS, STARTUP_RETRY_MS, type StartupState } from './startup.ts';
+import {
+  probeDirectories,
+  STARTUP_PROBE_MS,
+  STARTUP_RETRY_MS,
+  type StartupCause,
+  type StartupState,
+} from './startup.ts';
 import {
   claimRemoveCommand,
   exclusiveClaimDir,
@@ -237,12 +243,14 @@ export interface ServerOptions {
   /** Whether this machine can host simulators and apps for other machines; only a Mac can. Defaults to running on macOS. */
   hostsDevices?: boolean;
   port: number;
-  /** The Unix socket for this machine's own user; defaults to `$STIM_HOME/server/local.sock`, null for none. */
+  /** The Unix socket for this machine's own user; defaults to core's serverLocalSocket(), null for none. */
   localSocket?: string | null;
   stimCli: string;
   stimVersion: string;
   serverVersion: string;
   env: NodeJS.ProcessEnv;
+  /** The environment now, for builds run for other machines to see tools installed since `env` was built. */
+  currentEnv?: () => NodeJS.ProcessEnv;
   /**
    * The transports that carry phones and other machines to this server. Without them, the server uses a Tailscale
    * transport built from `tailscale`, `tailscaleState` and `tailscaleMonitor`. The server listens on each
@@ -271,6 +279,8 @@ export interface ServerOptions {
   logLimits?: Partial<LogLimits>;
   commandLimits?: Partial<CommandLimits>;
   actionLimits?: Partial<CommandLimits>;
+  /** How many requests one connection, and one tailnet device across its connections, run at a time. */
+  requestLimits?: Partial<RequestLimits>;
   frameLimits?: Partial<FrameLimits>;
   /** False runs no recorder; true by default. The limits say how much footage it keeps. */
   record?: boolean;
@@ -390,7 +400,13 @@ function lastCursor(page: readonly ArchivedWorkspace[]): string | null {
   return last ? archiveCursor(last) : null;
 }
 const STATUS_READ_WAIT_MS = 30_000;
-const MAX_COMMANDS = 4;
+interface RequestLimits {
+  connection: number;
+  device: number;
+}
+const REQUEST_LIMITS: RequestLimits = { connection: 32, device: 16 };
+const MAX_REPORT_WAITS = 16;
+const MAX_RETAINED_PLANS = 4;
 
 function isWorkspaceChangeMethod(method: string): method is 'workspace.files' | 'workspace.diff' {
   return method === 'workspace.files' || method === 'workspace.diff';
@@ -1181,6 +1197,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return foldBuild;
   };
   const running = new Set<() => Promise<void>>();
+  const peerCommands = new Map<string, number>();
+  const requestLimits: RequestLimits = { ...REQUEST_LIMITS, ...options.requestLimits };
   const cancelling = new Pending();
   const logLimits: LogLimits = { ...LOG_LIMITS, ...options.logLimits };
   const commandLimits: CommandLimits = { ...COMMAND_LIMITS, ...options.commandLimits };
@@ -1192,8 +1210,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     method: 'stats' | 'gc' | 'doctor',
     cwd = homedir(),
     platform?: 'ios' | 'android',
+    signal?: AbortSignal,
   ): Promise<DetailsRead> => {
     const abort = new AbortController();
+    if (signal?.aborted) abort.abort();
+    else signal?.addEventListener('abort', () => abort.abort(), { once: true });
     const timeoutMs = options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS;
     let task: Promise<DetailsRead>;
     const cancel = async () => {
@@ -1204,9 +1225,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     task = Promise.resolve()
       .then(async () => {
         const stim = createStim({ projectRoot: cwd, env: options.env });
-        return method === 'doctor'
-          ? await stim.doctor({ signal: abort.signal, platform })
-          : await stim[method]({ signal: abort.signal });
+        if (method === 'doctor') return await stim.doctor({ signal: abort.signal, platform });
+        return method === 'gc'
+          ? await stim.gc({ signal: abort.signal, measureBuildState: false })
+          : await stim.stats({ signal: abort.signal });
       })
       .then(
         (report): DetailsRead => {
@@ -1229,11 +1251,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     running.add(cancel);
     return task;
   };
-  const desktopReports = new DesktopReports((target) =>
+  const desktopReports = new DesktopReports((target, signal) =>
     readDetailsReport(
       target.report,
       target.report === 'doctor' ? target.cwd : undefined,
       target.report === 'doctor' ? target.platform : undefined,
+      signal,
     ),
   );
   const machineDetails = new MachineDetailsCache(() =>
@@ -1350,6 +1373,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const builds = new BuildHost({
     worker: join(dirname(options.stimCli), 'offload-worker.mjs'),
     env: options.env,
+    currentEnv: options.currentEnv,
     limits: options.buildLimits,
     ready: () => startup.state === 'ready',
     finished: ({ client, repo, ok, error, durationMs }) =>
@@ -1523,6 +1547,24 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const replays = new Map<string, Replayable>();
     let keyframeReads = 0;
     const commands = new Set<() => Promise<void>>();
+    const reportWaits = new Set<() => Promise<void>>();
+    const holdSlot = (cancel: () => Promise<void>) => {
+      commands.add(cancel);
+      if (peer !== null) peerCommands.set(peer, (peerCommands.get(peer) ?? 0) + 1);
+    };
+    const releaseSlot = (cancel: () => Promise<void>) => {
+      if (!commands.delete(cancel) || peer === null) return;
+      const left = (peerCommands.get(peer) ?? 1) - 1;
+      if (left > 0) peerCommands.set(peer, left);
+      else peerCommands.delete(peer);
+    };
+    const slotsFull = (needed = 1) =>
+      commands.size + needed > requestLimits.connection ||
+      (peer !== null && (peerCommands.get(peer) ?? 0) + needed > requestLimits.device);
+    const slotsMessage = (needed = 1) =>
+      peer !== null && commands.size + needed <= requestLimits.connection
+        ? `A remote device can run ${requestLimits.device} requests at a time.`
+        : `A connection can run ${requestLimits.connection} requests at a time.`;
     const planRequests = new Map<
       string,
       { cancel: () => Promise<void>; refusal: () => DesktopPlanRefusal | undefined }
@@ -1637,6 +1679,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-plan',
                 'desktop-reports',
                 'desktop-report-platform',
+                'desktop-report-invalidate-target',
                 'desktop-settings',
                 'desktop-settings-schema',
                 'desktop-settings-write',
@@ -2369,15 +2412,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function archiveRead(id: RequestId, read: () => void | Promise<void>): void {
-      if (commands.size >= MAX_COMMANDS) {
-        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (slotsFull()) {
+        return error(id, 'limit-exceeded', slotsMessage());
       }
       let dropped = false;
       const cancel = async () => {
         dropped = true;
         await task;
       };
-      commands.add(cancel);
+      holdSlot(cancel);
       running.add(cancel);
       const task = archiveReads
         .then(() => new Promise<void>((resolve) => setImmediate(resolve)))
@@ -2386,7 +2429,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return undefined;
         })
         .finally(() => {
-          commands.delete(cancel);
+          releaseSlot(cancel);
           running.delete(cancel);
         });
       archiveReads = task.catch(() => socket.close(1011, 'internal error'));
@@ -2435,8 +2478,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const cwd = workspaceDir(id, params.workspace, true);
       if (!cwd) return;
-      if (commands.size >= MAX_COMMANDS) {
-        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (slotsFull()) {
+        return error(id, 'limit-exceeded', slotsMessage());
       }
       const abort = new AbortController();
       let task: Promise<void>;
@@ -2444,7 +2487,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         abort.abort();
         await task;
       };
-      commands.add(cancel);
+      holdSlot(cancel);
       running.add(cancel);
       task = readWorkspaceDiff(
         cwd,
@@ -2464,7 +2507,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           },
         )
         .finally(() => {
-          commands.delete(cancel);
+          releaseSlot(cancel);
           running.delete(cancel);
         });
       return;
@@ -2486,9 +2529,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       read: (signal: AbortSignal) => Promise<Methods[M]['result']>,
       timeoutMs = commandLimits.timeoutMs,
       turn: Promise<void> | null = null,
+      report = false,
     ): { done: Promise<void>; cancel: () => Promise<void> } | null {
-      if (commands.size >= MAX_COMMANDS) {
-        error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (report ? reportWaits.size >= MAX_REPORT_WAITS : slotsFull()) {
+        error(
+          id,
+          'limit-exceeded',
+          report ? `A connection can wait for ${MAX_REPORT_WAITS} reports at a time.` : slotsMessage(),
+        );
         return null;
       }
       const abort = new AbortController();
@@ -2518,14 +2566,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         )
         .finally(() => {
           clearTimeout(deadline);
-          commands.delete(cancel);
+          releaseSlot(cancel);
+          reportWaits.delete(cancel);
           running.delete(cancel);
         });
       const cancel = async () => {
         abort.abort();
         await task;
       };
-      commands.add(cancel);
+      if (report) reportWaits.add(cancel);
+      else holdSlot(cancel);
       running.add(cancel);
       return { done: task, cancel };
     }
@@ -2579,8 +2629,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const { action } = parsed;
       const resolved = registeredWorkspace(action.workspace);
       if ('code' in resolved) return refuseAction(resolved.code, resolved.message);
-      if (commands.size >= MAX_COMMANDS)
-        return refuseAction('limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (slotsFull()) return refuseAction('limit-exceeded', slotsMessage());
       if (busyWorkspaces.has(resolved.dir)) {
         return refuseAction(
           'action-busy',
@@ -2626,7 +2675,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       let finished = false;
       const release = (outcome: CommandOutcome & { unresolved?: boolean }) => {
         if (outcome.unresolved) return;
-        commands.delete(cancel);
+        releaseSlot(cancel);
         persistentActions.delete(cancel);
         running.delete(cancel);
         busyWorkspaces.delete(resolved.dir);
@@ -2648,7 +2697,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         await run.cancel();
         release(await run.drained);
       };
-      commands.add(cancel);
+      holdSlot(cancel);
       persistentActions.add(cancel);
       running.add(cancel);
       void run.outcome.then((outcome) =>
@@ -2787,8 +2836,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       } catch (cause) {
         return error(id, 'bad-request', `Cannot reload this workspace: ${readFailure(cause)}`);
       }
-      if (commands.size >= MAX_COMMANDS)
-        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (slotsFull()) return error(id, 'limit-exceeded', slotsMessage());
       if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
       const subscription = openSubscription(id);
       if (!subscription) return;
@@ -2823,7 +2871,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         },
       });
       const cancel = () => run.cancel();
-      commands.add(cancel);
+      holdSlot(cancel);
       running.add(cancel);
       busyWorkspaces.add(cwd);
       subscriptions.set(subscription, () => {
@@ -2833,7 +2881,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       void run.outcome.then(finish);
       void run.drained.then((outcome) => {
         if (!outcome.unresolved) {
-          commands.delete(cancel);
+          releaseSlot(cancel);
           running.delete(cancel);
           busyWorkspaces.delete(cwd);
           busyWorkspaces.delete(admittedCwd);
@@ -3058,8 +3106,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       } catch (cause) {
         return error(id, 'bad-request', `Cannot ${kind} this workspace: ${readFailure(cause)}`);
       }
-      if (commands.size >= MAX_COMMANDS)
-        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (slotsFull()) return error(id, 'limit-exceeded', slotsMessage());
       if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
       const subscription = openSubscription(id);
       if (!subscription) return;
@@ -3098,7 +3145,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const cancel = async () => {
         await run.cancel();
       };
-      commands.add(cancel);
+      holdSlot(cancel);
       running.add(cancel);
       busyWorkspaces.add(cwd);
       subscriptions.set(subscription, async (): Promise<ProtocolError | void> => {
@@ -3112,7 +3159,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         if (kind === 'gc' || kind === 'worktree-remove' || kind === 'worktree-warm' || kind === 'machine-access')
           desktopReports.invalidate();
         const release = () => {
-          commands.delete(cancel);
+          releaseSlot(cancel);
           running.delete(cancel);
           busyWorkspaces.delete(cwd);
           for (const workspace of admittedWorkspaces) busyWorkspaces.delete(workspace);
@@ -3195,8 +3242,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       } catch (cause) {
         return error(id, 'bad-request', `Cannot change settings here: ${readFailure(cause)}`);
       }
-      if (commands.size >= MAX_COMMANDS)
-        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (slotsFull()) return error(id, 'limit-exceeded', slotsMessage());
       if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
       const { key, action } = params;
       const value = typeof params.value === 'string' ? params.value : undefined;
@@ -3272,7 +3318,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         })
         .finally(() => {
           clearTimeout(deadline);
-          commands.delete(cancel);
+          releaseSlot(cancel);
           running.delete(cancel);
           busyWorkspaces.delete(cwd);
           busyWorkspaces.delete(admittedCwd);
@@ -3292,7 +3338,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         abort.abort();
         await task;
       };
-      commands.add(cancel);
+      holdSlot(cancel);
       running.add(cancel);
       busyWorkspaces.add(cwd);
     }
@@ -3305,7 +3351,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         abort.abort();
         await task;
       };
-      commands.add(cancel);
+      holdSlot(cancel);
       running.add(cancel);
       task = Promise.resolve()
         .then(() => createStim({ projectRoot: cwd, env: options.env }).logs({ ...query, signal: abort.signal }))
@@ -3318,7 +3364,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         )
         .finally(() => {
           clearTimeout(deadline);
-          commands.delete(cancel);
+          releaseSlot(cancel);
           running.delete(cancel);
         });
       return task;
@@ -3364,8 +3410,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const cwd = readDir(id, { workspace, archive });
       if (!cwd) return;
-      if (archive === undefined && commands.size + 2 > MAX_COMMANDS) {
-        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      if (archive === undefined && slotsFull(2)) {
+        return error(id, 'limit-exceeded', slotsMessage(2));
       }
       const slotName = slot ?? 'default';
       const spans = recordedSpans(
@@ -3536,7 +3582,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       method: 'build.plan' | 'desktop.plan.get',
       request?: string,
     ): void {
-      if (request !== undefined && planRequests.size >= MAX_COMMANDS) {
+      if (request !== undefined && planRequests.size >= MAX_RETAINED_PLANS) {
         error(id, 'limit-exceeded', 'Acknowledge retained plan refusals before requesting more previews.');
         return;
       }
@@ -3905,9 +3951,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     function desktopReport(id: RequestId, method: string, params: unknown): void {
-      if (method === 'desktop.reports.invalidate') {
-        if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length))
-          return error(id, 'bad-request', 'desktop.reports.invalidate takes no parameters.');
+      if (
+        method === 'desktop.reports.invalidate' &&
+        (params === undefined || (isJsonObject(params) && !Object.keys(params).length))
+      ) {
         desktopReports.invalidate();
         return send(socket, { id, result: {} });
       }
@@ -3936,6 +3983,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               cwd: resolvePath(String(params.cwd)),
               ...(params.platform === 'ios' || params.platform === 'android' ? { platform: params.platform } : {}),
             };
+      if (method === 'desktop.reports.invalidate') {
+        desktopReports.invalidate(target);
+        return send(socket, { id, result: {} });
+      }
       if (method === 'desktop.reports.get') {
         return void inProcessRead<'desktop.reports.get'>(
           id,
@@ -3946,6 +3997,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             return snapshot;
           },
           options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
+          null,
+          true,
         );
       }
       const subscription = openSubscription(id);
@@ -4127,7 +4180,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                             ? await hostedDevices.logsQuery(session.id, raw)
                             : method === 'device-host.metro.open'
                               ? await hostedDevices.metroOpen(session.id, raw, peer)
-                              : await hostedDevices.metroClose(session.id, raw);
+                              : method === 'device-host.metro.ports'
+                                ? await hostedDevices.metroPorts(session.id, raw)
+                                : await hostedDevices.metroClose(session.id, raw);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
@@ -4333,12 +4388,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       controllers.delete(socket);
       for (const unsubscribe of subscriptions.values()) unsubscribe();
       subscriptions.clear();
-      for (const cancel of commands) {
-        if (persistentActions.has(cancel)) continue;
+      for (const cancel of [...commands, ...reportWaits]) {
+        if (persistentActions.has(cancel)) {
+          releaseSlot(cancel);
+          continue;
+        }
         running.delete(cancel);
         void cancelling.track(cancel());
       }
-      commands.clear();
     });
   }
 
@@ -4549,7 +4606,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         request.headers.origin === undefined &&
         request.headers['sec-fetch-site'] === undefined
       ) {
-        const peerHealth = { version: health.version };
+        const peerHealth = {
+          version: health.version,
+          ...(startup.state === 'ready'
+            ? {}
+            : {
+                startup:
+                  startup.state === 'degraded' ? { state: 'degraded', cause: startup.cause } : { state: 'pending' },
+              }),
+        };
         response
           .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
           .end(JSON.stringify(peerHealth));
@@ -4719,6 +4784,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     startupProbe = probeDirectories(directories, options.env, options.startupProbeMs ?? STARTUP_PROBE_MS, configDir());
     let reason = await startupProbe.result;
+    let cause: StartupCause = 'home-unreadable';
     startupProbe = null;
     if (closing) return settle(startup);
     if (reason === null) {
@@ -4728,6 +4794,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         becomeReady();
       } catch (error) {
         reason = (error as Error).message;
+        cause = 'start-failed';
       }
     }
     if (reason === null) {
@@ -4753,7 +4820,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (startup.state !== 'degraded' || startup.reason !== reason) {
       console.error(`stim-server: listening, but not serving clients until the Stim home answers. ${reason}`);
     }
-    startup = { state: 'degraded', reason };
+    startup = { state: 'degraded', reason, cause };
     settle(startup);
     startupRetry = setTimeout(() => void checkHome(), options.startupRetryMs ?? STARTUP_RETRY_MS);
   };

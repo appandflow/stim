@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { ambientContext } from '@stim-cli/core';
 import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
 import chalk from 'chalk';
@@ -9,16 +11,17 @@ import {
   loadConfig,
   saveConfig,
   setDevice,
-  withConfigLock,
   withConfigLockAsync,
 } from '../workspace/config.ts';
 import { configuredIosSimulatorViewer, type IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
 import { getExecutor } from '../exec.ts';
-import { hostMemoryPressureAdvice, memoryCulpritsUnder, readHostMemoryPressure } from '../host-memory.ts';
+import { hostMemoryPressureAdvice, readHostMemoryPressure, reportMemoryCulprits } from '../host-memory.ts';
 import {
   bootIosSim,
   createOwnedIosSim,
   iosSimulatorFailureAdvice,
+  readSpringBoardPid,
+  waitForSpringBoard,
   listAllIosSims,
   listAllIosSimsAsync,
   type IosSimSnapshot,
@@ -35,7 +38,7 @@ import {
   type SimModel,
 } from '../devices/ios.ts';
 import { adoptParked, dropParked, parkedMaxSetting, readParked, selectParked } from '../devices/sim-pool.ts';
-import { iosSimSlimProfileSetting } from '../workspace/settings.ts';
+import { iosSimSlimDefaultSetting, iosSimSlimProfileSetting } from '../workspace/settings.ts';
 import { teardownParkedIosSim } from '../devices/teardown.ts';
 import { reconcileSimSlim } from './simslim.ts';
 import { withWorkspaceProcessLock } from './workspace-process-lock.ts';
@@ -72,8 +75,8 @@ function startIosBoot(
     async () => {
       out(chalk.dim(phaseLine('device', `booting ${label} (${udid})`)));
       await bootIosSim(udid, { label, out, simulatorApp, env: ambientContext()?.env });
-      await muteBootedSimulator(udid, out);
       await configure();
+      await muteBootedSimulator(udid, out);
     },
     { ...deviceSlotWait, root, out },
   );
@@ -81,8 +84,18 @@ function startIosBoot(
   return { udid, done };
 }
 
+const SPRINGBOARD_MUTE_WAIT_MS = 60000;
+
+// SpringBoard publishes the default volume, 60, every time it starts, and SimSlim
+// reboots the simulator when it applies or removes a profile (#4229). Mute last,
+// once SpringBoard is running again.
 async function muteBootedSimulator(udid: string, out: Notify): Promise<void> {
   try {
+    const springBoard = await waitForSpringBoard(udid, Date.now() + SPRINGBOARD_MUTE_WAIT_MS);
+    if (springBoard.state === 'unreadable') throw new Error(springBoard.reason);
+    if (springBoard.state === 'timed-out') {
+      throw new Error(`SpringBoard did not finish starting within ${SPRINGBOARD_MUTE_WAIT_MS / 1000}s.`);
+    }
     const response: unknown = JSON.parse(
       await getExecutor().runFileAsync(
         'xcrun',
@@ -142,9 +155,11 @@ export async function ensureOwnedIosDevice({
   simSnapshot?: IosSimSnapshot;
 }): Promise<OwnedDeviceRecord> {
   const pressure = readHostMemoryPressure();
-  const memoryAdvice = hostMemoryPressureAdvice(pressure, memoryCulpritsUnder(pressure));
+  const memoryAdvice = hostMemoryPressureAdvice(pressure);
   if (memoryAdvice) out(chalk.yellow(phaseLine('memory', memoryAdvice)));
+  reportMemoryCulprits(pressure, (named) => out(chalk.yellow(phaseLine('memory', named))));
   const simslimProfile = iosSimSlimProfileSetting(settings, settingsRoot);
+  const simslimDefault = iosSimSlimDefaultSetting(settings);
   if (record?.deviceUdid) {
     if (record.owned) {
       const listed = simSnapshot ? simSnapshot.read() : listAllIosSims({ includeUnavailable: true });
@@ -159,13 +174,13 @@ export async function ensureOwnedIosDevice({
       } else {
         const sim = resolved.sim as SimRecord;
         const wantedType = flags.deviceType || settings?.ios?.deviceType;
-        const deviceTypes = await listIosDeviceTypesAsync();
+        const deviceTypes = await listIosDeviceTypesAsync({ snapshot: simSnapshot });
         const mismatch = deviceTypeMismatch(sim.deviceTypeIdentifier, wantedType, deviceTypes);
         if (mismatch) {
           throw new IosDeviceMismatchError(`${mismatch}. Stim will not silently boot a different model.`);
         }
         const versionMismatch = flags.runtimeFlag
-          ? runtimeMismatch(sim.runtime, flags.runtimeFlag, await listIosRuntimesAsync())
+          ? runtimeMismatch(sim.runtime, flags.runtimeFlag, await listIosRuntimesAsync({ snapshot: simSnapshot }))
           : null;
         if (versionMismatch) {
           throw new IosDeviceMismatchError(`${versionMismatch}. Stim will not silently boot a different iOS version.`);
@@ -183,18 +198,21 @@ export async function ensureOwnedIosDevice({
           owned: true,
           deviceName: name,
           ...(record.simslimManaged ? { simslimManaged: true } : {}),
+          ...(record.simslimApplied ? { simslimApplied: record.simslimApplied } : {}),
           ...(record.adopted ? { adopted: true } : {}),
           ...(record.adoptionPending ? { adoptionPending: true } : {}),
           ...(record.parkedCacheKey ? { parkedCacheKey: record.parkedCacheKey } : {}),
           ...(record.schemeApprovals ? { schemeApprovals: record.schemeApprovals } : {}),
         };
-        const configure = async () => {
+        const configure = async (freshBoot: boolean) => {
           if (record.adoptionPending) await resetAdoptedSim(sim.udid, out);
           return configureOwnedIosSim({
             record: updated,
             projectPath,
             slot,
             profile: simslimProfile,
+            slimByDefault: simslimDefault,
+            freshBoot,
             out,
             reconcileIosSimulator,
           });
@@ -208,7 +226,7 @@ export async function ensureOwnedIosDevice({
             ...updated,
             booting: startIosBoot(
               sim.udid,
-              configure,
+              () => configure(true),
               name,
               out,
               flags.simulatorApp,
@@ -218,7 +236,9 @@ export async function ensureOwnedIosDevice({
             ...facts,
           };
         }
-        return { ...(await configure()), ...facts, booted: sim.udid };
+        const { record: configured, rebooted } = await configure(false);
+        if (rebooted) await muteBootedSimulator(sim.udid, out);
+        return { ...configured, ...facts, booted: sim.udid };
       }
     } else {
       const sim = (await listAllIosSimsAsync()).find((s) => s.udid === record.deviceUdid);
@@ -267,6 +287,8 @@ export async function ensureOwnedIosDevice({
           projectPath,
           slot,
           profile: simslimProfile,
+          slimByDefault: simslimDefault,
+          freshBoot: true,
           out,
           reconcileIosSimulator,
         });
@@ -289,7 +311,9 @@ export async function ensureOwnedIosDevice({
       await listAllIosSimsAsync({ includeUnavailable: true }),
     );
     const result = await createOwnedIosSim(label, { suffix }, choice);
-    setDevice(projectPath, 'ios', { deviceUdid: result.udid, owned: true, deviceName: result.name }, slot);
+    await withConfigLockAsync(() =>
+      setDevice(projectPath, 'ios', { deviceUdid: result.udid, owned: true, deviceName: result.name }, slot),
+    );
     return result;
   });
   const newRecord = { deviceUdid: created.udid, owned: true, deviceName: created.name };
@@ -301,6 +325,8 @@ export async function ensureOwnedIosDevice({
         projectPath,
         slot,
         profile: simslimProfile,
+        slimByDefault: simslimDefault,
+        freshBoot: true,
         out,
         reconcileIosSimulator,
       }),
@@ -438,7 +464,7 @@ async function takeParkedIosSim({
       ...(parked.simslimManaged ? { simslimManaged: true } : {}),
       ...(parked.cacheKey ? { parkedCacheKey: parked.cacheKey } : {}),
     };
-    const adopted = adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device });
+    const adopted = await adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device });
     if (!adopted) continue;
     try {
       await renameIosSim(parked.udid, name);
@@ -450,8 +476,8 @@ async function takeParkedIosSim({
   return null;
 }
 
-export function clearIosAdoptionPending(projectPath: string, slot = 'default'): void {
-  withConfigLock(() => {
+export function clearIosAdoptionPending(projectPath: string, slot = 'default'): Promise<void> {
+  return withConfigLockAsync(() => {
     const cfg = loadConfig();
     const ios = deviceSlotPlatforms(cfg?.projects?.[projectPath], slot)?.ios;
     if (!cfg || !ios?.adoptionPending) return;
@@ -462,11 +488,18 @@ export function clearIosAdoptionPending(projectPath: string, slot = 'default'): 
   });
 }
 
+function simslimProfileIdentity(profile: string | null, slimByDefault: boolean): string | null {
+  if (profile) return `profile:${createHash('sha256').update(readFileSync(profile)).digest('hex')}`;
+  return slimByDefault ? 'default' : null;
+}
+
 async function configureOwnedIosSim({
   record,
   projectPath,
   slot,
   profile,
+  slimByDefault,
+  freshBoot,
   out,
   reconcileIosSimulator,
 }: {
@@ -474,31 +507,57 @@ async function configureOwnedIosSim({
   projectPath: string;
   slot?: string;
   profile: string | null;
+  slimByDefault: boolean;
+  freshBoot: boolean;
   out: Notify;
   reconcileIosSimulator: typeof reconcileSimSlim;
-}): Promise<OwnedDeviceRecord> {
+}): Promise<{ record: OwnedDeviceRecord; rebooted: boolean }> {
+  const identity = simslimProfileIdentity(profile, slimByDefault);
+  const slimConfigured = identity !== null || Boolean(record.simslimManaged);
+  const applied = record.simslimApplied;
+  const springBoardBefore = slimConfigured && !freshBoot ? await readSpringBoardPid(record.deviceUdid) : null;
+  if (
+    identity !== null &&
+    record.simslimManaged &&
+    !freshBoot &&
+    applied?.profile === identity &&
+    springBoardBefore !== null &&
+    springBoardBefore === applied.springBoardPid
+  ) {
+    await withConfigLockAsync(() => setDevice(projectPath, 'ios', { ...record }, slot));
+    return { record, rebooted: false };
+  }
+
   if (profile) out(chalk.dim(phaseLine('device', `applying the SimSlim profile to ${record.deviceUdid}`)));
+  else if (slimByDefault)
+    out(chalk.dim(phaseLine('device', `applying SimSlim's default services to ${record.deviceUdid}`)));
   else if (record.simslimManaged)
     out(chalk.dim(phaseLine('device', `restoring stock simulator services on ${record.deviceUdid}`)));
 
   const previouslyManaged = Boolean(record.simslimManaged);
-  if (profile && !record.simslimManaged) {
-    const pending = { ...record, simslimManaged: true };
-    setDevice(projectPath, 'ios', pending, slot);
+  if ((identity !== null && !record.simslimManaged) || applied) {
+    const { simslimApplied: _applied, ...rest } = record;
+    const pending = identity !== null ? { ...rest, simslimManaged: true } : rest;
+    await withConfigLockAsync(() => setDevice(projectPath, 'ios', pending, slot));
     record = pending;
   }
   const result = await reconcileIosSimulator({
     context: ambientContext(),
     udid: record.deviceUdid,
     profile,
+    slimByDefault,
     previouslyManaged,
     out,
   });
   const updated = { ...record };
   if (result.managed) updated.simslimManaged = true;
   else delete updated.simslimManaged;
-  setDevice(projectPath, 'ios', updated, slot);
-  return updated;
+  const springBoardAfter = slimConfigured ? await readSpringBoardPid(record.deviceUdid) : null;
+  if (result.managed && !result.notInstalled && identity !== null && springBoardAfter !== null) {
+    updated.simslimApplied = { profile: identity, springBoardPid: springBoardAfter };
+  }
+  await withConfigLockAsync(() => setDevice(projectPath, 'ios', updated, slot));
+  return { record: updated, rebooted: slimConfigured && springBoardAfter !== springBoardBefore };
 }
 
 export async function ensureIosBooted({
@@ -528,7 +587,7 @@ export async function ensureIosBooted({
     } catch (error) {
       return {
         failed: true,
-        reason: `Simulator ${udid} failed its process-spawn readiness check: ${(error as Error)?.message || error}. ${iosSimulatorFailureAdvice()}`,
+        reason: `Simulator ${udid} failed its process-spawn readiness check: ${(error as Error)?.message || error}. ${await iosSimulatorFailureAdvice()}`,
       };
     }
   };

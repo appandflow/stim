@@ -69,32 +69,39 @@ const size = (
 });
 
 test('corrupt state schedules fresh checks instead of postponing them', () => {
-  expect(due(parseMaintenanceState({ version: 2 }), settings, 0)).toEqual(['pressure', 'size', 'worktree', 'sweep']);
-  expect(due(null, settings, 0)).toEqual(['pressure', 'size', 'worktree', 'sweep']);
+  expect(due(parseMaintenanceState({ version: 2 }), settings, 0)).toEqual([
+    'pressure',
+    'size',
+    'worktree',
+    'sweep',
+    'idle',
+  ]);
+  expect(due(null, settings, 0)).toEqual(['pressure', 'size', 'worktree', 'sweep', 'idle']);
 });
 
 test('each check becomes due at its own interval and a missing stamp does not postpone it', () => {
-  const state = { ...emptyState(), lastAt: { pressure: 0, size: 0, worktree: 0, sweep: 0 } };
+  const state = { ...emptyState(), lastAt: { pressure: 0, size: 0, worktree: 0, sweep: 0, idle: 0 } };
   expect(due(state, settings, 59_999)).toEqual([]);
   expect(due(state, settings, 60_000)).toEqual(['pressure']);
-  expect(due(state, settings, 15 * 60_000)).toEqual(['pressure', 'worktree']);
-  expect(due(state, settings, 3_600_000)).toEqual(['pressure', 'size', 'worktree']);
-  expect(due(state, settings, 24 * 3_600_000)).toEqual(['pressure', 'size', 'worktree', 'sweep']);
-  expect(due({ ...state, lastAt: { pressure: 60_000, worktree: 60_000, sweep: 60_000 } }, settings, 60_000)).toEqual([
-    'size',
-  ]);
+  expect(due(state, settings, 5 * 60_000)).toEqual(['pressure', 'idle']);
+  expect(due(state, settings, 15 * 60_000)).toEqual(['pressure', 'worktree', 'idle']);
+  expect(due(state, settings, 3_600_000)).toEqual(['pressure', 'size', 'worktree', 'idle']);
+  expect(due(state, settings, 24 * 3_600_000)).toEqual(['pressure', 'size', 'worktree', 'sweep', 'idle']);
+  expect(
+    due({ ...state, lastAt: { pressure: 60_000, worktree: 60_000, sweep: 60_000, idle: 60_000 } }, settings, 60_000),
+  ).toEqual(['size']);
 });
 
 test('the age sweep and the worktree check can be turned off and are then never due', () => {
   const off = { ...settings, sweepHours: 0, removeFinishedWorktrees: false };
-  expect(due(null, off, 0)).toEqual(['pressure', 'size']);
-  expect(due(null, { ...settings, sweepHours: 0 }, 0)).toEqual(['pressure', 'size', 'worktree']);
+  expect(due(null, off, 0)).toEqual(['pressure', 'size', 'idle']);
+  expect(due(null, { ...settings, sweepHours: 0 }, 0)).toEqual(['pressure', 'size', 'worktree', 'idle']);
 });
 
 test('a deferred size scan is not retried by every command while the host stays loaded', () => {
   const state = {
     ...emptyState(),
-    lastAt: { pressure: 0, size: 0, worktree: 3_600_000, sweep: 3_600_000 },
+    lastAt: { pressure: 0, size: 0, worktree: 3_600_000, sweep: 3_600_000, idle: 3_700_000 },
     deferredAt: { size: 3_600_000 },
   };
   expect(due(state, settings, 3_600_000 + 299_999)).toEqual(['pressure']);
@@ -105,10 +112,10 @@ test('a stamp from a clock that was ahead does not suppress checks until the clo
   const future = 10 * 3_600_000;
   const state = {
     ...emptyState(),
-    lastAt: { pressure: future, size: future, worktree: future, sweep: future },
+    lastAt: { pressure: future, size: future, worktree: future, sweep: future, idle: future },
     deferredAt: { size: future },
   };
-  expect(due(state, settings, 3_600_000, future)).toEqual(['pressure', 'size', 'worktree', 'sweep']);
+  expect(due(state, settings, 3_600_000, future)).toEqual(['pressure', 'size', 'worktree', 'sweep', 'idle']);
 });
 
 test('maintenance settings reject unknown modes and invalid ranges before they can trigger work', () => {
@@ -116,7 +123,7 @@ test('maintenance settings reject unknown modes and invalid ranges before they c
     ['maintenance.mode', 'act', 'on'],
     ['maintenance.worktreeCheckMinutes', 0, 1],
     ['maintenance.sweepHours', -1, 0],
-    ['maintenance.olderThanDays', 0, 1],
+    ['maintenance.olderThanDays', -1, 0],
     ['maintenance.protectRecentHours', -1, 0],
     ['maintenance.removeFinishedWorktrees', 'yes', false],
     ['maintenance.keep', 'yes', true],

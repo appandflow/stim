@@ -16,11 +16,12 @@ import { peekBudget } from '../budget.ts';
 import { namedBuildMachine, resolveBuildMachine } from '../offload/selection.ts';
 import { readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
 import { peekDeviceSlots } from '../engine/device-capacity.ts';
+import type { IosSimRecord } from '../devices/ios.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
 import { hostingMachines } from './machines.ts';
 import { call, connectHost, requireHostedAppMode, type HostConnection } from './hosted-client.ts';
 import { prepareHostedNative, type HostedNativeTarget } from './hosted-native.ts';
-import { readHostedNative, writeHostedNative } from './ios-state.ts';
+import { readHostedNative, writeHostedNativeAsync } from './ios-state.ts';
 import {
   decideDevicePlacement,
   type EasFallbackCheck,
@@ -130,6 +131,7 @@ export async function automaticDevicePlacement(
     noWait,
     eas,
     signal,
+    localSims,
   }: {
     root: string;
     slot: string;
@@ -140,13 +142,21 @@ export async function automaticDevicePlacement(
     noWait: boolean;
     signal?: AbortSignal;
     eas?: () => Promise<EasFallbackCheck>;
+    /** Available simulators already listed by this run, so the local device count does not list again. */
+    localSims?: IosSimRecord[];
   },
   {
     machines = () => hostingMachines(undefined, signal),
     read = readHostedNative,
-    write = writeHostedNative,
+    write = writeHostedNativeAsync,
     resume = prepareHostedNative,
-    peek = () => peekDeviceSlots({ platform, project: getProject(root), slot }),
+    peek = () =>
+      peekDeviceSlots({
+        platform,
+        project: getProject(root),
+        slot,
+        ...(localSims ? { sources: { sims: localSims } } : {}),
+      }),
     capacity = machineCapacity,
     memory = () => readHostMemoryPressureAsync(undefined, undefined, signal),
     probe = probeHost,
@@ -154,7 +164,7 @@ export async function automaticDevicePlacement(
   }: {
     machines?: () => string[] | null | Promise<string[] | null>;
     read?: typeof readHostedNative;
-    write?: typeof writeHostedNative;
+    write?: (...args: Parameters<typeof writeHostedNativeAsync>) => unknown;
     resume?: typeof prepareHostedNative;
     peek?: () => ReturnType<typeof peekDeviceSlots>;
     capacity?: typeof machineCapacity;
@@ -186,7 +196,7 @@ export async function automaticDevicePlacement(
         skipped: [],
         sticky: true,
       };
-    write(root, slot, null, platform);
+    await write(root, slot, null, platform);
   }
   const devices = peek();
   if (devices.localLive)

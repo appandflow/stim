@@ -26,7 +26,11 @@ HOSTED IOS METRO
   ios --remote <machine> keeps Metro local and needs no start --remote.
   The supervisor watches private gateway requests in workspace state, binds
   only this machine's Tailscale address and accepts only the pinned hosting peer
-  with a per-session secret. The host's bridge is loopback-only. Port and secret
+  with a per-session secret. The host's bridge is loopback-only. For an Expo
+  dev client it listens on this machine's Metro port, which the dev server
+  writes into the manifest. ios --remote starts Metro on a port free on both
+  Macs; a running Metro or a pin on a port the host uses refuses the run before
+  the build. Port and secret
   stay in 0600 workspace state and never appear in status, JSON or logs.
   metro.tunnel and metro.publicUrl are ignored. Supervisor restart recreates
   the recorded gateway; stop or a stopped hosted session closes it. A recorded
@@ -64,9 +68,16 @@ TAILNET-ONLY METRO
 
 BUNDLE WARMUP
   After verifying Metro, \`stim ios\` and \`stim android\` prefetch the
-  platform's development bundle while native work continues. Expo supplies the
-  entry point and bundle options through its manifest; bare React Native uses
-  the standard index entry and development bundle options, including lazy loading.
+  platform's development bundle while native work continues. The prefetch
+  requests the URL of the app's most recent bundle request on that platform,
+  read from this workspace's metro log, so it matches the app's entry point
+  and options and does not ask Expo for its manifest. A recorded URL whose
+  entry file no longer exists under the project root or its ancestors is
+  skipped. Expo computes the
+  runtime version fingerprint for every manifest request. Without a recorded
+  request, Expo supplies the entry point and bundle options through its
+  manifest, and bare React Native uses the standard index entry and
+  development bundle options, including lazy loading.
   Warmup is enabled by default. Set optimizations.metroWarmup=false to disable
   it on the next ios/android command, using the machine or project settings.
   For custom entry points or bundle options, set metro.warmupUrl.ios and/or
@@ -114,7 +125,9 @@ REMOTE DEVICE BACKENDS
   are Apple silicon. The cache key ends in that architecture.
 
   The EAS backend needs eas-cli 21.6.0 or later and an account with EAS
-  Simulator access. An EAS session is billable. Stim prepares the app before
+  Simulator access. An EAS session is billable; Stim has EAS stop each session
+  it creates after remote.easMaxDurationMinutes (default 30), and a later run
+  replaces a session that expired. Stim prepares the app before
   it creates or reconnects the session, so a failed build starts no session
   and the install follows the connection directly. EAS does not inherit the
   proxy credentials. Always tear the session down: \`stop\`,
@@ -167,9 +180,13 @@ WHAT THE SUPERVISOR IS
 
   expo-child and command-child put the Node the app pins (.nvmrc,
   .node-version, .tool-versions nodejs, or package.json volta.node) first
-  on PATH when an nvm, fnm, Volta, asdf or mise install satisfies the pin
-  and the node already on PATH does not; the metro log then records a
-  project_node event naming it. bare-inproc runs on the supervisor's Node.
+  on PATH when an nvm, fnm, Volta, asdf, mise or linked Homebrew
+  node/node@NN install satisfies the pin and the node already on PATH does
+  not; the metro log then records a project_node event naming it. When no
+  install has the version the pin names, the newest install of the pinned
+  major that is not older than the pin stands in, and a node on PATH of
+  that major and not older than the pin is kept. bare-inproc runs on the
+  supervisor's Node.
 
   In expo-child mode, remote intent plus metro.tunnel "expo" makes \`start\` pass
   \`--tunnel\` and EXPO_UNSTABLE_TUNNEL_V2=1 (the legacy ws-tunnel path is

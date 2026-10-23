@@ -1,14 +1,17 @@
+import chalk from 'chalk';
+import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { hostedAndroidStatus, type HostedDeviceSelectors, type HostedAppOffer } from '@stim-cli/core/state';
 import { placeHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
-import { writeHostedAndroid } from '../../device-host/ios-state.ts';
-import { writeWorkspaceLaunch, workspaceDevServerMode } from '../../supervisor/state.ts';
-import { verifyLaunch } from '../../engine/launch-verify.ts';
-import { launchSlotScope, siblingPlatformSlots } from '../../engine/slot-launch.ts';
+import { writeHostedAndroidAsync } from '../../device-host/ios-state.ts';
+import type { writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
+import { LAUNCH_BUNDLING, LAUNCH_FATAL, type verifyLaunch } from '../../engine/launch-verify.ts';
+import type { followHostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
+import { verifyAndroidMetroRun } from './launch.ts';
 import type { PreparedAndroidArtifact } from './artifact.ts';
 import { persistLastBuild, reportAndroidResult, finishAndroidUpload, type ReportAndroidResultArgs } from './result.ts';
 import { androidDevClientScheme } from './support.ts';
 import type { RunAndroidResult, FailExtra } from './types.ts';
-import type { BuildPhase } from '../../engine/build-progress.ts';
+import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
 
 export async function finishHostedAndroidRun({
   target,
@@ -24,6 +27,7 @@ export async function finishHostedAndroidRun({
   place,
   writePlacement,
   verifyLaunch: verify,
+  followLogs,
   writeLaunch,
   readApkPackage,
   resolveDevClientScheme,
@@ -33,6 +37,7 @@ export async function finishHostedAndroidRun({
   fail,
   phase,
   enterPhase,
+  enterActivity,
   out,
   recordBuild,
   ...report
@@ -56,9 +61,10 @@ export async function finishHostedAndroidRun({
   appMode?: HostedAppOffer['mode'];
   selectors: HostedDeviceSelectors;
   place: typeof placeHostedAndroid;
-  writePlacement: typeof writeHostedAndroid;
+  writePlacement: typeof writeHostedAndroidAsync;
   verifyLaunch: typeof verifyLaunch;
-  writeLaunch: typeof writeWorkspaceLaunch;
+  followLogs: typeof followHostedLaunchLogs;
+  writeLaunch: typeof writeWorkspaceLaunchAsync;
   readApkPackage: (path: string | null) => string | null | Promise<string | null>;
   resolveDevClientScheme: typeof androidDevClientScheme;
   now: () => number;
@@ -72,11 +78,16 @@ export async function finishHostedAndroidRun({
   ) => RunAndroidResult;
   phase: (label: unknown, text: string) => void;
   enterPhase: (phase: BuildPhase) => void;
+  enterActivity?: BuildProgress['activity'];
   out: (line: string) => void;
   recordBuild?: Parameters<typeof persistLastBuild>[0]['recordBuild'];
 }): Promise<RunAndroidResult> {
   const packageName = artifact.androidPackage ?? (await readApkPackage(artifact.apkPath));
   if (!artifact.apkPath || !packageName) return fail('STIM_INSTALL_FAILED', 'The built APK has no package identity.');
+  const devClientScheme =
+    appMode === 'development' && isExpo
+      ? ((await resolveDevClientScheme(root, artifact.apkPath)) ?? undefined)
+      : undefined;
   const launchedAt = now();
   try {
     const run = await place(target, {
@@ -89,15 +100,13 @@ export async function finishHostedAndroidRun({
       ...(appMode === 'process' ? { mode: appMode } : {}),
       metroPort,
       selectors,
-      ...(appMode === 'development' && isExpo
-        ? { devClientScheme: (await resolveDevClientScheme(root, artifact.apkPath)) ?? undefined }
-        : {}),
+      ...(appMode === 'development' && isExpo ? { devClientScheme } : {}),
       reserved: (placement) => writePlacement(root, slot, placement),
       note: out,
       enterPhase,
     });
-    writePlacement(root, slot, run.placement);
-    writeLaunch(
+    await writePlacement(root, slot, run.placement);
+    await writeLaunch(
       root,
       'android',
       {
@@ -111,24 +120,44 @@ export async function finishHostedAndroidRun({
       slot,
     );
     let launched: true | 'bundling' | 'unverified' = run.launched;
+    let launchWarning: string | undefined;
     if (appMode === 'development') {
-      const evidence = await verify({
-        requireBundleResponse: true,
-        platform: 'android',
-        logsDir: logsDir ?? undefined,
-        since: launchedAt,
-        metroPort,
-        mode: workspaceDevServerMode(root, isExpo),
-        slot: launchSlotScope(root, slot),
-        platformShared: (await siblingPlatformSlots(root, 'android', slot)).length > 0,
-      });
-      if (evidence.fatal)
+      const hostedLogs = followLogs(root, slot, 'android', launchedAt);
+      let verification;
+      try {
+        verification = await verifyAndroidMetroRun({
+          root,
+          slot,
+          remoteDevice: false,
+          verifyLaunched: verify,
+          serial: run.placement.device?.serial ?? '',
+          androidPackage: packageName,
+          metroCheck: report.metroCheck,
+          logsDir: logsDir ?? '',
+          launchedAt,
+          metroPort,
+          isExpo,
+          physical: false,
+          device: {},
+          scheme: devClientScheme,
+          phase,
+          enterActivity,
+          hostedLogs,
+          hostedRunCommand: `stim android --remote ${run.placement.selected}${slot === 'default' ? '' : ` --slot ${slot}`}`,
+        });
+      } finally {
+        hostedLogs.stop();
+      }
+      if (verification.state === LAUNCH_FATAL)
         return fail(
           'STIM_LAUNCH_FAILED',
-          'Metro could not deliver the hosted app bundle.',
-          'Run stim logs --errors and fix the bundle error.',
+          'The app failed its launch readiness check.',
+          `Read the launch error above or run \`stim logs --errors\`. The full timeline is in ${logsDir}.`,
+          { lastBuildStatus: true },
         );
-      launched = evidence.verified ? true : evidence.requested ? 'bundling' : 'unverified';
+      launched =
+        verification.state === true ? true : verification.state === LAUNCH_BUNDLING ? 'bundling' : 'unverified';
+      launchWarning = verification.warning;
     }
     if (launched === 'unverified')
       out(
@@ -143,11 +172,17 @@ export async function finishHostedAndroidRun({
       record: report.record,
       startedAt,
       durationMs: now() - started,
-      status: 'success',
+      status: 'ok',
       out,
     });
     await finishAndroidUpload(artifact.uploadPending, artifact.remote, phase);
     await artifact.providerUpload;
+    await settleFingerprintCheck(
+      artifact.fingerprintCheck,
+      'android',
+      (line) => phase('fingerprint', chalk.yellow(line)),
+      (entry) => report.writer.write(entry),
+    );
     const facts = reportAndroidResult({
       ...report,
       out,
@@ -166,6 +201,7 @@ export async function finishHostedAndroidRun({
       remote: artifact.remote,
       providerName: artifact.providerName,
       launchState: launched,
+      launchWarning,
       launched: {},
       ccache: artifact.ccache,
       durationMs: now() - started,

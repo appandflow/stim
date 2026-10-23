@@ -14,7 +14,7 @@ import Testing
       #"{"mode":"on","lastPass":{"startedAt":1791256709802,"mode":"on","freedBytes":1288490188,"actions":3,"blocked":[]}}"#
     ).maintenance
     #expect(status?.cleansAutomatically == true)
-    #expect(status?.lastPassLine?.contains("3 actions") == true)
+    #expect(!MaintenanceStatus.asksAboutDiskPressure(status))
   }
 
   @Test func reportOffInvalidAndBlockedLeaveCleanupToTheApp() throws {
@@ -22,8 +22,19 @@ import Testing
       #"{"mode":"report"}"#, #"{"mode":"off"}"#, #"{"mode":"on","invalid":"maintenance.mode: bad"}"#,
       #"{"mode":"on","claim":{"unresolved":"x","removeCommand":"y"}}"#,
     ] {
-      #expect(try payload(block).maintenance?.cleansAutomatically == false, "\(block)")
+      let status = try payload(block).maintenance
+      #expect(status?.cleansAutomatically == false, "\(block)")
+      #expect(MaintenanceStatus.asksAboutDiskPressure(status), "\(block)")
     }
+  }
+
+  @Test func aBlockedPassOrAnOlderStimAsksAboutDiskPressure() throws {
+    let blocked = try payload(
+      #"{"mode":"on","lastPass":{"startedAt":1,"mode":"on","freedBytes":0,"actions":0,"blocked":["no reclaimable disk targets"]}}"#
+    ).maintenance
+    #expect(MaintenanceStatus.asksAboutDiskPressure(blocked))
+    #expect(MaintenanceStatus.asksAboutDiskPressure(nil))
+    #expect(!MaintenanceStatus.asksAboutDiskPressure(try payload(#"{"mode":"on"}"#).maintenance))
   }
 
   @Test func anOlderStimOrAMalformedBlockReportsNoMaintenance() throws {
@@ -39,12 +50,5 @@ import Testing
     #expect(status?.memoryCulprits.map(\.name) == ["fseventsd", "Xcode"])
     #expect(status?.memoryCulprits.first?.command == "sudo killall fseventsd")
     #expect(try payload(#"{"mode":"on","pressure":null}"#).maintenance?.memoryCulprits.isEmpty == true)
-  }
-
-  @Test func aReportPassHasNoSummaryLine() throws {
-    let status = try payload(
-      #"{"mode":"report","lastPass":{"startedAt":1,"mode":"report","freedBytes":0,"actions":2,"blocked":[]}}"#
-    ).maintenance
-    #expect(status?.lastPassLine == nil)
   }
 }

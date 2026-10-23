@@ -670,8 +670,8 @@ export async function deleteProjectDevices(
             ...('project' in d ? { owner: { projectPath: d.project, slot: d.slot } } : {}),
             ...('project' in d
               ? {
-                  onRemoved: () => {
-                    if (clearDevice(d.project, d.kind, d.slot, d.id))
+                  onRemoved: async () => {
+                    if (await withConfigLockAsync(() => clearDevice(d.project, d.kind, d.slot, d.id)))
                       output.log(chalk.dim(`  cleared the ${d.kind} record for ${d.project}`));
                   },
                 }
@@ -701,7 +701,7 @@ export async function deleteProjectDevices(
   for (const d of staleDevices) {
     const status = await reap(d);
     if (d.kind === 'ios' && (status === 'torn-down' || status === 'missing')) {
-      clearDevice(d.project, d.kind, d.slot, d.id);
+      await withConfigLockAsync(() => clearDevice(d.project, d.kind, d.slot, d.id));
       output.log(chalk.dim(`  cleared the ${d.kind} record for ${d.project}`));
     }
   }

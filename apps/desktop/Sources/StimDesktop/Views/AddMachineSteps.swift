@@ -17,34 +17,43 @@ struct AddMachineSteps: View {
   private var tools: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
       Text("Tools on \(name)").font(.stim(.title))
-      Text("Compared with this Mac. Only a red row stops Next; an amber row says what it costs.")
-        .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      Text(
+        "Compared with this Mac. A red row means that capability will not work there yet; an amber row says what it costs. None of them stops Next."
+      )
+      .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      let remoteIsNewer = model.installStatus.flatMap { model.machines?.install(for: $0) }?.block?.remoteIsNewer == true
       ForEach(model.tools) { tool in
+        let staleAdvice = tool.id == "stim-build" && remoteIsNewer
         VStack(alignment: .leading, spacing: Space.xs) {
           Label(tool.title, systemImage: icon(tool)).font(.stim(.body, weight: .semibold))
             .foregroundStyle(color(tool))
           if let detail = tool.detail {
             Text(detail).font(.stim(.footnote)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
           }
-          if let consequence = tool.consequence {
+          if let consequence = tool.consequence, !staleAdvice {
             Text(consequence).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
               .fixedSize(horizontal: false, vertical: true)
           }
-          if let fix = tool.state.fix {
+          if let fix = tool.state.fix, !staleAdvice {
             Text(tool.onThisMac ? "Problem on this Mac:" : "Fix for \(name):")
               .font(.stim(.footnote, weight: .semibold))
             ForEach(Array(fix.split(separator: "\n").map(String.init).enumerated()), id: \.offset) { _, line in
               if wizardFixIsCommand(line) {
-                CopyableCommand(command: line)
+                CopyableCommand(command: line, runsOn: tool.onThisMac ? nil : name)
               } else {
                 Text(line).font(.stim(.footnote)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
               }
             }
           }
           if tool.id == "stim-build" {
-            MachineUpdateLine(phase: model.machineEntry.flatMap { model.machines?.updates[$0] }, needed: tool.state.fix != nil) {
+            MachineUpdateLine(
+              machine: model.machineEntry ?? name, phase: model.machineEntry.flatMap { model.machines?.updates[$0] },
+              install: model.installStatus.flatMap { model.machines?.install(for: $0) }
+            ) {
               Task {
-                if let entry = model.machineEntry { await model.machines?.update(entry, checkout: model.doctorPath) }
+                if let entry = model.machineEntry {
+                  await model.machines?.update(entry, checkout: model.doctorPath, status: model.installStatus)
+                }
                 await model.refreshTools()
               }
             }
@@ -75,10 +84,8 @@ struct AddMachineSteps: View {
             timeRow("Build", timings.workerMs)
             timeRow("Download / fetch", timings.fetchMs)
             timeRow("Total", timings.totalMs)
-            if let local = sample.test.localMs {
-              Text("This Mac can still build it: \(sampleDuration(local))").foregroundStyle(Palette.success)
-              Text(speedComparison(machine: name, offloadMs: timings.totalMs, localMs: local))
-            }
+            Text("The first build on a new machine is cold, so later builds are faster.").font(.stim(.footnote))
+              .foregroundStyle(Palette.secondary)
           }
         }
         if !sample.lines.isEmpty {
@@ -109,9 +116,7 @@ struct AddMachineSteps: View {
     case .preparingSample: Text("Preparing the sample app").foregroundStyle(Palette.secondary)
     case .ready: Text("The sample app is ready.")
     case .offloading(let phase): Text("Building on \(name): \(phase)").foregroundStyle(Palette.secondary)
-    case .offloaded: Text("The offloaded sample launched.").foregroundStyle(Palette.success)
-    case .localBuilding: Text("Building on this Mac to prove the fallback path.")
-    case .done: Label("Both test builds passed", systemImage: "checkmark.circle.fill").foregroundStyle(Palette.success)
+    case .done: Label("Test build passed on \(name)", systemImage: "checkmark.circle.fill").foregroundStyle(Palette.success)
     case .failed(let code, let message, let remedy):
       Text(code).font(.stim(.body, mono: true)).foregroundStyle(Palette.error)
       Text(message).foregroundStyle(Palette.error).textSelection(.enabled)
@@ -134,7 +139,7 @@ struct AddMachineSteps: View {
       }
       if model.wizard.capabilities.contains(.build), let machine = model.machineEntry {
         tryIt(machine)
-        card("Builds", detail: "Auto: when this Mac is busy. Always: prefer \(name). Never: build here.") {
+        card("Builds", detail: buildsDetail) {
           Picker("Builds", selection: $model.mode) {
             ForEach(WizardMode.allCases, id: \.self) { Text($0.title).tag($0) }
           }
@@ -142,7 +147,7 @@ struct AddMachineSteps: View {
         }
       }
       if model.choosesSimulators, let machine = model.machineEntry {
-        card("Simulators", detail: "Auto: on \(name) when this Mac is full.") {
+        card("Simulators", detail: simulatorsDetail) {
           Picker("Simulators", selection: $model.simulators) {
             ForEach(SimulatorPlacement.allCases, id: \.self) { choice in
               Text(choice.title(machine: name)).tag(Optional(choice))
@@ -163,17 +168,36 @@ struct AddMachineSteps: View {
     }
   }
 
-  private func card<Content: View>(_ title: String, detail: String, @ViewBuilder content: () -> Content) -> some View {
+  private func card<Content: View>(_ title: String, detail: String?, @ViewBuilder content: () -> Content) -> some View {
     VStack(alignment: .leading, spacing: Space.md) {
       Text(title).font(.stim(.headline))
       content()
-      Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-        .fixedSize(horizontal: false, vertical: true)
+      if let detail {
+        Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(Space.lg)
     .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
     .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+  }
+
+  private var buildsDetail: String {
+    switch model.mode {
+    case .auto: return "Builds run on \(name) when this Mac is busy."
+    case .force: return "Builds run on \(name) whenever it can take them, and on this Mac when it can't."
+    case .off: return "Builds run on this Mac."
+    }
+  }
+
+  private var simulatorsDetail: String? {
+    switch model.simulators {
+    case .thisMac?: return "Simulators run on this Mac."
+    case .auto?: return "Simulators run on \(name) when this Mac is full or busy."
+    case .always?: return "Simulators always run on \(name)."
+    case nil: return nil
+    }
   }
 
   private func tryIt(_ machine: String) -> some View {
@@ -210,7 +234,7 @@ struct AddMachineSteps: View {
   }
   private func icon(_ tool: WizardTool) -> String {
     switch tool.state {
-    case .ok: return "checkmark.circle.fill"
+    case .ok: return tool.warns ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
     case .missing, .mismatch: return tool.blocks ? "xmark.circle.fill" : "exclamationmark.triangle.fill"
     case .checking: return "clock"
     case .busy, .notNeeded: return "minus.circle"
@@ -218,7 +242,7 @@ struct AddMachineSteps: View {
   }
   private func color(_ tool: WizardTool) -> Color {
     switch tool.state {
-    case .ok: return Palette.success
+    case .ok: return tool.warns ? Palette.warning : Palette.success
     case .missing, .mismatch: return tool.blocks ? Palette.error : Palette.warning
     default: return Palette.secondary
     }

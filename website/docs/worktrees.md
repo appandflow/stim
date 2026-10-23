@@ -41,7 +41,10 @@ names; warm refuses with the exact Git command to run when that branch has no
 worktree or `HEAD` is detached. It copies missing
 ignored entries, including installed dependencies, Pods, native build output,
 `.env`, and local configuration files. APFS clones keep copies space-efficient
-where supported; a normal byte copy is used when cloning is unavailable.
+where supported; a normal byte copy is used when cloning is unavailable. On
+macOS with the Command Line Tools, an ignored directory such as `node_modules`
+or `ios/Pods` on the same APFS volume is cloned in one step, so even a large
+one takes seconds instead of minutes.
 Copies go directly to the destination with no intermediate staging. Keep the
 source checkout and the linked worktree on the same volume to benefit from CoW;
 `STIM_TMPDIR` and `tempDir` do not affect warming.
@@ -74,9 +77,8 @@ Concurrent files can be overwritten or removed.
 Stim excludes:
 
 - Nested registered Git worktrees, including ignored parents containing them.
-- `.DS_Store` files and any `.DerivedData`, `.idea`, `.jj`, or `.pnpm-store` directory, including inside newly copied directories. A project-local pnpm store duplicates the global one, and pnpm refills it when it needs to.
-- `android/build/generated/autolinking`, including in nested apps, so Gradle
-  regenerates paths for the new checkout.
+- Ignored entries named `.DS_Store`, `.DerivedData`, `.idea`, `.jj`, or `.pnpm-store`, and `android/build/generated/autolinking`.
+- From a copied directory, these known paths: `.pnpm-store` in `node_modules` (a project-local pnpm store duplicates the global one, and pnpm refills it when it needs to), `android/build/generated/autolinking` under a copied `android`, `android/build`, or `android/build/generated` (Gradle regenerates it for the new checkout), and `expo-modules-jsi/apple/.DerivedData` in `node_modules`, hoisted or in the pnpm virtual store (Xcode build state that records the source checkout's paths). Stim does not walk copied directories, so a `.DS_Store` or `.idea` inside one stays, and so do these paths inside an ignored directory that Git reports above those names, such as an app directory with no tracked files.
 - Paths matched by the source checkout's nonempty `.worktreeexclude`, or its
   resolved `worktree.exclude` setting when that file is absent or empty.
 - Destination paths that overlap a registered nested worktree or have symlink
@@ -265,6 +267,20 @@ even with `--force`; unlock it first. Both checks run before any resource is
 reclaimed. Untracked `.watchman-cookie-*` files, which watchman writes into the
 roots it watches, do not count as work; removal deletes them.
 
+Deleting `node_modules`, `ios/Pods` and build outputs can take most of a
+removal. Before git removes the worktree, Stim renames its ignored directories
+into `$STIM_HOME/trash`, which takes no time on the same volume, and a
+detached, low-priority `rm` deletes them after the command returns, so disk is
+freed a little later. Through the [programmatic API](./programmatic-api.md),
+the trash is deleted before `removeWorktree` resolves. When git refuses the
+removal, the directories are moved back. On Windows, or when `$STIM_HOME` is on another volume than the worktree,
+git deletes them as before. `stim gc` reports what is left in the trash, and
+`stim gc --delete` deletes the entries Stim wrote there (a `remove-*` directory
+with a `trash.json`) whose worktree is gone, including those of an interrupted
+removal, and keeps anything else. An entry whose worktree still exists, because
+the removal was killed before git ran, stays until you run `stim worktree
+remove` on that worktree again.
+
 Git-created branches stay. An existing Stim ownership record permits deleting
 a branch only when it has no unique commits.
 
@@ -309,8 +325,17 @@ stim gc --delete --worktrees --older-than 3`}
 />
 
 Automatic maintenance (`maintenance.mode`, on by default) removes finished
-worktrees on its own, by the same rules as `gc --delete`; turn that off with
+worktrees on its own, by the same rules as `gc --delete`. Turn that off with
 `maintenance.removeFinishedWorktrees false`.
+
+With `maintenance.removeIdleWorktrees true`, which is off by default, its daily
+age sweep also removes clean, pushed worktrees whose branch is not merged once
+they are unused for `maintenance.olderThanDays` (7 days), as
+`gc --delete --worktrees --older-than 7` does. Unused means no Stim command ran
+there, so a worktree you edit without running `stim` counts as unused once its
+git activity is older than `gc.worktreeGraceMinutes`, and removal takes its
+git-ignored files, such as `.env.local`, with it. Pin a worktree with
+`maintenance.keep`.
 
 `gc` lists every linked worktree that has a Stim workspace, and every other
 linked worktree of a registered project's repository, and says why each one
@@ -372,7 +397,9 @@ holds nothing git would lose, but looks just like a worktree created a minute
 ago, so plain `gc --delete` keeps it. `--worktrees` removes it once it is idle:
 by its last Stim use when one is recorded, else by its git and Stim activity
 (the same sources as the grace period below) being older than `--older-than`
-days. Automatic maintenance removes it only at disk pressure level 3, once
+days. Automatic maintenance removes it the same way in its daily age sweep,
+after `maintenance.olderThanDays`, only with `maintenance.removeIdleWorktrees`
+(off by default), and at disk pressure level 3 once
 that activity is older than `maintenance.pressureProtectMinutes`, and never
 sooner than 5 minutes after it, even when that setting is 0. Before
 removing it, gc checks again that its HEAD did not move and that it is still

@@ -110,6 +110,7 @@ final class TipCoordinator: ObservableObject {
     inputs.pairedPhones = ServerController.shared.pairedPhoneCount
     inputs.phoneApp = FeatureFlags.isEnabled(.phoneApp)
     inputs.tutorialCompleted = tutorial.completed
+    inputs.tutorialOffered = AppPreferences.offersTutorial(defaults)
     inputs.sidebar = SidebarPreferences().options
     inputs.rows = status.sidebarList(inputs.sidebar).count
     inputs.workspaces = status.payload?.environments ?? []

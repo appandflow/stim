@@ -111,6 +111,19 @@ export function parseLogcatLine(
   };
 }
 
+export const isAndroidCrashText = (text: string): boolean => /FATAL EXCEPTION:|signal \d+ \(/.test(text);
+
+export function androidLogGroups(entries: NdjsonRecord[]): NdjsonRecord[][] {
+  const groups: NdjsonRecord[][] = [];
+  for (const entry of entries) {
+    const last = groups.at(-1);
+    if (!last || entry.proc !== last.at(-1)?.proc || /^\s*(?:FATAL EXCEPTION:|\*\*\* \*\*\*)/.test(entry.msg ?? ''))
+      groups.push([entry]);
+    else last.push(entry);
+  }
+  return groups;
+}
+
 export function logcatArgs(serial: string, pid: number | string): string[] {
   return ['-s', serial, 'logcat', '--pid', String(pid), '-v', 'time,epoch'];
 }

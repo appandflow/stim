@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import { workspaceId } from '@stim-cli/core';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { captureProcessToken } from '../process-identity.ts';
+import { processGroupAlive } from '../ownership-claim.ts';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { once } from 'node:events';
@@ -1714,6 +1715,11 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
 
     const failure = JSON.parse(result.logs[0] ?? '');
     expect(failure.code).toBe('STIM_CLAIM_UNAVAILABLE');
+    expect(failure.message).toMatch(
+      new RegExp(
+        `^Could not record supervisor pid ${IMPOSSIBLE_PID} before .*Could not confirm cleanup of supervisor pid ${IMPOSSIBLE_PID}`,
+      ),
+    );
     expect(failure.remedy).toContain(String(IMPOSSIBLE_PID));
     expect(failure.remedy).toContain(join(workspaceLogsDir(root), '..', 'metro-start.lock'));
   });
@@ -2229,6 +2235,149 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       expect(retryArgs.includes('--reset-cache')).toBe(false);
     },
   );
+
+  describe('another process takes the reserved port while the dev server starts', () => {
+    const takenPort = 8156;
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+    const bindError = (port: number) => `metro: Error: listen EADDRINUSE: address already in use :::${port}\n`;
+
+    function racingExecutor(exitLog: (port: number) => string, losingSpawns = 1) {
+      const exec = metroExecutor({ listeners: {} });
+      const listening = new Set<number>();
+      const base = exec.runQuiet.bind(exec);
+      exec.runQuiet = (cmd) => {
+        const listener = /lsof -nP -iTCP:(\d+)/.exec(cmd);
+        if (listener && listening.has(Number(listener[1]))) return String(process.pid);
+        return base(cmd);
+      };
+      exec.spawn = (cmd, args, opts) => {
+        exec.calls.spawn.push({ cmd, args, opts });
+        const port = Number(args[args.indexOf('--port') + 1]);
+        const handlers: Record<string, (...a: unknown[]) => void> = {};
+        if (exec.calls.spawn.length <= losingSpawns) {
+          const rival = createServer((_req, res) => res.end('another home'));
+          openServers.push(rival);
+          rival.listen(port, '127.0.0.1');
+          writeFileSync(supervisorLogFile(root), exitLog(port));
+          setTimeout(() => handlers.exit?.(1, null), 5);
+        } else {
+          const metro = createServer((_req, res) => res.end('packager-status:running'));
+          openServers.push(metro);
+          metro.listen(port, '127.0.0.1');
+          listening.add(port);
+          writeWorkspaceState(root, {
+            supervisor: {
+              pid: process.pid,
+              processToken: captureProcessToken(process.pid),
+              port,
+              mode: 'bare-inproc',
+              startedAt: 'T',
+            },
+          });
+        }
+        return {
+          pid: process.pid,
+          unref() {},
+          on(event, cb) {
+            handlers[event] = cb;
+          },
+        };
+      };
+      return exec;
+    }
+
+    test('start moves to a free port and starts again', async () => {
+      const exec = racingExecutor(bindError);
+      setExecutor(exec);
+      upsertProject(root, { metroPort: takenPort });
+
+      const result = await runAction({ json: true, wait: '30' });
+
+      expect(result.exitCode).toBe(null);
+      const facts = JSON.parse(result.logs.at(-1) ?? '');
+      expect(facts.port).not.toBe(takenPort);
+      expect(facts.alreadyRunning).toBe(false);
+      expect(getProject(root)?.metroPort).toBe(facts.port);
+      expect(exec.calls.spawn).toHaveLength(2);
+      expect(exec.calls.spawn[1]?.args).toContain(String(facts.port));
+      expect(result.errs.join('\n')).toContain(`Port ${takenPort} was taken by another process`);
+    });
+
+    test('a lost supervisor whose helper is still exiting is waited out and the port race retried', async () => {
+      const exec = racingExecutor(bindError);
+      const stub = exec.spawn.bind(exec);
+      const real = getExecutor();
+      let supervisorPid: number | undefined;
+      exec.spawn = (cmd, args, opts) => {
+        if (exec.calls.spawn.length > 0) return stub(cmd, args, opts);
+        exec.calls.spawn.push({ cmd, args, opts });
+        const port = Number(args[args.indexOf('--port') + 1]);
+        const child = real.spawn(
+          process.execPath,
+          [
+            '-e',
+            `require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 2000)'], { stdio: 'ignore' }); process.stdout.write(${JSON.stringify(bindError(port))}); process.exit(1);`,
+          ],
+          opts,
+        );
+        supervisorPid = child.pid;
+        return child;
+      };
+      setExecutor(exec);
+      upsertProject(root, { metroPort: takenPort });
+
+      const result = await runAction({ json: true, wait: '30' });
+
+      expect(result.exitCode).toBe(null);
+      expect(JSON.parse(result.logs.at(-1) ?? '').port).not.toBe(takenPort);
+      expect(exec.calls.spawn).toHaveLength(2);
+      assert(supervisorPid);
+      expect(processGroupAlive(supervisorPid)).toBe(false);
+    }, 30_000);
+
+    test('start gives up after three lost ports and names the race', async () => {
+      const exec = racingExecutor(bindError, Infinity);
+      setExecutor(exec);
+      upsertProject(root, { metroPort: takenPort });
+
+      const result = await runAction({ json: true, wait: '30' });
+
+      expect(result.exitCode).toBe(1);
+      const failure = JSON.parse(result.logs.at(-1) ?? '');
+      expect(failure.code).toBe('STIM_SUPERVISOR_EXITED');
+      expect(failure.remedy).toContain('3 times in a row');
+      expect(exec.calls.spawn).toHaveLength(3);
+    });
+
+    test('a pinned metro.port stays put and the failure is reported', async () => {
+      vi.stubEnv('STIM_METRO_PORT', String(takenPort));
+      const exec = racingExecutor(bindError);
+      setExecutor(exec);
+
+      const result = await runAction({ json: true, wait: '30' });
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.logs.at(-1) ?? '').code).toBe('STIM_SUPERVISOR_EXITED');
+      expect(exec.calls.spawn).toHaveLength(1);
+      expect(getProject(root)?.metroPort).toBe(takenPort);
+    });
+
+    test('a supervisor that exits for another reason is not retried', async () => {
+      const exec = racingExecutor(
+        () => 'Stim supervisor: failed to start the bare-inproc dev server: STIM_BARE_DEPS\n',
+      );
+      setExecutor(exec);
+      upsertProject(root, { metroPort: takenPort });
+
+      const result = await runAction({ json: true, wait: '30' });
+
+      expect(result.exitCode).toBe(1);
+      expect(exec.calls.spawn).toHaveLength(1);
+    });
+  });
 });
 
 describe('the error contract', () => {

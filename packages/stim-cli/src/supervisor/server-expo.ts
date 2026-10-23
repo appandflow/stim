@@ -17,7 +17,7 @@ import {
   registerMetroStore,
 } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
-import { withProjectNode } from './project-node.ts';
+import { projectNodeLine, withProjectNode } from './project-node.ts';
 
 function resolveExpoBin(root: string): { path: string; source: 'package' | 'shim' } | null {
   const fromPackage = expoBinFromPackage(resolvePackageJson(root, 'expo'));
@@ -160,7 +160,9 @@ export function recordFromLine(
       const record = JSON.parse(msg.slice('stim-bundle-response: '.length));
       if (
         record.src === 'metro' &&
-        /^bundle_(response|prefetch)_(started|progress|finished|failed)$/.test(record.event) &&
+        /^(?:bundle_(?:response|prefetch)_(?:started|progress|finished|failed)|manifest_request_(?:started|finished|failed))$/.test(
+          record.event,
+        ) &&
         ['ios', 'android'].includes(record.platform) &&
         typeof record.requestId === 'string' &&
         Number.isFinite(record.ts)
@@ -195,6 +197,10 @@ export function expoProxyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return publicUrl ? { EXPO_PACKAGER_PROXY_URL: publicUrl.replace(/\/+$/, '') } : {};
 }
 
+export function expoTelemetryEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  return env.EXPO_NO_TELEMETRY === undefined ? { EXPO_NO_TELEMETRY: '1' } : {};
+}
+
 const WAITING_ON_RE = /^Waiting on (\S+)/;
 const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const HTTP_SCHEME_RE = /^https?:\/\//i;
@@ -209,7 +215,7 @@ export function parseExpoWaitingOnUrl(line: unknown): string | null {
 
 function resolveMetroStoreInjection(
   root: string,
-  { log, env, settings }: { log: NdjsonWriter; env: NodeJS.ProcessEnv; settings: SettingsObject },
+  { log, env, settings, port }: { log: NdjsonWriter; env: NodeJS.ProcessEnv; settings: SettingsObject; port: number },
 ): Record<string, string> | null {
   const sharedCache = resolveMetroSharedCache(settings);
   if (!sharedCache) {
@@ -246,6 +252,7 @@ function resolveMetroStoreInjection(
   const storeRoot = sharedCache ? metroStoreRoot(root) : '';
   const additions = expoMetroStoreEnv({
     root,
+    port,
     storeRoot,
     adapterPath,
     existingOverride: env.EXPO_OVERRIDE_METRO_CONFIG,
@@ -303,6 +310,7 @@ export async function startExpoServer({
     log,
     env: process.env,
     settings: settings ?? resolveProjectSettings(root).settings,
+    port,
   });
 
   // On Windows the package bin's shebang resolves `node` through PATH, where pnpm
@@ -317,7 +325,7 @@ export async function startExpoServer({
       src: 'metro',
       level: 'info',
       event: 'project_node',
-      msg: `Metro runs on Node ${node.pinned.version} from ${node.pinned.bin}, which ${node.pinned.pin} pins`,
+      msg: `Metro runs on ${projectNodeLine(node.pinned)}`,
     });
   }
   const child = spawn(command, commandArgs, {
@@ -328,6 +336,7 @@ export async function startExpoServer({
       ...node.env,
       FORCE_COLOR: '0',
       ...expoProxyEnv(process.env),
+      ...expoTelemetryEnv(process.env),
       ...storeEnv,
       // Expo's legacy tunnel uses port 8081; v2 uses this workspace's reserved port.
       ...(tunnel ? { EXPO_UNSTABLE_TUNNEL_V2: '1' } : {}),

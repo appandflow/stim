@@ -48,7 +48,7 @@ public struct ServerSettingWrite: Sendable {
   guard case .open(let hello) = client.state, hello.features?.contains("desktop-settings") == true else {
     throw ServerError(code: "unsupported", message: "Update the local stim-server to read settings for selected folders.")
   }
-  let result = try await client.request("desktop.settings.get", ["cwd": .string(cwd)])
+  let result = try await client.read("desktop.settings.get", ["cwd": .string(cwd)])
   return try decodeReporting(SettingsPayload.self, from: result, source: .server, diagnostics: cli.diagnostics)
 }
 

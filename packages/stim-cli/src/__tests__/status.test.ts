@@ -1,5 +1,6 @@
 import { isRpcEvent } from '@stim-cli/core/receive-protocol';
-import { writeHostedIos, writeHostedAndroid } from '../device-host/ios-state.ts';
+import { writeHostedNative } from '../device-host/ios-state.ts';
+import type { HostedIosPlacement, HostedAndroidPlacement } from '@stim-cli/core/state';
 import * as hostedClient from '../device-host/hosted-client.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
@@ -28,6 +29,11 @@ import { findProjectRoot } from '../workspace/project.ts';
 import { recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 import { startBuildProgress } from '../engine/build-progress.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+
+const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | null): void =>
+  writeHostedNative(root, slot, host, 'ios');
+const writeHostedAndroid = (root: string, slot: string, host: HostedAndroidPlacement | null): void =>
+  writeHostedNative(root, slot, host, 'android');
 
 let tmpHome: string;
 const realExecutor = getExecutor();
@@ -630,7 +636,7 @@ test('status reports a recorded EAS session with its preview URL', async () => {
         },
       }),
     );
-    recordEasSessionClaim({
+    await recordEasSessionClaim({
       sessionId: 'drs_9',
       name: 'stim-agent-1',
       platform: 'ios',

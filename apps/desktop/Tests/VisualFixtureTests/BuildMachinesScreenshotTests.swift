@@ -22,20 +22,23 @@
     }
 
     @MainActor private func content(
-      entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool?, updates: [String: MachineUpdatePhase] = [:],
+      entries: [String]?, statuses: [BuildMachineStatus]?, tailscale: Bool?, updates: [String: MachineUpdatePhase] = [:],
+      installs: [String: StimInstall] = [:],
       poolDisabled: [String: [String]]? = nil, failure: String? = nil, hosted: [HostedOnMachine] = [],
-      linux: Set<String> = []
+      linux: Set<String> = [],
+      settingsReadFailure: String? = nil, showsThisMac: Bool = false
     ) -> some View {
       BuildMachinesContent(
         entries: entries, statuses: statuses,
         hosts: [
           BuildMachineStatus(machine: "mini", state: .approved), BuildMachineStatus(machine: "janics-mac-mini", state: .approved),
-        ], updates: updates,
-        working: nil, progress: nil, refreshing: false, failure: failure, tailscaleRunning: tailscale, canAsk: true,
+        ], updates: updates, installs: installs,
+        working: nil, progress: nil, refreshing: false, failure: failure, tailscaleRunning: tailscale,
+        settingsReadFailure: settingsReadFailure, canAsk: true,
         addDisabled: false,
         updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in },
         remove: { _ in }, poolDisabled: poolDisabled, hostsSimulators: { !linux.contains($0) }, hosted: { _ in hosted },
-        thisMacName: "MacBook Pro",
+        showsThisMac: showsThisMac, thisMacName: "MacBook Pro",
         thisMac: EmptyView()
       )
       .font(.stim(.body))
@@ -54,6 +57,26 @@
             "reasons":["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here","no CocoaPods there"],
             "problems":[{"code":"stim-build","reason":"Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"},
                         {"code":"cocoapods","reason":"no CocoaPods there"}]}]
+          """#.utf8))
+    }
+
+    private func layers() throws -> [BuildMachineStatus] {
+      try JSONDecoder().decode(
+        [BuildMachineStatus].self,
+        from: Data(
+          #"""
+          [{"machine":"mini","state":"unreachable","dnsName":"mini.tail1234.ts.net","deviceId":"a1b2c3d4",
+            "diagnosis":{"layer":"server","code":"server-not-ready","title":"Server not ready",
+              "message":"stim-server on mini is running but is not serving clients (HTTP 503). It cannot read its Stim home, usually because the disk holding ~/.stim is disconnected or not responding.",
+              "remedy":"Check the disk that holds the Stim home on mini (reconnect or wake an external drive); stim-server serves again by itself once it answers. `stim-server service status` there shows the exact reason."}},
+           {"machine":"studio","state":"unreachable","dnsName":"studio.tail1234.ts.net","deviceId":"e5f6a7b8",
+            "diagnosis":{"layer":"server","code":"server-not-running","title":"Server not running",
+              "message":"Tailscale and the serve route on studio work, but nothing listens behind the route: stim-server is not running there (HTTP 502).",
+              "remedy":"On studio, run `stim-server service status`; `stim-server service install --serve` starts it and keeps it running."}},
+           {"machine":"air","state":"unreachable","dnsName":"air.tail1234.ts.net","deviceId":"c9d0e1f2",
+            "diagnosis":{"layer":"peer","code":"peer-offline","title":"Mac is offline",
+              "message":"air is offline on Tailscale (last seen 3 h ago).",
+              "remedy":"Wake air or check that it is powered on, connected to a network and signed in to Tailscale, then run `stim doctor` again."}}]
           """#.utf8))
     }
 
@@ -129,7 +152,49 @@
         ),
         (
           "section-mismatch",
-          AnyView(content(entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true, poolDisabled: pools))
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true,
+              installs: ["janics-mac-mini": .install], poolDisabled: pools))
+        ),
+        (
+          "install-remote-newer",
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true,
+              installs: [
+                "janics-mac-mini": .blocked(
+                  StimInstallBlock(
+                    reason:
+                      "janics-mac-mini runs Stim 1.25.0, newer than this Mac (1.24.0). Update Stim Desktop to match.",
+                    action: .checkForUpdates))
+              ], poolDisabled: pools))
+        ),
+        (
+          "install-needs-setting",
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true,
+              installs: [
+                "janics-mac-mini": .blocked(
+                  StimInstallBlock(
+                    reason:
+                      "janics-mac-mini takes only npm releases, and this Mac runs a checkout build. To allow it, run `stim settings set server.acceptClientBuilds true` on janics-mac-mini.",
+                    action: .runOnRemote("stim settings set server.acceptClientBuilds true")))
+              ], poolDisabled: pools))
+        ),
+        (
+          "install-cannot-update",
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true,
+              installs: [
+                "janics-mac-mini": .blocked(
+                  StimInstallBlock(
+                    reason:
+                      "stim-server on janics-mac-mini cannot be updated from here yet. Update it once there with `stim-server service update`.",
+                    action: .runOnRemote("stim-server service update")))
+              ], poolDisabled: pools))
         ),
         (
           "section-updating",
@@ -165,6 +230,21 @@
         ),
         ("empty", AnyView(content(entries: [], statuses: [], tailscale: true))),
         (
+          "settings-unreadable-this-mac",
+          AnyView(
+            content(
+              entries: nil, statuses: nil, tailscale: true,
+              settingsReadFailure: "The local stim-server is not ready to read settings for this Stim home.",
+              showsThisMac: true))
+        ),
+        (
+          "settings-unreadable",
+          AnyView(
+            content(
+              entries: nil, statuses: nil, tailscale: true,
+              settingsReadFailure: "The local stim-server is not ready to read settings for this Stim home."))
+        ),
+        (
           "list", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: true))
         ),
         (
@@ -192,6 +272,7 @@
                 )
               ]))
         ),
+        ("layers", AnyView(content(entries: ["mini", "studio", "air"], statuses: try layers(), tailscale: true))),
         ("busy", AnyView(content(entries: ["mini", "studio"], statuses: try busy(), tailscale: true))),
         ("tailscale-off", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: false))),
         ("empty-tailscale-off", AnyView(content(entries: [], statuses: [], tailscale: false))),
