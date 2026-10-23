@@ -189,7 +189,7 @@ export function machineId(model, hostname) {
   return `${slug(model || 'machine')}-${createHash('sha256').update(hostname).digest('hex').slice(0, 6)}`;
 }
 
-/** Home and temporary directories replaced, and the text cut short, so a failure can be published. */
+/** `text` with the home and temporary directories replaced and only its end kept, for the local log. */
 export function scrubOutput(text, { home, tmp }, max = 300) {
   let out = String(text ?? '').trim();
   for (const [dir, label] of [

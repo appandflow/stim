@@ -50,8 +50,18 @@ const reps = Number(values.reps);
 const maxLoad = Number(values['max-load']);
 const wanted = new Set(values.scenarios.split(',').map((name) => name.trim()));
 const GROUPS = ['warm', 'start', 'ios', 'android', 'stop'];
-if (!Number.isInteger(reps) || reps < 1 || [...wanted].some((name) => !GROUPS.includes(name))) {
-  process.stderr.write(`--reps must be a positive integer and --scenarios a list of ${GROUPS.join(',')}\n`);
+const waitMinutes = Number(values['wait-minutes']);
+if (
+  !Number.isInteger(reps) ||
+  reps < 1 ||
+  !Number.isFinite(maxLoad) ||
+  !Number.isFinite(waitMinutes) ||
+  [...wanted].some((name) => !GROUPS.includes(name)) ||
+  (values.machine !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(values.machine))
+) {
+  process.stderr.write(
+    `--reps must be a positive integer, --max-load and --wait-minutes numbers, --machine letters, digits, . _ - and --scenarios a list of ${GROUPS.join(',')}\n`,
+  );
   process.exit(2);
 }
 const scratch = mkdtempSync(join(tmpdir(), 'stim-perf-'));
@@ -188,8 +198,8 @@ async function measure(cli, cwd, step, label) {
   if (existsSync(traceFile)) {
     try {
       entry.trace = summarizeTrace(parseTrace(readFileSync(traceFile, 'utf8')));
-    } catch (error) {
-      entry.traceError = String(error.message).slice(0, 120);
+    } catch {
+      entry.traceUnreadable = true;
     }
   }
   if (step.platform && !entry.trace && entry.exit === 0) {
@@ -248,6 +258,13 @@ async function pass(cli, sha, label) {
     for (const step of STEPS) {
       log(`[${label}] ${step.scenario}`);
       results[step.scenario] = await measure(cli, app, step, label);
+      if (step.scenario === 'warm') {
+        const installed = await runAsync('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], {
+          cwd: tree,
+          timeout: COMMAND_TIMEOUT_MS,
+        });
+        log(`[${label}] pnpm install (not measured): exit ${installed.status}`);
+      }
       log(
         `[${label}] ${step.scenario}: ${(results[step.scenario].wallMs / 1000).toFixed(1)}s exit ${results[step.scenario].exit}`,
       );

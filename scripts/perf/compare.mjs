@@ -50,7 +50,10 @@ try {
   if (!data) {
     const url = git(['remote', 'get-url', 'origin']);
     clone = mkdtempSync(join(tmpdir(), 'stim-perf-data-'));
-    git(['clone', '--quiet', '--depth', '1', '--branch', 'perf-data', url, clone]);
+    const cloned = spawnSync('git', ['clone', '--quiet', '--depth', '1', '--branch', 'perf-data', url, clone], {
+      encoding: 'utf8',
+    });
+    if (cloned.status !== 0) throw new Error(`cannot read the perf-data branch of origin: ${cloned.stderr.trim()}`);
     data = clone;
   }
   const runs = existsSync(join(data, 'runs'))
@@ -85,6 +88,9 @@ try {
       `${results.map((entry) => entry.message ?? formatComparison(entry.machine, entry.latest, entry.previous, entry.result)).join('\n\n')}\n`,
     );
   }
+} catch (error) {
+  process.stderr.write(`${error.message}\n`);
+  process.exitCode = 1;
 } finally {
   if (clone) rmSync(clone, { recursive: true, force: true });
 }

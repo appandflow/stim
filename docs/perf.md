@@ -39,7 +39,7 @@ Each repetition adds a detached git worktree of this repository at `--sha` (defa
 | `ios-rerun`, `android-rerun` | the same command again with the app installed         |
 | `stop`                       | `stim stop`                                           |
 
-It then removes the worktree. Before the measured repetitions it runs one unmeasured pass, so the build caches are
+After `warm` it runs `pnpm install --frozen-lockfile` in the worktree, not measured: `warm` carries the main checkout's `node_modules`, which can lag this commit's lockfile. It then removes the worktree. Before the measured repetitions it runs one unmeasured pass, so the build caches are
 full and `*-first` measures a restore, not a cold compile (`--no-prime` skips it). A bare React Native scenario is
 recorded as skipped: the repository checks in no bare fixture, and `test/e2e` generates one from the network.
 
