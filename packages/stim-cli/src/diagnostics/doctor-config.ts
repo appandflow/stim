@@ -12,7 +12,7 @@ import {
   unknownSettingKeys,
   type SettingsLayer,
 } from '../workspace/settings.ts';
-import { settingDefinition, type SettingsObject } from '@stim-cli/core/state';
+import { REPLACED_SETTINGS, replacementAdvice, settingDefinition, type SettingsObject } from '@stim-cli/core/state';
 
 export interface MachineSettings {
   settings: SettingsObject;
@@ -104,12 +104,34 @@ export function checkMachineSettings({
   }
 
   for (const key of unknownSettingKeys(settings)) {
-    const file = settingOrigin(layers, key)?.file ?? null;
+    const origin = settingOrigin(layers, key);
+    const file = origin?.file ?? null;
+    const advice = replacementAdvice(key, origin?.value);
+    if (advice) {
+      findings.push({
+        level: 'note',
+        title: `${key} was replaced by ${advice.key}`,
+        detail: `${key}${file ? ` in ${file}` : ''} is not read by Stim, so ${advice.key} decides placement and its default applies until you set it.`,
+        fix: `${advice.command ? `Run \`${advice.command}\`` : `Set ${advice.key}`}, then remove ${key}${file ? ` from ${file}` : ''}.`,
+      });
+      continue;
+    }
     findings.push({
       level: 'note',
       title: 'A key in the config is inert',
       detail: `${key}${file ? ` in ${file}` : ''} is not read by Stim, so its value changes nothing.`,
       fix: `Remove ${key}${file ? ` from ${file}` : ''}, or run \`stim guide settings\` for the name that replaced it.`,
+    });
+  }
+
+  for (const [key, replaced] of Object.entries(REPLACED_SETTINGS)) {
+    if (!replaced.env || !env[replaced.env]?.trim()) continue;
+    const advice = replacementAdvice(key, env[replaced.env]);
+    findings.push({
+      level: 'note',
+      title: `${replaced.env} was replaced by ${replaced.key}`,
+      detail: `${replaced.env} is not read by Stim, so ${replaced.key} decides placement and its default applies until you set it.`,
+      fix: `${advice?.command ? `Run \`${advice.command}\`` : `Set ${replaced.key}`}, then unset ${replaced.env}.`,
     });
   }
 

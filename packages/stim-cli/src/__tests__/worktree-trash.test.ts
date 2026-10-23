@@ -1,5 +1,6 @@
 import { execSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -12,8 +13,10 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
-import { resetExecutor } from '../exec.ts';
-import { moveIgnoredTreesToTrash, restoreTrashedTrees } from '../workspace/worktree-trash.ts';
+import { releaseClaim } from '../ownership-claim.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { collectTrash, deleteTrash } from '../commands/gc/trash.ts';
+import { disposeTrash, moveIgnoredTreesToTrash, restoreTrashedTrees } from '../workspace/worktree-trash.ts';
 
 const POSIX = process.platform !== 'win32';
 
@@ -111,4 +114,67 @@ test.skipIf(!POSIX)(
     expect(readClaimSet(join(trash.dir, 'claims')).live).toEqual([]);
   },
   30_000,
+);
+
+test.skipIf(!POSIX)(
+  'a background rm that exits before its identity is recorded reports the entry as deleted',
+  async () => {
+    const repo = repoWithIgnoredTrees();
+    const trash = await moveIgnoredTreesToTrash(repo);
+    if (!trash) throw new Error('nothing was moved to the trash');
+    const real = getExecutor();
+    const exitedPid = await new Promise<number>((resolvePid) => {
+      const child = real.spawn('true', [], { stdio: 'ignore' });
+      child.on('exit', () => resolvePid(child.pid ?? 0));
+    });
+    setExecutor({
+      ...real,
+      spawn(...params: Parameters<typeof real.spawn>) {
+        const [, args = []] = params;
+        for (const path of args.slice(args.indexOf('--') + 1)) rmSync(path, { recursive: true, force: true });
+        const child = real.spawn('true', [], { stdio: 'ignore' });
+        Object.defineProperty(child, 'pid', { value: exitedPid });
+        return child;
+      },
+    });
+
+    expect(await disposeTrash(trash)).toBe('deleted');
+    expect(existsSync(trash.dir)).toBe(false);
+  },
+  30_000,
+);
+
+test.skipIf(!POSIX || process.getuid?.() === 0)(
+  'a background delete that cannot remove a read-only directory keeps the manifest so gc finishes the entry',
+  async () => {
+    const repo = repoWithIgnoredTrees();
+    const locked = join(repo, 'node_modules', 'pkg', 'locked');
+    mkdirSync(locked);
+    writeFileSync(join(locked, 'f'), 'x');
+    chmodSync(locked, 0o555);
+    const trash = await moveIgnoredTreesToTrash(repo);
+    if (!trash) throw new Error('nothing was moved to the trash');
+
+    const real = getExecutor();
+    let removal: Promise<void> = Promise.resolve();
+    setExecutor({
+      ...real,
+      spawn(...params: Parameters<typeof real.spawn>) {
+        const child = real.spawn(...params);
+        removal = new Promise((resolveExit) => child.on('exit', () => resolveExit()));
+        return child;
+      },
+    });
+
+    expect(await disposeTrash(trash)).toBe('background');
+    await removal;
+    releaseClaim(trash.claim);
+
+    expect(existsSync(join(trash.dir, 'trash.json'))).toBe(true);
+    rmSync(repo, { recursive: true, force: true });
+    expect((await collectTrash())?.entries.find((entry) => entry.path === trash.dir)?.willDelete).toBe(true);
+    expect(await deleteTrash(undefined)).toMatchObject({ count: 1, failures: 0 });
+    expect(existsSync(trash.dir)).toBe(false);
+  },
+  60_000,
 );

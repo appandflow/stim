@@ -346,9 +346,13 @@ outside it moves to its own issue and pull request.
   `server/build-clients.json`, apart from `devices.json`. The client names its
   remote machines in `remote.machines` and pins each one's stim-server key in
   `build-machines.json`; a worker that cannot prove that key is refused.
-  `remote.buildMode` places iOS simulator Debug builds and Android emulator
-  debug builds and macOS SwiftPM Debug builds;
-  every offload failure falls back to a local build, and no failure path
+  `remote.build` places iOS simulator Debug builds and Android emulator
+  debug builds and macOS SwiftPM Debug builds with the placement words every
+  workload shares (`local`, `auto`, `remote`, `remote-only` or one machine),
+  trying the machines of `remote.machines` in that order, each only while it
+  has a free slot and a load under its own `server.maxLoadPerCore`;
+  every offload failure falls back to a local build unless the selection is
+  `remote-only` or one machine, and no failure path
   writes the cache. Two machines build for each other, and reuse each other's
   completed React Native and SwiftPM artifacts, when their bundled Stim
   reports the same `STIM_BUILD_COMPAT`
@@ -534,12 +538,16 @@ use, leased, driven, locked or pinned by `maintenance.keep`. Parking keeps the d
 record names the installed app and its cache key. Parked devices are
 Stim-owned and listed in the pool record. Adoption removes other third-party
 apps and clears the adopting app's data before launch, on every adoption, and
-skips the install only after verifying the installed bytes. Android adoption
+skips the install only after verifying the installed bytes. On Android that proof is the installed
+APK's size and the SHA-256 of its tail, from the v2 or v3 signing block through the end of the file,
+matching the values recorded after one `apksigner verify` of the local APK; an APK without a recorded
+tail, or a device that cannot answer that probe, compares the SHA-256 of the whole APK. Android adoption
 matches the system image and recorded AVD creation settings and keeps the AVD
 name. When an adopted emulator lacks room on `/data` for the install, trim app
 caches, then wipe its user data through centralized teardown. Delete parked
 devices only by eviction, adoption-time reconciliation of a listed unavailable
-simulator, `gc --delete`, or automatic maintenance at disk pressure level 2; erase them only with `gc --cache parked
+simulator, `gc --delete`, or automatic maintenance at disk pressure level 2 or
+in its age sweep after `maintenance.olderThanDays`; erase them only with `gc --cache parked
 --delete`. Every route uses centralized teardown and ownership revalidation.
 `gc --delete` deletes parked hosted devices through their owning session home.
 
@@ -679,7 +687,10 @@ tool at least once. Use a timeout around `simctl`.
 initial lookup and single-flight lock on the pre-mutation key. After a mutation,
 fingerprint again and resolve once under the new key before compiling. Store
 the artifact, `lastBuild`, and remote upload only under the post-mutation key.
-Do not store the same artifact under both keys.
+Do not store the same artifact under both keys. A recorded fingerprint from
+`$STIM_HOME/fingerprint-memo` may stand in only for the pre-mutation lookup.
+The post-mutation fingerprint, the build worker and `doctor` always compute it
+in full. Write a record only from a full fingerprint, never from a recorded one.
 
 ### 11. Preserve launch status semantics
 

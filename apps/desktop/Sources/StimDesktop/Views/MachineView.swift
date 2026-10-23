@@ -204,7 +204,7 @@ struct MachineView: View {
       }
     } trailing: {
       if !plan.isEmpty {
-        Button("Free Disk Space") { autopilot.runPressurePlan(trigger: .manual, present: true) }
+        Button("Free Disk Space") { autopilot.runPressurePlan() }
           .buttonStyle(.stim(.primary))
           .help("stim gc --delete")
       }

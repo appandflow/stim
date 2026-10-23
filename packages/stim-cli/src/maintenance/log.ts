@@ -1,6 +1,6 @@
 import { statSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
-import { LOG_ROTATE_BYTES, rotatedLogPath, withDirLock } from '@stim-cli/core';
+import { dirname, join } from 'node:path';
+import { ensurePrivateDir, LOG_ROTATE_BYTES, rotatedLogPath, withDirLock } from '@stim-cli/core';
 import {
   MAINTENANCE_LOG_NAME,
   maintenanceNdjsonFile,
@@ -20,17 +20,25 @@ interface MaintenanceLogger {
   close(): ReturnType<NdjsonWriter['close']>;
 }
 
-export function maintenanceLogger(settings: MaintenanceSettings, pass: string, trigger: string): MaintenanceLogger {
-  const file = maintenanceNdjsonFile();
+export function openRetainedLog(
+  file: string,
+  settings: Pick<MaintenanceSettings, 'logMaxMb' | 'logRetentionDays'>,
+): NdjsonWriter {
+  ensurePrivateDir(dirname(file));
   const rotated = rotatedLogPath(file);
   withDirLock(`${file}.lock`, () => {
     try {
       if (Date.now() - statSync(rotated).mtimeMs > settings.logRetentionDays * 86_400_000) unlinkSync(rotated);
     } catch {}
   });
-  const writer = createNdjsonWriter(file, {
+  return createNdjsonWriter(file, {
     maxBytes: settings.logMaxMb * 1024 ** 2,
   });
+}
+
+export function maintenanceLogger(settings: MaintenanceSettings, pass: string, trigger: string): MaintenanceLogger {
+  const file = maintenanceNdjsonFile();
+  const writer = openRetainedLog(file, settings);
   return {
     write(
       event: MaintenanceRecord['event'],

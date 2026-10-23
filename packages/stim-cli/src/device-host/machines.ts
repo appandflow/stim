@@ -2,7 +2,7 @@ import { withDirLockAsync, type StimContext } from '@stim-cli/core';
 import { reportSignal } from '../report-runtime.ts';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import type { HelloResult } from '@stim-cli/core/protocol';
+import type { HelloResult, RemoteDiagnosis } from '@stim-cli/core/protocol';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import {
   deviceHostMachinesClaims,
@@ -20,7 +20,10 @@ import {
 import type { Finding } from '../diagnostics/doctor.ts';
 import { withDirLock } from '../dir-lock.ts';
 import { readHostPermissions } from '../offload/access-ticket.ts';
+import { diagnosisFinding, notOnTailnetDiagnosis } from '../offload/diagnosis.ts';
 import {
+  diagnoseOutcome,
+  diagnoseTailscale,
   endpoint,
   findPeer,
   outdatedServer,
@@ -50,6 +53,7 @@ interface MachineReport {
     | 'unreachable'
     | 'credentials-unavailable'
     | 'busy';
+  diagnosis?: RemoteDiagnosis;
   dnsName?: string;
   deviceId?: string;
   requestedAt?: string;
@@ -194,10 +198,17 @@ export async function inspectDeviceHostMachines(
     if (!entries.length) return { findings: [], machines: [] };
     const status = await io.status();
     if (!isJsonObject(status)) {
-      return unavailable(
-        'tailscale-off',
-        note('Remote machines are unreachable', 'remote.machines names remote machines, but Tailscale is not running.'),
-      );
+      const diagnosis = await diagnoseTailscale(io);
+      return {
+        findings: [
+          note(
+            'Remote machines are unreachable',
+            `remote.machines names remote machines. ${diagnosis.message}`,
+            diagnosis.remedy,
+          ),
+        ],
+        machines: entries.map((machine) => ({ machine, state: 'tailscale-off', diagnosis })),
+      };
     }
     const self = isJsonObject(status.Self) ? status.Self : {};
     const raw = typeof self.HostName === 'string' && self.HostName ? self.HostName : hostname();
@@ -219,21 +230,16 @@ export async function inspectDeviceHostMachines(
       }
       const current = await io.status();
       if (!isJsonObject(current)) {
-        inspected.machines.push({ machine, state: 'tailscale-off' });
-        inspected.findings.push(
-          note(`Remote machine ${machine} is unreachable`, 'Tailscale stopped before this connection.'),
-        );
+        const diagnosis = await diagnoseTailscale(io);
+        inspected.machines.push({ machine, state: 'tailscale-off', diagnosis });
+        inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;
       }
       const peer = findPeer(current, parsed.name);
       if (peer === 'missing' || peer === 'ambiguous') {
-        inspected.machines.push({ machine, state: 'not-on-tailnet' });
-        inspected.findings.push(
-          note(
-            `Remote machine ${machine} is not on this tailnet`,
-            peer === 'missing' ? 'No peer has that name.' : 'Several peers match that name.',
-          ),
-        );
+        const diagnosis = notOnTailnetDiagnosis(machine, peer === 'ambiguous');
+        inspected.machines.push({ machine, state: 'not-on-tailnet', diagnosis });
+        inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;
       }
       const nodeRoute = `${peer.nodeId}:${parsed.port}`;
@@ -341,8 +347,31 @@ export async function inspectDeviceHostMachines(
       }
       if (outcome.state === 'outdated') {
         const outdated = outdatedServer(machine, version, outcome.command);
-        inspected.machines.push({ ...known, state: 'outdated' });
+        inspected.machines.push({
+          ...known,
+          state: 'outdated',
+          diagnosis: {
+            layer: 'compat',
+            code: 'server-outdated',
+            title: 'Server is outdated',
+            message: outdated.detail,
+            remedy: outdated.fix,
+          },
+        });
         inspected.findings.push(note(outdated.title, outdated.detail, outdated.fix));
+        continue;
+      }
+      if (outcome.state === 'unreachable') {
+        const diagnosis = await diagnoseOutcome(io, {
+          entry: machine,
+          peer,
+          port: parsed.port,
+          target: endpoint(peer, parsed.port),
+          reason: outcome.reason,
+          transport: outcome.transport,
+        });
+        inspected.machines.push({ ...known, state: 'unreachable', diagnosis });
+        inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;
       }
       inspected.machines.push({ ...known, state: outcome.state });
@@ -359,17 +388,11 @@ export async function inspectDeviceHostMachines(
                 `${machine} did not approve this machine before its setup ticket expired at ${outcome.credential.expiresAt}.`,
                 'Run `stim doctor --fix` to make a new ticket.',
               )
-            : outcome.state === 'revoked'
-              ? note(
-                  `Remote machine ${machine} no longer accepts this machine for device hosting`,
-                  `${outcome.reason} The pinned key is preserved.`,
-                  'Run `stim doctor --fix` to ask again.',
-                )
-              : note(
-                  `Remote machine ${machine} did not confirm hosting access`,
-                  outcome.reason,
-                  `Check stim-server and its tailnet serve route on ${machine}, then run doctor again.`,
-                ),
+            : note(
+                `Remote machine ${machine} no longer accepts this machine for device hosting`,
+                `${outcome.reason} The pinned key is preserved.`,
+                'Run `stim doctor --fix` to ask again.',
+              ),
       );
     }
     return inspected;

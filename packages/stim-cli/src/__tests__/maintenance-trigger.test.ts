@@ -81,7 +81,7 @@ test('fresh stamps suppress spawning, while a due check starts one detached chil
     maintenanceStateFile(),
     JSON.stringify({
       version: 1,
-      lastAt: { pressure: Date.now(), size: Date.now(), worktree: Date.now(), sweep: Date.now() },
+      lastAt: { pressure: Date.now(), size: Date.now(), worktree: Date.now(), sweep: Date.now(), idle: Date.now() },
       pressure: null,
       sizes: [],
       lastPass: null,

@@ -14,6 +14,7 @@ import {
   resolveSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
+  inertSettingWarning,
   unknownSettingKeys,
   type SettingsObject,
 } from '../workspace/settings.ts';
@@ -41,6 +42,7 @@ import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
+import { trace } from '@stim-cli/core/state';
 import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
@@ -183,7 +185,7 @@ function reportRefreshFailure(failure: RefreshFailure, out: (line: string) => vo
 }
 
 function mainCheckoutAppDir(root: string, target: string, cwd: string): string {
-  const app = findProjectRoot(cwd);
+  const app = warmedWorkspace(root, target, cwd) ?? findProjectRoot(cwd);
   if (!app) return root;
   const rel = relative(target, app);
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return root;
@@ -292,7 +294,7 @@ export async function warmWorktreeTarget(opts: {
         return null;
       }
       for (const key of unknownSettingKeys(settings)) {
-        out(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
+        out(chalk.yellow(inertSettingWarning(settings, key)));
       }
       return settings;
     };
@@ -328,7 +330,9 @@ export async function warmWorktreeTarget(opts: {
             }
             const excluded = readWorktreeExclude(root);
             const patterns = excluded?.length ? excluded : (settings as WorktreeSettings).worktree?.exclude || [];
-            const result = await cloneIgnoredEntries({ root, target, patterns, operation });
+            const result = await trace.spanAsync('carry ignored entries', () =>
+              cloneIgnoredEntries({ root, target, patterns, operation }),
+            );
             for (const entry of result.skipped) {
               out(chalk.dim(phaseLine('carry', `kept ${entry.file} (${entry.reason})`)));
             }

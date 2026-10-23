@@ -18,6 +18,7 @@ export type VerifyLaunchResult = {
   mode: string | null;
   waitedMs: number;
   readiness?: AppReadiness;
+  jsRunning?: true;
 };
 
 export const RELEASE_VERIFY_WAIT_MS = 3000;
@@ -93,7 +94,9 @@ export const VERIFY_TIMEOUT_MS = 20000;
 export const MANIFEST_GRACE_MS = 15000;
 export const MANIFEST_VERIFY_TIMEOUT_MS = 60000;
 export const STABILITY_WINDOW_MS = 3000;
+const JS_RUNNING_SETTLE_MS = 500;
 const VERIFY_POLL_MS = 500;
+const DEVICE_LOG_LAG_LIMIT_MS = 10_000;
 
 const BUNDLE_EVENTS = new Set([
   'bundle_build_started',
@@ -141,6 +144,39 @@ export function isBundleRequestProof(
   if (!digits) return false;
   if (!new RegExp(`:${digits}\\b`).test(rec.msg)) return false;
   return BUNDLE_URL_PATH.test(rec.msg);
+}
+
+const JS_RUNNING = /^Running "[^"]*"/;
+
+function isJsRunning(record: NdjsonRecord, platform: 'ios' | 'android' | null): boolean {
+  return (
+    record.src === 'device' &&
+    record.platform === platform &&
+    (record.level === 'info' || record.level === 'debug') &&
+    typeof record.msg === 'string' &&
+    JS_RUNNING.test(record.msg)
+  );
+}
+
+function jsRunningSince(
+  signals: NdjsonRecord[],
+  since: number | null,
+  runtimeWaiting: boolean,
+  platform: 'ios' | 'android' | null,
+): number | null {
+  if (since === null || runtimeWaiting) return null;
+  const running = signals.find((record) => Number(record.ts) >= since && isJsRunning(record, platform));
+  return running ? Number(running.ts) : null;
+}
+
+function settledWindowEnd(stabilityDeadline: number | null, jsRunningAt: number | null): number | null {
+  return stabilityDeadline !== null && jsRunningAt !== null
+    ? Math.min(stabilityDeadline, jsRunningAt + JS_RUNNING_SETTLE_MS)
+    : stabilityDeadline;
+}
+
+function jsRunningFields(jsRunningAt: number | null): { jsRunning?: true } {
+  return jsRunningAt === null ? {} : { jsRunning: true };
 }
 
 function expoBundleLine(msg: string) {
@@ -212,6 +248,7 @@ export async function verifyLaunch({
   processAlive = null,
   onReadinessPending = null,
   onActivity,
+  deviceLogsThrough,
   now = Date.now,
   sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
 }: {
@@ -239,6 +276,11 @@ export async function verifyLaunch({
    * record time.
    */
   onActivity?: ((name: 'bundling' | 'waiting-ready' | null, at: number) => void) | null;
+  /**
+   * The time through which the device records are complete, for a device log copied from another machine. The
+   * stability and readiness windows end only once the copy covers them, or `DEVICE_LOG_LAG_LIMIT_MS` after they end.
+   */
+  deviceLogsThrough?: (() => number | null) | null;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
 } = {}): Promise<VerifyLaunchResult> {
@@ -246,6 +288,12 @@ export async function verifyLaunch({
   const read = readRecords || (() => readMetroRecords(logsDir));
   const readDevice = readDeviceRecords || (() => readNdjson(logsDir, 'device.ndjson'));
   const readClient = readClientRecords || (() => readNdjson(logsDir, 'client.ndjson'));
+  const deviceNow = () => {
+    const at = now();
+    return deviceLogsThrough
+      ? Math.max(Math.min(at, deviceLogsThrough() ?? -Infinity), at - DEVICE_LOG_LAG_LIMIT_MS)
+      : at;
+  };
   const startedAt = now();
   const baseTimeoutMs = Math.max(0, timeoutMs);
   let bundleDeadline = startedAt + baseTimeoutMs;
@@ -346,6 +394,8 @@ export async function verifyLaunch({
     const runtimeWaiting = runtimeLoadingAt !== null && runtimeStartedAt === null;
     const completedAt = proof ? Math.max(Number(proof.ts), runtimeStartedAt ?? 0) : null;
     if (completedAt !== null) stabilityDeadline = completedAt + Math.max(0, stabilityMs);
+    const jsRunningAt = jsRunningSince(signals, completedAt, runtimeWaiting, platform);
+    const windowEnd = settledWindowEnd(stabilityDeadline, jsRunningAt);
     const readinessDeadline = completedAt !== null ? completedAt + APP_READINESS_TIMEOUT_MS : bundleDeadline;
     if (pendingAt === null) {
       const pending = signals.find(
@@ -395,7 +445,7 @@ export async function verifyLaunch({
       };
     }
 
-    if (proof && stabilityDeadline !== null && (pendingAt !== null || now() >= stabilityDeadline)) {
+    if (proof && windowEnd !== null && (pendingAt !== null || deviceNow() >= windowEnd)) {
       const errorSince = pendingAt === null ? Number(proof.ts ?? since ?? 0) : Number(since ?? 0);
       const errors = [
         ...metroRecords.filter((record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform)),
@@ -418,7 +468,7 @@ export async function verifyLaunch({
       }
       const actionableErrors = errors.filter((record) => !isIosConnectionRefusal(record, platform));
       const appErrors = actionableErrors.some(isAppLaunchError);
-      if ((!runtimeWaiting && pendingAt === null) || appErrors || ready || now() >= readinessDeadline) {
+      if ((!runtimeWaiting && pendingAt === null) || appErrors || ready || deviceNow() >= readinessDeadline) {
         return {
           verified: true,
           record: proof,
@@ -427,6 +477,7 @@ export async function verifyLaunch({
           mode,
           waitedMs,
           ...(pendingAt !== null ? { readiness: appErrors ? 'error' : ready ? 'ready' : 'timed-out' } : {}),
+          ...jsRunningFields(jsRunningAt),
         };
       }
     }
@@ -452,8 +503,8 @@ export async function verifyLaunch({
       ? bundleDeadline
       : proof && pendingAt !== null
         ? readinessDeadline
-        : (stabilityDeadline ?? bundleDeadline);
-    await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
+        : (windowEnd ?? bundleDeadline);
+    await sleep(Math.min(pollMs, Math.max(0, deadline - deviceNow())));
   }
 }
 

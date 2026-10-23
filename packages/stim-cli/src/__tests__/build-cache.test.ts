@@ -46,6 +46,8 @@ import {
   untrackedNativeFiles,
 } from '../cache/build-cache.ts';
 import { testContext } from './_context.ts';
+import { writeSignedApk } from './_signed-apk.ts';
+import { recordedSignedTail } from '../engine/apk-signed-tail.ts';
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
 import { buildCacheKey as providerKey } from '../../../expo-build-cache/index.js';
 
@@ -373,6 +375,34 @@ test('a custom iOS project directory keeps the sources fingerprint.config.js dec
   ]);
 });
 
+test('a patch at the monorepo install root moves the key of an app below it', async () => {
+  const app = join(root, 'apps/app');
+  mkdirSync(join(root, 'patches'), { recursive: true });
+  mkdirSync(app, { recursive: true });
+  writeFileSync(join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n");
+  writeFileSync(join(root, 'patches/react-native-mmkv.patch'), '--- a/ios/MMKV.mm\n+++ b/ios/MMKV.mm\n');
+  writeFileSync(join(app, 'package.json'), '{"name":"app"}');
+  getExecutor().runFile('git', ['init', '--quiet', root], { timeoutMs: 10_000 });
+  const hashOf = async () => (await fingerprintProject(app, { platform: 'ios' }))?.hash;
+  const before = await hashOf();
+  writeFileSync(join(root, 'patches/react-native-mmkv.patch'), '--- a/ios/MMKV.mm\n+++ b/ios/MMKV.mm\n@@ -1 +1 @@\n');
+  expect(await hashOf()).not.toBe(before);
+}, 30_000);
+
+test('a pnpm patch outside patches/ moves the key through the hash pnpm records for it', async () => {
+  const lockfile = (hash: string) =>
+    `lockfileVersion: '9.0'\n\npatchedDependencies:\n  react-native-mmkv@4.3.2: ${hash}\n\nimporters:\n  .: {}\n`;
+  writeFileSync(join(root, 'pnpm-lock.yaml'), lockfile('aaa'));
+  writeFileSync(join(root, 'package.json'), '{"name":"app"}');
+  getExecutor().runFile('git', ['init', '--quiet', root], { timeoutMs: 10_000 });
+  const hashOf = async () => (await fingerprintProject(root, { platform: 'android' }))?.hash;
+  const before = await hashOf();
+  writeFileSync(join(root, 'pnpm-lock.yaml'), `# reformatted\n${lockfile('aaa')}`);
+  expect(await hashOf()).toBe(before);
+  writeFileSync(join(root, 'pnpm-lock.yaml'), lockfile('bbb'));
+  expect(await hashOf()).not.toBe(before);
+}, 30_000);
+
 test('an iOS project in the app directory hashes every tracked top-level entry except dependencies and build output', () => {
   const directories = new Set(['node_modules', 'js', 'Pods', 'android', 'build', 'RNTesterPods.xcodeproj', 'shared']);
   const { extraSources, ignorePaths } = iosProjectFingerprintOptions(root, '.', {
@@ -588,6 +618,43 @@ test('a capability store records the app id read from the stored artifact, and s
   expect(storedAppId('android', 'missing', root)).toBe(null);
 });
 
+test('storing an Android APK verifies its signature once and records the signed tail beside it', async () => {
+  resetExecutor();
+  const sdk = join(root, 'sdk');
+  mkdirSync(join(sdk, 'build-tools', '36.0.0'), { recursive: true });
+  writeFileSync(join(sdk, 'build-tools', '36.0.0', 'apksigner'), '');
+  const build = join(root, 'build7', 'app-debug.apk');
+  const apk = writeSignedApk(build, {}, false);
+  const real = getExecutor();
+  const signerCalls: string[][] = [];
+  setExecutor({
+    ...real,
+    runFileAsync: async (file, args, options) => {
+      if (!file.endsWith('apksigner')) return real.runFileAsync(file, args, options);
+      signerCalls.push([file, ...(args ?? [])]);
+      return 'Verified using v2 scheme (APK Signature Scheme v2): true\n';
+    },
+  });
+  const androidHome = process.env.ANDROID_HOME;
+  process.env.ANDROID_HOME = sdk;
+  try {
+    const stored = await storeBuild('android', 'ak7', build, { root });
+    assert(stored);
+    expect(signerCalls.map((call) => call.slice(0, 3))).toEqual([
+      [join(sdk, 'build-tools', '36.0.0', 'apksigner'), 'verify', '--verbose'],
+    ]);
+    expect(recordedSignedTail(stored)).toEqual({
+      file: 'app-debug.apk',
+      size: apk.size,
+      tailOffset: apk.tailOffset,
+      tailSha256: apk.tailSha256,
+    });
+  } finally {
+    if (androidHome === undefined) delete process.env.ANDROID_HOME;
+    else process.env.ANDROID_HOME = androidHome;
+  }
+});
+
 test('{ overwrite } REPLACES the manifest too, so a refusing entry stops refusing', async () => {
   resetExecutor();
   const build = join(root, 'build4', 'App.apk');
@@ -671,6 +738,32 @@ test('the real @expo/fingerprint differ reports additions and removals with thei
   expect(changes).toHaveLength(2);
 });
 
+test.each([
+  ['a hoisted install', 'node_modules/bar/package.json', 'node_modules/bar/package.json'],
+  [
+    'a pnpm store',
+    'node_modules/.pnpm/bar@1.0.0/node_modules/bar/package.json',
+    'node_modules/.pnpm/bar@1.1.0/node_modules/bar/package.json',
+  ],
+])('the real differ reports a native dependency version bump in %s as one change', (_layout, before, after) => {
+  const source = (filePath: string, version: string): FingerprintSource => ({
+    type: 'package',
+    name: 'bar',
+    version,
+    filePath,
+    reasons: ['expoAutolinkingIos'],
+    hash: version,
+  });
+  expect(
+    diffFingerprintSources({
+      previous: [source(before, '1.0.0')],
+      previousHash: 'h1',
+      current: { hash: 'h2', sources: [source(after, '1.1.0')] },
+      differ: expoFingerprint.diffFingerprints,
+    }),
+  ).toEqual([{ name: after, change: 'changed', reasons: ['expoAutolinkingIos'] }]);
+});
+
 describe('gitignored fingerprint inputs', () => {
   const write = (path: string, content = path) => {
     mkdirSync(join(root, path, '..'), { recursive: true });
@@ -715,6 +808,11 @@ describe('gitignored fingerprint inputs', () => {
     expect(
       await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: { EXPO_NO_DOTENV: '1' } }),
     ).toEqual([join(real, 'creds/google-services.json'), join(real, 'ios/GoogleService-Info.plist')]);
+    write('.env.development');
+    expect(
+      await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: { NODE_ENV: 'production' } }),
+    ).toEqual(expect.arrayContaining([join(real, '.env.development'), join(real, '.env.local')]));
+    rmSync(join(root, '.env.development'));
     expect(await gitignoredFingerprintInputs(real, sources.slice(0, 2), { platform: 'ios' }, { env: {} })).toEqual([
       join(real, 'ios/GoogleService-Info.plist'),
     ]);

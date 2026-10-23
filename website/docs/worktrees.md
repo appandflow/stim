@@ -78,7 +78,7 @@ Stim excludes:
 
 - Nested registered Git worktrees, including ignored parents containing them.
 - Ignored entries named `.DS_Store`, `.DerivedData`, `.idea`, `.jj`, or `.pnpm-store`, and `android/build/generated/autolinking`.
-- From a copied directory, these known paths: `.pnpm-store` in `node_modules` (a project-local pnpm store duplicates the global one, and pnpm refills it when it needs to), `android/build/generated/autolinking` under a copied `android`, `android/build`, or `android/build/generated` (Gradle regenerates it for the new checkout), and `expo-modules-jsi/apple/.DerivedData` in `node_modules`, hoisted or in the pnpm virtual store (Xcode build state that records the source checkout's paths). Stim does not walk copied directories, so a `.DS_Store` or `.idea` inside one stays, and so do these paths inside an ignored directory that Git reports above those names, such as an app directory with no tracked files.
+- From a copied directory, these known paths: `.pnpm-store` in `node_modules` (a project-local pnpm store duplicates the global one, and pnpm refills it when it needs to), `android/build/generated/autolinking` under a copied `android`, `android/build`, or `android/build/generated` (Gradle regenerates it for the new checkout), and `expo-modules-jsi/apple/.DerivedData` in `node_modules`, hoisted or in the pnpm virtual store (Xcode build state that records the source checkout's paths). Warm renames these paths into `$STIM_HOME/trash` and a detached, low-priority `rm` deletes them after the command returns (through the [programmatic API](./programmatic-api.md), before the call resolves); on Windows, or when `$STIM_HOME` is on another volume than the worktree, warm deletes them before it returns. Stim does not walk copied directories, so a `.DS_Store` or `.idea` inside one stays, and so do these paths inside an ignored directory that Git reports above those names, such as an app directory with no tracked files.
 - Paths matched by the source checkout's nonempty `.worktreeexclude`, or its
   resolved `worktree.exclude` setting when that file is absent or empty.
 - Destination paths that overlap a registered nested worktree or have symlink
@@ -132,9 +132,14 @@ code={`stim worktree warm --refresh`}
 It checks the branch's upstream, fetches changes when needed, and fast-forwards
 **whatever branch the source checkout has** to its `@{upstream}`, and then installs only what the new commits
 moved: the lockfile's own install command where the lockfile lives (the
-repository root in a monorepo), and `pod install` for the app you ran the
-command from. Each dependency and Pods step names its source directory and
-prints what it did or why it skipped.
+repository root in a monorepo, and the app too when it has a lockfile of its
+own; a root that was never installed is left alone), and `pod install` for the app. The app is the one you ran the command
+from or, from the monorepo root, the one app registered in the source checkout.
+In an npm project a change to `patches/` counts as a dependency change. When npm's config sets
+`ignore-scripts` and the project's `package.json` defines `postinstall`
+(patch-package, usually), the refresh runs `npm run postinstall` after `npm ci`;
+dependencies' own install scripts stay blocked. Each dependency and Pods step
+names its source directory and prints what it did or why it skipped.
 
 The flag is opt-in because it writes to a checkout you are not standing in. It
 refuses one it cannot move -- uncommitted changes to tracked files or a rebase
@@ -149,8 +154,8 @@ branch's dependencies; set `worktree.defaultBranch` in the repository-root
 `.stim.json` when `origin/HEAD` is missing or wrong.
 
 An install that fails is remembered, and a plain warm reads that before it
-copies. The refresh records the install it completed for the lockfile it read;
-when the last install of the lockfile as it stands now did not finish, a plain
+copies. The refresh records the install it completed for each lockfile it read,
+the repository root's and the app's own; when the last install of a lockfile as it stands now did not finish, a plain
 warm refuses with `STIM_DEPS_INCOMPLETE` and copies nothing, because the
 dependencies in the source checkout are partial and only the refresh's own
 terminal ever said so. Run `stim worktree warm --refresh`, which reinstalls for
@@ -325,8 +330,17 @@ stim gc --delete --worktrees --older-than 3`}
 />
 
 Automatic maintenance (`maintenance.mode`, on by default) removes finished
-worktrees on its own, by the same rules as `gc --delete`; turn that off with
+worktrees on its own, by the same rules as `gc --delete`. Turn that off with
 `maintenance.removeFinishedWorktrees false`.
+
+With `maintenance.removeIdleWorktrees true`, which is off by default, its daily
+age sweep also removes clean, pushed worktrees whose branch is not merged once
+they are unused for `maintenance.olderThanDays` (7 days), as
+`gc --delete --worktrees --older-than 7` does. Unused means no Stim command ran
+there, so a worktree you edit without running `stim` counts as unused once its
+git activity is older than `gc.worktreeGraceMinutes`, and removal takes its
+git-ignored files, such as `.env.local`, with it. Pin a worktree with
+`maintenance.keep`.
 
 `gc` lists every linked worktree that has a Stim workspace, and every other
 linked worktree of a registered project's repository, and says why each one
@@ -388,7 +402,9 @@ holds nothing git would lose, but looks just like a worktree created a minute
 ago, so plain `gc --delete` keeps it. `--worktrees` removes it once it is idle:
 by its last Stim use when one is recorded, else by its git and Stim activity
 (the same sources as the grace period below) being older than `--older-than`
-days. Automatic maintenance removes it only at disk pressure level 3, once
+days. Automatic maintenance removes it the same way in its daily age sweep,
+after `maintenance.olderThanDays`, only with `maintenance.removeIdleWorktrees`
+(off by default), and at disk pressure level 3 once
 that activity is older than `maintenance.pressureProtectMinutes`, and never
 sooner than 5 minutes after it, even when that setting is 0. Before
 removing it, gc checks again that its HEAD did not move and that it is still

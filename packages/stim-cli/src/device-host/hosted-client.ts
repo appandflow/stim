@@ -113,7 +113,7 @@ export async function connectHost(
   const opened = await BuildConnection.open(target, credential.serverKey!, timeoutMs, 'device-host', signal).catch(
     (error: unknown) => {
       throw Object.assign(
-        new Error(`${machine} is unreachable. Check stim-server and its tailnet serve route on ${machine}.`, {
+        new Error(`${machine} is unreachable. Run stim doctor to see which layer failed.`, {
           cause: error,
         }),
         { code: strict ? 'STIM_HOSTING_REFUSED' : 'closed' },
@@ -129,7 +129,7 @@ export async function connectHost(
           ? `${machine} runs a stim-server that speaks an older protocol than this Stim. Run stim doctor for the command that updates it there, then retry.`
           : opened.refused
             ? `${machine} refused this machine: ${opened.failure.replace(/\.+$/, '')}. Run stim doctor.`
-            : `${machine} is unreachable: ${opened.failure}. Check stim-server and its tailnet serve route on ${machine}.`,
+            : `${machine} is unreachable: ${opened.failure}. Run stim doctor to see which layer failed.`,
       ),
       {
         code: strict ? 'STIM_HOSTING_REFUSED' : opened.refused ? 'STIM_HOSTING_REFUSED' : (opened.code ?? 'closed'),

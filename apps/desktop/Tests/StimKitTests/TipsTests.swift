@@ -273,6 +273,14 @@ struct TipsTests {
     #expect(Tips.move(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .buildMachine)
   }
 
+  @Test func theTutorialTipStopsWhenTheTutorialIsNotOffered() {
+    var state = TipState()
+    var inputs = TipInputs()
+    inputs.tutorialOffered = false
+    #expect(!Tips.applicable(.tutorial, inputs: inputs))
+    #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) != .tutorial)
+  }
+
   @Test func nextWrapsInCatalogOrderAndOneApplicableTipHasNoNext() {
     var state = TipState()
     var inputs = TipInputs()

@@ -64,7 +64,7 @@ export type SettingsPayload = {
   project: string | null;
   files: Partial<Record<SettingScope, string>>;
   settings: SettingEntry[];
-  unknown: Array<{ key: string; scope: SettingScope; file: string; value: unknown }>;
+  unknown: Array<{ key: string; scope: SettingScope; file: string; value: unknown; replacement?: string }>;
 };
 
 /** The masked JSON result of a settings set or unset. */
@@ -83,9 +83,22 @@ export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop'] as con
 
 export const ANDROID_EMULATOR_APPS = ['emulator', 'stim-desktop'] as const;
 
-export const OFFLOAD_MODES = ['auto', 'force', 'off'] as const;
+export const REPLACED_SETTINGS: Readonly<
+  Record<string, { key: string; env?: string; value: (old: unknown) => string | null }>
+> = {
+  'remote.buildMode': {
+    key: 'remote.build',
+    env: 'STIM_REMOTE_BUILD_MODE',
+    value: (old) => (old === 'auto' ? 'auto' : old === 'force' ? 'remote' : old === 'off' ? 'local' : null),
+  },
+};
 
-export type OffloadMode = (typeof OFFLOAD_MODES)[number];
+export function replacementAdvice(key: string, old: unknown): { key: string; command: string | null } | null {
+  const replaced = REPLACED_SETTINGS[key];
+  if (!replaced) return null;
+  const value = replaced.value(old);
+  return { key: replaced.key, command: value ? `stim settings set ${replaced.key} ${value}` : null };
+}
 
 export const WEB_VIEWPORTS = ['desktop', 'phone'] as const;
 
@@ -167,11 +180,11 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: {
       kind: 'string',
       pattern: TAILNET_MACHINE_PATTERN,
-      patternHelp: 'eas, proxy, auto, local, or a tailnet machine name',
+      patternHelp: 'eas, proxy, local, auto, remote, remote-only, or a tailnet machine name',
     },
     scopes: EVERY,
     description:
-      'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this machine is full or busy; local runs here, overriding a lower layer',
+      'Where the iOS simulator runs: local here (overriding a lower layer); auto here first, then a remote.machines entry when this machine is full or busy; remote on a remote.machines entry in order, here only when none takes it; remote-only the same but never here; a machine name exactly that machine; eas or proxy a remote device backend',
   },
   {
     key: 'ios.projectPath',
@@ -179,6 +192,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: ['workspace', 'committed'],
     default: 'ios',
     description: "Directory under the app that holds a bare React Native app's Xcode project and Podfile",
+  },
+  {
+    key: 'ios.simslim',
+    type: { kind: 'choice', choices: ['on', 'off'] },
+    scopes: EVERY,
+    default: 'off',
+    description:
+      "Slim every Stim-owned iOS simulator with SimSlim's default categories when no ios.simslimProfile is set; off in a project opts that app out",
   },
   {
     key: 'ios.simslimProfile',
@@ -308,11 +329,11 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: {
       kind: 'string',
       pattern: TAILNET_MACHINE_PATTERN,
-      patternHelp: 'eas, proxy, auto, local, or a tailnet machine name',
+      patternHelp: 'eas, proxy, local, auto, remote, remote-only, or a tailnet machine name',
     },
     scopes: EVERY,
     description:
-      'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this machine is full or busy; local runs here, overriding a lower layer',
+      'Where the Android emulator runs: local here (overriding a lower layer); auto here first, then a remote.machines entry when this machine is full or busy; remote on a remote.machines entry in order, here only when none takes it; remote-only the same but never here; a machine name exactly that machine; eas or proxy a remote device backend',
   },
   {
     key: 'metro.tunnel',
@@ -362,7 +383,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: 30,
     description:
-      'Minutes an owned simulator or emulator stays idle before the workspace supervisor shuts it down; 0 never',
+      'Minutes an owned simulator or emulator stays idle before the workspace supervisor, or automatic maintenance when no supervisor runs, shuts it down; 0 never',
   },
   {
     key: 'devices.reclaimIdleMinutes',
@@ -396,6 +417,17 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: { kind: 'strings' },
     scopes: PROJECT,
     description: 'Arguments passed directly to the owned macOS development executable.',
+  },
+  {
+    key: 'macos.remote',
+    type: {
+      kind: 'string',
+      pattern: `^(?![Ee][Aa][Ss]$|[Pp][Rr][Oo][Xx][Yy]$)${TAILNET_MACHINE_PATTERN.slice(1)}`,
+      patternHelp: 'local, auto, remote, remote-only, or a tailnet machine name (macOS has no eas or proxy backend)',
+    },
+    scopes: EVERY,
+    description:
+      'Where stim macos launches the app: local here; auto here unless this machine is busy, then a remote.machines entry; remote on a remote.machines entry in order, here only when none takes it; remote-only the same but never here; a machine name exactly that machine. The --remote flag overrides it',
   },
   {
     key: 'macos.assetCatalog',
@@ -647,7 +679,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 1,
     env: 'STIM_MAINTENANCE_LOG_MAX_MB',
-    description: 'Machine maintenance log rotation size in MiB',
+    description: 'Machine maintenance and gc log rotation size in MiB',
   },
   {
     key: 'maintenance.logRetentionDays',
@@ -655,7 +687,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 30,
     env: 'STIM_MAINTENANCE_LOG_RETENTION_DAYS',
-    description: 'Retention of the rotated machine maintenance log in days',
+    description: 'Retention of the rotated machine maintenance and gc logs in days',
   },
   {
     key: 'maintenance.logChecks',
@@ -705,6 +737,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Finished-worktree check interval in minutes',
   },
   {
+    key: 'maintenance.idleCheckMinutes',
+    type: { kind: 'number', integer: true, minimum: 1 },
+    scopes: MACHINE,
+    default: 5,
+    env: 'STIM_MAINTENANCE_IDLE_CHECK_MINUTES',
+    description:
+      'Interval in minutes of the check that shuts down owned simulators and emulators idle for devices.idleShutdownMinutes, also with no dev server running',
+  },
+  {
     key: 'maintenance.sweepHours',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,
@@ -714,11 +755,12 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'maintenance.olderThanDays',
-    type: { kind: 'number', integer: true, minimum: 1 },
+    type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,
     default: 7,
     env: 'STIM_MAINTENANCE_OLDER_THAN_DAYS',
-    description: 'Age in days for the age sweep: unused workspace build outputs and shared cache entries',
+    description:
+      'Days unused before the age sweep removes it: workspace build outputs, shared cache entries, parked simulators and emulators, and, with maintenance.removeIdleWorktrees, clean pushed linked worktrees; 0 turns those age removals off',
   },
   {
     key: 'maintenance.deviceIdleDays',
@@ -781,6 +823,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     env: 'STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES',
     description:
       'Remove clean linked worktrees whose branch or pull request finished, under gc.worktreeGraceMinutes, and at disk pressure level 3 clean, pushed ones with no commits of their own',
+  },
+  {
+    key: 'maintenance.removeIdleWorktrees',
+    type: BOOLEAN,
+    scopes: MACHINE,
+    default: false,
+    env: 'STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES',
+    description:
+      'In the age sweep, also remove clean, pushed linked worktrees whose branch is not merged once no Stim command has used them for maintenance.olderThanDays, with their git-ignored files; needs maintenance.removeFinishedWorktrees',
   },
   {
     key: 'maintenance.keep',
@@ -903,7 +954,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: { kind: 'strings' },
     scopes: MACHINE,
     description:
-      'Tailscale names of the remote machines this machine may build on and host owned simulators on, each optionally with :<port> of its tailscale serve route (default 7443); what each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
+      'Tailscale names of the remote machines this machine may build on and host owned simulators, emulators and macOS apps on, each optionally with :<port> of its tailscale serve route (default 7443). The order is the placement priority: each workload goes to the first machine with room and a load under its own limit. What each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
   },
   {
     key: 'remote.buildPoolDisabled',
@@ -927,7 +978,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: false,
     description:
-      'When ios.remote or android.remote is auto, this machine is at its concurrency.maxDevices cap and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can',
+      'When ios.remote or android.remote is auto or remote, this machine is at its concurrency.maxDevices cap and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can; remote-only never uses it',
   },
   {
     key: 'remote.easMaxDurationMinutes',
@@ -942,22 +993,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: {
       kind: 'string',
       pattern: TAILNET_MACHINE_PATTERN,
-      patternHelp: 'auto, local, or a tailnet machine name',
+      patternHelp: 'local, auto, remote, remote-only, or a tailnet machine name',
     },
     scopes: MACHINE,
     default: 'auto',
     env: 'STIM_REMOTE_BUILD',
     description:
-      'Build placement: auto follows remote.buildMode within enabled automatic pool members; local always builds here; a name in remote.machines requires that remote machine without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
-  },
-  {
-    key: 'remote.buildMode',
-    type: { kind: 'choice', choices: OFFLOAD_MODES },
-    scopes: MACHINE,
-    default: 'auto',
-    env: 'STIM_REMOTE_BUILD_MODE',
-    description:
-      'When remote.build is auto, where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: auto builds here while this machine has a free concurrency.maxBuilds slot and its load is under server.maxLoadPerCore, and otherwise builds on a less loaded machine in remote.machines; force builds on an enabled remote machine whenever one can take the build; off builds here when local is enabled in remote.buildPoolDisabled',
+      'Where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: local here; auto here while it has a free concurrency.maxBuilds slot and load under server.maxLoadPerCore, otherwise on a remote.machines entry; remote on a remote.machines entry in order, here only when none takes the build; remote-only the same but never here; a machine name exactly that machine without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
   },
   {
     key: 'server.maxLoadPerCore',
@@ -965,7 +1007,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 2,
     description:
-      'Load per core (5-minute load average divided by the CPU count) at which this machine counts as saturated: it declines builds other machines send it, automatic build placement stops preferring it, and automatic iOS and Android device placement treats it as busy',
+      'Load per core (5-minute load average divided by the CPU count) at which this machine counts as saturated: it declines builds other machines send it, reports the limit in its device offers so other machines skip it like a full one, stops preferring itself for automatic placement, and automatic iOS, Android and macOS placement treats it as busy',
   },
   {
     key: 'server.workerRoot',

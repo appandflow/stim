@@ -171,7 +171,7 @@ Cache providers must settle after cancellation. If cleanup cannot finish within
 35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
 directory; it does not delete files a broken provider may still be writing.
 
-`doctor({ platform?, record? })` and `gc({ cache?, olderThan?, worktrees? })` read their CLI
+`doctor({ platform?, record? })` and `gc({ cache?, olderThan?, worktrees?, measureBuildState? })` read their CLI
 JSON reports with a 60 second execution budget and optional `signal`. Doctor
 never repairs; its `stim.runningPath` is null. By default it does not record a
 check. Pass `record: true` to register the supported iOS/Android project and record

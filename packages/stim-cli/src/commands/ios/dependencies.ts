@@ -6,9 +6,11 @@ import { checkEasFallback } from '../../engine/eas-fallback.ts';
 import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
 import { hostedMetroPortProbe } from '../../device-host/hosted-native.ts';
 import { readHostedIos, writeHostedIosAsync } from '../../device-host/ios-state.ts';
+import { followHostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { buildIos, discoverXcodeProject } from '../../integrations/react-native-build.ts';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
+import { memoizedFingerprint } from '../../cache/fingerprint-memo.ts';
 import {
   fingerprintProject,
   resolveBuild,
@@ -33,7 +35,13 @@ import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
 import { budgetGate } from '../../budget.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
 import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
-import { clearIosAppData, listIosRuntimesAsync, listIosRuntimes, listAllIosSims } from '../../devices/ios.ts';
+import {
+  clearIosAppData,
+  listIosRuntimesAsync,
+  listIosRuntimes,
+  listAllIosSims,
+  type IosSimSnapshot,
+} from '../../devices/ios.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable,
@@ -124,6 +132,7 @@ export interface IosDeps {
   ensureOwnedDevice: typeof ensureOwnedDevice;
   listIosRuntimes: (options?: {
     signal?: AbortSignal;
+    snapshot?: IosSimSnapshot;
   }) => ReturnType<typeof listIosRuntimes> | Promise<ReturnType<typeof listIosRuntimes>>;
   listAllIosSims: typeof listAllIosSims;
   ensureBooted: typeof ensureBooted;
@@ -134,6 +143,7 @@ export interface IosDeps {
   pidExists: typeof pidExists;
   getConcurrencyLimits: typeof getConcurrencyLimits;
   fingerprintProject: typeof fingerprintProject;
+  memoizedFingerprint: typeof memoizedFingerprint;
   untrackedNativeFiles: typeof untrackedNativeFiles;
   resolveBuild: typeof resolveBuild;
   storeBuild: BuildStore;
@@ -183,6 +193,7 @@ export interface IosDeps {
   launchIosApp: typeof launchIosApp;
   verifyLaunch: typeof verifyLaunch;
   verifyReleaseLaunch: typeof verifyReleaseLaunch;
+  followHostedLaunchLogs: typeof followHostedLaunchLogs;
   ensureWorkspaceStorage: typeof ensureWorkspaceStorageSafely;
   replaceCollector: typeof replaceCollector;
   stopPreviousCollector: typeof stopPreviousCollector;
@@ -239,6 +250,7 @@ export const DEFAULT_DEPS: IosDeps = {
   pidExists,
   getConcurrencyLimits,
   fingerprintProject,
+  memoizedFingerprint,
   untrackedNativeFiles,
   resolveBuild,
   storeBuild,
@@ -285,6 +297,7 @@ export const DEFAULT_DEPS: IosDeps = {
   launchIosApp,
   verifyLaunch,
   verifyReleaseLaunch,
+  followHostedLaunchLogs,
   ensureWorkspaceStorage: ensureWorkspaceStorageSafely,
   replaceCollector,
   stopPreviousCollector,

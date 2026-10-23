@@ -126,6 +126,7 @@ const SIMCTL_TIMEOUT_MS = 60_000;
 const SIMCTL_OPTIONS = { timeoutMs: SIMCTL_TIMEOUT_MS, killSignal: 'SIGKILL' } as const;
 
 const SIMCTL_LIST_ARGS = ['simctl', 'list', 'devices', '--json'];
+const SIMCTL_LIST_ALL_ARGS = ['simctl', 'list', '--json'];
 
 export function listAllIosSims({
   timeoutMs = 30000,
@@ -135,33 +136,73 @@ export function listAllIosSims({
   return parseSimctlList(out, { includeUnavailable });
 }
 
+interface IosSimulatorListing {
+  /** Every simulator, unavailable ones included. */
+  sims: IosSimRecord[];
+  runtimes: IosRuntime[];
+  deviceTypes: IosDeviceType[];
+}
+
+interface IosListOptions {
+  signal?: AbortSignal;
+  operation?: StimContext;
+}
+
 export interface IosSimSnapshot {
   /** All simulators, unavailable ones included (filter on `available`); one `simctl list` until `invalidate`. */
   read(): IosSimRecord[];
   /** Await a native listing and cache it for subsequent synchronous reads. */
-  readAsync?(): Promise<IosSimRecord[]>;
+  readAsync?(options?: IosListOptions): Promise<IosSimRecord[]>;
+  /** Installed iOS runtimes, from the same `simctl list` that fills the simulators. Kept across `invalidate`. */
+  runtimes?(options?: IosListOptions): Promise<IosRuntime[]>;
+  /** Simulator device types, from the same `simctl list` that fills the simulators. Kept across `invalidate`. */
+  deviceTypes?(options?: IosListOptions): Promise<IosDeviceType[]>;
   /** Drop the cached listing after Stim changes device state, so the next `read` lists again. */
   invalidate(): void;
 }
 
 export function createIosSimSnapshot(): IosSimSnapshot {
-  let cached: { value?: IosSimRecord[]; pending?: Promise<IosSimRecord[]> } | null = null;
+  type Entry = { value?: IosSimRecord[]; pending?: Promise<IosSimRecord[]> };
+  let cached: Entry | null = null;
+  let listing: Promise<IosSimulatorListing> | null = null;
+  const start = (options: IosListOptions | undefined): Promise<IosSimulatorListing> => {
+    if (listing) return listing;
+    const entry = (cached ??= {});
+    const run = listIosSimulatorAsync(options);
+    const pending = run.then((all) => (entry.value ??= all.sims));
+    listing = run;
+    entry.pending = pending;
+    const forget = () => {
+      if (listing === run) listing = null;
+      if (entry.pending === pending) entry.pending = undefined;
+    };
+    run.catch(forget);
+    pending.catch(forget);
+    return run;
+  };
   return {
     read() {
       const entry = (cached ??= {});
       entry.value ??= listAllIosSims({ includeUnavailable: true });
       return entry.value;
     },
-    async readAsync() {
+    async readAsync(options) {
       const entry = (cached ??= {});
       if (entry.value) return entry.value;
-      entry.pending ??= listAllIosSimsAsync({ includeUnavailable: true })
+      if (!entry.pending && !listing) start(options);
+      entry.pending ??= listAllIosSimsAsync({ includeUnavailable: true, ...options })
         .then((value) => (entry.value = value))
         .catch((error) => {
           entry.pending = undefined;
           throw error;
         });
       return entry.pending;
+    },
+    async runtimes(options) {
+      return (await start(options)).runtimes;
+    },
+    async deviceTypes(options) {
+      return (await start(options)).deviceTypes;
     },
     invalidate() {
       cached = null;
@@ -186,6 +227,25 @@ export async function listAllIosSimsAsync({
   return parseSimctlList(out, { includeUnavailable });
 }
 
+/** The simulators, runtimes and device types out of one unfiltered `simctl list --json`. */
+function parseSimctlListing(jsonOutput: string): IosSimulatorListing {
+  return {
+    sims: parseSimctlList(jsonOutput, { includeUnavailable: true }),
+    runtimes: parseIosRuntimes(jsonOutput),
+    deviceTypes: parseIosDeviceTypes(jsonOutput),
+  };
+}
+
+async function listIosSimulatorAsync({ signal, operation }: IosListOptions = {}): Promise<IosSimulatorListing> {
+  const out = await runOperationFile(operation, getExecutor(), 'xcrun', SIMCTL_LIST_ALL_ARGS, {
+    timeoutMs: 30000,
+    killSignal: 'SIGKILL',
+    signal,
+    cwd: operation?.cwd,
+  });
+  return parseSimctlListing(out);
+}
+
 export function parseRuntimeVersion(runtimeId: string): string {
   const m = runtimeId.match(/iOS-(\d+)(?:-(\d+))?$/);
   if (!m) return runtimeId;
@@ -202,12 +262,34 @@ const BOOT_STATE_LIST_TIMEOUT_MS = 30000;
 const SPRINGBOARD_QUERY_TIMEOUT_MS = 10000;
 const SPRINGBOARD_POLL_MS = 250;
 
-type SpringBoardStartup = { state: 'started' } | { state: 'timed-out' } | { state: 'unreadable'; reason: string };
+type SpringBoardStartup =
+  | { state: 'started'; pid: number }
+  | { state: 'timed-out' }
+  | { state: 'unreadable'; reason: string };
+
+// SpringBoard's pid changes on every simulator reboot. Null when it is not running or unreadable.
+export async function readSpringBoardPid(udid: string): Promise<number | null> {
+  try {
+    const output = await getExecutor().runFileAsync(
+      'xcrun',
+      ['simctl', 'spawn', udid, 'notifyutil', '-g', 'com.apple.springboard.finishedstartup'],
+      { timeoutMs: SPRINGBOARD_QUERY_TIMEOUT_MS },
+    );
+    const pid = Number(/^com\.apple\.springboard\.finishedstartup (\d+)$/m.exec(output)?.[1] ?? 0);
+    return pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+export function springBoardRunning(launchctlList: string): boolean {
+  return /^\d+[ \t]+\S+[ \t]+com\.apple\.SpringBoard$/m.test(launchctlList);
+}
 
 // `simctl bootstatus -b` returns before SpringBoard has started. Until it has,
 // `simctl launch` blocks and SpringBoard resets the volume (#4075). It sets the
 // `com.apple.springboard.finishedstartup` notify state to its pid once started.
-async function waitForSpringBoard(udid: string, deadline: number): Promise<SpringBoardStartup> {
+export async function waitForSpringBoard(udid: string, deadline: number): Promise<SpringBoardStartup> {
   for (;;) {
     let output: string | null = null;
     try {
@@ -232,7 +314,7 @@ async function waitForSpringBoard(udid: string, deadline: number): Promise<Sprin
           reason: `Could not read SpringBoard's startup state: ${output.trim() || 'no output'}.`,
         };
       }
-      if (Number(state[1]) > 0) return { state: 'started' };
+      if (Number(state[1]) > 0) return { state: 'started', pid: Number(state[1]) };
     }
     if (Date.now() >= deadline) return { state: 'timed-out' };
     await cancellableSleep(SPRINGBOARD_POLL_MS);
@@ -303,6 +385,10 @@ async function awaitBootCommand(args: string[], attemptMs: number, onLine: (line
   throw new Error(`${command} failed with exit code ${result.code ?? 'unknown'}${detail}`);
 }
 
+export type IosBootEvent =
+  | { phase: 'boot_requested' | 'bootstatus_done' | 'viewer_opened' }
+  | { phase: 'springboard_started'; pid: number };
+
 export async function bootIosSim(
   udid: string,
   {
@@ -313,6 +399,7 @@ export async function bootIosSim(
     openViewer = true,
     label = udid,
     out = () => {},
+    onPhase,
   }: {
     timeoutMs?: number;
     attemptMs?: number;
@@ -321,8 +408,9 @@ export async function bootIosSim(
     openViewer?: boolean;
     label?: string;
     out?: (message: string) => void;
+    onPhase?: (event: IosBootEvent) => void;
   } = {},
-): Promise<{ springBoardUnreadable: string | null }> {
+): Promise<void> {
   const exec = getExecutor();
   const viewer = configuredIosSimulatorViewer(simulatorApp, env);
   const started = Date.now();
@@ -332,7 +420,6 @@ export async function bootIosSim(
   let sampledAt = started;
   let longestGapMs = 0;
   let phase = 'requesting boot';
-  let springBoardUnreadable: string | null = null;
   const ranks = { normal: 0, warning: 1, critical: 2 };
   const sample = () => {
     const now = Date.now();
@@ -366,6 +453,7 @@ export async function bootIosSim(
   monitor.unref();
   try {
     try {
+      onPhase?.({ phase: 'boot_requested' });
       await awaitBootCommand(['simctl', 'boot', udid], Math.max(1, deadline - Date.now()), onLine);
       phase = 'waiting for boot completion';
     } catch (e) {
@@ -404,12 +492,13 @@ export async function bootIosSim(
         throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
       }
     }
+    onPhase?.({ phase: 'bootstatus_done' });
     phase = 'waiting for SpringBoard';
     const springBoard = await waitForSpringBoard(udid, deadline);
     if (springBoard.state === 'timed-out') {
       throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
     }
-    if (springBoard.state === 'unreadable') springBoardUnreadable = springBoard.reason;
+    if (springBoard.state === 'started') onPhase?.({ phase: 'springboard_started', pid: springBoard.pid });
   } catch (error) {
     const named = memoryCulpritAdvice(await memoryCulpritsUnderAsync(sample(), exec));
     throw new Error(
@@ -419,8 +508,10 @@ export async function bootIosSim(
   } finally {
     clearInterval(monitor);
   }
-  if (openViewer) await viewer.open(udid);
-  return { springBoardUnreadable };
+  if (openViewer) {
+    await viewer.open(udid);
+    onPhase?.({ phase: 'viewer_opened' });
+  }
 }
 
 export async function shutdownIosSim(udid: string, operation?: StimContext): Promise<void> {
@@ -449,7 +540,9 @@ export function listIosDeviceTypes(): IosDeviceType[] {
 export async function listIosDeviceTypesAsync({
   signal,
   operation,
-}: { signal?: AbortSignal; operation?: StimContext } = {}): Promise<IosDeviceType[]> {
+  snapshot,
+}: { signal?: AbortSignal; operation?: StimContext; snapshot?: IosSimSnapshot } = {}): Promise<IosDeviceType[]> {
+  if (snapshot?.deviceTypes) return snapshot.deviceTypes({ signal, operation });
   return parseIosDeviceTypes(
     await runOperationFile(operation, getExecutor(), 'xcrun', LIST_DEVICE_TYPES_ARGS, {
       ...LIST_DEVICE_TYPES_OPTIONS,
@@ -771,7 +864,11 @@ export function listIosRuntimes(): IosRuntime[] {
   return parseIosRuntimes(getExecutor().runFile('xcrun', LIST_RUNTIMES_ARGS, LIST_RUNTIMES_OPTIONS));
 }
 
-export async function listIosRuntimesAsync({ signal }: { signal?: AbortSignal } = {}): Promise<IosRuntime[]> {
+export async function listIosRuntimesAsync({
+  signal,
+  snapshot,
+}: { signal?: AbortSignal; snapshot?: IosSimSnapshot } = {}): Promise<IosRuntime[]> {
+  if (snapshot?.runtimes) return snapshot.runtimes({ signal });
   return parseIosRuntimes(
     await getExecutor().runFileAsync('xcrun', LIST_RUNTIMES_ARGS, { ...LIST_RUNTIMES_OPTIONS, signal }),
   );

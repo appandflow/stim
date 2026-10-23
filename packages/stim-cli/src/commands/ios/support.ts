@@ -13,6 +13,7 @@ import {
   iosProjectDirSettingError,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
+  inertSettingWarning,
   unknownSettingKeys,
   type SettingsObject,
 } from '../../workspace/settings.ts';
@@ -27,7 +28,7 @@ import {
   unknownIosRuntimeRefusal,
 } from '../../engine/device-capacity.ts';
 import { parseIosSimulatorApp, type IosSimulatorApp } from '../../devices/ios-simulator-viewer.ts';
-import { listIosRuntimes } from '../../devices/ios.ts';
+import { listIosRuntimes, type IosSimSnapshot } from '../../devices/ios.ts';
 import { IosDeviceMismatchError } from '../../engine/device-ios.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import { describeDiagnostic } from '../../engine/errors-xcode.ts';
@@ -66,7 +67,7 @@ export function resolveIosBuildSetup(
     };
   }
   for (const key of unknownSettingKeys(settings)) {
-    warn('setting', `Warning: setting "${key}" is not read by Stim and will be ignored.`);
+    warn('setting', inertSettingWarning(settings, key));
   }
   const cacheProviderError = cacheProviderSettingError(settings);
   if (cacheProviderError) warn('cache', `${cacheProviderError} Using the local cache.`);
@@ -174,6 +175,7 @@ export async function deviceModelRefusal({
   hosted = false,
   listRuntimes,
   signal,
+  snapshot,
 }: {
   slot?: string;
   deviceTypeFlag: string | undefined;
@@ -186,8 +188,10 @@ export async function deviceModelRefusal({
   remoteBackend: RemoteDeviceBackend | null;
   hosted?: boolean;
   signal?: AbortSignal;
+  snapshot?: IosSimSnapshot;
   listRuntimes: (options?: {
     signal?: AbortSignal;
+    snapshot?: IosSimSnapshot;
   }) => ReturnType<typeof listIosRuntimes> | Promise<ReturnType<typeof listIosRuntimes>>;
 }): Promise<{ code: string; message: string; remedy: string } | null> {
   if (slot && slot !== 'default' && remoteBackend)
@@ -227,7 +231,7 @@ export async function deviceModelRefusal({
   if (!deviceType && !runtime) return null;
   let runtimes;
   try {
-    runtimes = await listRuntimes({ signal });
+    runtimes = await listRuntimes({ signal, snapshot });
   } catch (error) {
     return {
       code: 'STIM_NO_DEVICE',

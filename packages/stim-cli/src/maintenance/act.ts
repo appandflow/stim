@@ -30,6 +30,12 @@ import {
   findStaleProjectDevices,
 } from '../commands/gc/devices.ts';
 import { listAvdsAsync } from '../devices/android.ts';
+import {
+  dueIdleDevices,
+  shutDownIdleDevices,
+  writeIdleShutdownEvent,
+  type IdleShutdownEvent,
+} from '../devices/idle-shutdown.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSimsAsync } from '../devices/ios.ts';
@@ -43,6 +49,7 @@ import { artifactWorktrees, clearArtifact, type ArtifactWorktree } from './artif
 import { cachedDeviceActivityAsync, workspaceActiveReason, workspaceActiveReasonAsync } from './activity.ts';
 import { levelFloors, lowestFree, protectWindowMs } from './pressure.ts';
 import type { MaintenanceSettings } from './settings.ts';
+import { idleShutdownMinutes } from './devices.ts';
 
 export interface ActionOutcome {
   status: 'done' | 'kept' | 'failed';
@@ -203,11 +210,42 @@ async function removeOrphan(action: MaintenanceAction): Promise<ActionOutcome> {
   return outcomeOf(results, orphan.bytes ?? 0);
 }
 
+async function shutDownIdleDevice(action: MaintenanceAction): Promise<ActionOutcome> {
+  if (deviceSweepIsScoped()) return kept('STIM_HOME scopes this config, and devices are machine-wide');
+  const root = action.workspace ?? action.target;
+  const minutes = idleShutdownMinutes(root);
+  if (minutes === 0) return kept('devices.idleShutdownMinutes is 0 for this workspace');
+  const idleMs = minutes * 60_000;
+  const due = dueIdleDevices(root, idleMs).find(({ device }) => device.id === action.target);
+  if (!due) return kept(`it is no longer idle for ${minutes} minutes`);
+  const failures: string[] = [];
+  const skips: string[] = [];
+  const log = (event: IdleShutdownEvent) => {
+    writeIdleShutdownEvent(root, event);
+    if (event.event === 'device_idle_shutdown_failed') (event.skipped ? skips : failures).push(event.msg);
+  };
+  const run = await withIdleWorkspace(
+    root,
+    () => shutDownIdleDevices(root, idleMs, log, Date.now(), { only: due.device }),
+    { purpose: 'automatic maintenance idle shutdown', supervisor: false, managedLocks: false },
+  );
+  if (!run.ran) return kept(`in use: ${run.reasons.join('; ')}`);
+  if (run.value) return { status: 'done', bytes: 0, detail: action.target };
+  if (failures.length) return { status: 'failed', bytes: 0, detail: failures.join('; ') };
+  return kept(skips.join('; ') || `it is no longer idle for ${minutes} minutes`);
+}
+
 async function deleteParkedDevice(action: MaintenanceAction): Promise<ActionOutcome> {
   if (deviceSweepIsScoped()) return kept('STIM_HOME scopes this config, and devices are machine-wide');
-  const sims = (await collectParkedSims({})).filter((sim) => sim.udid === action.target);
-  const avds = sims.length ? [] : (await collectParkedAvds({})).filter((avd) => avd.name === action.target);
-  if (!sims.length && !avds.length) return kept('it is no longer parked');
+  const age = { olderThanDays: action.olderThanDays ?? null, now: Date.now() };
+  const sims = (await collectParkedSims({}, age)).filter((sim) => sim.udid === action.target);
+  const avds = sims.length ? [] : (await collectParkedAvds({}, age)).filter((avd) => avd.name === action.target);
+  if (!sims.length && !avds.length)
+    return kept(
+      action.olderThanDays === undefined
+        ? 'it is no longer parked'
+        : `it is no longer parked, or was parked within ${action.olderThanDays} days`,
+    );
   const before = lowestFree(measureDisk());
   const { results } = await quietly(async () => (await deleteParkedSims(sims)) + (await deleteParkedAvds(avds)));
   return outcomeOf(results, freedSince(before));
@@ -430,6 +468,10 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
       return deleteParkedDevice(action);
     case 'would-delete-devices':
       return deleteDevices(action, context);
+    case 'would-shutdown-device':
+      return action.check === 'disk'
+        ? kept('automatic maintenance does not stop devices or dev servers for disk')
+        : shutDownIdleDevice(action);
     case 'would-stop-workspace':
       return action.level === 3
         ? stopWorkspace(action, context)

@@ -401,6 +401,9 @@ struct NavigationCommands: Commands {
       Button("Machines") { navigation?.go(.machine) }
         .keyboardShortcut("4", modifiers: .command)
         .disabled(navigation == nil)
+      Button("Builds") { navigation?.go(.builds) }
+        .keyboardShortcut("5", modifiers: .command)
+        .disabled(navigation == nil)
     }
   }
 }

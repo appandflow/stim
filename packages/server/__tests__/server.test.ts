@@ -439,6 +439,7 @@ async function start(
     logLimits?: ServerOptions['logLimits'];
     commandLimits?: ServerOptions['commandLimits'];
     actionLimits?: ServerOptions['actionLimits'];
+    requestLimits?: ServerOptions['requestLimits'];
     tailscaleState?: ServerOptions['tailscaleState'];
     tailscaleMonitor?: ServerOptions['tailscaleMonitor'];
     transports?: ServerOptions['transports'];
@@ -502,6 +503,7 @@ async function start(
     logLimits: overrides.logLimits,
     commandLimits: overrides.commandLimits,
     actionLimits: overrides.actionLimits,
+    requestLimits: overrides.requestLimits,
     frameLimits: { lingerMs: 50, ...overrides.frameLimits },
     frameHelper: overrides.frameHelper ?? null,
     foldHelper: overrides.foldHelper,
@@ -752,10 +754,20 @@ syncBuiltinESMExports();
         expect(settled).toEqual({
           state: 'degraded',
           reason: expect.stringContaining('did not finish within 0.4 s'),
+          cause: 'home-unreadable',
         });
         const degraded = await fetch(`http://127.0.0.1:${port}/health`);
         expect(degraded.status).toBe(503);
         expect(await degraded.json()).toMatchObject({ startup: settled });
+
+        const forwarded = await fetch(`http://127.0.0.1:${port}/health`, {
+          headers: { 'x-forwarded-for': '100.64.0.2' },
+        });
+        expect(forwarded.status).toBe(503);
+        expect(await forwarded.json()).toEqual({
+          version: expect.any(String),
+          startup: { state: 'degraded', cause: 'home-unreadable' },
+        });
 
         await expect(
           new Promise((resolve, reject) => {
@@ -1226,6 +1238,7 @@ describe('pairing', () => {
           'hosted-metro-ports',
           'server-update',
           'build-compat',
+          'build-jdk',
           'status-views',
         ],
         actions: [],
@@ -1327,6 +1340,9 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     const hello = await remote.request('hello', { client: CLIENT });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
+    expect(hello).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-report-invalidate-target']) },
+    });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-full-logs']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-doctor-run']) } });
@@ -1334,7 +1350,13 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.arrayContaining(['desktop-reports', 'desktop-report-platform']) },
+      result: {
+        features: expect.arrayContaining([
+          'desktop-reports',
+          'desktop-report-platform',
+          'desktop-report-invalidate-target',
+        ]),
+      },
     });
     for (const client of [remote, plain]) {
       for (const method of [
@@ -1365,7 +1387,14 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     const subscribed = await client.request('desktop.reports.subscribe', { report: 'gc' });
     expect(subscribed).toHaveProperty('result.subscription');
     expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: first.result });
-    expect(await client.request('desktop.reports.invalidate')).toHaveProperty('result');
+    expect(await client.request('desktop.reports.invalidate', { report: 'doctor', cwd: root })).toHaveProperty(
+      'result',
+    );
+    expect(await client.request('desktop.reports.invalidate', { report: 'doctor' })).toHaveProperty(
+      'error.code',
+      'bad-request',
+    );
+    expect(await client.request('desktop.reports.invalidate', { report: 'gc' })).toHaveProperty('result');
     expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
     expect(await client.next()).toMatchObject({
       event: 'desktop-report',
@@ -1482,7 +1511,51 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     });
   });
 
-  it('caps waiting requests, retains shared probes after disconnect, and drains them at shutdown', async () => {
+  it('serves five identical waiting reports from one load', async () => {
+    const bin = join(root, 'bin');
+    const jobs = join(root, 'report-git-jobs');
+    const release = join(root, 'release');
+    mkdirSync(bin);
+    mkdirSync(jobs);
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    writeFileSync(
+      join(bin, 'git'),
+      `#!${process.execPath}
+const { existsSync, writeFileSync } = require('node:fs');
+writeFileSync(require('node:path').join(process.env.REPORT_GIT_JOBS, String(process.pid)), '');
+const timer = setInterval(() => {
+  if (existsSync(process.env.REPORT_RELEASE)) {
+    clearInterval(timer);
+    process.exit(1);
+  }
+}, 20);
+`,
+    );
+    chmodSync(join(bin, 'git'), 0o755);
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: bin + ':' + process.env.PATH,
+        REPORT_GIT_JOBS: jobs,
+        REPORT_RELEASE: release,
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const client = await desktop();
+    const target = { report: 'doctor', cwd: workspace };
+    const replies = Promise.all(Array.from({ length: 5 }, () => client.request('desktop.reports.get', target)));
+    await until(() => readdirSync(jobs).length === 2);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(readdirSync(jobs)).toHaveLength(2);
+    writeFileSync(release, '');
+    const results = await replies;
+    expect(results.every((reply) => 'result' in reply)).toBe(true);
+    expect(new Set(results.map((reply) => ('result' in reply ? JSON.stringify(reply.result) : null))).size).toBe(1);
+    expect(results[0]).toMatchObject({ result: { pending: false, value: { project: workspace } } });
+  });
+
+  it('answers interactive requests while reports wait, caps report waiters, and drains shared probes at shutdown', async () => {
     const bin = join(root, 'bin');
     const jobs = join(root, 'report-git-jobs');
     mkdirSync(bin);
@@ -1508,15 +1581,16 @@ require('node:net').createServer().listen(0, '127.0.0.1');
     });
     const first = await desktop();
     const second = await desktop();
-    for (let id = 10; id < 14; id++)
+    for (let id = 100; id < 117; id++)
       first.socket.send(
         JSON.stringify({ id, method: 'desktop.reports.get', params: { report: 'doctor', cwd: workspace } }),
       );
-    await until(() => processes().length === 2);
-    expect(await first.request('settings.get')).toMatchObject({ error: { code: 'limit-exceeded' } });
-    expect(await first.request('desktop.settings.get', { cwd: workspace })).toMatchObject({
-      error: { code: 'limit-exceeded' },
+    expect(await first.next()).toMatchObject({
+      id: 116,
+      error: { code: 'limit-exceeded', message: 'A connection can wait for 16 reports at a time.' },
     });
+    await until(() => processes().length === 2);
+    expect(await first.request('stats.get')).toHaveProperty('result');
     await second.request('desktop.reports.subscribe', { report: 'doctor', cwd: workspace });
     expect(await second.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
     first.socket.close();
@@ -1951,6 +2025,9 @@ test('build.start rejects escaping or oversized macOS resources before probing t
       },
     };
     expect(validate({ id: 'request', method: 'build.start', params: valid })).toBe(true);
+    expect(validate({ id: 'request', method: 'build.start', params: { ...valid, jdk: '17' } })).toBe(true);
+    for (const jdk of ['17.0.1', '', '17; id', 17])
+      expect(validate({ id: 'request', method: 'build.start', params: { ...valid, jdk } })).toBe(false);
     expect(await session.start(valid)).toMatchObject({
       error: { code: 'build-refused', message: 'This machine runs Stim build unknown.' },
     });
@@ -2007,9 +2084,12 @@ test('build.start compares the build compatibility version when both machines re
     );
     expect(await message({ stimBuild: 'b2' })).toBe('This machine runs Stim build b1.');
     expect(await message({ stimBuild: 'b1' })).toBe('launched');
+    expect(launch.mock.calls.at(-1)?.[0].job).not.toHaveProperty('jdk');
+    expect(await message({ stimBuild: 'b2', compat: 3, jdk: '17' })).toBe('launched');
+    expect(launch.mock.calls.at(-1)?.[0].job).toMatchObject({ jdk: '17' });
     toolchain.mockResolvedValue({ ...worker, compat: undefined });
     expect(await message({ stimBuild: 'b2', compat: 3 })).toBe('This machine runs Stim build b1.');
-    expect(launch).toHaveBeenCalledTimes(2);
+    expect(launch).toHaveBeenCalledTimes(3);
   } finally {
     toolchain.mockRestore();
     await host.close();
@@ -4132,7 +4212,7 @@ describe('archived reads', () => {
       'frames.subscribe',
     ];
     const replies = await Promise.all(
-      Array.from({ length: 40 }, (_, index) => client.request(methods[index % methods.length]!, params)),
+      Array.from({ length: 120 }, (_, index) => client.request(methods[index % methods.length]!, params)),
     );
     const refused = replies.filter((reply) => 'error' in reply);
     expect(refused.length).toBeGreaterThan(0);
@@ -4140,7 +4220,7 @@ describe('archived reads', () => {
       all.every(
         (reply) =>
           (reply as { error: { code: string } }).error.code === 'limit-exceeded' &&
-          (reply as { error: { message: string } }).error.message === 'A connection can run 4 requests at a time.',
+          (reply as { error: { message: string } }).error.message === 'A connection can run 32 requests at a time.',
       ),
     );
     expect(await client.request('frames.subscribe', params)).toMatchObject({ result: { video: 'h264' } });
@@ -4937,7 +5017,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
     'keeps another socket responsive, shares the command cap, and cancels stats plus its Git child on disconnect',
     async () => {
       const slow = slowGit();
-      const port = await start({ env: slow.env });
+      const port = await start({ env: slow.env, requestLimits: { connection: 4 } });
       const first = await authed(port);
       const second = await authed(port);
       for (let id = 10; id < 14; id++)
@@ -4949,6 +5029,29 @@ require('node:net').createServer().listen(0, '127.0.0.1');
       first.socket.terminate();
       await until(() => owned.every((pid) => !alive(pid)));
       expect(await second.request('stats.get')).toMatchObject({ result: { version: 1 } });
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'bounds a tailnet device across its connections until its cancelled reads drain',
+    async () => {
+      const slow = slowGit();
+      const port = await start({ env: slow.env, requestLimits: { device: 2 } });
+      const peer = '100.64.0.2';
+      const { keyPair } = await pair(port, peer);
+      const first = await returning(port, keyPair, peer);
+      const second = await returning(port, keyPair, peer);
+      for (let id = 10; id < 12; id++)
+        first.socket.send(JSON.stringify({ id, method: 'stats.get', params: { workspace } }));
+      await until(() => slow.processes().length >= 2);
+      expect(await second.request('stats.get', { workspace })).toMatchObject({
+        error: { code: 'limit-exceeded', message: 'A remote device can run 2 requests at a time.' },
+      });
+      const owned = slow.processes();
+      first.socket.terminate();
+      await until(() => owned.every((pid) => !alive(pid)));
+      second.socket.send(JSON.stringify({ id: 20, method: 'stats.get', params: { workspace } }));
+      await until(() => slow.processes().length > owned.length);
     },
   );
 
@@ -6082,7 +6185,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     const secondClaim = second.acquired;
     const firstClaim = claims[0];
     assert(firstClaim);
-    await start();
+    await start({ requestLimits: { connection: 4 } });
     const original = stim.createStim;
     const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
       ...original(options),
@@ -6362,7 +6465,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       mkdirSync(folder, { recursive: true });
       writeFileSync(join(folder, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
     }
-    await start();
+    await start({ requestLimits: { connection: 4 } });
     const client = await desktop();
     const attempt = tryAcquireClaim({
       root: join(root, 'home', 'config.lock.claims'),
@@ -6566,7 +6669,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
       JSON.stringify({ projects: Object.fromEntries(roots.map((cwd) => [cwd, {}])) }),
     );
     const browsers = await Promise.all(roots.map((cwd, i) => reloadBrowser(cwd, i < 4)));
-    await start();
+    await start({ requestLimits: { connection: 4 } });
     const client = await desktop();
     const subscriptions: string[] = [];
     for (const cwd of roots.slice(0, 4)) {
@@ -10486,7 +10589,7 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
 
   it.each(
     kind === 'run'
-      ? [{ platform: 'ios' }, { platform: 'macos', remote: 'auto' }]
+      ? [{ platform: 'ios' }, { platform: 'macos', remote: 'eas' }]
       : [{ platform: 'ios' }, { platform: 'android' }],
   )('streams the real API refusal for %j without a CLI and releases the workspace', async (options) => {
     await start();

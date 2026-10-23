@@ -164,6 +164,9 @@ struct Sidebar: View {
             .accessibilityLabel("Free disk is under the Stim budget")
         }
       }
+      PinnedRow(item: .builds, selection: $selection) {
+        SidebarLabel(title: "Builds", icon: "hammer", selected: selection == .builds)
+      }
     }
     .padding(.horizontal, Space.md)
     .padding(.bottom, Space.md)

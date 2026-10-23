@@ -18,7 +18,7 @@ import { reportAndroidResult } from '../commands/android/result.ts';
 import { makeWriter } from './_factories.ts';
 import { testContext } from './_context.ts';
 import { getExecutor } from '../exec.ts';
-import { buildPlacementCandidates } from '../offload/client.ts';
+import { buildPlacementSettings } from '../offload/selection.ts';
 import { createDebugLog, getConcurrencyLimits, getParkedMax } from '@stim-cli/core/state';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
@@ -128,13 +128,13 @@ test('an unqualified child working directory is the client workspace', async () 
 
 test('client resource and placement overrides govern native admission', () => {
   const operation = context({
-    STIM_REMOTE_BUILD_MODE: 'off',
+    STIM_REMOTE_BUILD: 'local',
     STIM_MAX_BUILDS: '1',
     STIM_MAX_DEVICES: '2',
     STIM_POOL_ANDROID_PARKED_MAX: '0',
   });
   withAmbientContext(operation, () => {
-    expect(buildPlacementCandidates('auto').mode).toBe('off');
+    expect(buildPlacementSettings('local')).toEqual([{ key: 'remote.build', value: 'local', from: 'env' }]);
     expect(getConcurrencyLimits()).toEqual({ maxBuilds: 1, maxDevices: 2 });
     expect(getParkedMax('android')).toEqual({ max: 0, error: null });
   });

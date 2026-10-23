@@ -93,7 +93,7 @@ it appends the default Node of nvm, fnm, Volta, mise or asdf, Homebrew,
 `JAVA_HOME` to a Homebrew `openjdk` (17, then 21, then the newest), else Android
 Studio's bundled runtime, when no JDK is installed under
 `/Library/Java/JavaVirtualMachines`. It never replaces a variable it was given,
-and its own Node's directory is always the last `PATH` entry. CocoaPods uses the
+and its own Node's directory is always the last `PATH` entry. The build host repeats this discovery for each build offer, toolchain read and build start, so a tool installed after the server started, such as Homebrew's directory, a JDK or the Android SDK, is found without a restart, within the minute the toolchain report is cached. A `PATH` line added to a shell profile is never read. CocoaPods uses the
 project's `.ruby-version` Ruby, else rvm's or rbenv's default Ruby, and reads the
 login shell only when neither exists. Anything else a shell profile sets, such as
 `STIM_*` variables, reaches the server only through its environment or `--env`.
@@ -275,7 +275,9 @@ reports without starting a CLI process. `desktop.reports.get` takes
 Doctor accepts a selected folder before it is registered with Stim. The result is
 `{ "pending": false, "value": { ... }, "measuredAt": "..." }`; a failed read
 returns `stim-failed`. Doctor never repairs the project or records a CLI run, and
-GC never deletes anything.
+GC never deletes anything. The GC report, here and in `machine.details`, takes
+worktree build-state sizes only from the disk-usage cache and runs no `du` for
+them; a stale size is `null`.
 
 The local-only `desktop-report-platform` feature adds an optional `"platform": "ios"`
 or `"platform": "android"` to doctor targets. Omitting it checks all selected platforms.
@@ -291,12 +293,17 @@ Active subscriptions refresh after 60 seconds; no refresh timer runs without
 subscribers. `unsubscribe` and disconnect remove the subscription. Cancelling a
 get request does not cancel another reader's shared work.
 
-After changing settings, running an action, or explicitly refreshing a view,
-Desktop calls `desktop.reports.invalidate` without parameters. This invalidates
-all report targets and refreshes active subscriptions. Results started before
-invalidation cannot replace a newer result or satisfy a waiting get. The existing
-request and subscription caps, report byte quota, API execution and cleanup
-budgets, and 150-second server limit apply. At most four shared report probes run
+`desktop.reports.invalidate` without parameters invalidates all report targets
+and refreshes active subscriptions. With the local-only
+`desktop-report-invalidate-target` feature it also takes a report target, as
+`desktop.reports.get` does, and invalidates only that target, so a fresh read
+of one report does not restart the others. Results started before
+invalidation cannot replace a newer result or satisfy a waiting get; invalidation
+aborts such a probe, so a waiting get waits only for the fresh one. A waiting get
+does not use one of the connection's request slots: a connection can wait for 16
+reports at a time, and more fail with `limit-exceeded`. The subscription cap,
+report byte quota, API execution and cleanup budgets, and 150-second server limit
+apply. At most four shared report probes run
 at once across connections and targets. A new target above that limit returns a
 busy error without starting or queuing work; invalidate and retry after a probe
 finishes. Unsubscribing does not release a probe's slot before it drains.
@@ -359,7 +366,10 @@ person approves does setup store the ticket's derived PSK and lookup in
 gets `unknown-secret`, and its `stim doctor` reports the machine as pending and
 tries again on every run. The requester's next first-contact handshake with the
 ticket records its public key once per approved capability, which spends the
-ticket. From then on the ticket admits only that key, until it expires, so a
+ticket. While it waits, setup says so ("Waiting for the requesting machine to
+connect. Stim Desktop sends this automatically.", or the `stim doctor`
+instruction for a Doctor-made command) and confirms each approval when it
+arrives. From then on the ticket admits only that key, until it expires, so a
 requester that lost the reply can retry; setup deletes an unspent secret when it
 ends. Build and
 device-host approvals are separate records. A build grant carries no `read` or
@@ -1360,7 +1370,10 @@ event loop. Until that read returns, `/health` answers HTTP 503 with
 requests get 503, and no status follower, native helper, file watcher or
 recorder starts. A read that does not return within 10 seconds, plus up to one
 second to stop the child, leaves the server listening with
-`startup: { "state": "degraded", "reason": "..." }` and HTTP 503 on `/health`,
+`startup: { "state": "degraded", "reason": "...", "cause": "home-unreadable" }`
+(`start-failed` when starting failed after the read returned) and HTTP 503 on
+`/health` (a tailnet peer sees only `{ "version", "startup": { "state",
+"cause" } }`, because the reason names the Stim home path),
 logs the reason once, and reads again every 30 seconds. When a read returns,
 the server starts its watchers and recorder, `/health` answers 200 with
 `startup: { "state": "ready" }`, and no restart is needed. `service status`
@@ -1621,9 +1634,14 @@ connected since stim-server started keeps its directory when revoked.
   `arch`; `xcode`; `simulatorSdk`; `macosSdk` (from
   `xcrun --sdk macosx --show-sdk-version`); `cocoapods`; `runtimes`, the simulator
   runtimes with an iPhone simulator to build for; `jdk`, the major version of
-  the JDK in `JAVA_HOME` or the macOS default; and `androidSdk`, the `ndk`,
+  the JDK in `JAVA_HOME` or the macOS default; `jdks`, the majors of every JDK it finds
+  (`JAVA_HOME`, the system JVM directories, Homebrew, Android Studio's JBR, SDKMAN), the default included; `developerDir` (what `xcode-select -p` prints) and `xcodeApps` (the Xcode apps in
+  `/Applications` with `version`, `build` and, while `xcode` is null, the `license` and `firstLaunch` checks of each), on a Mac; and `androidSdk`, the `ndk`,
   `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME`, else `~/Library/Android/sdk` on macOS or
-  `~/Android/Sdk` on Linux, null without one), `capacity` and `warm`
+  `~/Android/Sdk` on Linux, null without one), `androidHome` (that directory) and
+  `androidLicenses` (whether `licenses/android-sdk-license` in it has content, so
+  Gradle can download a missing package; both absent from a server older than
+  them, and from a worker without an SDK), `capacity` and `warm`
   (`checkout`, `dependencies`, and the legacy `build` field, now always false)
   for that repository. For React Native and Expo builds, clients supporting `build-dependency-cache` can send
   `dependencies: { project, packageName }` alongside `lockfile`; the dependency
@@ -1715,7 +1733,9 @@ connected since stim-server started keeps its directory when revoked.
   simulator runtime identifier, required for `ios`, null for `android`),
   `fingerprint`, `packageName`, `isExpo`, `optimizations`, `android` (for
   `android`: `variant`, `abi`, `gradleBuildCache`, `pch` and `compilerCache`,
-  `ccache` or `none`), `stimBuild` and, from a caller that saw `build-compat`, `compat`, after the whole manifest of `repo` was
+  `ccache` or `none`), `stimBuild` and, from a caller that saw `build-compat`, `compat`, and, for Android from a caller
+  that saw `build-jdk`, `jdk` (the JDK major its Gradle runs on; the build runs with `JAVA_HOME` at an installed JDK of
+  that major, and fails if there is none), after the whole manifest of `repo` was
   synced on this connection. A peer-cache-capable React Native caller can set
   `cacheArtifact: true` to retain a completed development archive when its cache
   write and remote policies allow it. With the `fingerprint-sources` feature, a
@@ -1945,7 +1965,7 @@ Events are `{ "event", "subscription", ... }`.
   retained logs and agent-device session actions locally through core, with the same JSON filters, ordering,
   markers and error context. Archive reads are synchronous and queued per
   connection, yielding to the event loop between requests. Pending archive
-  reads share the four-request limit with commands. Archived session actions
+  reads share the connection's request limit with commands. Archived session actions
   retain available platform and device attribution; device ids and Stim slot
   assignments absent from retained files are unavailable after removal. They never follow files or use a hosted relay.
   An archive subscription sends its records in the same batches and limits,
@@ -2355,9 +2375,10 @@ Events are `{ "event", "subscription", ... }`.
 
 `workspace` is an environment `path` from a status payload. Any other path is
 refused with `unknown-workspace` and runs nothing. A connection holds at most
-32 subscriptions and runs at most 4 `logs.query`, `stats.get`,
+32 subscriptions and runs at most 32 `logs.query`, `stats.get`,
 `settings.get`, `build.plan`, `workspace.files` and `workspace.diff` requests at
-a time. `logs.query`, `stats.get` and `settings.get` fail after 60 seconds,
+a time, actions included. A tailnet device runs at most 16 across all its
+connections; more fail with `limit-exceeded`. `logs.query`, `stats.get` and `settings.get` fail after 60 seconds,
 `build.plan` after 150; these four fail at 32 MiB of output. Closing the
 connection stops running requests. When the command refuses with Stim's error
 contract on stdout, the `stim-failed` message is its code, message and remedy;

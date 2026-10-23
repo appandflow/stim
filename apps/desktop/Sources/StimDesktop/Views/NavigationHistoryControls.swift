@@ -20,6 +20,7 @@ struct NavigationDestination: Equatable {
     case .worktree: "worktree"
     case .notifications: "notifications"
     case .machine: "machine"
+    case .builds: "builds"
     case nil: "none"
     }
   }

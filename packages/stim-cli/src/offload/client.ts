@@ -21,11 +21,11 @@ import {
   requireAutomaticMachine,
   isJsonObject,
   runId,
-  OFFLOAD_MODES,
+  mayRunHere,
+  placementWord,
   saturation,
   type BuildMachineCredential,
   type MachineCapacity,
-  type OffloadMode,
 } from '@stim-cli/core/state';
 import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-facts.ts';
 import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE } from '../engine/ccache.ts';
@@ -56,9 +56,16 @@ import { nativeGradleTransfer, type GradleTransfer } from '../integrations/nativ
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
-import { namedBuildMachine, OffloadRefusal } from './selection.ts';
+import { namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
-import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
+import {
+  toolchainMismatches,
+  toolchainNotes,
+  cocoapodsDifference,
+  type BuildTarget,
+  type OffloadProblem,
+  type WorkerToolchain,
+} from './toolchain.ts';
 import { ambientContext, dependencyLockfile, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
 import type {
   BuildArtifactIdentity,
@@ -86,24 +93,19 @@ const CHUNK_BYTES = 60 * 1024;
 const MAX_BUFFERED = 8 * 1024 * 1024;
 const DIGEST_BYTES = 32;
 
-function offloadMode(env: NodeJS.ProcessEnv = ambientContext()?.env ?? process.env): OffloadMode {
-  const raw = env.STIM_REMOTE_BUILD_MODE || loadConfig()?.remote?.buildMode;
-  return OFFLOAD_MODES.includes(raw as OffloadMode) ? (raw as OffloadMode) : 'auto';
-}
-
 export function buildPlacementCandidates(selected: string): {
-  mode: OffloadMode;
   machines: BuildMachineCredential[];
   localEnabled: boolean;
 } {
   const config = loadConfig();
+  const word = placementWord(selected);
   return {
-    localEnabled: selected !== 'auto' || automaticMachineEnabled('build', 'local', config),
-    mode: selected === 'local' ? 'off' : offloadMode(),
+    localEnabled:
+      word === null || word === 'local' || (mayRunHere(word) && automaticMachineEnabled('build', 'local', config)),
     machines:
-      selected === 'local'
+      word === 'local'
         ? []
-        : namedBuildMachine(selected)
+        : word === null
           ? pairedMachines([selected]).slice(0, 1)
           : pairedMachines().filter((entry) => automaticMachineEnabled('build', entry.machine, config)),
   };
@@ -133,10 +135,10 @@ export function placementLoad(choice: { offer: BuildOffer }): string {
 /**
  * Whether a build may go to a remote machine at all, before any machine is asked. `auto` keeps the build here while
  * this machine has a free `concurrency.maxBuilds` slot and its load per core is under `server.maxLoadPerCore`.
- * A named selection ignores local capacity and mode, and refuses an unsupported build or missing pairing.
+ * `remote` always tries the remote machines first and `remote-only` never builds here. A named selection ignores
+ * local capacity, and refuses an unsupported build or missing pairing.
  */
 export function offloadPlacement({
-  mode,
   machines,
   here,
   unsupported,
@@ -144,30 +146,28 @@ export function offloadPlacement({
   selected = 'auto',
 }: {
   selected?: string;
-  mode: OffloadMode;
   machines: number;
   here: MachineCapacity;
   unsupported: string | null;
   localEnabled?: boolean;
 }): { offload: boolean; code: string; reason: string } {
-  if (namedBuildMachine(selected)) {
+  const word = placementWord(selected);
+  if (word === null) {
     if (unsupported) throw new OffloadRefusal(selected, `${unsupported}, so a named remote machine cannot take it`);
     if (machines === 0) throw new OffloadRefusal(selected, 'no remote machine is paired');
     return { offload: true, code: 'named', reason: `selected with --remote-build ${selected}` };
   }
-  if (selected === 'local') return { offload: false, code: 'local-selected', reason: '--remote-build local' };
-  if (!localEnabled) {
-    const reason =
-      mode === 'off'
-        ? 'remote.buildMode is off'
-        : (unsupported ?? (machines === 0 ? 'no enabled remote machine is paired' : null));
-    if (reason) throw new OffloadRefusal('auto', `${reason}; local is disabled in remote.buildPoolDisabled`);
-    return { offload: true, code: 'local-disabled', reason: 'local is disabled in remote.buildPoolDisabled' };
+  if (word === 'local') return { offload: false, code: 'local-selected', reason: '--remote-build local' };
+  if (!localEnabled || !mayRunHere(word)) {
+    const why =
+      word === 'remote-only' ? 'remote-only never builds here' : 'local is disabled in remote.buildPoolDisabled';
+    const reason = unsupported ?? (machines === 0 ? 'no enabled remote machine is paired' : null);
+    if (reason) throw new OffloadRefusal(selected, `${reason}; ${why}`);
+    return { offload: true, code: word === 'remote-only' ? 'remote-only' : 'local-disabled', reason: why };
   }
-  if (mode === 'off') return { offload: false, code: 'mode-off', reason: 'remote.buildMode is off' };
   if (machines === 0) return { offload: false, code: 'no-remote-mac', reason: 'no remote machine is paired' };
   if (unsupported) return { offload: false, code: 'unsupported', reason: unsupported };
-  if (mode === 'force') return { offload: true, code: 'forced', reason: 'remote.buildMode is force' };
+  if (word === 'remote') return { offload: true, code: 'remote', reason: 'remote machines come first' };
   const busy = saturation(here);
   return busy
     ? { offload: true, code: 'this-mac-busy', reason: `this machine is busy: ${busy} (${capacityText(here)})` }
@@ -246,8 +246,13 @@ function matchingArtifact(offer: BuildOffer, identity?: ArtifactLookup): CachedB
 const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
 
 /** Every reason a machine's offer cannot take this build, in either mode; empty when it can. */
-export function offerProblems(offer: BuildOffer, target: BuildTarget): OffloadProblem[] {
+export function offerProblems(offer: BuildOffer, target: BuildTarget, named = false): OffloadProblem[] {
   const problems = toolchainMismatches(target, offer.toolchain);
+  const pods =
+    !named && target.platform === 'ios' && !problems.some(({ code }) => code === 'platform')
+      ? cocoapodsDifference(target, offer.toolchain)
+      : null;
+  if (pods) problems.push(pods);
   const capacity = offer.capacity;
   const { running, max, diskFreeBytes, minDiskFreeBytes, declined } = capacity;
   if (diskFreeBytes !== null && diskFreeBytes < minDiskFreeBytes) {
@@ -264,15 +269,15 @@ export function offerProblems(offer: BuildOffer, target: BuildTarget): OffloadPr
 }
 
 /**
- * The asked machines that can take the build, best first, and one reason per machine that cannot. A machine with any
- * `offerProblems` never takes it. In `auto`, a machine must also be expected to build faster than this machine: while
- * every local build slot is busy any machine that accepts will do, otherwise its load per core must be lower than
- * this machine's. A named selection considers only that machine and skips this local-capacity gating.
- * A machine that reports no load (a stim-server older than capacity) takes an `auto` build only while
- * every local slot is busy. Matching dependency installations rank first, then load.
+ * The asked machines that can take the build, in the order they should be tried, and one reason per machine that
+ * cannot. A machine with any `offerProblems` never takes it, nor does one whose load per core is at or above its own
+ * `server.maxLoadPerCore` (this machine's setting stands in for a stim-server that does not report it). Machines that
+ * can take it keep the order of `remote.machines`, so the first one with a free slot under its load threshold gets
+ * the build; only a machine that already holds the exact completed artifact goes ahead of that order. A named
+ * selection considers only that machine. In `auto` a machine that reports no load (a stim-server older than capacity)
+ * takes the build only while every local slot is busy.
  */
 export function pickOffer({
-  mode,
   here,
   offers,
   target,
@@ -281,7 +286,6 @@ export function pickOffer({
   artifact,
   cacheOnly = false,
 }: {
-  mode: OffloadMode;
   here: MachineCapacity;
   selected?: string;
   localEnabled?: boolean;
@@ -297,7 +301,7 @@ export function pickOffer({
     reasons.push(`${machine}: ${msg}`);
     candidates.push({ machine, code, msg, ...(detail ? { detail } : {}) });
   };
-  const ranked: Array<{ index: number; score: number; load: number }> = [];
+  const ranked: Array<{ index: number; cached: boolean }> = [];
   offers.forEach(({ machine, offer, failure }, index) => {
     if (namedBuildMachine(selected) && machine !== selected) return;
     if (!offer) return skip(machine, 'unreachable', failure ?? 'no offer');
@@ -305,12 +309,12 @@ export function pickOffer({
       matchingArtifact(offer, artifact) &&
       (artifact !== 'swiftpm' || toolchainMismatches(target, offer.toolchain).length === 0)
     ) {
-      ranked.push({ index, score: Number.POSITIVE_INFINITY, load: 0 });
+      ranked.push({ index, cached: true });
       candidates.push({ machine, code: 'artifact-hit', msg: 'has the exact completed artifact' });
       return;
     }
     if (cacheOnly) return skip(machine, 'artifact-miss', 'no matching completed artifact');
-    const problems = offerProblems(offer, target);
+    const problems = offerProblems(offer, target, namedBuildMachine(selected));
     if (problems.length) {
       return skip(
         machine,
@@ -319,24 +323,26 @@ export function pickOffer({
         problems.map((problem) => problem.code),
       );
     }
-    const load = offer.capacity.loadPerCore;
-    if (selected === 'auto' && localEnabled && mode === 'auto' && !slotsFull) {
-      if (typeof load !== 'number') {
-        return skip(machine, 'load', 'capacity unknown (older stim-server) while this machine has a free slot');
-      }
-      if (load >= here.loadPerCore) {
-        return skip(machine, 'load', `no less loaded (load ${load}/core there, ${here.loadPerCore}/core here)`);
-      }
+    const { loadPerCore: load, maxLoadPerCore } = offer.capacity;
+    const ceiling = maxLoadPerCore ?? here.maxLoadPerCore;
+    if (typeof load === 'number' && !namedBuildMachine(selected) && load >= ceiling) {
+      return skip(machine, 'load', `saturated: load ${load}/core there, at or above ${ceiling}/core`);
     }
-    const score = Number(offer.warm.dependencies);
-    ranked.push({ index, score, load: typeof load === 'number' ? load : Number.POSITIVE_INFINITY });
+    if (selected === 'auto' && localEnabled && !slotsFull && typeof load !== 'number') {
+      return skip(machine, 'load', 'capacity unknown (older stim-server) while this machine has a free slot');
+    }
+    ranked.push({ index, cached: false });
+    const notes = toolchainNotes(target, offer.toolchain).map((each) => each.reason);
     candidates.push({
       machine,
       code: 'accepted',
-      msg: typeof load === 'number' ? `can take the build (load ${load}/core there)` : 'can take the build',
+      msg: [
+        typeof load === 'number' ? `can take the build (load ${load}/core there)` : 'can take the build',
+        ...notes,
+      ].join('; '),
     });
   });
-  ranked.sort((a, b) => b.score - a.score || a.load - b.load);
+  ranked.sort((a, b) => Number(b.cached) - Number(a.cached));
   return { order: ranked.map((each) => each.index), reasons, candidates };
 }
 
@@ -729,13 +735,12 @@ interface OfferingMachine {
  * refuses `build.start`, `offloadBuild` moves this choice to the next one in place.
  */
 export interface OffloadChoice extends OfferingMachine {
-  mode: OffloadMode;
+  selected: string;
   here: MachineCapacity;
   target: BuildTarget;
   offerMs: number;
   identity: RepoIdentity;
   runnersUp: OfferingMachine[];
-  automatic?: boolean;
   cacheOnly?: boolean;
   gradleArtifact?: BuildGradleArtifactQuery;
   reactNativeArtifact?: BuildReactNativeArtifactQuery;
@@ -856,7 +861,6 @@ async function probeMachine(
 export async function chooseBuildMachine({
   projectRoot,
   target,
-  mode,
   here,
   note,
   machines = pairedMachines(),
@@ -870,7 +874,6 @@ export async function chooseBuildMachine({
 }: {
   projectRoot: string;
   target: BuildTarget;
-  mode: OffloadMode;
   here: MachineCapacity;
   note: (line: string) => void;
   machines?: BuildMachineCredential[];
@@ -936,9 +939,8 @@ export async function chooseBuildMachine({
     ),
   );
   const { order, reasons, candidates } = pickOffer({
-    localEnabled: selected !== 'auto' || automaticMachineEnabled('build', 'local'),
+    localEnabled: buildPlacementCandidates(selected).localEnabled,
     selected,
-    mode,
     here,
     target,
     artifact: swiftpmQuery
@@ -972,13 +974,12 @@ export async function chooseBuildMachine({
   });
   return {
     ...first!,
-    mode,
+    selected,
     here,
     target,
     offerMs: Date.now() - started,
     identity,
     runnersUp: rest,
-    automatic: selected === 'auto',
     cacheOnly,
     ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
     ...(reactNativeQuery ? { reactNativeArtifact: reactNativeQuery } : {}),
@@ -1031,6 +1032,13 @@ export type BuildRequest =
       resources?: Record<string, string>;
       assetCatalog?: string | null;
     };
+
+function startJdk(choice: OffloadChoice): { jdk?: string } {
+  const { target, connection } = choice;
+  return target.platform === 'android' && target.local.jdk && connection.supports('build-jdk')
+    ? { jdk: target.local.jdk }
+    : {};
+}
 
 function startCompat(choice: OffloadChoice): { compat?: number } {
   return choice.connection.supports('build-compat') ? { compat: choice.target.local.compat } : {};
@@ -1507,11 +1515,10 @@ export async function offloadBuild(
       });
       if ('failure' in probe) return fail(probe.failure);
       const placement = pickOffer({
-        mode: choice.mode,
         here: choice.here,
         target: choice.target,
-        selected: choice.automatic ? 'auto' : choice.machine,
-        localEnabled: !choice.automatic || automaticMachineEnabled('build', 'local'),
+        selected: choice.selected,
+        localEnabled: buildPlacementCandidates(choice.selected).localEnabled,
         offers: [{ machine: choice.machine, offer: probe.offer }],
       });
       if (placement.order.length === 0) {
@@ -1582,7 +1589,7 @@ export async function offloadBuild(
       return true;
     };
     for (;;) {
-      if (choice.automatic && !automaticMachineEnabled('build', choice.machine)) {
+      if (!namedBuildMachine(choice.selected) && !automaticMachineEnabled('build', choice.machine)) {
         const reason = `${choice.machine} is disabled in remote.buildPoolDisabled`;
         if (moveOn(reason)) continue;
         return fail(reason);
@@ -1627,7 +1634,7 @@ export async function offloadBuild(
       workerStarted = Date.now();
       early = [];
       choice.connection.onProgress((event) => (job === null ? early.push(event) : handle(event)));
-      if (choice.automatic) requireAutomaticMachine('build', choice.machine);
+      if (!namedBuildMachine(choice.selected)) requireAutomaticMachine('build', choice.machine);
       checkCancelled();
       const reply = await choice.connection.request('build.start', {
         repo: identity.repo,
@@ -1671,6 +1678,7 @@ export async function offloadBuild(
             }),
         stimBuild: choice.target.local.stimBuild,
         ...startCompat(choice),
+        ...startJdk(choice),
       });
       checkCancelled();
       if ('result' in reply) {
@@ -1694,10 +1702,7 @@ export async function offloadBuild(
     connection.onProgress(null);
     const workerMs = cacheHit ? 0 : Date.now() - workerStarted;
     if (result.ok !== true)
-      return keepCorruptCacheMessage(
-        fail(`${String(result.code ?? 'failed')}: ${String(result.message ?? '')}`),
-        result,
-      );
+      return keepCorruptCacheMessage(fail(workerFailureReason(result.code, result.message)), result);
     if (!cacheHit && native && (result.sourceDigest !== sourceDigest || result.fingerprint !== expectedFingerprint))
       return fail('The worker returned a different native source or artifact identity.');
     if (native?.provider === 'gradle' && !ANDROID_PACKAGE.test(String(result.androidPackage ?? '')))
@@ -1854,6 +1859,18 @@ export function machineProblems(offer: BuildOffer, targets: BuildTarget[]): Offl
   return problems;
 }
 
+/** What a build on a machine that would take it does beyond the match, for each of `targets`, labeled like `machineProblems`. */
+export function machineNotes(offer: BuildOffer, targets: BuildTarget[]): OffloadProblem[] {
+  const notes: OffloadProblem[] = [];
+  if (machineProblems(offer, targets).length) return notes;
+  for (const target of targets) {
+    for (const note of toolchainNotes(target, offer.toolchain)) {
+      notes.push(targets.length > 1 ? { ...note, reason: `${PLATFORM_LABEL[target.platform]}: ${note.reason}` } : note);
+    }
+  }
+  return notes;
+}
+
 const DOCTOR_CONNECT_MS = 5000;
 const DOCTOR_OFFER_MS = 8000;
 const PLATFORM_LABEL = { ios: 'iOS', android: 'Android', macos: 'macOS' } as const;
@@ -1868,7 +1885,7 @@ export function offloadCheck(
   targets: () => Promise<BuildTarget[]>,
 ): (
   credential: BuildMachineCredential,
-) => Promise<{ capacity: BuildOffer['capacity'] | null; problems: OffloadProblem[] }> {
+) => Promise<{ capacity: BuildOffer['capacity'] | null; problems: OffloadProblem[]; notes?: OffloadProblem[] }> {
   let identity: Promise<RepoIdentity | string> | undefined;
   const readIdentity = async (): Promise<RepoIdentity | string> => {
     try {
@@ -1899,6 +1916,11 @@ export function offloadCheck(
     if ('failure' in probe) return { capacity: null, problems: [{ code: 'unreachable', reason: probe.failure }] };
     probe.connection.close();
     resolved ??= targets();
-    return { capacity: probe.offer.capacity, problems: machineProblems(probe.offer, await resolved) };
+    const judged = await resolved;
+    return {
+      capacity: probe.offer.capacity,
+      problems: machineProblems(probe.offer, judged),
+      notes: machineNotes(probe.offer, judged),
+    };
   };
 }

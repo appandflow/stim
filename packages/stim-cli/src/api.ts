@@ -49,6 +49,7 @@ import {
   resolveProjectSettingsAsync,
   settingShapeErrors,
   SETTING_SHAPE_REMEDY,
+  inertSettingWarning,
   unknownSettingKeys,
 } from './workspace/settings.ts';
 import type {
@@ -300,14 +301,14 @@ export function createStim(options: StimOptions): StimClient {
         );
         return task;
       }),
-    gc: ({ signal, olderThan, cache, worktrees }: StimGcOptions = {}) => {
+    gc: ({ signal, olderThan, cache, worktrees, measureBuildState }: StimGcOptions = {}) => {
       if (olderThan !== undefined && !Number.isSafeInteger(olderThan))
         return Promise.reject(
           new StimError({ code: 'STIM_BAD_ARG', message: 'olderThan must be a whole number of days.' }),
         );
       return report(signal, async (context) => {
         const result = await readGcReport(
-          { olderThan, cache, worktrees },
+          { olderThan, cache, worktrees, measureBuildState },
           {
             operation: context,
             easLedgerRoot: join(context.env.HOME || context.env.USERPROFILE || homedir(), '.stim', 'machine', 'eas'),
@@ -683,8 +684,7 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
     if (shapeErrors.length) {
       throw new StimError({ code: 'STIM_BAD_ARG', message: shapeErrors.join('\n'), remedy: SETTING_SHAPE_REMEDY });
     }
-    for (const key of unknownSettingKeys(settings))
-      note(context)(`Warning: setting "${key}" is not read by Stim and will be ignored.`);
+    for (const key of unknownSettingKeys(settings)) note(context)(inertSettingWarning(settings, key));
     const cacheError = cacheProviderSettingError(settings);
     if (cacheError) note(context)(`Warning: ${cacheError} No cache provider is used.`);
     await ensureWorkspaceStorageAsync(root, context.signal);

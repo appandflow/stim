@@ -22,7 +22,11 @@ type GcResultKind =
   | 'watchman'
   | 'gradleDaemon'
   | 'gradleVersion'
-  | 'kotlinDaemon';
+  | 'kotlinDaemon'
+  | 'devServer'
+  | 'workspaceLogs'
+  | 'ledgerEntry'
+  | 'easLedgerEntry';
 
 type GcResultStatus = 'done' | 'kept' | 'failed';
 
@@ -45,7 +49,7 @@ interface GcResults {
   take(): GcResult[];
 }
 
-export function createGcResults(): GcResults {
+export function createGcResults(observe?: (result: GcResult) => void): GcResults {
   const results: GcResult[] = [];
   return {
     record(
@@ -58,7 +62,9 @@ export function createGcResults(): GcResults {
         detail = null,
       }: { id?: string | null; bytes?: number | null; detail?: string | null } = {},
     ): void {
-      results.push({ kind, status, label, id, bytes, detail });
+      const result = { kind, status, label, id, bytes, detail };
+      results.push(result);
+      observe?.(result);
     },
     take(): GcResult[] {
       return results.splice(0);

@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
-import { isAbsolute, join, posix, relative, resolve as resolvePath, sep } from 'path';
+import { basename, isAbsolute, join, posix, relative, resolve as resolvePath, sep } from 'path';
 import { isDeepStrictEqual } from 'util';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
@@ -8,6 +8,7 @@ import { normalizeOptionsAsync } from '@expo/fingerprint/build/Options.js';
 import { isIgnoredPathWithMatchObjects } from '@expo/fingerprint/build/utils/Path.js';
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
 import { resolveArtifact, storeArtifactAsync, type StimContext } from '@stim-cli/core';
+import { trace } from '@stim-cli/core/state';
 import { readdir, writeFile } from 'node:fs/promises';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { throwIfCancelled } from '../cancellation.ts';
@@ -15,6 +16,7 @@ import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 import { getExecutor } from '../exec.ts';
 import { git, gitAsync, gitQuiet } from '../workspace/git.ts';
 import { register } from './cache-manifest.ts';
+import { computeSignedTail, writeSignedTail } from '../engine/apk-signed-tail.ts';
 import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from '../engine/asset-manifest.ts';
 import { sharedBuildCache as cacheRoot } from '../workspace/paths.ts';
 import { DEFAULT_IOS_PROJECT_PATH, type AndroidLayout } from '../workspace/settings.ts';
@@ -169,7 +171,54 @@ export function androidProjectFingerprintOptions(
   };
 }
 
-interface FingerprintTarget {
+const LOCKFILES = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json', 'bun.lock', 'bun.lockb'];
+
+/**
+ * The patches of a monorepo's install root, which @expo/fingerprint does not see: its patch sourcer reads only the
+ * app's own `patches/`, and its default preset hashes an installed package by name and version, so a patch applied
+ * from the workspace root would leave the key unchanged.
+ */
+function workspacePatchSources(projectRoot: string): NonNullable<FingerprintOptions['extraSources']> {
+  let dir = resolvePath(projectRoot);
+  for (;;) {
+    if (LOCKFILES.some((name) => existsSync(join(dir, name)))) break;
+    const parent = resolvePath(dir, '..');
+    if (parent === dir || existsSync(join(dir, '.git'))) return [];
+    dir = parent;
+  }
+  const sources: NonNullable<FingerprintOptions['extraSources']> = ['patches', '.yarn/patches']
+    .filter((name) => (name === 'patches' ? dir !== resolvePath(projectRoot) : true) && existsSync(join(dir, name)))
+    .map((name) => ({
+      type: 'dir' as const,
+      filePath: relative(projectRoot, join(dir, name)).split(sep).join('/'),
+      reasons: ['workspacePatches'],
+    }));
+  const patched = pnpmPatchedDependencies(join(dir, 'pnpm-lock.yaml'));
+  if (patched)
+    sources.push({ type: 'contents', id: 'pnpmPatchedDependencies', contents: patched, reasons: ['workspacePatches'] });
+  return sources;
+}
+
+/** The lockfile's `patchedDependencies` block, which pnpm rewrites with each patch's hash wherever the patch lives. */
+function pnpmPatchedDependencies(lockfile: string): string | null {
+  let text: string;
+  try {
+    text = readFileSync(lockfile, 'utf8');
+  } catch {
+    return null;
+  }
+  const lines = text.split(/\r?\n/);
+  const start = lines.indexOf('patchedDependencies:');
+  if (start === -1) return null;
+  const block: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line && !/^\s/.test(line)) break;
+    if (line.trim()) block.push(line.trim());
+  }
+  return block.length ? block.join('\n') : null;
+}
+
+export interface FingerprintTarget {
   platform?: string;
   iosProjectPath?: string;
   androidLayout?: AndroidLayout | null;
@@ -206,7 +255,7 @@ export function trackedFingerprintPaths(
   return names.filter((name) => matched.has(name) && !ignored.has(name)).toSorted();
 }
 
-async function fingerprintOptions(
+export async function fingerprintOptions(
   projectRoot: string,
   {
     platform,
@@ -230,10 +279,11 @@ async function fingerprintOptions(
       : androidLayout?.custom
         ? androidProjectFingerprintOptions(projectRoot, androidLayout)
         : {};
-  if (ios.extraSources) {
+  const patches = workspacePatchSources(projectRoot);
+  if (ios.extraSources || patches.length) {
     // An explicit extraSources replaces fingerprint.config.js's list in @expo/fingerprint, so keep the project's own.
     const config = await loadFingerprintConfig(projectRoot, true);
-    ios.extraSources = [...(config?.extraSources ?? []), ...ios.extraSources];
+    ios.extraSources = [...(config?.extraSources ?? []), ...(ios.extraSources ?? []), ...patches];
   }
   const bundleOutput =
     platform === 'android'
@@ -259,19 +309,24 @@ export async function fingerprintProject(
     debug?: boolean;
   } = {},
 ): Promise<ProjectFingerprint | null> {
-  const options = await fingerprintOptions(projectRoot, target);
-  const result = await createFingerprint(projectRoot, debug ? { ...options, debug } : options);
-  const hash = result?.hash ?? null;
-  if (!hash) return null;
-  const sources = Array.isArray(result?.sources) ? (result.sources as FingerprintSource[]) : [];
-  return { hash, sources };
+  return trace.spanAsync(
+    'fingerprint',
+    async () => {
+      const options = await fingerprintOptions(projectRoot, target);
+      const result = await createFingerprint(projectRoot, debug ? { ...options, debug } : options);
+      const hash = result?.hash ?? null;
+      if (!hash) return null;
+      const sources = Array.isArray(result?.sources) ? (result.sources as FingerprintSource[]) : [];
+      return { hash, sources };
+    },
+    { platform: target.platform },
+  );
 }
 
-/** The env files @expo/env loads for the config, in the mode @expo/fingerprint's config loader sets. */
-function expoEnvFiles(env: NodeJS.ProcessEnv = {}): string[] {
+/** The env files @expo/env loads for the config: @expo/fingerprint 0.21 evaluates it in development mode. */
+export function expoEnvFiles(env: NodeJS.ProcessEnv = {}): string[] {
   if (/^(1|true)$/i.test(env.EXPO_NO_DOTENV ?? '')) return [];
-  const mode = env.NODE_ENV || 'development';
-  return [`.env.${mode}.local`, ...(mode === 'test' ? [] : ['.env.local']), `.env.${mode}`, '.env'];
+  return ['.env.development.local', '.env.local', '.env.development', '.env'];
 }
 
 const inNodeModules = (path: string) => path.split('/').includes('node_modules');
@@ -411,6 +466,21 @@ export async function storeBuild(
           }),
         overwrite: Boolean(options.overwrite),
         writeMetadata: async (staging) => {
+          if (platform === 'android' && buildPath.endsWith('.apk')) {
+            try {
+              const tail = await computeSignedTail(join(staging, basename(buildPath)), (file, args) =>
+                getExecutor().runFileAsync(file, args, {
+                  timeoutMs: 120_000,
+                  ...(env ? childEnvironment(env) : {}),
+                  onSpawn: killOnAbort(signal),
+                  declareFor: options.context,
+                }),
+              );
+              if (tail) await writeSignedTail(staging, tail);
+            } catch {
+              throwIfCancelled(signal, 'build cache copy');
+            }
+          }
           if (Array.isArray(options.sources)) {
             try {
               await writeFile(join(staging, SOURCES_FILE), JSON.stringify(options.sources.map(withoutContents)));
@@ -586,6 +656,31 @@ function diffItemChange(item: unknown): SourceChange | null {
   return name === null ? null : { name, change, reasons: sourceReasons(source) };
 }
 
+/** The installed package a source path lies in: the name after its last `node_modules/`. */
+export function packageIn(path: string): string | null {
+  const matches = [...path.matchAll(/(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/g)];
+  return matches.at(-1)?.[1] ?? null;
+}
+
+/** A package that moved, such as a version bump of a pnpm store directory, is one change rather than a removal and an addition. */
+function mergeMovedPackages(changes: SourceChange[]): SourceChange[] {
+  const added = new Map<string, SourceChange>();
+  for (const change of changes) {
+    const pkg = change.change === 'added' ? packageIn(change.name) : null;
+    if (pkg && !added.has(pkg)) added.set(pkg, change);
+  }
+  const moved = new Set<SourceChange>();
+  const kept = changes.filter((change) => {
+    const pkg = change.change === 'removed' ? packageIn(change.name) : null;
+    const counterpart = pkg ? added.get(pkg) : undefined;
+    if (!counterpart || moved.has(counterpart)) return true;
+    moved.add(counterpart);
+    return false;
+  });
+  for (const change of moved) change.change = 'changed';
+  return kept;
+}
+
 export function compareSourceLists(previous: unknown[], current: unknown[]): SourceChange[] {
   const previousByName = new Map<string, { hash: string | null; reasons: string[] }>();
   for (const source of previous) {
@@ -611,7 +706,7 @@ export function compareSourceLists(previous: unknown[], current: unknown[]): Sou
   for (const [name, before] of previousByName) {
     if (!seen.has(name)) changes.push({ name, change: 'removed', reasons: before.reasons });
   }
-  return changes;
+  return mergeMovedPackages(changes);
 }
 
 export function diffFingerprintSources({
@@ -632,16 +727,10 @@ export function diffFingerprintSources({
         { sources: current.sources, hash: current.hash },
       );
       if (Array.isArray(items)) {
-        const changes: SourceChange[] = [];
         const seen = new Set<string>();
-        for (const item of items) {
-          const change = diffItemChange(item);
-          if (change !== null && !seen.has(change.name)) {
-            seen.add(change.name);
-            changes.push(change);
-          }
-        }
-        return changes;
+        return mergeMovedPackages(
+          items.map(diffItemChange).filter((change): change is SourceChange => change !== null),
+        ).filter((change) => !seen.has(change.name) && Boolean(seen.add(change.name)));
       }
     } catch {}
   }

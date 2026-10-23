@@ -1,10 +1,12 @@
 import { ambientContext, ambientEnv } from '@stim-cli/core';
 import { operationState } from '../engine/operation-state.ts';
 import { InvalidArgumentError } from 'commander';
-import { OFFLOAD_MODES, parseMachine, automaticMachineEnabled } from '@stim-cli/core/state';
+import { parseMachine, automaticMachineEnabled, placementWord } from '@stim-cli/core/state';
 import type { PlacementSetting, SettingSource } from '../placement-log.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines } from './build-machines.ts';
+import { POD_MISSING_REASON } from '../engine/deps.ts';
+import { cocoapodsInstall } from './toolchain.ts';
 
 const FINGERPRINT_MISMATCH_REMEDY =
   "The build Mac fingerprints the synced checkout differently; the message names the sources that differ. Stim sends tracked and untracked files and the gitignored files the fingerprint reads, except under node_modules. A source still differs when the build Mac's dependency install or pod install writes it differently, or when the app config reads an environment variable or file that differs. Make that input agree on both Macs, for example by committing the lockfile pod install rewrote there, or rerun with --remote-build auto or --remote-build local.";
@@ -14,6 +16,26 @@ export function fingerprintMismatchRemedy(reason: string): string | undefined {
   return reason.startsWith('fingerprint-mismatch: the checkout there ') ? FINGERPRINT_MISMATCH_REMEDY : undefined;
 }
 
+const PODS_FAILED_PREFIX = 'pod install failed: ';
+
+/** The reason a failed worker job is reported with: a `pods-failed` code reads as a failed pod install. */
+export function workerFailureReason(code: unknown, message: unknown): string {
+  return code === 'pods-failed'
+    ? `${PODS_FAILED_PREFIX}${String(message ?? '')}`
+    : `${String(code ?? 'failed')}: ${String(message ?? '')}`;
+}
+
+/** The remedy for a worker whose `pod install` failed, naming the install when it has no CocoaPods; undefined for any other reason. */
+export function podsFailedRemedy(machine: string, reason: string, localCocoapods: string | null): string | undefined {
+  if (!reason.startsWith(PODS_FAILED_PREFIX)) return undefined;
+  const retry = 'run the same command again, or rerun with --remote-build auto or --remote-build local';
+  if (!reason.includes(POD_MISSING_REASON)) {
+    return `Fix the pod install error on ${machine} (run pod install in its checkout under server.workerRoot there to see all of it), then ${retry}.`;
+  }
+  const { lead, commands } = cocoapodsInstall(localCocoapods);
+  return [`On ${machine}, ${lead}:`, ...commands, `Then ${retry}.`].join('\n');
+}
+
 export class OffloadRefusal extends Error {
   readonly code = 'STIM_OFFLOAD_REFUSED';
   readonly remedy: string;
@@ -21,7 +43,7 @@ export class OffloadRefusal extends Error {
   constructor(
     machine: string,
     reason: string,
-    remedy = 'Run stim doctor --fix to ask for build access if not paired; it prints the stim-server setup command a person runs on the worker to approve this machine. Check stim settings get remote.machines, or rerun with --remote-build auto or --remote-build local.',
+    remedy = 'Run stim doctor --fix to ask for build access if not paired; it prints the stim-server setup command a person runs on the worker to approve this machine. Check stim settings get remote.machines, or rerun with --remote-build auto, remote or local.',
   ) {
     super(reason.startsWith(`${machine}: `) ? reason : `${machine}: ${reason}`);
     this.remedy = remedy;
@@ -31,13 +53,12 @@ export class OffloadRefusal extends Error {
 export function resolveBuildMachine(flag?: string, env?: string, setting?: unknown): string {
   const selected = flag ?? (env?.trim() || undefined) ?? setting ?? 'auto';
   if (typeof selected !== 'string' || !selected.trim() || !parseMachine(selected)) {
-    throw Object.assign(new Error('--remote-build / remote.build must be auto, local, or a tailnet machine name.'), {
-      code: 'STIM_BAD_ARG',
-    });
+    throw Object.assign(
+      new Error('--remote-build / remote.build must be local, auto, remote, remote-only, or a tailnet machine name.'),
+      { code: 'STIM_BAD_ARG' },
+    );
   }
-  const trimmed = selected.trim();
-  const reserved = trimmed.toLowerCase();
-  return reserved === 'auto' || reserved === 'local' ? reserved : trimmed;
+  return placementWord(selected) ?? selected.trim();
 }
 
 export function parseBuildMachineOption(value: string): string {
@@ -48,16 +69,24 @@ export function parseBuildMachineOption(value: string): string {
   }
 }
 
-export function requireLocalBuild(selected: string): void {
-  if (selected === 'auto' && !automaticMachineEnabled('build', 'local'))
+export function automaticBuild(selected: string): boolean {
+  const word = placementWord(selected);
+  return word !== null && word !== 'local';
+}
+
+export function requireLocalBuild(selected: string, reason?: string): void {
+  const word = placementWord(selected);
+  const lead = reason ? `${reason}; ` : '';
+  if (word === 'remote-only') throw new OffloadRefusal(selected, `${lead}remote-only never builds on this machine`);
+  if ((word === 'auto' || word === 'remote') && !automaticMachineEnabled('build', 'local'))
     throw new OffloadRefusal(
-      'auto',
-      'local is disabled in remote.buildPoolDisabled; enable it or select a machine explicitly',
+      selected,
+      `${lead}local is disabled in remote.buildPoolDisabled; enable it or select a machine explicitly`,
     );
 }
 
 export function namedBuildMachine(selected: string): boolean {
-  return selected !== 'auto' && selected !== 'local';
+  return placementWord(selected) === null;
 }
 
 export function requireConfiguredMachine(selected: string, machines: unknown): string {
@@ -79,18 +108,11 @@ const settingSource = (flag: string | undefined, env: string | undefined, settin
 /** The settings that decide where a build runs, with the layer each value came from, for this run's `--remote-build`. */
 export function buildPlacementSettings(selected: string): PlacementSetting[] {
   const flag = operationState(ambientContext()).buildMachineFlag;
-  const remote = loadConfig()?.remote;
-  const rawMode = ambientEnv().STIM_REMOTE_BUILD_MODE || remote?.buildMode;
   return [
     {
       key: 'remote.build',
       value: selected,
-      from: settingSource(flag, ambientEnv().STIM_REMOTE_BUILD, remote?.build),
-    },
-    {
-      key: 'remote.buildMode',
-      value: selected === 'local' ? 'off' : OFFLOAD_MODES.includes(rawMode as never) ? (rawMode as string) : 'auto',
-      from: settingSource(undefined, ambientEnv().STIM_REMOTE_BUILD_MODE, remote?.buildMode),
+      from: settingSource(flag, ambientEnv().STIM_REMOTE_BUILD, loadConfig()?.remote?.build),
     },
   ];
 }
@@ -117,7 +139,7 @@ export function resolveBuildPlacement(flag?: string): {
         remedy:
           error instanceof OffloadRefusal
             ? error.remedy
-            : 'Pass --remote-build auto, local, or an entry from stim settings get remote.machines.',
+            : 'Pass --remote-build local, auto, remote, remote-only, or an entry from stim settings get remote.machines.',
       },
     };
   }

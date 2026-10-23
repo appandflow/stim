@@ -463,6 +463,9 @@ repeat the affected gate rather than waiving it.
 - Leave every `package.json` at the just-released version. The next release
   bumps them as part of its own section 2, step 1; we don't carry a `-dev`
   suffix between releases.
+- Cut the Stim Desktop release for this version now, at the release commit
+  that `vX.Y.Z` points to, so the bundled CLI and server equal the published
+  packages. See [apps/desktop/RELEASING.md](./apps/desktop/RELEASING.md).
 
 ## Stim Host releases
 

@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import {
   coerceSettingText,
   isJsonObject,
+  replacementAdvice,
   SETTING_SCOPES,
   SETTINGS,
   settingValueError,
@@ -13,7 +14,7 @@ import {
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig, type Config } from './config.ts';
 import { gitPath, killOnAbort } from './git-read.ts';
 import { findCommandWorkspaceAsync } from './project.ts';
-import { readCommittedSettings, unknownSettingKeys } from './settings.ts';
+import { readCommittedSettings, removedMachineSettings, unknownSettingKeys } from './settings.ts';
 import { settingDefault, stimDesktopInstalled, stimDesktopInstalledAsync } from '../devices/stim-desktop.ts';
 
 const MASK = '********';
@@ -212,7 +213,7 @@ function unknownEntries(context: SettingsContext): SettingsPayload['unknown'] {
     {
       scope: 'machine',
       file: layerFile(context, 'machine', null),
-      settings: { optimizations: context.machine?.optimizations },
+      settings: { optimizations: context.machine?.optimizations, ...removedMachineSettings(context.machine) },
     },
     {
       scope: 'workspace',
@@ -237,7 +238,12 @@ function unknownEntries(context: SettingsContext): SettingsPayload['unknown'] {
   return sources.flatMap(({ scope, file, settings }) =>
     file === null
       ? []
-      : unknownSettingKeys(settings).map((key) => ({ key, scope, file, value: valueAt(settings, key) })),
+      : unknownSettingKeys(settings).map((key) => {
+          const value = valueAt(settings, key);
+          const command = replacementAdvice(key, value)?.command;
+          const entry = { key, scope, file, value };
+          return command ? Object.assign(entry, { replacement: command }) : entry;
+        }),
   );
 }
 

@@ -172,7 +172,7 @@ async function emptyCache(
 
 function reportFailures(cache: CacheDescriptor, failed: number | undefined, { log, record, fail }: GcOutput): boolean {
   if (!failed) return false;
-  const message = `${failed} entr${failed === 1 ? 'y' : 'ies'} in ${cache.dir} could not be removed`;
+  const message = `${failed} entr${failed === 1 ? 'y' : 'ies'} in ${cache.dir} could not be read or removed`;
   log(chalk.red(`${cache.name}: ${message}`));
   record('cache', 'failed', cache.name, { id: cache.dir, detail: message });
   fail();
@@ -190,6 +190,7 @@ export async function trimCaches(
   let cacheBytes = 0;
   let failures = 0;
   const trimmed: GcCache[] = [];
+  let unchanged = 0;
   for (const c of caches) {
     signal?.throwIfAborted();
     if (c.machineGlobal) {
@@ -209,10 +210,12 @@ export async function trimCaches(
         chalk.green(`Trimmed ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`),
       );
     } else if (!r.failed) {
-      log(chalk.dim(`${c.name}: nothing older than ${olderThan}d`));
+      unchanged++;
     }
     if (reportFailures(c, r.failed, output)) failures++;
   }
+
+  if (unchanged) log(chalk.dim(`${unchanged} cache${unchanged === 1 ? '' : 's'}: nothing older than ${olderThan}d`));
 
   if (cacheBytes) {
     log(

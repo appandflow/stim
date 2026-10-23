@@ -578,6 +578,7 @@ export function protocolJsonSchema(): JsonSchema {
             properties: {
               cpus: { type: 'integer', minimum: 1 },
               loadPerCore: { type: 'number', minimum: 0 },
+              maxLoadPerCore: { type: 'number', exclusiveMinimum: 0 },
               memoryFreeBytes: { type: 'number', minimum: 0 },
               memoryPressure: { enum: ['normal', 'warning', 'critical', null] },
               workerDiskFreeBytes: { type: ['number', 'null'], minimum: 0 },
@@ -1561,7 +1562,9 @@ export function protocolJsonSchema(): JsonSchema {
           optionalParams('route.setup', { type: 'object', maxProperties: 0 }),
           request('desktop.reports.get', { $ref: '#/$defs/DesktopReportTarget' }),
           request('desktop.reports.subscribe', { $ref: '#/$defs/DesktopReportTarget' }),
-          optionalParams('desktop.reports.invalidate', { type: 'object', maxProperties: 0 }),
+          optionalParams('desktop.reports.invalidate', {
+            oneOf: [{ type: 'object', maxProperties: 0 }, { $ref: '#/$defs/DesktopReportTarget' }],
+          }),
           optionalParams('desktop.settings.schema', { type: 'object', maxProperties: 0 }),
           request('desktop.settings.get', {
             type: 'object',
@@ -2101,6 +2104,12 @@ export function protocolJsonSchema(): JsonSchema {
               compat: {
                 ...buildCompat,
                 description: 'Compared instead of stimBuild by a machine whose build.offer toolchain reports compat.',
+              },
+              jdk: {
+                type: 'string',
+                pattern: '^[0-9]{1,3}$',
+                description:
+                  'The JDK major an Android build runs on, sent to a stim-server with the build-jdk feature.',
               },
             },
           }),

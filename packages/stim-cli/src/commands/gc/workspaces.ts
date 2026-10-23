@@ -9,6 +9,7 @@ import { teardownOwnedBrowser } from '../../devices/teardown.ts';
 import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
 import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
+import { mapLimited, sizeConcurrency } from './limited.ts';
 import { canonicalPath } from './paths.ts';
 import type { GcSkip } from './types.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
@@ -213,16 +214,15 @@ export async function collectOrphanedWorkspaces(
     }
   }
   if (!measure) return classified;
-  const orphaned: OrphanedWorkspace[] = [];
-  for (const entry of classified.orphaned) {
+  const orphaned = await mapLimited(classified.orphaned, sizeConcurrency(operation), async (entry) => {
     operation?.signal.throwIfAborted();
     const bytes = await measuredDirectorySizeAsync(entry.dir, {
       timeoutMs: SIZE_TIMEOUT_MS,
       operation,
       signal: operation?.signal,
     });
-    orphaned.push({ ...entry, bytes });
-  }
+    return { ...entry, bytes };
+  });
   return { orphaned, skipped: classified.skipped };
 }
 
@@ -300,18 +300,23 @@ function outputPaths(dir: string): string[] {
 }
 
 async function outputBytes(
-  paths: readonly string[],
+  entries: readonly (readonly string[])[],
   timeoutMs: number,
   signal?: AbortSignal,
   operation?: StimContext,
-): Promise<number | null> {
-  let total = 0;
-  for (const path of paths) {
-    const size = await measuredDirectorySizeAsync(path, { timeoutMs, signal, operation });
-    if (size === null) return null;
-    total += size;
-  }
-  return total;
+): Promise<(number | null)[]> {
+  const sizes = await mapLimited(
+    entries.flatMap((paths, index) => paths.map((path) => ({ path, index }))),
+    sizeConcurrency(operation),
+    async ({ path, index }) => ({
+      index,
+      size: await measuredDirectorySizeAsync(path, { timeoutMs, signal, operation }),
+    }),
+  );
+  return entries.map((_, index) => {
+    const own = sizes.filter((size) => size.index === index).map((size) => size.size);
+    return own.includes(null) ? null : own.reduce<number>((total, size) => total + (size ?? 0), 0);
+  });
 }
 
 interface WorkspaceOutputsOptions {
@@ -369,11 +374,19 @@ export function collectWorkspaceOutputs({
   return (async () => {
     const sizes: (WorkspaceDirEntry & { bytes: number | null; inUse: string[] })[] = [];
     const entries = outputEntries(await listWorkspaceDirsAsync(signal));
-    for (const { paths, ...entry } of entries) {
+    const bytes = measure
+      ? await outputBytes(
+          entries.map((entry) => entry.paths),
+          sizeTimeoutMs,
+          signal,
+          operation,
+        )
+      : [];
+    for (const [index, { paths: _paths, ...entry }] of entries.entries()) {
       signal?.throwIfAborted();
       sizes.push({
         ...entry,
-        bytes: measure ? await outputBytes(paths, sizeTimeoutMs, signal, operation) : null,
+        bytes: bytes[index] ?? null,
         inUse:
           entry.projectRoot === null
             ? []

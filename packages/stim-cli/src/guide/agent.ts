@@ -180,6 +180,11 @@ RULES DURING THE LOOP
   you do other work.
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
+- The build cache counts an installed package by its name and version, so it
+  cannot see a file you edit inside node_modules/. Change a dependency's native
+  code with a patch (patch-package or pnpm patch), which is hashed, or run ios or
+  android with --no-build-cache --remote-build local to compile it here. See
+  guide lifecycle builds.
 - For stale Metro transforms or file-map state, use stim start --reset-cache.
   It restarts only this app's verified owned Metro, preserving devices and other
   apps' caches. See guide lifecycle for reset scope.
@@ -387,7 +392,7 @@ FULL TOPIC LIST
   stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit
   stim guide lifecycle            # the ordered flow, consent rules, and capacity
   stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof
-  stim guide lifecycle readiness  # add optional app readiness logs; no package required
+  stim guide lifecycle readiness  # add recommended app readiness logs; no package required
   stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints
   stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits
   stim guide lifecycle budget     # disk and memory budgets, automatic reclaim

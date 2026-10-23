@@ -5,6 +5,8 @@ import SwiftUI
 
 struct AppPreferencesView: View {
   let stimHome: String
+  let settings: MachineSettingsStore
+  @ObservedObject var history: GcHistoryModel
   @AppStorage(AppPreferences.Key.appearance) private var appearance = Appearance.auto
   @AppStorage(AppPreferences.Key.sidebarStatuses) private var statuses = StatusFilter.encode(StatusFilter.defaultSelection)
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
@@ -14,15 +16,12 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.editorBundleID) private var editor = ""
   @AppStorage(AppPreferences.Key.diffViewer) private var diffViewer = DiffViewer.builtIn
   @AppStorage(AppPreferences.Key.terminalBundleID) private var terminal = ""
+  @AppStorage(AppPreferences.Key.tipsEnabled) private var showsTips = true
+  @AppStorage(AppPreferences.Key.showsWorkspaceCards) private var showsWorkspaceCards = true
+  @AppStorage(AppPreferences.Key.offersTutorial) private var offersTutorial = true
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
   @AppStorage(AppPreferences.Key.stimExecutable) private var stimExecutable = ""
   @AppStorage(AppPreferences.Key.remoteSessionMinutes) private var remoteMinutes = 30
-  @AppStorage(AppPreferences.Key.autopilotIdleShutdown) private var idleShutdown = true
-  @AppStorage(AppPreferences.Key.autopilotIdleMinutes) private var idleMinutes = 60
-  @AppStorage(AppPreferences.Key.autopilotNightly) private var nightly = true
-  @AppStorage(AppPreferences.Key.autopilotNightlyHour) private var nightlyHour = 3
-  @AppStorage(AppPreferences.Key.autopilotNightlyOlderThanDays) private var nightlyOlderThanDays = 7
-  @AppStorage(AppPreferences.Key.autopilotPressure) private var actsOnPressure = true
   @AppStorage(AppPreferences.Key.notifiesDiskPressure) private var notifiesPressure = true
   @AppStorage(NotificationSettings.stuckMinutesKey) private var stuckMinutes = Oversight.defaultStuckMinutes
   @AppStorage(NotificationSettings.quietHoursKey) private var quietHours = "off"
@@ -37,7 +36,9 @@ struct AppPreferencesView: View {
     ScrollViewReader { proxy in
       form
         .background(ResignFirstResponder())
+        .task { await history.poll() }
         .onAppear {
+          onboarding.refreshLatestStim(interval: StimRelease.settingsInterval)
           guard !scrolledToTop else { return }
           scrolledToTop = true
           DispatchQueue.main.async { proxy.scrollTo("top", anchor: .top) }
@@ -103,59 +104,10 @@ struct AppPreferencesView: View {
         }
       }
 
-      Section {
-        Toggle("Shut down idle devices", isOn: $idleShutdown)
-        Picker("After", selection: $idleMinutes) {
-          ForEach(AppPreferences.idleMinuteChoices, id: \.self) { minutes in
-            Text(minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h").tag(minutes)
-          }
-        }
-        .disabled(!idleShutdown)
-        Toggle("Clean up every night", isOn: $nightly)
-        Picker("At", selection: $nightlyHour) {
-          ForEach(0..<24, id: \.self) { hour in Text(String(format: "%02d:00", hour)).tag(hour) }
-        }
-        .disabled(!nightly)
-        Picker("Only what is unused for", selection: $nightlyOlderThanDays) {
-          ForEach(AppPreferences.nightlyOlderThanDayChoices, id: \.self) { days in
-            Text(days == 1 ? "1 day" : "\(days) days").tag(days)
-          }
-        }
-        .disabled(!nightly)
-        Toggle("Reclaim space when free disk is under the Stim budget", isOn: $actsOnPressure)
-        if let maintenance = autopilot.cliMaintenance, maintenance.cleansAutomatically {
-          Text(
-            "Stim's automatic maintenance is on, so it frees disk space and removes worktrees of finished pull requests. Reclaiming space under the budget does not run here while it is on."
-              + (maintenance.lastPassLine.map { " \($0)" } ?? "")
-          )
-          .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-        }
-      } header: {
-        Text("Autopilot")
-      } footer: {
-        Text(
-          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup runs stim gc --delete --worktrees --older-than with the chosen days (7 by default): it removes merged worktrees and clean ones idle that long, clears the build outputs of workspaces and the cache entries unused that long, and deletes devices parked or unused that long. Disk pressure runs stim gc --delete with no age limit: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. Disk pressure does nothing here while stim's automatic maintenance is on (maintenance.mode on, the default from stim 1.18.0); an older stim, or maintenance.mode report or off, leaves it to this app, and the nightly run still deletes unused and parked devices. A nightly run the Mac slept through runs at the next check."
-        )
-        .multilineTextAlignment(.leading)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .foregroundStyle(Palette.tertiary)
-      }
+      MaintenanceSection(
+        maintenance: autopilot.cliMaintenance, statusLoaded: autopilot.statusLoaded, settings: settings)
 
-      Section {
-        if autopilot.log.isEmpty {
-          InlineEmpty("No runs yet.")
-        } else {
-          ForEach(autopilot.log.prefix(50)) { entry in AutopilotLogRow(entry: entry) }
-        }
-      } header: {
-        HStack {
-          Text("Autopilot Activity")
-          Spacer()
-          if !autopilot.log.isEmpty {
-            Button("Clear") { autopilot.clearLog() }.buttonStyle(.stim())
-          }
-        }
-      }
+      CleanupHistorySection(history: history)
 
       Section {
         ForEach(OversightCategory.desktop, id: \.self) { category in
@@ -209,6 +161,21 @@ struct AppPreferencesView: View {
       }
 
       Section {
+        Toggle("Show tips", isOn: $showsTips)
+        Toggle("Show new workspace cards", isOn: $showsWorkspaceCards)
+        Toggle("Offer the tutorial", isOn: $offersTutorial)
+      } header: {
+        Text("Cards and Tips")
+      } footer: {
+        Text(
+          "Turning off Show tips also hides the suggestion banners. New workspace cards are the ones in the bottom-left corner; "
+            + "Notifications, system notifications and build requests are unchanged. "
+            + "With the tutorial off, Help > Stim Tutorial still opens it."
+        )
+        .foregroundStyle(Palette.tertiary)
+      }
+
+      Section {
         Toggle("Automatically check for updates", isOn: $updater.automaticallyChecksForUpdates)
           .disabled(!updater.isAvailable)
       } header: {
@@ -246,7 +213,7 @@ struct AppPreferencesView: View {
   @ViewBuilder private var stimVersionRow: some View {
     if case .compatible(let installed)? = onboarding.report?.stim {
       LabeledContent("Installed") { Text(installed.description).font(.stim(.body, mono: true)) }
-      if let latest = onboarding.latestStim {
+      if let latest = StimRelease.shownLatest(installed: installed, latest: onboarding.latestStim) {
         LabeledContent("Latest") {
           HStack(spacing: Space.md) {
             Text(latest.description).font(.stim(.body, mono: true))
@@ -325,30 +292,6 @@ struct OversightLevelPicker: View {
     } label: {
       Label(category.label, systemImage: category.symbol)
     }
-  }
-}
-
-private struct AutopilotLogRow: View {
-  var entry: AutopilotLogEntry
-
-  var body: some View {
-    HStack(alignment: .firstTextBaseline, spacing: Space.md) {
-      Image(systemName: entry.exitStatus == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
-        .foregroundStyle(entry.exitStatus == 0 ? Palette.success : Palette.error)
-        .help(entry.exitStatus.map { $0 == 0 ? "Succeeded" : "Failed with exit status \($0)" } ?? "Did not finish")
-      VStack(alignment: .leading, spacing: Space.xxs) {
-        HStack {
-          Text(entry.trigger.title)
-          Spacer()
-          Text(entry.date.formatted(date: .abbreviated, time: .shortened)).foregroundStyle(Palette.tertiary)
-        }
-        Text(abbreviatingHome(entry.command)).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
-        if let note = entry.note {
-          Text(abbreviatingHome(note)).font(.stim(.footnote)).foregroundStyle(Palette.tertiary).lineLimit(2)
-        }
-      }
-    }
-    .textSelection(.enabled)
   }
 }
 

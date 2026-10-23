@@ -1,12 +1,19 @@
 import type { StimContext } from '@stim-cli/core';
 import type { IosSimSnapshot } from '../../devices/ios.ts';
+import { runCancellationSignal } from '../../engine/native-run.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { resolveSimulatorAppFlag } from './support.ts';
 import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
 import { devicePlacementLine } from '../../device-host/auto-placement.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import chalk from 'chalk';
 import { phaseLine } from '../../command-output.ts';
-import { type DevicePlacement, type HostedIosPlacement, type HostedAppOffer } from '@stim-cli/core/state';
+import {
+  type AutomaticPlacement,
+  type DevicePlacement,
+  type HostedIosPlacement,
+  type HostedAppOffer,
+} from '@stim-cli/core/state';
 import {
   parseIosRemote,
   remoteEasFallbackSetting,
@@ -41,7 +48,12 @@ export function resolveIosRemote({
   physical: boolean;
   recorded?: HostedIosPlacement;
 }):
-  | { machine: string | null; backend: RemoteDeviceBackend | null; recorded?: HostedIosPlacement }
+  | {
+      machine: string | null;
+      placement?: AutomaticPlacement;
+      backend: RemoteDeviceBackend | null;
+      recorded?: HostedIosPlacement;
+    }
   | { failure: FailArgs } {
   const target = opts.remote !== undefined ? parseIosRemote(opts.remote) : physical ? null : remoteIosSetting(settings);
   const machine = target?.kind === 'machine' ? target.machine : null;
@@ -52,7 +64,12 @@ export function resolveIosRemote({
         message: `This workspace's iOS simulator runs on ${recorded.machine}; run stim stop first.`,
       },
     };
-  return { machine, backend: !physical && target?.kind === 'backend' ? target.backend : null, recorded };
+  return {
+    machine,
+    ...(target?.kind === 'machine' && target.placement ? { placement: target.placement } : {}),
+    backend: !physical && target?.kind === 'backend' ? target.backend : null,
+    recorded,
+  };
 }
 
 export function selectIosTarget({
@@ -121,10 +138,12 @@ export function selectIosTarget({
 export async function selectIosPlacement(
   args: Parameters<typeof selectIosTarget>[0] & {
     supportsRemote: boolean;
+    simSnapshot: IosSimSnapshot;
     validateSelectors: () => FailArgs | null | Promise<FailArgs | null>;
     deviceType: string | null;
     runtime: string | null;
     noWait: boolean;
+    waitMs?: number;
     env?: NodeJS.ProcessEnv;
     operation?: StimContext;
     note: (line: string) => void;
@@ -142,21 +161,36 @@ export async function selectIosPlacement(
 > {
   const selection = selectIosTarget(args);
   if ('failure' in selection || selection.machine !== 'auto') return selection;
-  const { root, slot, d, opts, deviceType, runtime, noWait, phase, log, release, appMode, metroCheck } = args;
+  const { root, slot, d, opts, deviceType, runtime, noWait, waitMs, phase, log, release, appMode, metroCheck } = args;
+  const signal = runCancellationSignal(args.operation) ?? args.operation?.signal;
   const viewer = resolveSimulatorAppFlag(opts.simulatorApp, args.physical, null);
   if ('refusal' in viewer) return { failure: viewer.refusal };
   const refusal = await args.validateSelectors();
   if (refusal) return { failure: refusal };
   const easFallback = args.supportsRemote && remoteEasFallbackSetting(args.settings);
+  const localSims = await args.simSnapshot
+    .readAsync?.({ signal: args.operation?.signal, operation: args.operation })
+    .then((sims) => sims.filter((sim) => sim.available))
+    .catch((error: unknown) => {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      args.operation?.signal.throwIfAborted();
+      return undefined;
+    });
   try {
     const placed = await d.automaticDevicePlacement({
       root,
       slot,
       platform: 'ios',
+      placement: selection.placement,
+      ...(localSims ? { localSims } : {}),
       selectors: hostedIosSelectors(deviceType, runtime),
       appMode,
       buildMachine: opts.remoteBuild,
       noWait,
+      ...(waitMs === undefined ? {} : { waitMs }),
+      onWait: (line) => phase('placement:', line),
+      signal,
       ...(easFallback
         ? {
             eas: () =>
@@ -177,7 +211,15 @@ export async function selectIosPlacement(
         : {}),
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
-    log?.(devicePlacementRecord({ platform: 'ios', fromFlag: opts.remote !== undefined, easFallback, placed }));
+    log?.(
+      devicePlacementRecord({
+        platform: 'ios',
+        selected: selection.placement,
+        fromFlag: opts.remote !== undefined,
+        easFallback,
+        placed,
+      }),
+    );
     if (placed.placement.decision === 'eas')
       return {
         ...selection,
@@ -204,6 +246,14 @@ export async function selectIosPlacement(
       devicePlacement: placed.placement,
     };
   } catch (error) {
+    if (signal?.aborted)
+      return {
+        failure: {
+          code: 'STIM_CANCELLED',
+          message: 'The run was cancelled while it waited for a remote machine.',
+          remedy: 'Run the command again when you want the app on a device.',
+        },
+      };
     return {
       failure: {
         code: (error as Error & { code?: string }).code ?? 'STIM_HOSTING_REFUSED',

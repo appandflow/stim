@@ -362,7 +362,6 @@ describe('macOS build placement and promotion', () => {
     swiftTmpdirs = [];
     plist = { CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' };
     buildRecord = { state: 'running', startedAt: new Date().toISOString() };
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
     vi.spyOn(machines, 'pairedMachines').mockReturnValue([
       { machine: 'mini' } as ReturnType<typeof machines.pairedMachines>[number],
     ]);
@@ -448,7 +447,7 @@ describe('macOS build placement and promotion', () => {
       writer,
       note: () => {},
       record: buildRecord,
-      buildMachine: extras.buildMachine ?? 'auto',
+      buildMachine: extras.buildMachine ?? 'remote',
       hostServerKey: extras.hostServerKey,
       displayName: extras.displayName,
     });
@@ -689,7 +688,7 @@ describe('macOS build placement and promotion', () => {
     it.each([
       ['another node hosts it', { buildMachine: 'mini', hostServerKey: 'OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOA' }],
       ['it is hosted on no remote Mac', { buildMachine: 'mini' }],
-      ['the build machine is not named', { buildMachine: 'auto', hostServerKey: nodeKey }],
+      ['the build machine is not named', { buildMachine: 'remote', hostServerKey: nodeKey }],
     ])('keeps the full toolchain match with this Mac when %s', async (_name, extras) => {
       const client = clientCache();
       await build({ ...extras, cache: client.cache });
@@ -784,6 +783,7 @@ describe('macOS build placement and promotion', () => {
   });
 
   it('automatic placement never falls back to Swift when local is excluded', async () => {
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildPoolDisabled', []);
     const config = loadConfig()!;
     config.remote = { ...config.remote, buildPoolDisabled: ['local'] };
     saveConfig(config);
@@ -831,7 +831,6 @@ describe('macOS build placement and promotion', () => {
     async (reason) => {
       writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini', 'other']);
       vi.mocked(offload.chooseBuildMachine).mockResolvedValue(`mini: ${reason}`);
-      writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'off');
       await expect(build({ buildMachine: 'mini' })).rejects.toMatchObject({
         code: 'STIM_OFFLOAD_REFUSED',
         message: expect.stringContaining(reason),
@@ -1047,9 +1046,13 @@ describe('macOS build placement and promotion', () => {
     expect(buildRecord.offloadFallback).toBeUndefined();
   });
 
-  it('builds locally without asking a machine when offload is off', async () => {
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'off');
-    expect(await build()).toEqual({ bundleId, offloadedTo: null, offloadFallback: null, handoff: null });
+  it('builds locally without asking a machine when the build is local', async () => {
+    expect(await build({ buildMachine: 'local' })).toEqual({
+      bundleId,
+      offloadedTo: null,
+      offloadFallback: null,
+      handoff: null,
+    });
     expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
     expect(localBuilds).toBe(1);
   });
@@ -1071,7 +1074,6 @@ describe('macOS build placement and promotion', () => {
   });
 
   it('refuses a plist changed by the local build before replacing the previous bundle', async () => {
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'off');
     const spawn = getExecutor().spawn;
     setExecutor({
       ...getExecutor(),
@@ -1080,12 +1082,11 @@ describe('macOS build placement and promotion', () => {
         return spawn(...args);
       },
     });
-    await expect(build()).rejects.toThrow('development Info.plist');
+    await expect(build({ buildMachine: 'local' })).rejects.toThrow('development Info.plist');
     expect(readFileSync(join(bundle, 'previous'), 'utf8')).toBe('old');
   });
 
   it('drains a cancelled resource copy before cleanup and preserves the previous bundle', async () => {
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'off');
     mkdirSync(join(root, 'branding'));
     writeFileSync(join(root, 'branding', 'wordmark.svg'), 'wordmark bytes');
     const controller = new AbortController();
@@ -1106,7 +1107,9 @@ describe('macOS build placement and promotion', () => {
       }
     });
     let settled = false;
-    const operation = withAmbientContext(context, () => build({ context, resources: { branding: 'branding' } }));
+    const operation = withAmbientContext(context, () =>
+      build({ context, buildMachine: 'local', resources: { branding: 'branding' } }),
+    );
     const observed = operation.finally(() => {
       settled = true;
     });

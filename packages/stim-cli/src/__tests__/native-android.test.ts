@@ -218,7 +218,6 @@ function uncachedOffloadProject(selected: string) {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(selection, 'resolveBuildPlacement').mockReturnValue({ selected });
   vi.spyOn(offload, 'buildPlacementCandidates').mockReturnValue({
-    mode: 'force',
     localEnabled: true,
     machines: [{ machine: 'worker' }],
   } as ReturnType<typeof offload.buildPlacementCandidates>);

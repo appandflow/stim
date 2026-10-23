@@ -27,6 +27,9 @@ Branch on the code, never on the message.`,
   hosted session. Auto skips declined offers before building, then uses the
   local queue if none admits. A reserve refusal after an accepted offer fails
   with this code and asks to retry; it does not re-place the built architecture.
+  remote-only never runs here and never joins the local queue: it refuses
+  with this code when no host could ever take the run, and waits for a host that
+  is only full or loaded (see STIM_AT_CAPACITY).
   Check stim-server and Tailscale there,
   then run stim doctor. Correct --device-type / --runtime for iOS or
   --system-image / --device-profile for Android when the offer names
@@ -149,7 +152,8 @@ Branch on the code, never on the message.`,
   note naming which of the two set it; Gemfile.lock is never edited either way.
   \`worktree warm --refresh\` reports the same code for the install it runs in
   the SOURCE CHECKOUT -- the lockfile's own command (\`pnpm install\`,
-  \`yarn install\`, \`bun install\`, \`npm ci\`) or that same pod ladder. The
+  \`yarn install\`, \`bun install\`, \`npm ci\`), the \`npm run postinstall\`
+  it runs when npm's config there sets ignore-scripts, or that same pod ladder. The
   message names the command, quotes its last lines, and nothing is copied: fix
   the source checkout, then warm again.`,
     },
@@ -389,6 +393,11 @@ and no enabled remote can finish this build, or when the build requires a local
 compiler. Enable local or choose an explicit --remote-build placement. Existing
 builds are not interrupted and a cache hit needs no compiler.
 
+remote-only never builds here: it refuses when no remote machine in remote.machines
+can take the build, naming each machine and why it was skipped, and for a build that
+cannot leave this machine. Rerun with --remote-build remote to allow a local build
+when no remote machine can take it.
+
 A named --remote-build selection is strict. The message names the machine
 and why it cannot take or finish the build: not configured or paired, approval
 pending or denied, unreachable, changed pinned server key, a stim-server
@@ -396,7 +405,12 @@ too old to speak protocol 2, incompatible
 toolchain/runtime/CPU, low disk, busy, sync/build failure, artifact failure,
 or a checkout that changed while it built. Unsupported build kinds also refuse.
 No local xcodebuild, Gradle or SwiftPM compile or alternate machine follows a
-refusal. Prebuild and pod install still run on this machine before a named offload.
+refusal. For stim ios, a toolchain difference on the named machine, such as Xcode,
+the simulator runtime or the CPU, refuses before this machine runs prebuild or pod
+install, even when prebuild would have produced an app the local cache already holds, or the
+machine already holds the exact artifact. A
+missing or different global CocoaPods never refuses a named machine; a pod install
+that fails on it reports "pod install failed" with the command to run there.
 Unlisted or unpaired names refuse at setup before consulting the cache, without
 a build record or failed-run stats. A listed paired name with a cache hit needs
 no build and does not contact the selected machine.
@@ -412,7 +426,7 @@ Run stim doctor --fix to ask for build access if not paired. Check
 stim settings get remote.machines. A person on the worker approves this machine
 by running the stim-server setup command doctor --fix printed, with its ticket
 and expiry (guide settings). Agents never run setup or approve requests.
-Rerun with --remote-build auto for normal placement and local fallback, or
+Rerun with --remote-build auto or remote for placement with local fallback, or
 --remote-build local to keep the build here.
 `,
     },
@@ -788,6 +802,16 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   installation. If it fails, the refusal includes observed host memory pressure
   when available. Free memory before retrying under pressure; see
   \`stim guide lifecycle simslim\`. Booted alone does not prove readiness.
+  The same probe lists the simulator's launchd jobs and requires a running
+  SpringBoard. A simulator that reports Booted while SpringBoard has died
+  (\`simctl launch\` then says "The system shell probably crashed") is shut
+  down through teardown and booted once more; if SpringBoard is still not
+  running, the refusal names the udid and the remedy: \`stim stop\`, then
+  \`stim ios\` again. Repeated SpringBoard crashes leave reports in
+  ~/Library/Logs/DiagnosticReports, and macOS deletes them after about two
+  days; before the restart Stim copies the simulator's recent ones into the
+  workspace logs directory and records the boot steps by udid
+  (\`stim logs --source device\`, \`stim guide logs\`, IOS BOOT RECORDS).
   On Android the emulator's own stdio is captured to
   the global workspace logs/emulator.log (truncated per boot), and when it printed a
   \`FATAL |\` / \`ERROR |\` / \`PANIC:\` line THAT is the message and the remedy
@@ -890,6 +914,11 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   locks, builds, viewers and recent activity. Reclaim excludes this workspace,
   physical, hosted, remote, parked and other homes' devices and never deletes.
   A failed reclaim is logged and skipped; the run keeps waiting.
+  --remote remote-only (and macos.remote remote-only) has no local queue: when every
+  approved host is full, loaded or short of memory it polls the hosts every 5 seconds
+  for the same wait (--wait, default 600 seconds) and then refuses with this code;
+  --no-wait and --wait 0 refuse at once. Builds under remote-only refuse with
+  STIM_OFFLOAD_REFUSED instead.
   Stop an environment (\`stim stop\`), pass a longer \`--wait <seconds>\`,
   or raise concurrency.maxDevices. With --remote auto, remote.machines and
   the opt-in remote.easFallback (billed EAS Simulator) are tried before this
@@ -1553,8 +1582,9 @@ not on any remote"  (worktree remove)
   lockfile says nothing about the one on disk now, whose dependencies may well
   have been installed since; and a repository with no record at all -- every
   repository before its first \`--refresh\` -- copies as it always has.
-  In a monorepo the record is keyed on the directory that owns the lockfile,
-  which is usually the repository root, so every app of it reads the same one.`,
+  Each directory that owns a lockfile the refresh installs has its own record:
+  the repository root and, when the app has a lockfile of its own, the app. A
+  plain warm reads both.`,
     },
     warm: {
       summary: 'worktree warm claim storage refusals and recovery',

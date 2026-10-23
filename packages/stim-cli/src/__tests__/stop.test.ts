@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
 import { clockTime } from '../command-output.ts';
 import { saveConfig, getProject } from '../workspace/config.ts';
@@ -26,6 +27,8 @@ import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { recordPhoneReverse } from '../devices/phone-reverses.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { tryAcquireClaim } from '../ownership-claim.ts';
 
 test('a live legacy supervisor is retained without signalling or releasing its port', async () => {
   const { calls, opts } = seams({
@@ -583,6 +586,162 @@ test('a failed Android device teardown reports an adb-flavored remedy', async ()
   expect(android.status).toBe('failed');
   expect(android.remedy).toMatch(/adb devices/);
   expect(android.remedy).toMatch(/stim gc --delete/);
+});
+
+describe('devices shut down concurrently', () => {
+  const bothDevices = {
+    metroPort: 8083,
+    platforms: { ios: { deviceUdid: 'U1', owned: true }, android: { avdName: 'stim-app', owned: true } },
+  };
+
+  test('the iOS teardown runs while a slow Android teardown is still pending', async () => {
+    const events: string[] = [];
+    let androidStarted!: () => void;
+    const started = new Promise<void>((resolve) => (androidStarted = resolve));
+    let iosDone!: () => void;
+    const iosFinished = new Promise<void>((resolve) => (iosDone = resolve));
+    const { opts } = seams({
+      project: bothDevices,
+      teardownIos: async () => {
+        events.push('ios:start');
+        await Promise.race([started, delay(300)]);
+        events.push('ios:end');
+        iosDone();
+        return { status: 'torn-down', label: 'sim' };
+      },
+      teardownAvd: async () => {
+        events.push('android:start');
+        androidStarted();
+        await Promise.race([iosFinished, delay(300)]);
+        events.push('android:end');
+        return { status: 'torn-down', label: 'stim-app' };
+      },
+    });
+    const r = await runStop(opts);
+    expect(events).toEqual(['ios:start', 'android:start', 'ios:end', 'android:end']);
+    expect(r.ok).toBe(true);
+  });
+
+  test('results are reported in slot order whichever device finishes first', async () => {
+    const lines: string[] = [];
+    const { opts } = seams({
+      project: bothDevices,
+      teardownIos: async () => {
+        await delay(30);
+        return { status: 'torn-down', label: 'sim' };
+      },
+      teardownAvd: async () => ({ status: 'torn-down', label: 'stim-app' }),
+      report: (line: string) => lines.push(line),
+    });
+    const r = await runStop(opts);
+    expect(r.ok).toBe(true);
+    const shutDown = lines.filter((line) => line.includes('shut down'));
+    expect(shutDown).toHaveLength(2);
+    expect(shutDown[0]).toContain('sim');
+    expect(shutDown[1]).toContain('stim-app');
+  });
+
+  test('a failed device is reported next to the one that shut down', async () => {
+    const { opts } = seams({
+      project: bothDevices,
+      teardownIos: async () => ({ status: 'failed', label: 'sim', reason: 'simulator U1 is still Booted' }),
+      teardownAvd: async () => {
+        await delay(30);
+        return { status: 'torn-down', label: 'stim-app' };
+      },
+    });
+    const r = await runStop(opts);
+    expect(r.ok).toBe(false);
+    expect(r.outcomes.device.ios?.status).toBe('failed');
+    expect(r.outcomes.device.android?.status).toBe('shut-down');
+    expect(r.summary).toMatch(/ios sim failed.*android stim-app shut down/);
+  });
+
+  test('a teardown that throws does not cut the other short', async () => {
+    const events: string[] = [];
+    const lines: string[] = [];
+    const { opts } = seams({
+      report: (line: string) => lines.push(line),
+      project: bothDevices,
+      teardownIos: async () => {
+        throw new Error('claims retained');
+      },
+      teardownAvd: async () => {
+        await delay(30);
+        events.push('android:end');
+        return { status: 'torn-down', label: 'stim-app' };
+      },
+    });
+    await expect(runStop(opts)).rejects.toThrow('claims retained');
+    expect(events).toEqual(['android:end']);
+    expect(lines.some((line) => line.includes('shut down stim-app'))).toBe(true);
+  });
+
+  const retained = (name: string, message: string) => {
+    const claim = tryAcquireClaim({ root: join(tmpHome, `${name}.claims`), mode: 'exclusive', label: name }).acquired;
+    if (!claim) throw new Error('The private fixture claim was not acquired');
+    return new WorkspaceProcessCleanupError([claim], message, 'Verify the child.');
+  };
+
+  test('two rejected teardowns surface one error naming both retained claims', async () => {
+    const { opts } = seams({
+      project: bothDevices,
+      teardownIos: async () => {
+        throw retained('ios', 'ios teardown unresolved.');
+      },
+      teardownAvd: async () => {
+        await delay(10);
+        throw retained('android', 'android teardown unresolved.');
+      },
+    });
+    const error = await runStop(opts).then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(WorkspaceProcessCleanupError);
+    if (!(error instanceof WorkspaceProcessCleanupError)) return;
+    expect(error.code).toBe('STIM_CLAIM_UNAVAILABLE');
+    expect(error.claims.map((claim) => claim.label)).toEqual(['ios', 'android']);
+    for (const claim of error.claims) {
+      expect(error.message).toContain(claim.path);
+      expect(error.remedy).toContain(claim.path);
+    }
+    expect(error.message).toContain('ios teardown unresolved.');
+    expect(error.message).toContain('android teardown unresolved.');
+  });
+
+  test('a cleanup error is surfaced ahead of a non-cleanup rejection from another device', async () => {
+    const { opts } = seams({
+      project: bothDevices,
+      teardownIos: async () => {
+        throw new Error('aborted');
+      },
+      teardownAvd: async () => {
+        throw retained('android', 'android teardown unresolved.');
+      },
+    });
+    await expect(runStop(opts)).rejects.toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      claims: [{ label: 'android' }],
+    });
+  });
+
+  test('one rejected teardown names its claim while the finished device is still reported', async () => {
+    const lines: string[] = [];
+    const { opts } = seams({
+      report: (line: string) => lines.push(line),
+      project: bothDevices,
+      teardownIos: async () => {
+        throw retained('ios', 'ios teardown unresolved.');
+      },
+      teardownAvd: async () => ({ status: 'torn-down', label: 'stim-app' }),
+    });
+    await expect(runStop(opts)).rejects.toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      claims: [{ label: 'ios' }],
+    });
+    expect(lines.filter((line) => line.includes('shut down stim-app'))).toHaveLength(1);
+  });
 });
 
 const reverseEvents: string[] = [];

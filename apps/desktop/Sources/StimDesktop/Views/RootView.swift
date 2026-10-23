@@ -13,6 +13,7 @@ enum SidebarItem: Hashable {
   case worktree(String)
   case notifications
   case machine
+  case builds
 
   var logName: String {
     switch self {
@@ -25,6 +26,7 @@ enum SidebarItem: Hashable {
     case .worktree(let path): "worktree \(path)"
     case .notifications: "notifications"
     case .machine: "machine"
+    case .builds: "builds"
     }
   }
 }
@@ -44,6 +46,7 @@ struct RootView: View {
   private let planChecks: BuildPlanChecks
   private let statsReader: StatsReader
   @StateObject private var tutorial = TutorialModel()
+  @StateObject private var builds: BuildLedgerModel
   @State private var selection: SidebarItem? = .overview
   @State private var previousSelection: SidebarItem? = .overview
   @StateObject private var navigation = NavigationController()
@@ -94,6 +97,7 @@ struct RootView: View {
     self.tips = tips
     self.buildMachines = buildMachines
     self.cli = cli
+    _builds = StateObject(wrappedValue: BuildLedgerModel(cli: cli))
     self.onboarding = onboarding
     self.store = store
     self.actions = actions
@@ -154,9 +158,9 @@ struct RootView: View {
       }
       .overlay(alignment: .topTrailing) { inspectorSideControls }
       .overlay(alignment: .topTrailing) {
-        ToastStack(center: toasts, onDismissAll: dismissAllCards)
+        ToastStack(center: toasts)
       }
-      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices, onDismissAll: dismissAllCards) }
+      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
       .onGeometryChange(for: CGFloat.self) {
         max(0, $0.size.width - tutorialDockWidth)
       } action: {
@@ -252,7 +256,8 @@ struct RootView: View {
       showsWorkspace ? InspectorToggle(isShown: inspector != .hidden, toggle: toggleInspector) : nil
     )
     .focusedSceneValue(
-      \.sidebarNavigation, SidebarNavigation { navigate($0, .command("Overview, Active Workspaces, Notifications or Machines")) }
+      \.sidebarNavigation,
+      SidebarNavigation { navigate($0, .command("Overview, Active Workspaces, Notifications, Machines or Builds")) }
     )
     .focusedSceneValue(
       \.historyNavigation,
@@ -785,32 +790,28 @@ struct RootView: View {
     }
   }
 
-  private func dismissAllCards() {
-    toasts.dismissAll()
-    notices.dismissAll()
-  }
-
   private func showNewWorkspaces(in payload: StatusPayload) -> [String] {
     let arrived = notices.arrivals.update(payload.environments)
+    var shown: [String] = []
     for workspace in arrived {
       let path = workspace.path
-      notices.show(
-        Notice(
-          icon: "plus.rectangle.on.folder", title: "New workspace \(workspace.names.title)",
-          detail: newWorkspaceDetail(workspace), actionTitle: "Show",
-          perform: {
-            navigate(.environment(path), .click("new workspace notice"))
-            let current = store.payload?.environments.first { $0.path == path }
-            focusedDeviceID =
-              current?.orderedDevices.first { device in
-                current?.build.map { $0.platform == device.platform && $0.slot == device.slot } ?? true
-              }?.id
-          }, key: WorkspaceArrivals.cardKey(path), workspacePath: path))
+      let card = Notice(
+        icon: "plus.rectangle.on.folder", title: "New workspace \(workspace.names.title)",
+        detail: newWorkspaceDetail(workspace), actionTitle: "Show",
+        perform: {
+          navigate(.environment(path), .click("new workspace notice"))
+          let current = store.payload?.environments.first { $0.path == path }
+          focusedDeviceID =
+            current?.orderedDevices.first { device in
+              current?.build.map { $0.platform == device.platform && $0.slot == device.slot } ?? true
+            }?.id
+        }, key: WorkspaceArrivals.cardKey(path), workspacePath: path)
+      if notices.show(card) { shown.append(path) }
     }
     for workspace in payload.environments {
       notices.update(key: WorkspaceArrivals.cardKey(workspace.path), detail: newWorkspaceDetail(workspace))
     }
-    return arrived.map(\.path)
+    return shown
   }
 
   private func newWorkspaceDetail(_ workspace: Workspace) -> String {
@@ -1024,6 +1025,8 @@ struct RootView: View {
       DiscoverView(
         replayUnavailableReason: discoverReplayUnavailableReason,
         perform: performDiscoverAction)
+    case .builds:
+      BuildsView(history: builds)
     case .overview:
       OverviewView(
         store: store, metrics: metrics,

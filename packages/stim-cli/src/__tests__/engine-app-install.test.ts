@@ -500,7 +500,7 @@ describe('ios', () => {
     expect(result.restartedPid).toBeUndefined();
   });
 
-  test('a running app is terminated before the Metro wiring and launched fresh', async () => {
+  test('a running app is restarted by the launch itself, after the Metro wiring', async () => {
     const exec = recordingExec({
       outputs: {
         'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n',
@@ -511,11 +511,9 @@ describe('ios', () => {
     expect(result).toEqual({ ok: true, mode: 'launch', pid: 5151, restartedPid: 4242, jsLocation: 'localhost:8082' });
     expect(exec.calls).toEqual([
       ['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list'],
-      ['xcrun', 'simctl', 'terminate', 'U1', 'com.example.app'],
       ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'write', 'com.example.app', 'RCT_jsLocation', 'localhost:8082'],
-      ['xcrun', 'simctl', 'launch', 'U1', 'com.example.app'],
+      ['xcrun', 'simctl', 'launch', '--terminate-running-process', 'U1', 'com.example.app'],
     ]);
-    expect(exec.options[1]?.timeoutMs).toBeGreaterThan(0);
   });
 
   test('a running Expo dev client restarts with its project URL instead of an openurl into the old process', async () => {
@@ -536,19 +534,23 @@ describe('ios', () => {
       { exec },
     );
     expect(result).toMatchObject({ ok: true, mode: 'launch', pid: 5151, restartedPid: 4242 });
-    expect(exec.calls.map((call) => call[2])).toEqual(['spawn', 'terminate', 'spawn', 'launch']);
+    expect(exec.calls.map((call) => call[2])).toEqual(['spawn', 'spawn', 'launch']);
+    expect(exec.calls.at(-1)).toContain('--terminate-running-process');
     expect(exec.calls.at(-1)).toContain('--initialUrl');
   });
 
-  test('a failed terminate refuses the launch instead of reusing the old process', async () => {
+  test('a failed terminate refuses an openurl into the old process', async () => {
     const exec = recordingExec({
       fail: 'simctl terminate',
       outputs: { 'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n' },
     });
-    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    const result = await launchIosApp(
+      { udid: 'U1', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
+      { exec },
+    );
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(result.reason).toMatch(/simctl terminate com\.example\.app failed.*pid 4242/);
-    expect(exec.calls.some((call) => call.includes('launch'))).toBe(false);
+    expect(exec.calls.some((call) => call.includes('openurl'))).toBe(false);
   });
 
   test('a no-process-handle error after a restart does not count the terminated pid as the new launch', async () => {
@@ -560,7 +562,8 @@ describe('ios', () => {
     });
     const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: null }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
-    expect(exec.calls.some((call) => call.includes('terminate'))).toBe(true);
+    expect(exec.calls.some((call) => call.includes('terminate'))).toBe(false);
+    expect(exec.calls.find((call) => call[2] === 'launch')).toContain('--terminate-running-process');
   });
 
   test('an unreadable process list launches with simctl terminating any running copy, not a separate terminate', async () => {
@@ -815,7 +818,7 @@ describe('ios', () => {
     });
     const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
-    expect(exec.calls).toHaveLength(4);
+    expect(exec.calls).toHaveLength(3);
   });
 
   test('launchIosApp with metroPort null is a plain launch: no RCT_jsLocation write, no openurl', async () => {
@@ -1596,6 +1599,119 @@ describe('verifyLaunch', () => {
   });
 });
 
+describe('verifyLaunch: the stability window ends on evidence that the app JavaScript is running', () => {
+  const since = 1000;
+  const metro = (platform: 'ios' | 'android'): NdjsonRecord[] => [
+    { ts: 1500, src: 'metro', platform, event: 'bundle_response_started', requestId: 'a' },
+    { ts: 2000, src: 'metro', platform, event: 'bundle_response_finished', requestId: 'a' },
+  ];
+  const device = (platform: 'ios' | 'android', ts: number, msg: string): NdjsonRecord => ({
+    ts,
+    src: 'device',
+    platform,
+    level: 'info',
+    msg,
+  });
+  const run = (
+    platform: 'ios' | 'android',
+    records: { metro?: NdjsonRecord[]; device: NdjsonRecord[] },
+    extra: Parameters<typeof verifyLaunch>[0] = {},
+  ) => {
+    const clock = fakeClock();
+    return verifyLaunch({
+      since,
+      platform,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => (records.metro ?? metro(platform)).filter((r) => Number(r.ts) <= clock.at()),
+      readDeviceRecords: () => records.device.filter((r) => Number(r.ts) <= clock.at()),
+      readClientRecords: () => [],
+      processAlive: () => true,
+      ...extra,
+    });
+  };
+
+  test.each(['ios', 'android'] as const)(
+    '%s: Running "<app>" after the bundle response ends the window early',
+    async (platform) => {
+      const result = await run(platform, { device: [device(platform, 3000, 'Running "main" with {"rootTag":11}')] });
+      expect(result).toMatchObject({ verified: true, jsRunning: true, processAlive: true });
+      expect(result.waitedMs).toBe(3000 + 500 - since);
+    },
+  );
+
+  test.each(['ios', 'android'] as const)('%s: without that evidence the window still lasts 3 s', async (platform) => {
+    const result = await run(platform, { device: [device(platform, 3000, 'some other log line')] });
+    expect(result).toMatchObject({ verified: true, waitedMs: 2000 - since + STABILITY_WINDOW_MS });
+    expect(result.jsRunning).toBeUndefined();
+  });
+
+  test('a Running line from before the bundle response finished is not evidence', async () => {
+    const result = await run('ios', { device: [device('ios', 1800, 'Running "main" with {"rootTag":1}')] });
+    expect(result.waitedMs).toBe(2000 - since + STABILITY_WINDOW_MS);
+    expect(result.jsRunning).toBeUndefined();
+  });
+
+  test('Android: a Running line from before the JavaScript bundle began loading is not evidence', async () => {
+    const result = await run('android', {
+      device: [
+        { ...device('android', 2200, 'Running "launcher"'), proc: 'ReactNativeJS(1)' },
+        {
+          ...device('android', 2500, 'ReactHost{0}.getOrCreateReactInstanceTask(): Loading JS Bundle'),
+          proc: 'unknown:BridgelessReact(1)',
+          level: 'warn',
+        },
+        { ...device('android', 4000, 'Running "main"'), proc: 'ReactNativeJS(1)' },
+      ],
+    });
+    expect(result).toMatchObject({ verified: true, jsRunning: true, waitedMs: 4000 + 500 - since });
+  });
+
+  test('a Running line from the other platform is not evidence', async () => {
+    const result = await run('ios', { device: [device('android', 3000, 'Running "main"')] });
+    expect(result.waitedMs).toBe(2000 - since + STABILITY_WINDOW_MS);
+  });
+
+  test('an app that exits before the evidence settles still fails', async () => {
+    const result = await run(
+      'ios',
+      { device: [device('ios', 3000, 'Running "main" with {"rootTag":11}')] },
+      { processAlive: () => false },
+    );
+    expect(result).toMatchObject({ verified: false, fatal: true, processAlive: false });
+  });
+
+  test('a Metro bundle failure before the evidence still fails', async () => {
+    const result = await run('ios', {
+      metro: [...metro('ios'), { ts: 2500, src: 'metro', platform: 'ios', event: 'bundling_error' }],
+      device: [device('ios', 3000, 'Running "main" with {"rootTag":11}')],
+    });
+    expect(result).toMatchObject({ verified: false, fatal: true });
+  });
+
+  test('a launch error logged between the bundle response and the evidence is reported', async () => {
+    const result = await run('ios', {
+      device: [
+        { ...device('ios', 2500, 'TypeError: undefined is not a function'), level: 'error' },
+        device('ios', 3000, 'Running "main" with {"rootTag":11}'),
+      ],
+    });
+    expect(result.verified).toBe(true);
+    expect(result.errors).toEqual([expect.objectContaining({ msg: 'TypeError: undefined is not a function' })]);
+  });
+
+  test('a pending readiness signal keeps waiting for ready after the evidence', async () => {
+    const result = await run('ios', {
+      device: [
+        device('ios', 2600, '[stim:readiness] pending'),
+        device('ios', 3000, 'Running "main" with {"rootTag":11}'),
+        device('ios', 9000, '[stim:readiness] ready'),
+      ],
+    });
+    expect(result).toMatchObject({ verified: true, readiness: 'ready', waitedMs: 9000 - since });
+  });
+});
+
 describe('optional app readiness', () => {
   test.each(['ready', 'error', 'absent', 'stalled'] as const)(
     'Android queued evaluation must start before stability: %s',
@@ -1624,7 +1740,7 @@ describe('optional app readiness', () => {
                 platform: 'android',
                 proc: 'ReactNativeJS(123)',
                 level: 'info',
-                msg: outcome === 'absent' ? 'Running "main"' : '[stim:readiness] pending',
+                msg: outcome === 'absent' ? 'module initialized' : '[stim:readiness] pending',
               },
               outcome === 'error'
                 ? {
@@ -1802,6 +1918,26 @@ describe('optional app readiness', () => {
       ['waiting-ready', 5000],
     ]);
   });
+
+  test.each([
+    ['copied 4s behind', (at: number) => at - 4000, 'ready', 8000],
+    ['never copied', () => null, undefined, 13000],
+  ] as const)(
+    'a device log %s holds the windows until it covers them, within a bound',
+    async (_, copied, readiness, waitedMs) => {
+      const clock = fakeClock();
+      const through = () => copied(clock.at());
+      const { result } = await run([], {
+        readDeviceRecords: () =>
+          [signal(2000, 'pending'), signal(5000, 'ready')].filter((record) => Number(record.ts) <= (through() ?? 0)),
+        deviceLogsThrough: through,
+        now: clock.now,
+        sleep: clock.sleep,
+      });
+      expect(result).toMatchObject({ verified: true, waitedMs });
+      expect(result.readiness).toBe(readiness);
+    },
+  );
 
   test('a fast ready replaces the default stability delay', async () => {
     const { result } = await run([signal(1000, 'pending'), signal(1500, 'ready', { msg: "'[stim:readiness] ready'" })]);

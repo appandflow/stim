@@ -158,6 +158,14 @@ export function deviceViewersDir(): string {
   return join(configDir(), 'viewers');
 }
 
+export function budgetSweepFile(): string {
+  return join(configDir(), 'budget-sweep.json');
+}
+
+export function budgetSweepLock(): string {
+  return join(configDir(), 'budget-sweep.lock');
+}
+
 export function statsFile(): string {
   return join(configDir(), 'stats.json');
 }
@@ -176,6 +184,26 @@ export function maintenanceAttemptFile(): string {
 
 export function maintenanceNdjsonFile(): string {
   return join(maintenanceDir(), 'maintenance.ndjson');
+}
+
+export function gcLogDir(): string {
+  return join(configDir(), 'gc');
+}
+
+export function gcLogFile(): string {
+  return join(gcLogDir(), 'gc.ndjson');
+}
+
+export function buildLedgerDir(): string {
+  return join(configDir(), 'builds');
+}
+
+export function buildLedgerFile(): string {
+  return join(buildLedgerDir(), 'builds.ndjson');
+}
+
+export function buildLedgerLock(): string {
+  return join(buildLedgerDir(), 'builds.lock');
 }
 
 export function maintenanceChildLogFile(): string {

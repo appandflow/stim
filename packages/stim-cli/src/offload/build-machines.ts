@@ -2,13 +2,14 @@ import { withDirLockAsync, type StimContext } from '@stim-cli/core';
 import { reportSignal } from '../report-runtime.ts';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import type { HelloResult } from '@stim-cli/core/protocol';
+import type { HelloResult, RemoteDiagnosis } from '@stim-cli/core/protocol';
 import {
   buildMachinesFile,
   buildMachinesLock,
   cannotHost,
   isJsonObject,
   MACHINE_CREDENTIALS_VERSION,
+  placementWord,
   readBuildMachines,
   readDeviceHostMachines,
   type BuildMachineCredential,
@@ -16,10 +17,13 @@ import {
 import type { Finding } from '../diagnostics/doctor.ts';
 import type { OffloadProblem } from './toolchain.ts';
 import { withDirLock } from '../dir-lock.ts';
-import { getConfigDir } from '../workspace/config.ts';
+import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import { configuredMachines } from '../device-host/machines.ts';
 import { readHostPermissions } from './access-ticket.ts';
+import { diagnosisFinding, notOnTailnetDiagnosis } from './diagnosis.ts';
 import {
+  diagnoseOutcome,
+  diagnoseTailscale,
   endpoint,
   findPeer,
   outdatedServer,
@@ -88,6 +92,7 @@ interface BuildMachineReport {
     | 'lapsed'
     | 'outdated'
     | 'unreachable';
+  diagnosis?: RemoteDiagnosis;
   dnsName?: string;
   deviceId?: string;
   requestedAt?: string;
@@ -98,6 +103,8 @@ interface BuildMachineReport {
   reasons?: string[];
   /** The same reasons with the code of each, in the same order. */
   problems?: OffloadProblem[];
+  /** What a build there does beyond the match, such as downloading an SDK package; none of it stops the build. */
+  notes?: OffloadProblem[];
   /** The machine's reported capacity, when it answered an offer. */
   capacity?: Record<string, unknown>;
 }
@@ -105,7 +112,7 @@ interface BuildMachineReport {
 /** Asks one approved machine for an offer the way placement does, and returns every reason it would not build. */
 export type OffloadCheck = (
   credential: BuildMachineCredential,
-) => Promise<{ capacity: Record<string, unknown> | null; problems: OffloadProblem[] }>;
+) => Promise<{ capacity: Record<string, unknown> | null; problems: OffloadProblem[]; notes?: OffloadProblem[] }>;
 
 export interface BuildMachinesInspection {
   findings: Finding[];
@@ -126,7 +133,7 @@ const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   xcode: 'has another Xcode',
   'macos-sdk': 'has another macOS SDK',
   'simulator-sdk': 'has another simulator SDK',
-  cocoapods: 'has another CocoaPods',
+  cocoapods: 'has no CocoaPods, or another version',
   bundler: 'has no Bundler',
   runtime: "has no simulator for this project's iOS runtime",
   jdk: 'runs another JDK major version',
@@ -139,7 +146,21 @@ const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   platform: 'cannot build this platform',
 };
 
-function problemFix(code: OffloadProblem['code'], entry: string): string {
+const NOTE_TITLES: Partial<Record<OffloadProblem['code'], string>> = {
+  ndk: "downloads this project's NDK on its first Android build",
+  'build-tools': "downloads this project's Android build-tools on its first Android build",
+  'compile-sdk': "downloads this project's Android compile platform on its first Android build",
+};
+
+function commandFix(problem: OffloadProblem, entry: string): string | null {
+  return problem.commands?.length && problem.lead
+    ? [`On ${entry}, ${problem.lead}:`, ...problem.commands].join('\n')
+    : null;
+}
+
+function problemFix(problem: OffloadProblem, entry: string): string {
+  const { code } = problem;
+  if (problem.followsFrom) return `Fix the ${problem.followsFrom} problem on ${entry} first; this follows from it.`;
   switch (code) {
     case 'unreachable':
       return `Check that stim-server runs on ${entry} and that its tailscale serve route answers, then run \`stim doctor\` again. To keep it running there, run \`stim-server service install --serve\` on ${entry}.`;
@@ -152,20 +173,35 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
     case 'xcode':
     case 'simulator-sdk':
     case 'macos-sdk':
-      return `Install and select the same Xcode on ${entry} and this Mac (\`xcode-select -p\` on each).`;
+      return (
+        commandFix(problem, entry) ??
+        `Install and select the same Xcode on ${entry} and this Mac (\`xcode-select -p\` on each).`
+      );
     case 'cocoapods':
-      return `Install the same CocoaPods version on ${entry}, on the PATH its stim-server's login shell sets.`;
+      return (
+        commandFix(problem, entry) ??
+        `Install the same CocoaPods version on ${entry}, on the PATH its stim-server sets. A build sent there with --remote-build ${entry} still runs; a version that differs rewrites the COCOAPODS line of a committed Podfile.lock.`
+      );
     case 'bundler':
       return `Install Bundler (\`gem install bundler\`) on ${entry}, on the PATH its stim-server's login shell sets.`;
     case 'runtime':
-      return `Install that iOS simulator runtime on ${entry} with at least one iPhone simulator, or set ios.runtime here to one ${entry} has.`;
+      return (
+        commandFix(problem, entry) ??
+        `Install that iOS simulator runtime on ${entry} with at least one iPhone simulator, or set ios.runtime here to one ${entry} has.`
+      );
     case 'jdk':
-      return `Start stim-server on ${entry} with JAVA_HOME at a JDK of the same major version as this machine's.`;
+      return (
+        commandFix(problem, entry) ??
+        `Start stim-server on ${entry} with JAVA_HOME at a JDK of the same major version as this machine's.`
+      );
     case 'android-sdk':
     case 'ndk':
     case 'build-tools':
     case 'compile-sdk':
-      return `Install the missing package with sdkmanager in the Android SDK stim-server on ${entry} uses (its ANDROID_HOME, else ~/Library/Android/sdk on macOS or ~/Android/Sdk on Linux).`;
+      return (
+        commandFix(problem, entry) ??
+        `Install the missing package with sdkmanager in the Android SDK stim-server on ${entry} uses (its ANDROID_HOME, else ~/Library/Android/sdk on macOS or ~/Android/Sdk on Linux).`
+      );
     case 'disk':
       return `Free space on ${entry}'s worker root (server.workerRoot there).`;
     case 'platform':
@@ -177,14 +213,51 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
 
 const TRANSIENT: ReadonlySet<OffloadProblem['code']> = new Set(['unreachable', 'busy']);
 
-function offloadFindings(entry: string, problems: OffloadProblem[]): Finding[] {
-  return problems.map((problem) => ({
-    code: `build-machine-${problem.code}`,
-    level: TRANSIENT.has(problem.code) ? 'note' : 'cost',
-    title: `Remote machine ${entry} ${PROBLEM_TITLES[problem.code]}`,
-    detail: `Builds fall back to this machine: ${problem.reason}.`,
-    fix: problemFix(problem.code, entry),
-  }));
+const UNPREDICTABLE: ReadonlySet<OffloadProblem['code']> = new Set([
+  'unreachable',
+  'busy',
+  'disk',
+  'checkout',
+  'cocoapods',
+]);
+
+/** Why a build on the machine named for it cannot work, from the toolchain differences found before this machine changes the checkout. */
+export function predictedRefusal(entry: string, problems: OffloadProblem[]): { reason: string; remedy: string } | null {
+  const known = problems.filter((problem) => !UNPREDICTABLE.has(problem.code));
+  if (known.length === 0) return null;
+  return {
+    reason: known.map((problem) => problem.reason).join('; '),
+    remedy: known.map((problem) => problemFix(problem, entry)).join('\n'),
+  };
+}
+
+function offloadFindings(
+  entry: string,
+  problems: OffloadProblem[],
+  notes: OffloadProblem[],
+  operation?: StimContext,
+): Finding[] {
+  const selected = operation?.env.STIM_REMOTE_BUILD?.trim() || loadConfig()?.remote?.build;
+  const consequence =
+    typeof selected === 'string' && placementWord(selected) === 'remote-only'
+      ? 'remote.build is remote-only, so automatic builds skip this machine and refuse rather than build on this Mac:'
+      : 'Builds fall back to this machine:';
+  return [
+    ...problems.map((problem) => ({
+      code: `build-machine-${problem.code}`,
+      level: TRANSIENT.has(problem.code) ? ('note' as const) : ('cost' as const),
+      title: `Remote machine ${entry} ${PROBLEM_TITLES[problem.code]}`,
+      detail: `${consequence} ${problem.reason}.${problem.code === 'cocoapods' ? ` A build sent there with --remote-build ${entry} still runs.` : ''}`,
+      fix: problemFix(problem, entry),
+    })),
+    ...notes.map((each) => ({
+      code: `build-machine-${each.code}`,
+      level: 'note' as const,
+      title: `Remote machine ${entry} ${NOTE_TITLES[each.code] ?? 'needs a first-build download'}`,
+      detail: `The build goes there anyway: ${each.reason}.`,
+      fix: commandFix(each, entry),
+    })),
+  ];
 }
 
 async function inspectMachine(
@@ -207,10 +280,10 @@ async function inspectMachine(
   }
   const peer = findPeer(status, parsed.name);
   if (peer === 'missing' || peer === 'ambiguous') {
-    const detail = peer === 'missing' ? 'No peer on this tailnet has that name.' : 'Several peers match that name.';
+    const diagnosis = notOnTailnetDiagnosis(entry, peer === 'ambiguous');
     return {
-      report: { machine: entry, state: 'not-on-tailnet' },
-      finding: note(`Remote machine ${entry} is not on this tailnet`, detail),
+      report: { machine: entry, state: 'not-on-tailnet', diagnosis },
+      finding: diagnosisFinding('build-machine', entry, diagnosis),
     };
   }
   const credential = readBuildMachines().find((each) => each.machine === entry);
@@ -306,22 +379,37 @@ async function inspectMachine(
       };
     case 'outdated': {
       const outdated = outdatedServer(entry, version, outcome.command);
-      return { report: { ...paired, state: 'outdated' }, finding: note(outdated.title, outdated.detail, outdated.fix) };
-    }
-    case 'unreachable':
-      return {
-        report: { ...paired, state: 'unreachable' },
-        finding: note(
-          `Could not reach remote machine ${entry}`,
-          outcome.reason,
-          `Check that stim-server runs on ${entry}. To keep it running there, run \`stim-server service install --serve\` on ${entry}.`,
-        ),
+      const diagnosis: RemoteDiagnosis = {
+        layer: 'compat',
+        code: 'server-outdated',
+        title: 'Server is outdated',
+        message: outdated.detail,
+        remedy: outdated.fix,
       };
+      return {
+        report: { ...paired, state: 'outdated', diagnosis },
+        finding: note(outdated.title, outdated.detail, outdated.fix),
+      };
+    }
+    case 'unreachable': {
+      const diagnosis = await diagnoseOutcome(io, {
+        entry,
+        peer,
+        port: parsed.port,
+        target: endpoint(peer, parsed.port),
+        reason: outcome.reason,
+        transport: outcome.transport,
+      });
+      return {
+        report: { ...paired, state: 'unreachable', diagnosis },
+        finding: diagnosisFinding('build-machine', entry, diagnosis),
+      };
+    }
   }
   const permissions = readHostPermissions(outcome.result.host);
   const host = permissions ? { host: permissions } : {};
   if (!check) return { report: { ...paired, state: 'approved', ...host }, finding: null };
-  const { capacity, problems } = await check(outcome.credential);
+  const { capacity, problems, notes = [] } = await check(outcome.credential);
   return {
     report: {
       ...paired,
@@ -330,10 +418,11 @@ async function inspectMachine(
       offloadable: problems.length === 0,
       reasons: problems.map((problem) => problem.reason),
       problems,
+      ...(notes.length ? { notes } : {}),
       ...(capacity ? { capacity } : {}),
     },
     finding: null,
-    extra: offloadFindings(entry, problems),
+    extra: offloadFindings(entry, problems, notes, operation),
   };
 }
 
@@ -380,11 +469,16 @@ export async function inspectBuildMachines(
   if (entries.length === 0) return { findings: [], machines: [] };
   const status = await io.status();
   if (!isJsonObject(status)) {
+    const diagnosis = await diagnoseTailscale(io);
     return {
       findings: [
-        note('Remote machines are unreachable', 'remote.machines names remote machines, but Tailscale is not running.'),
+        note(
+          'Remote machines are unreachable',
+          `remote.machines names remote machines. ${diagnosis.message}`,
+          diagnosis.remedy,
+        ),
       ],
-      machines: entries.map((machine) => ({ machine, state: 'tailscale-off' })),
+      machines: entries.map((machine) => ({ machine, state: 'tailscale-off', diagnosis })),
     };
   }
   const self = isJsonObject(status.Self) ? status.Self : {};

@@ -63,7 +63,7 @@ beforeEach(() => {
       "console.log(response.invalid ? 'invalid JSON' : JSON.stringify({",
       "  stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0',",
       "  macosSdk: '27.0', runtimes: [], jdk: null, androidSdk: null,",
-      '  cocoapods: response.cocoapods',
+      '  cocoapods: process.env.FIXTURE_POD ?? response.cocoapods',
       '}));',
     ].join('\n'),
   );
@@ -180,6 +180,22 @@ test('older offers without Ruby context work and each context keeps its report f
   now++;
   expect(await offered()).toBe('1.18.0');
   expect(await offered('3.3.4')).toBe('1.19.0');
+});
+
+test('a report taken after its expiry sees the tools installed since the server started', async () => {
+  let installed = 'none-at-start';
+  await host.close();
+  host = new BuildHost({
+    worker: join(root, 'worker.mjs'),
+    env: { ...process.env, FIXTURE_POD: installed },
+    currentEnv: () => ({ ...process.env, FIXTURE_POD: installed }),
+  });
+  expect(await offered()).toBe('none-at-start');
+  installed = '1.17.0';
+  now += 59_999;
+  expect(await offered()).toBe('none-at-start');
+  now++;
+  expect(await offered()).toBe('1.17.0');
 });
 
 test('concurrent Ruby contexts stay separate and a same-context caller joins its in-flight probe', async () => {

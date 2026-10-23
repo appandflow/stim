@@ -308,8 +308,10 @@ leased until <time>" for each one.`,
                     true         Metro finished the bundle response, or an app
                                  without Metro (a release build, or a native
                                  Xcode or Gradle app) has a live process; then
-                                 the app stayed alive through a three-second
-                                 stability window.
+                                 the app stayed alive until its JavaScript
+                                 reported \`Running "<name>"\` (plus half a
+                                 second), or through a three-second stability
+                                 window when it did not.
                                  The command checks process liveness when the
                                  platform exposes it. Errors from that window
                                  are printed even when the app stays alive,
@@ -321,12 +323,14 @@ leased until <time>" for each one.`,
                                  bundle and the process, never a frame, and a
                                  cold app can keep rendering for a minute or
                                  more after this, which is why the stderr line
-                                 reads \`bundle loaded, process alive, stable
-                                 for 3s -- the first screen may still be
-                                 rendering\`. Poll the UI before you trust a
-                                 screenshot. Optional app-declared readiness
-                                 adds a separate stderr readiness phase; it
-                                 does not change this field. See
+                                 reads \`bundle loaded, process alive, app
+                                 JavaScript running -- the first screen may
+                                 still be rendering\` (\`stable for 3s\` when
+                                 no \`Running\` log arrived). Poll the UI
+                                 before you trust a screenshot. Recommended
+                                 app-declared readiness adds a separate
+                                 stderr readiness phase; it does not change
+                                 this field. See
                                  \`guide lifecycle readiness\`
                     "bundling"   the request DID arrive and Metro was still
                                  building or delivering when the bundle timeout closed.
@@ -570,13 +574,27 @@ leased until <time>" for each one.`,
                   pins Node (bin, version and match are null when no install
                   fits the pin; match is "exact", or "major" for the newest
                   install of the pinned major not older than the pin), else null
-  remoteMachines  one { machine, state, dnsName?, deviceId?, requestedAt?,
+  remoteMachines  one { machine, state, diagnosis?, dnsName?, deviceId?, requestedAt?,
                   expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
                   remote.machines entry, for its build approval; state is "approved", "pending", "not-asked",
                   "revoked" (revoked or denied), "lapsed" (the request lapsed
                   before approval), "key-changed", "outdated",
                   "not-on-tailnet", "tailscale-off", "unreachable" or
-                  "invalid". host has the same shape and presence rule as in
+                  "invalid". diagnosis is { layer, code, title, message, remedy }
+                  for the first layer that stopped this machine, present for
+                  "tailscale-off", "not-on-tailnet", "outdated" and "unreachable"
+                  (deviceHosts carries it too); the codes are
+                  tailscale-stopped, tailscale-logged-out, tailscale-unavailable
+                  (this machine's Tailscale), peer-not-found, peer-ambiguous,
+                  peer-offline (with last seen), peer-no-answer (the connection
+                  got no reply and tailscale ping fails), route-missing (nothing accepts
+                  connections on the serve port), route-tls, route-http-error
+                  (any HTTP status but 502 and 503), server-not-running (502:
+                  nothing behind the route), server-not-ready (503: running but
+                  not serving; its message gives the cause the server reports),
+                  server-no-answer (silent route while tailscale ping reaches the Mac), server-outdated and connect-failed (none of the above).
+                  Tailscale's own "offline" flag lags a reachable peer, so an
+                  answer from the machine outranks it. host has the same shape and presence rule as in
                   deviceHosts, as do expiresAt (a pending request's lapse
                   time) and "lapsed" (--fix asks again). An approved machine also carries offloadable,
                   true when it would take this app's builds now (iOS
@@ -592,7 +610,16 @@ leased until <time>" for each one.`,
                   checkout, stim-build, arch, xcode, simulator-sdk, macos-sdk,
                   cocoapods, bundler, runtime, jdk, android-sdk, ndk,
                   build-tools, compile-sdk, disk, busy or platform). problems lists the same
-                  reasons as { code, reason } with that code. capacity
+                  reasons as { code, reason } with that code; an ndk, build-tools,
+                  compile-sdk, jdk, xcode or runtime problem can also carry commands and a
+                  lead, the lines to run on that machine (sdkmanager, the JDK install,
+                  xcode-select, xcodebuild or xcodes) and what they do, or followsFrom, the
+                  code of the problem whose fix also clears it. notes lists what a build there does without stopping:
+                  { code, reason, commands, lead } for an ndk, build-tools or compile-sdk package its
+                  Android SDK lacks and Gradle downloads on the first build (licenses
+                  accepted there, no android.builder.sdkDownload=false in the app), with the sdkmanager
+                  command that installs it ahead of time; each
+                  also a build-machine-<code> finding at level note. capacity
                   is the machine's offer: { running, max, diskFreeBytes,
                   minDiskFreeBytes, cpus?, loadPerCore?, builds?, maxBuilds?,
                   maxLoadPerCore?, memoryUsedBytes?, memoryTotalBytes?, declined? }; an older stim-server omits the
@@ -603,6 +630,7 @@ leased until <time>" for each one.`,
                   with an abnormally large footprint and, when it is safe to
                   restart, the command
                   offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Remote Machines > Add
+                  readiness-markers-missing is a note when no JS or TS source under the app directory contains [stim:readiness]; the scan skips node_modules, native and build output directories and dot-directories, and reports nothing past 5000 source files; see stim guide lifecycle readiness
 
 ON FAILURE
   \`start\`, \`ios\`, \`android\` and \`web\` all print the error contract instead,
@@ -1056,11 +1084,13 @@ RULES
                               bytes, willDelete, kept }] } | null  ignored
                               directories worktree remove moved out of a
                               worktree into $STIM_HOME/trash before git
-                              removed it. bytes is null while a removal is
+                              removed it, and paths worktree warm moved out
+                              of a copy. bytes is null while a removal is
                               deleting the entry. kept names the live or
                               unresolved ownership claim, the missing or
                               invalid trash.json, or the worktree that
-                              still exists, that keeps a directory;
+                              still exists (not for a warm entry), that
+                              keeps a directory;
                               --delete deletes the rest, only remove-*
                               entries with a valid trash.json. null when the
                               trash is empty or under any --cache scope
@@ -1559,6 +1589,10 @@ RULES
     build: ios compile on janics-mac-mini (build, 2m10s), 3m05s elapsed
     build: ios launch (bundling JS 45%, 12s), 58s elapsed
 
+  The machine keeps every native build run, not only the latest, in
+  $STIM_HOME/builds/builds.ndjson (newest 500), read with
+  \`stim logs --source builds --json\` (\`guide logs\`, BUILD LEDGER).
+
   An environment with a recorded run also carries lastBuilds, each
   platform's most recent ios or android run, finished or failed:
 
@@ -1755,6 +1789,8 @@ RULES
     lastPass carries startedAt, durationMs, trigger, mode, freedBytes
     (0 in report mode), actions, stopped (0), blocked. recent holds the last 20 action, failure
     and blocked NDJSON records from maintenance/maintenance.ndjson.
+    What each run cleared, kept or failed is in $STIM_HOME/gc/gc.ndjson,
+    read with \`stim logs --source gc --json\` (\`guide logs\`, GC LOG).
     invalid names invalid settings; invalid cache caps use their defaults,
     while invalid maintenance settings disable passes. claim contains an
     unresolved claim's path and reason, plus removeCommand from the claim
@@ -1834,9 +1870,10 @@ RULES
                 plan does not, so changes compare the fingerprint before that
                 prebuild; changeCount 0 then means those inputs match the
                 baseline. rekeyedBy is empty.
-  placement     with ios.remote or android.remote set to auto or a Mac,
-                where the plan assumes the device runs: "on <machine>" or
-                "this machine; auto may use <machines>"; absent otherwise
+  placement     with ios.remote or android.remote set to auto, remote,
+                remote-only or a Mac, where the plan assumes the device runs:
+                "on <machine>" or "this machine; <word> may use <machines>";
+                absent otherwise
   refusal       { code, message, remedy } when the run would refuse:
                 STIM_PREBUILD_FAILED for a tracked native dir the fingerprint
                 leaves out, STIM_EAS_BUILD_MISSING for an EAS miss
@@ -1991,9 +2028,9 @@ BUILD PLACEMENT (\`offload\`)
   decision is "here", "offloaded", or "fell-back" (it tried a remote machine
   and built here). reason is why: the run's \`placement:\` reason, such as
   "load 0.6/core, 1 of 3 build slots busy here" (auto keeps the build here
-  while this machine has room) or "remote.buildMode is off" (which prints no line),
+  while this machine has room) or "--remote-build local" (which prints no line),
   or for a fallback the cause, prefixed by the machine it concerns, such as
-  "mini: no less loaded (load 1.2/core there, 0.6/core here)". buildMs is the compile here, or the offloaded build's
+  "mini: saturated: load 2.4/core there, at or above 2/core". buildMs is the compile here, or the offloaded build's
   total (offer, sync, build and fetch); localEstimateMs is this project's
   last cold build here before the run. A run that hits the cache or waits
   for another workspace's build compiles nothing and records none.

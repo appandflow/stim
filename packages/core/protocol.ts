@@ -78,10 +78,13 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `build-compat` accepts `compat` on `build.start`, and in place of `stimBuild` in React Native and SwiftPM artifact
  * queries.
+ * `build-jdk` accepts `jdk` on `build.start`, the JDK major an Android build runs on; the machine finds an installed JDK of that
+ * major when its default differs.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
+ * `desktop-report-invalidate-target` accepts a report target in `desktop.reports.invalidate`, which then invalidates only it.
  * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
  * `desktop-settings-schema` supplies this server's registry-derived settings schema to local Desktop clients.
  * `desktop-settings-write` mutates settings on the proved local Desktop connection.
@@ -129,9 +132,11 @@ export const FEATURES = [
   'hosted-metro-ports',
   'server-update',
   'build-compat',
+  'build-jdk',
   'status-views',
   'desktop-reports',
   'desktop-report-platform',
+  'desktop-report-invalidate-target',
   'desktop-settings',
   'desktop-settings-schema',
   'desktop-settings-write',
@@ -1073,8 +1078,24 @@ export interface BuildToolchain {
   runtimes: string[];
   /** The major version of the JDK Gradle runs on there. */
   jdk: string | null;
+  /** The majors of every JDK it can find, the one `jdk` names included; absent from a stim-server older than this field. */
+  jdks?: string[];
+  /** What `xcode-select -p` prints on a Mac; absent from a stim-server older than this field, and while DEVELOPER_DIR is set there. */
+  developerDir?: string | null;
+  /** The Xcode apps in `/Applications`, with the license and first-launch checks of each while `xcode` is null. */
+  xcodeApps?: {
+    path: string;
+    version: string | null;
+    build: string | null;
+    license?: boolean;
+    firstLaunch?: boolean;
+  }[];
   /** The NDK, build-tools and platform directories of its Android SDK; null without an SDK. */
   androidSdk: { ndk: string[]; buildTools: string[]; platforms: string[] } | null;
+  /** Whether that SDK has its licenses accepted, so Gradle downloads a missing package; absent from a stim-server older than this field. */
+  androidLicenses?: boolean;
+  /** The SDK directory `androidSdk` was read from; absent from a stim-server older than this field. */
+  androidHome?: string;
 }
 
 /**
@@ -1200,6 +1221,8 @@ export interface BuildStartParams {
   stimBuild: string;
   /** The client's Stim build compatibility version, compared instead of `stimBuild` by a machine that reports one. */
   compat?: number;
+  /** The JDK major the client's Android build ran on; a machine with the `build-jdk` feature builds on a JDK of that major. */
+  jdk?: string;
   cacheArtifact?: boolean;
 }
 
@@ -1328,10 +1351,25 @@ export interface BuildClientSummary {
   lastAt: string;
 }
 
+/**
+ * The first layer that stops this machine from using a remote machine, as `stim doctor --json` reports it under
+ * `diagnosis`. `code` is stable; `title` is a short label for a status pill; `message` says what failed and
+ * `remedy` what to do. `guide remote` lists the codes.
+ */
+export interface RemoteDiagnosis {
+  layer: 'tailscale' | 'peer' | 'route' | 'server' | 'compat';
+  code: string;
+  title: string;
+  message: string;
+  remedy: string;
+}
+
 /** One `remote.machines` entry as `stim doctor --json` reports it; `guide facts doctor` defines the fields. */
 export interface BuildMachineReport {
   machine: string;
   state: string;
+  /** Present for a state that stops at a layer below approval (`tailscale-off`, `not-on-tailnet`, `unreachable`, `outdated`). */
+  diagnosis?: RemoteDiagnosis;
   dnsName?: string;
   deviceId?: string;
   requestedAt?: string;
@@ -1607,7 +1645,7 @@ export interface Methods {
   'desktop.authenticate': { params: { proof: string }; result: { authorized: true } };
   'desktop.reports.get': { params: DesktopReportTarget; result: DesktopReportSnapshot };
   'desktop.reports.subscribe': { params: DesktopReportTarget; result: SubscribeResult };
-  'desktop.reports.invalidate': { params?: Record<string, never>; result: Record<string, never> };
+  'desktop.reports.invalidate': { params?: Record<string, never> | DesktopReportTarget; result: Record<string, never> };
   'desktop.settings.get': { params: { cwd: string }; result: SettingsResult };
   'desktop.settings.schema': { params?: Record<string, never>; result: Record<string, unknown> };
   'desktop.settings.write': { params: DesktopSettingsWriteParams; result: DesktopSettingsWriteResult };

@@ -111,6 +111,42 @@ test('--json reports each layer, the winning one, environment overrides, and def
   expect(payload.unknown).toEqual([{ key: 'bogus', scope: 'committed', file: join(repo, '.stim.json'), value: true }]);
 });
 
+test('a removed setting is listed with the command that replaces it', async () => {
+  writeFileSync(join(app, '.stim.json'), JSON.stringify({ remote: { buildMode: 'force' } }));
+  const [printed] = (await settings(['--json'])).out;
+  expect(JSON.parse(printed ?? '').unknown).toEqual([
+    {
+      key: 'remote.buildMode',
+      scope: 'committed',
+      file: join(app, '.stim.json'),
+      value: 'force',
+      replacement: 'stim settings set remote.build remote',
+    },
+  ]);
+  const { note } = await settings([]);
+  expect(note).toEqual([
+    expect.stringContaining(
+      `remote.buildMode in ${join(app, '.stim.json')} is not read by Stim. Run \`stim settings set remote.build remote\` instead.`,
+    ),
+  ]);
+});
+
+test('a removed setting in the machine config is listed with its replacement too', async () => {
+  writeFileSync(
+    join(home, 'config.json'),
+    JSON.stringify({ version: 2, projects: { [app]: {} }, repos: {}, remote: { buildMode: 'off' } }),
+  );
+  const [printed] = (await settings(['--json'])).out;
+  expect(JSON.parse(printed ?? '').unknown).toEqual([
+    expect.objectContaining({
+      key: 'remote.buildMode',
+      scope: 'machine',
+      value: 'off',
+      replacement: 'stim settings set remote.build local',
+    }),
+  ]);
+});
+
 test('set and unset edit .stim.json in place, keeping other keys and indentation', async () => {
   const file = join(app, '.stim.json');
   writeFileSync(

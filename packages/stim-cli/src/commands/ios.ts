@@ -96,7 +96,8 @@ import {
   resolveIosBuildSetup,
   simulatorBuildArch,
 } from './ios/support.ts';
-import { lastBuildRecord, writeLastBuild } from './ios/result.ts';
+import { iosLedgerDevice, lastBuildRecord, writeLastBuild } from './ios/result.ts';
+import type { BuildLedgerExtras } from '../engine/build-ledger.ts';
 import { finishIosRun, type IosRunCompletion } from './ios/launch.ts';
 import { planIos } from './ios/next-build.ts';
 
@@ -140,7 +141,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
     .option(
       '--remote-build <value>',
-      'Build on auto, local, or one named machine; a name refuses without fallback',
+      'Build on local, auto, remote (remote machines first), remote-only (never here), or one named machine; a name refuses without fallback',
       parseBuildMachineOption,
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
@@ -190,10 +191,10 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or an approved Mac in remote.machines; named Macs never fall back locally. auto places on an approved Mac when this machine is full or busy. local runs here, whatever ios.remote says.',
+      'Run on eas, proxy, or an approved Mac in remote.machines; named Macs never fall back locally. auto places on an approved Mac when this machine is full or busy. remote tries remote.machines in order first and runs here only when none takes it. remote-only never runs here. local runs here, whatever ios.remote says.',
       (value) => {
         if (parseMachine(value)) return value.trim();
-        throw new InvalidArgumentError('expected eas, proxy, auto, local, or a remote Mac name');
+        throw new InvalidArgumentError('expected eas, proxy, local, auto, remote, remote-only, or a remote Mac name');
       },
     )
     .option(
@@ -354,6 +355,7 @@ function iosSlotDeps(d: IosDeps, slot: string): IosDeps {
     d = {
       ...base,
       ensureOwnedDevice: (args) => base.ensureOwnedDevice({ ...args, slot }),
+      ensureBooted: (args) => base.ensureBooted({ ...args, slot }),
       checkDeviceCapacity: (args) => base.checkDeviceCapacity({ ...args, slot }),
       selectFromPool: (args) => base.selectFromPool({ ...args, slot }),
       acquireRunLease: (args) => base.acquireRunLease({ ...args, slot }),
@@ -461,10 +463,17 @@ async function runIos(
   let builtConfiguration: string | null = null;
   let acquiredBuild: BuildFailureFields | null = null;
 
-  const recordFailedBuild = (build: BuildFailureFields, errorCode?: string) =>
+  let builtScheme: string | undefined;
+  let builtDevice: BuildLedgerExtras['device'] = null;
+  const recordFailedBuild = (
+    build: BuildFailureFields,
+    errorCode?: string,
+    why: { message?: string | null; remedy?: string | null } = {},
+  ) =>
     writeLastBuild(
       root,
       lastBuildRecord({
+        ledger: { scheme: builtScheme, device: builtDevice, message: why.message, remedy: why.remedy },
         devicePlacement,
         buildMachine,
         ...build,
@@ -499,7 +508,7 @@ async function runIos(
     if (remedy) note(chalk.dim(phaseLine('remedy', remedy)));
     if (logPath) note(chalk.dim(phaseLine('log', logPath)));
     const failedBuild = build ?? acquiredBuild;
-    if (failedBuild) recordFailedBuild(failedBuild, code);
+    if (failedBuild) recordFailedBuild(failedBuild, code, { message, remedy });
     if (acquiredBuild) logWriter().write(runFailureRecord({ code, message, phase: progress.phase() }));
     note(chalk.red(phaseLine('failed', code)));
     if (!setup) recordRun({ failed: true, durationMs: elapsed() });
@@ -583,6 +592,7 @@ async function runIos(
   const configuration = opts.easProfile !== undefined ? null : resolveConfiguration(opts.configuration, settings);
   builtConfiguration = configuration ?? 'Debug';
   const buildScheme = resolveSchemeSelection(opts, settings);
+  builtScheme = buildScheme;
   const release = isReleaseConfiguration(configuration);
   const appMode = ({ metro: 'development', process: 'process', 'embedded-js': 'release' } as const)[
     integration.runtimeKind(configuration)
@@ -630,6 +640,7 @@ async function runIos(
   if (schemeRefusal) return fail(schemeRefusal);
   const capabilityRefusal = iosProjectTargetRefusal(integration, { physical, easProfile: opts.easProfile });
   if (capabilityRefusal) return fail(capabilityRefusal);
+  const simSnapshot = createIosSimSnapshot();
   const remoteSelection = await selectIosPlacement({
     root,
     env: context.env,
@@ -658,8 +669,11 @@ async function runIos(
         runtimeOrigin: d.settingOriginScope(d.settingsLayers(settingsContext), 'ios.runtime'),
         listRuntimes: d.listIosRuntimes,
         signal: context.signal,
+        snapshot: simSnapshot,
       }),
+    simSnapshot,
     noWait: deviceSlotWaitMs === 0,
+    waitMs: deviceSlotWaitMs,
     note,
     phase,
     log: (entry) => logWriter().write(entry),
@@ -693,6 +707,7 @@ async function runIos(
     hosted: Boolean(hostedMachine),
     listRuntimes: d.listIosRuntimes,
     signal: context.signal,
+    snapshot: simSnapshot,
   });
   if (modelRefusal) return fail(modelRefusal);
   const selectors = hostedIosSelectors(deviceType, runtime);
@@ -700,7 +715,6 @@ async function runIos(
   if ('failure' in connected) return fail(connected.failure);
   const hostedTarget = connected.target;
   try {
-    const simSnapshot = createIosSimSnapshot();
     const budget = await iosPlacementBudget(
       d,
       root,
@@ -859,6 +873,7 @@ async function runIos(
       }
     }
 
+    builtDevice = iosLedgerDevice(device);
     let bootDuration = '';
     let bootPending = false;
     let bootPromise!: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined>;
@@ -960,6 +975,8 @@ async function runIos(
           isExpo,
           appId: proj?.bundleId,
           bundleUrl: metroWarmupUrlSetting(settings, 'ios'),
+          logsDir,
+          root,
         });
       return { ok: true, prepared: { metroPort } };
     }
@@ -1020,7 +1037,9 @@ async function runIos(
       if (cancelled) return fail(cancelled);
       if (acquiredBuild) {
         const { code } = error as { code?: unknown };
-        recordFailedBuild(acquiredBuild, typeof code === 'string' ? code : undefined);
+        recordFailedBuild(acquiredBuild, typeof code === 'string' ? code : undefined, {
+          message: error instanceof Error ? error.message : String(error),
+        });
         logWriter().write(thrownRunFailureRecord(error, progress.phase()));
       }
       recordRun({ failed: true, durationMs: elapsed() });
@@ -1182,8 +1201,11 @@ async function runIos(
           devServer,
           fail,
           note,
+          phase,
           enterPhase: progress.step,
+          enterActivity: progress.activity,
           selectors,
+          logWriter,
         });
       if (!localBoot) {
         progress.step('device');
@@ -1281,6 +1303,7 @@ async function runIos(
     } catch (error) {
       return reportRunFailure(error);
     } finally {
+      artifact?.cancelFingerprintCheck();
       await artifact?.release();
     }
   } finally {

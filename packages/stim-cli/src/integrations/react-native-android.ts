@@ -17,6 +17,7 @@ import {
   untrackedMissLine,
   untrackedNativeFiles,
 } from '../cache/build-cache.ts';
+import { memoizedFingerprint, type FingerprintCheck } from '../cache/fingerprint-memo.ts';
 import { explainBuildMiss, fingerprintErrorMissReason } from '../cache/miss-reason.ts';
 import { formatDuration, shortHash } from '../command-output.ts';
 import { androidMetroRuntime, androidProcessRuntime } from '../commands/android/launch.ts';
@@ -59,6 +60,7 @@ import { planReactNativeAndroid, type AndroidPlanDeps } from './react-native-and
 export interface ReactNativeAndroidDependencies {
   plan?: Partial<AndroidPlanDeps>;
   fingerprint?: typeof fingerprintProject;
+  memoize?: typeof memoizedFingerprint;
   untracked?: typeof untrackedNativeFiles;
   resolveCached?: typeof resolveBuild;
   storeCached?: BuildStore;
@@ -135,6 +137,7 @@ function reactNativeAndroidArtifact(
   context: ResolvedProjectSettings['context'],
   {
     fingerprint = fingerprintProject,
+    memoize = memoizedFingerprint,
     untracked = untrackedNativeFiles,
     resolveCached = resolveBuild,
     storeCached = storeBuild,
@@ -162,6 +165,7 @@ function reactNativeAndroidArtifact(
   let initialSources: FingerprintSource[] = [];
   let prebuildRan = false;
   let editedConfig: string[] = [];
+  let fingerprintCheck: FingerprintCheck | null = null;
   const identity = () => ({ hash, key: buildCacheKey('android', hash, runOptions) });
 
   const materialize: AndroidArtifactRecipe['materialize'] = async (key, cachedPath) => {
@@ -216,10 +220,22 @@ function reactNativeAndroidArtifact(
   };
 
   return {
+    fingerprintCheck: () => fingerprintCheck,
     async identity() {
       let computed;
       try {
-        computed = await fingerprint(root, { platform: 'android', androidLayout: layout });
+        const memo = await memoize(
+          root,
+          { platform: 'android', androidLayout: layout },
+          { consult: buildPlan.cache.read, record: true, operation, fingerprint },
+        );
+        computed = memo.fingerprint;
+        fingerprintCheck = memo.check;
+        if (memo.memoHit)
+          phase(
+            'fingerprint',
+            chalk.dim('matches a recorded fingerprint of this tree; confirming it in the background'),
+          );
       } catch (error) {
         const message = String((error as Error)?.message || error);
         throw new AndroidRecipeRefusal(
@@ -397,7 +413,7 @@ function reactNativeAndroidArtifact(
       target: async () => ({
         platform: 'android',
         local: await androidToolchainAsync(operation?.env),
-        requires: androidRequirements(root),
+        requires: androidRequirements(root, layout.gradleRoot),
       }),
       request: {
         platform: 'android',

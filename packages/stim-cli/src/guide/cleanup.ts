@@ -25,13 +25,14 @@ and logs, and never deletes anything. off disables it. It is off in CI and
 scoped STIM_HOME homes unless STIM_MAINTENANCE is explicit, so a scratch home
 or CI run never deletes on its own.
 Commands trigger a detached pass when a check is due: disk and memory pressure
-(every minute), directory sizes (hourly), finished worktrees (every 15
-minutes) and the age sweep (daily). guide, settings, help and every gc
+(every minute), idle devices (every 5 minutes, maintenance.idleCheckMinutes),
+directory sizes (hourly), finished worktrees (every 15 minutes) and the age
+sweep (daily). guide, settings, help and every gc
 invocation do not trigger it; gc without --delete prints the maintenance plan
 itself.
 status --watch and every running dev server supervisor also trigger checks
 each minute, so the disk check runs while no command does.
-Size, worktree and sweep checks defer under high load. Attempts back off for at
+Size, idle, worktree and sweep checks defer under high load. Attempts back off for at
 least one minute. Measured directories are workspace build outputs and Stim's
 shared native, Metro, ccache, Swift compilation and registered caches. The size
 check also records the disk of each owned and parked simulator and emulator
@@ -40,7 +41,10 @@ Pressure checks read free disk on the Stim home, projects and worker root
 volumes. On macOS the memory signal is the sysctl pressure level, with no
 signal if sysctl fails. Other platforms use os.freemem(); macOS never falls
 back to it. Memory pressure is recorded only; stopping devices, dev servers
-and helpers is not automatic. While the level is warning or critical, the
+and helpers for memory is not automatic. The idle check shuts down (never
+deletes) owned simulators and emulators idle for their workspace's
+devices.idleShutdownMinutes, also with no supervisor running, through the
+supervisor's idle rules and records (guide lifecycle budget). While the level is warning or critical, the
 check also names abnormally large processes (guide lifecycle simslim) in
 status's maintenance block and the maintenance log.
 
@@ -57,13 +61,25 @@ In on mode a pass runs, cheapest to rebuild first:
      claim (taken for each xcodebuild run that compiles with it) or that
      claim is unresolved; the emptying holds the exclusive claim
   5. linked worktrees whose branch or pull request finished (gc's finished
-     worktree rules and gc.worktreeGraceMinutes; maintenance.removeFinishedWorktrees)
-  6. owned simulators and emulators of a finished worktree that is kept, such
+     worktree rules and gc.worktreeGraceMinutes; maintenance.removeFinishedWorktrees),
+     and, with maintenance.removeIdleWorktrees (off by default), in the age
+     sweep clean, pushed ones unused for olderThanDays, as gc --delete
+     --worktrees --older-than removes them, git-ignored files included; never
+     a dirty one, one with unpushed commits, the source checkout, or one whose
+     last use is unknown
+  6. parked simulators and emulators unused for olderThanDays in the age
+     sweep, through centralized teardown with ownership checked again
+  7. owned simulators and emulators of a finished worktree that is kept, such
      as a dirty one (not one locked with git worktree lock), once it finished
      and was idle for gc.worktreeGraceMinutes (at least protectRecentHours),
      and of any
      workspace idle for maintenance.deviceIdleDays (3; 0 turns it off) in the
      age sweep. Devices are recreated on the next run.
+The age sweep runs every maintenance.sweepHours (24) in the background of
+commands, never at a set hour.
+maintenance.olderThanDays (7) is its age for steps 2, 3, 5 and 6; with 0 the
+sweep removes nothing in them by age, while step 1, step 7, finished
+worktrees and the cap and disk-driven parts of steps 2 and 3 still run.
 Disk-driven steps stop once free space is back above the floor. Kept for
 every pass: a workspace that is in use, holds a lock, was used within
 maintenance.protectRecentHours, is pinned with maintenance.keep, or is the
@@ -158,6 +174,23 @@ Each pass keeps a 1 MiB file, maintenance/disk-reserve. When taking the run
 claim fails with ENOSPC or EDQUOT, the pass deletes it and retries once, so a
 pass starts at zero free disk as long as an earlier pass left the reserve; the
 pass writes it again at its end.
+
+WHAT WAS CLEARED
+Every run that deletes or changes something appends one record per item to
+the machine gc log, $STIM_HOME/gc/gc.ndjson: gc --delete with any flags, gc
+--idle, gc --cache --delete, each maintenance action taken, and what the budget gate
+reclaims before stim start, ios or android. A dry run writes nothing, and a
+gc run that only kept items writes nothing. Failed and kept items carry their
+reason. The file rotates at maintenance.logMaxMb and its old generation is
+kept for maintenance.logRetentionDays, like the maintenance log.
+  stim logs --source gc           the retained records, oldest first
+  stim logs --source gc --json    one record per line
+  stim logs --source gc --errors  only the items that failed
+gc works from any directory because the log is machine-wide; it cannot be
+combined with other --source values and --source all leaves it out. Fields
+(\`guide logs\`, GC LOG): runId, trigger (manual, desktop, maintenance or
+budget), options, kind, status (done, kept or failed), label, id, path,
+bytes, detail.
 
 CLEANUP AND DISK
 
@@ -427,7 +460,10 @@ LINKED WORKTREES
   still exists, as after a removal killed between the rename and git, stays
   with the reason; if that worktree is the one the entry came from, run
   \`stim worktree remove\` on it to finish the removal.
-  gc never moves the directories back.
+  gc never moves the directories back. Warm uses the same trash for the
+  known paths it deletes from a copy (such as a copied .pnpm-store); gc
+  --delete deletes such an entry (trash.json kind warm) once its claim is free,
+  whatever the state of the worktree.
   When git still refuses the removal, the kept ownership record no longer
   names the devices that were parked or deleted. A workspace that is in use
   (see IN USE below) keeps its directory, devices and registry entry, and the
@@ -564,7 +600,9 @@ SWEEPING FINISHED WORKTREES
   one, else by the RECENT ACTIVITY sources above being older than
   --older-than days (reason recently-used while they are newer, and
   last-use-unknown when they cannot be read). Automatic maintenance removes it
-  only at disk pressure level 3, once that activity is older than
+  the same way in its daily age sweep, after maintenance.olderThanDays, only
+  with maintenance.removeIdleWorktrees (off by default), and at disk pressure
+  level 3 once that activity is older than
   maintenance.pressureProtectMinutes and at least 5 minutes old, whatever
   the setting; unreadable activity keeps it. Removal re-checks, under the removal
   locks, that HEAD did not move and the worktree is still idle, and
@@ -1101,6 +1139,12 @@ SHARED BUILD CACHES
   The Gradle build cache under GRADLE_USER_HOME (default ~/.gradle) is
   report-only because every Gradle build shares it. Stim reports its size
   but never prunes or empties it, including with --older-than or --cache all.
+
+  A cache directory that \`gc --delete --older-than\` cannot list (EACCES,
+  EPERM or ELOOP, for example) is a failed trim, not an empty one: the run
+  prints "N entries in <dir> could not be read or removed", records the cache
+  as failed and exits 1. Fix the directory's permissions and run it again. A
+  directory that is missing or is not a directory is not a failure.
 
   Trim rather than empty. Emptying costs the next build in every project the
   time the cache was saving.`,

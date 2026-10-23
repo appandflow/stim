@@ -12,6 +12,18 @@ export interface TailnetPeer {
   address: string;
   /** Tailscale's `OS` for the node, such as `macOS` or `linux`; absent when the status does not report it. */
   os?: string;
+  /** Tailscale's `Online` for the node: whether the control plane sees it connected. Absent when not reported. */
+  online?: boolean;
+  /** When Tailscale last saw the node, as an ISO timestamp; absent when it never did or the status omits it. */
+  lastSeen?: string;
+}
+
+function peerPresence(peer: Record<string, unknown>): Pick<TailnetPeer, 'online' | 'lastSeen'> {
+  const lastSeen = typeof peer.LastSeen === 'string' ? peer.LastSeen : '';
+  return {
+    ...(typeof peer.Online === 'boolean' ? { online: peer.Online } : {}),
+    ...(lastSeen && Date.parse(lastSeen) > 0 ? { lastSeen } : {}),
+  };
 }
 
 export function parseMachine(entry: string): { name: string; port: number } | null {
@@ -32,7 +44,15 @@ export function findPeer(status: unknown, name: string): TailnetPeer | 'missing'
     const addresses = Array.isArray(peer.TailscaleIPs) ? peer.TailscaleIPs.filter((ip) => typeof ip === 'string') : [];
     const address = addresses.find((ip) => !ip.includes(':')) ?? addresses[0];
     if (!address || !(dnsName === name || dnsName.startsWith(`${name}.`))) return [];
-    return [{ nodeId: peer.ID, dnsName, address, ...(typeof peer.OS === 'string' && peer.OS ? { os: peer.OS } : {}) }];
+    return [
+      {
+        nodeId: peer.ID,
+        dnsName,
+        address,
+        ...(typeof peer.OS === 'string' && peer.OS ? { os: peer.OS } : {}),
+        ...peerPresence(peer),
+      },
+    ];
   });
   if (found.length === 0) return 'missing';
   return found.length === 1 ? found[0]! : 'ambiguous';

@@ -4,6 +4,13 @@ import type { StimContext } from '@stim-cli/core';
 import { homedir, platform, totalmem } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 import chalk from 'chalk';
+import {
+  EMPTY_SWEEP_WINDOW_MS,
+  canSkipEmptySweep,
+  readEmptySweep,
+  sweepMarker,
+  writeEmptySweep,
+} from './budget-sweep.ts';
 import { phaseLine } from './command-output.ts';
 import { formatBytes, measuredDirectorySizeAsync, volumeRootFor } from './fs-util.ts';
 import { capacity, environmentState, formatSpace, type AndroidRuntimeFacts } from './status.ts';
@@ -21,7 +28,9 @@ import {
 import { canonicalPath } from './commands/gc/paths.ts';
 import type { Finding } from './diagnostics/doctor.ts';
 import { clearWorkspaceOutputs, collectWorkspaceOutputs } from './commands/gc/workspaces.ts';
-import type { GcOutput } from './commands/gc/results.ts';
+import { openGcLog } from './commands/gc/log.ts';
+import { createGcResults, type GcOutput } from './commands/gc/results.ts';
+import { lowestFree } from './maintenance/pressure.ts';
 import { workspaceActivity } from './devices/activity.ts';
 import { ownedAvdSerialResolverAsync } from './devices/android.ts';
 import { projectDeviceSlots } from './devices/device-slots.ts';
@@ -333,7 +342,9 @@ interface StepContext {
   env: NodeJS.ProcessEnv;
   dryRun: boolean;
   note: (line: string) => void;
+  record?: GcOutput['record'];
   now: number;
+  freeMb: number;
   diskRecovered: () => Promise<boolean>;
   signal?: AbortSignal;
   operation?: StimContext;
@@ -354,6 +365,7 @@ async function reclaimIdleDevices({
   root,
   dryRun,
   note,
+  record,
   now,
   env,
   signal,
@@ -387,7 +399,7 @@ async function reclaimIdleDevices({
     idle,
     0,
     () => collect(Date.now()),
-    stepOutput(note),
+    stepOutput(note, record),
     signal,
     operation,
   );
@@ -404,6 +416,7 @@ async function reclaimIdleDevServers({
   root,
   dryRun,
   note,
+  record,
   now,
   env,
   signal,
@@ -472,22 +485,27 @@ async function reclaimIdleDevServers({
       signal?.throwIfAborted();
       failures++;
       note(chalk.red(`Could not stop the dev server of ${path}: ${(error as Error)?.message || error}`));
+      record?.('devServer', 'failed', path, { detail: error instanceof Error ? error.message : String(error) });
       continue;
     }
     if (!run.ran) {
       note(chalk.yellow(`Kept the dev server of ${path}: ${run.reasons.join('; ')}`));
+      record?.('devServer', 'kept', path, { detail: run.reasons.join('; ') });
       continue;
     }
     const stopped = run.value;
     if (stopped === 'busy' || stopped === 'starting') {
       const why = stopped === 'busy' ? 'it is no longer idle' : 'a stim start holds its metro-start lock';
       note(chalk.dim(`Kept the dev server of ${path}: ${why}`));
+      record?.('devServer', 'kept', path, { detail: why });
     } else if (stopped.status === 'stopped') {
       targets.push(path);
       note(chalk.green(`Stopped the idle dev server of ${path}`));
+      record?.('devServer', 'done', path);
     } else if ('reason' in stopped) {
       if (stopped.status === 'stuck') failures++;
       note(chalk.yellow(`Kept the dev server of ${path}: ${stopped.reason}`));
+      record?.('devServer', stopped.status === 'stuck' ? 'failed' : 'kept', path, { detail: stopped.reason });
     }
   }
   return { targets, failures };
@@ -498,6 +516,7 @@ async function reclaimWorkspaceOutputs({
   dryRun,
   now,
   note,
+  record,
   diskRecovered,
   signal,
   operation,
@@ -519,7 +538,7 @@ async function reclaimWorkspaceOutputs({
     const result = await clearWorkspaceOutputs(
       { ...report, workspaces: [entry] },
       { olderThan: null, now, signal, operation },
-      stepOutput(note),
+      stepOutput(note, record),
     );
     failures += result.failures;
     targets.push(...result.cleared);
@@ -538,15 +557,37 @@ export function trimmableCaches(env: NodeJS.ProcessEnv = process.env, cwd?: stri
   );
 }
 
-async function reclaimStaleCacheEntries({ dryRun, note, env, cwd, signal }: StepContext): Promise<StepResult> {
+async function reclaimStaleCacheEntries({
+  dryRun,
+  note,
+  record,
+  env,
+  cwd,
+  now,
+  freeMb,
+  signal,
+}: StepContext): Promise<StepResult> {
   const caches = trimmableCaches(env, cwd);
   if (dryRun) return { targets: caches.map(cacheLabel), failures: 0 };
-  const { trimmed, failures } = await trimCaches(caches, STALE_CACHE_DAYS, stepOutput(note), signal);
+  const current = { at: now, freeMb, marker: sweepMarker(caches, STALE_CACHE_DAYS) };
+  if (canSkipEmptySweep(readEmptySweep(), current)) {
+    note(
+      chalk.dim(
+        phaseLine(
+          'budget',
+          `cache trim skipped: the last one, under ${EMPTY_SWEEP_WINDOW_MS / 60_000} minutes ago with the same caches and about the same free disk, found nothing older than ${STALE_CACHE_DAYS}d`,
+        ),
+      ),
+    );
+    return { targets: [], failures: 0 };
+  }
+  const { trimmed, failures } = await trimCaches(caches, STALE_CACHE_DAYS, stepOutput(note, record), signal);
+  writeEmptySweep(trimmed.length === 0 && failures === 0 ? current : null);
   return { targets: trimmed.map(cacheLabel), failures };
 }
 
-function stepOutput(note: (line: string) => void): GcOutput {
-  return { log: note, error: note, record: () => {}, fail: () => {} };
+function stepOutput(note: (line: string) => void, record: GcOutput['record'] = () => {}): GcOutput {
+  return { log: note, error: note, record, fail: () => {} };
 }
 
 const STEPS: Record<ReclaimStepName, (context: StepContext) => StepResult | Promise<StepResult>> = {
@@ -606,19 +647,19 @@ async function spaceUsers(
     ['Android emulators', join(home, '.android', 'avd')],
   ];
   const measured = new Set<string>();
-  const users: { label: string; bytes: number }[] = [];
+  const targets: [string, string][] = [];
   for (const [label, path] of candidates) {
     const canonical = canonicalPath(path);
     if (measured.has(canonical) || [...measured].some((dir) => canonical.startsWith(`${dir}${sep}`))) continue;
     measured.add(canonical);
-    if (!existsSync(path)) continue;
-    const bytes = await measuredDirectorySizeAsync(path, {
-      timeoutMs: USAGE_TIMEOUT_MS,
-      signal,
-      operation,
-    });
-    if (bytes) users.push({ label: `${label} ${path}`, bytes });
+    if (existsSync(path)) targets.push([label, path]);
   }
+  const sizes = await Promise.all(
+    targets.map(([, path]) => measuredDirectorySizeAsync(path, { timeoutMs: USAGE_TIMEOUT_MS, signal, operation })),
+  );
+  const users = targets.flatMap(([label, path], index) =>
+    sizes[index] ? [{ label: `${label} ${path}`, bytes: sizes[index] }] : [],
+  );
   return users.toSorted((a, b) => b.bytes - a.bytes).map(({ label, bytes }) => `${label}: ${formatBytes(bytes)}`);
 }
 
@@ -718,6 +759,8 @@ export async function enforceBudget(
       ),
     );
   }
+  const gcLog = dryRun ? null : openGcLog({ trigger: 'budget', holdKept: true, env });
+  const gcResults = gcLog && createGcResults(gcLog.record);
   for (const step of plan) {
     signal?.throwIfAborted();
     if (!dryRun && (!overBudget(short) || (DISK_ONLY.includes(step) && short.disk.length === 0))) break;
@@ -728,7 +771,9 @@ export async function enforceBudget(
       env,
       dryRun,
       note,
+      record: gcResults?.record,
       now: deps.now(),
+      freeMb: lowestFree(measure.volumes),
       diskRecovered: async () =>
         budgetShortfalls(budget, {
           volumes: await (deps.volumesAsync?.(paths) ?? deps.volumes(paths)),
