@@ -132,7 +132,10 @@ test('a removed setting is listed with the command that replaces it', async () =
 });
 
 test('a removed setting in the machine config is listed with its replacement too', async () => {
-  saveConfig({ version: 2, projects: { [app]: {} }, repos: {}, remote: { buildMode: 'off' } });
+  writeFileSync(
+    join(home, 'config.json'),
+    JSON.stringify({ version: 2, projects: { [app]: {} }, repos: {}, remote: { buildMode: 'off' } }),
+  );
   const [printed] = (await settings(['--json'])).out;
   expect(JSON.parse(printed ?? '').unknown).toEqual([
     expect.objectContaining({
