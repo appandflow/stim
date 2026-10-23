@@ -461,13 +461,18 @@ private struct TutorialExplanationStyle: DisclosureGroupStyle {
 struct TutorialPromptBox: View {
   var prompt: String
   var onCopy: () -> Void
+  var fill: Color = Palette.surface
+  var contentPadding: CGFloat = Space.lg
+  var contentSpacing: CGFloat = Space.md
+  var textLineSpacing: CGFloat = 0
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.sm) {
       Text("Tell your agent:").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-      Card {
-        VStack(alignment: .leading, spacing: Space.md) {
+      Card(fill: fill) {
+        VStack(alignment: .leading, spacing: contentSpacing) {
           Text(prompt)
+            .lineSpacing(textLineSpacing)
             .textSelection(.enabled)
             .lineLimit(nil)
             .fixedSize(horizontal: false, vertical: true)
@@ -477,7 +482,7 @@ struct TutorialPromptBox: View {
             CopyButton(prompt, accessibilityLabel: "Copy prompt: \(prompt)", onCopy: onCopy)
           }
         }
-        .padding(Space.lg)
+        .padding(contentPadding)
       }
     }
   }
