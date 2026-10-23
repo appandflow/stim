@@ -586,8 +586,13 @@ export async function ensureIosBooted(args: IosBootArgs): Promise<BootResult> {
     return { ...first, reason: `${first.reason} The restart did not run: ${stopped.reason ?? stopped.status}.` };
   }
   const { booted: _booted, booting: _booting, ...unbooted } = device;
-  const { springBoardDown: _down, ...second } = await bootOwnedIosSim({ ...args, device: unbooted });
-  return second;
+  const { springBoardDown: stillDown, ...second } = await bootOwnedIosSim({ ...args, device: unbooted });
+  return stillDown
+    ? {
+        ...second,
+        reason: `${second.reason} Stim already restarted the simulator once, so it did not restart it again.`,
+      }
+    : second;
 }
 
 async function bootOwnedIosSim({
@@ -615,7 +620,7 @@ async function bootOwnedIosSim({
         return {
           failed: true,
           springBoardDown: true,
-          reason: `Simulator ${udid} reports Booted, but SpringBoard (the system shell) is not running, so apps cannot launch. Run \`stim stop\`, then \`stim ios\` again to boot it fresh. If it repeats, look for SpringBoard crash reports in ~/Library/Logs/DiagnosticReports.`,
+          reason: `Simulator ${udid} reports Booted, but SpringBoard (the system shell) is not running, so apps cannot launch. Run \`stim stop\`, then \`stim ios\` again. If it repeats, look for SpringBoard crash reports in ~/Library/Logs/DiagnosticReports.`,
         };
       }
       return { ok: true, udid };

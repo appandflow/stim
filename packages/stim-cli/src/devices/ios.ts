@@ -280,7 +280,7 @@ export async function readSpringBoardPid(udid: string): Promise<number | null> {
 }
 
 export function springBoardRunning(launchctlList: string): boolean {
-  return /^\d+\s+\S+\s+com\.apple\.SpringBoard$/m.test(launchctlList);
+  return /^\d+[ \t]+\S+[ \t]+com\.apple\.SpringBoard$/m.test(launchctlList);
 }
 
 // `simctl bootstatus -b` returns before SpringBoard has started. Until it has,
