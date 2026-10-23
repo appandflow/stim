@@ -10,15 +10,15 @@ release gate.
 runs/<machine id>/<UTC start time>-<stim version or local-sha>.json
 ```
 
-One file per `bench.mjs` run. The machine id is the hardware model plus a short hash of the host name, so no host
-name or user name is stored. Files are never edited after they are pushed.
+One file per `bench.mjs` run. The machine id is the hardware model plus a short hash of the host name; the files hold no host name, user name
+or path. Files are never edited after they are pushed.
 
 ## File format (schema 1)
 
 ```text
-schema, startedAt, finishedAt
+schema, id, startedAt, finishedAt     id is the file name without .json
 stim        { source: npm | path, label, version, traceSupport }
-repo        { sha, branch, appDirty }      the commit whose apps/mobile the scenarios ran
+repo        { sha }                    the commit whose apps/mobile the scenarios ran
 machine     { id, model, cpu, cores, memoryGb, os, xcode, node }
 config      { reps, primed, app, maxLoad }
 load        { start: [1m, 5m, 15m], end: [1m, 5m, 15m] }
@@ -26,16 +26,22 @@ scenarios   { <name>: { runs: [...], summary } }
 skipped     [{ scenario, reason }]
 ```
 
+`stim.label` is the npm version, or `local-<version>-<repo sha or external>` for a local build. `config.primed` is
+true when an unmeasured pass filled the build caches first; primed and unprimed runs are never compared.
+
 A scenario run is `{ rep, wallMs, exit, loadBefore, loadAfter }` plus, when present:
 
 - `trace`: `{ commandMs, phases, spans, exec: { count, ms } }` summed from the `STIM_TRACE` file (Stim versions
-  with `STIM_TRACE` only). `phases` are the build phases named as in stats.json.
-- `statsPhases`: the phases stats.json recorded for that ios or android run.
-- `error`: the end of the output of a failed run, with home and temporary paths replaced.
+  with `STIM_TRACE` only). `phases` are the build phases named as in stats.json. `traceUnreadable: true` replaces
+  it when the file could not be parsed.
+- `statsPhases`: for a successful ios or android run of a Stim version without `STIM_TRACE`, the phases stats.json
+  recorded in the run's time window when exactly one sample matches. A heuristic.
+- `failure`: `exit`, `signal` or `spawn` for a run that did not succeed. No output text is stored.
 
 Scenarios: `warm`, `start`, `ios-first`, `ios-rerun`, `android-first`, `android-rerun`, `stop`. The `first`
 scenario is the first run in a new worktree (device setup and cache restore); `rerun` is the second run with the
-app installed. All times are milliseconds.
+app installed. All times are milliseconds. `summary` is `{ n, failures, medianMs, minMs, maxMs, spread }` over the
+successful repetitions.
 
 ## Comparing
 
