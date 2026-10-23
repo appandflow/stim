@@ -6,7 +6,7 @@ import { collectTrash, deleteTrash } from '../commands/gc/trash.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
 import { resetExecutor } from '../exec.ts';
 import { moveIgnoredTreesToTrash } from '../workspace/worktree-trash.ts';
-import { goneClaimOwner, plantClaim } from './_factories.ts';
+import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 
 const POSIX = process.platform !== 'win32';
 
@@ -131,6 +131,25 @@ test.skipIf(!POSIX)('gc keeps the trash of a worktree that still exists until th
     failures: 0,
   });
   expect(existsSync(interrupted)).toBe(false);
+});
+
+test.skipIf(!POSIX)('gc deletes the trash a crashed warm left although its worktree still exists', async () => {
+  const worktree = join(base, 'warmed');
+  mkdirSync(worktree);
+  const crashed = plantEntry('remove-warm-crashed', worktree);
+  writeFileSync(join(crashed, 'trash.json'), JSON.stringify({ worktree, createdAt: 'T', kind: 'warm' }));
+  plantClaim(join(crashed, 'claims'), 'exclusive', goneClaimOwner());
+  const live = plantEntry('remove-warm-live', worktree);
+  writeFileSync(join(live, 'trash.json'), JSON.stringify({ worktree, createdAt: 'T', kind: 'warm' }));
+  plantClaim(join(live, 'claims'), 'exclusive', liveClaimOwner());
+
+  const report = await collectTrash();
+  expect(report?.entries.find((item) => item.path === crashed)).toMatchObject({ willDelete: true, kept: null });
+  expect(report?.entries.find((item) => item.path === live)?.willDelete).toBe(false);
+
+  expect(await deleteTrash(undefined)).toMatchObject({ count: 1, failures: 0 });
+  expect(existsSync(crashed)).toBe(false);
+  expect(existsSync(join(live, 'entries', '0', 'file'))).toBe(true);
 });
 
 test.skipIf(!POSIX || process.getuid?.() === 0)('gc keeps the trash of a worktree it cannot prove gone', async () => {
