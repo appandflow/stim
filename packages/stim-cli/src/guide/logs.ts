@@ -378,8 +378,9 @@ has pid; spans have ts and dur in microseconds since the epoch. Events:
   command  one span named "stim <command>" with the exit code in args.exit
   exec     one span per child process. args.argv (or args.command for a shell
            command) has the values of secret-looking flags, credentials in
-           URLs and token shapes replaced by [redacted]; args also has cwd,
-           ok, exit and signal
+           URLs and token shapes replaced by [redacted], and the credentials
+           of curl -u and security import -P; other short flags such as -p
+           and -u are kept. args also has cwd, ok, exit and signal
   phase    the build phases of an ios, android or macos run on a
            "phases: <platform> build" track, named as in stats.json and the
            build ledger (prepare, cache-lookup, wait, prebuild, pods, compile,

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
@@ -55,6 +55,15 @@ test('every executor entry point writes one span per child, with secrets in argu
     { args: { spawned: true, ok: true, argv: [node, '-e', '0', '--', '--token=[redacted]'] } },
     { args: { ok: false, exit: 3 } },
   ]);
+});
+
+test.skipIf(process.platform === 'win32')('the program name selects the flags that carry a credential', () => {
+  const curl = join(dir, 'curl');
+  writeFileSync(curl, '#!/bin/sh\nexit 0\n');
+  chmodSync(curl, 0o755);
+  getExecutor().runFile(curl, ['-u', 'user:curl-secret', 'https://example.com'], { timeoutMs: 60_000 });
+  expect(readFileSync(file, 'utf8')).not.toContain('curl-secret');
+  expect(spans()).toMatchObject([{ args: { argv: [curl, '-u', '[redacted]', 'https://example.com'] } }]);
 });
 
 test('children running at the same time get separate lanes so their spans do not overlap on one track', async () => {

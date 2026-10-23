@@ -680,7 +680,7 @@ interface ChildSpan {
 
 function fileSpan(file: string, args: readonly string[] | undefined, opts: ExecOptions): ChildSpan {
   const program = basename(file);
-  const argv = redactArgv(args ?? [], opts.redact);
+  const argv = redactArgv(args ?? [], opts.redact, file);
   const first = argv[0];
   return {
     name: first && /^[a-z][a-z0-9-]{1,23}$/.test(first) ? `${program} ${first}` : program,
