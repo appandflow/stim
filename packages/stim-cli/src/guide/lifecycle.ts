@@ -2331,7 +2331,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   when neither answers it says so and makes no warning.
 
   The app is the one warm prepares: the app the command was invoked from, or,
-  from a monorepo root, the one app registered in the source checkout.
+  from a monorepo root, the one app registered in the source checkout or in
+  the worktree. With no such app, a refresh from the root updates only the
+  repository root and says so on stderr.
   Dependencies install where the repository root's lockfile is and, when the
   app has its own lockfile (a nested package outside the root workspaces),
   there too; a root that has neither installed dependencies nor an install
