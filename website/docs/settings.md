@@ -421,7 +421,8 @@ Put the fastest machine first and set the order with
 `remote.build` is a machine setting, defaulting to `auto`. On `ios`,
 `android` and `macos`, `--remote-build <local|auto|remote|remote-only|name>` overrides
 `STIM_REMOTE_BUILD`, which overrides the setting. A blank environment value
-is unset. Trimmed placement words are case-insensitive; names match configured
+is unset, and `stim doctor` flags an invalid value in the machine config or in
+`STIM_REMOTE_BUILD`. Trimmed placement words are case-insensitive; names match configured
 names case-insensitively with port 7443 when omitted. Reports use the configured
 entry:
 

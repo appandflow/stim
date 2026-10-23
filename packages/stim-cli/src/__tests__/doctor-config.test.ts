@@ -214,6 +214,40 @@ test('STIM_REMOTE_BUILD_MODE in the environment is reported with its replacement
   expect(check({}, [], { STIM_REMOTE_BUILD_MODE: '  ' })).toEqual([]);
 });
 
+test('an invalid remote.build in the machine config is flagged as a wrong type', () => {
+  const findings = checkMachineSettings({
+    settings: {},
+    layers: [],
+    projectRoot: '/app',
+    env: {},
+    remoteBuild: 'bad word',
+  });
+  expect(findings).toEqual([
+    {
+      level: 'cost',
+      title: 'A setting has the wrong type',
+      detail:
+        'Invalid remote.build setting "bad word". Expected local, auto, remote, remote-only, or a tailnet machine name.',
+      fix: 'Run `stim guide settings` for the shape each setting takes.',
+    },
+  ]);
+  for (const remoteBuild of [undefined, 'auto', 'remote-only', 'mini:7444'])
+    expect(checkMachineSettings({ settings: {}, layers: [], projectRoot: '/app', env: {}, remoteBuild })).toEqual([]);
+});
+
+test('an invalid STIM_REMOTE_BUILD in the environment is flagged with the message settings get gives', () => {
+  expect(check({}, [], { STIM_REMOTE_BUILD: 'bad word' })).toEqual([
+    {
+      level: 'cost',
+      title: 'A setting has the wrong type',
+      detail:
+        'Invalid STIM_REMOTE_BUILD value "bad word". Expected local, auto, remote, remote-only, or a tailnet machine name.',
+      fix: 'Fix the environment variable, or unset it and run `stim settings set remote.build <value>`.',
+    },
+  ]);
+  for (const value of ['remote-only', ' Mini ', '  ']) expect(check({}, [], { STIM_REMOTE_BUILD: value })).toEqual([]);
+});
+
 test('a config with nothing wrong reports nothing', () => {
   expect(check({ optimizations: { buildCache: true, android: { compilerCache: 'ccache' } } })).toEqual([]);
 });
@@ -258,6 +292,18 @@ describe('against a config file on disk', () => {
       expect.objectContaining({
         title: 'remote.buildMode was replaced by remote.build',
         fix: `Run \`stim settings set remote.build remote\`, then remove remote.buildMode from ${join(home, 'config.json')}.`,
+      }),
+    ]);
+  });
+
+  test('a remote.build hand-edited into the machine config to an invalid value reaches doctor', async () => {
+    writeConfig({ version: 2, repos: {}, projects: {}, remote: { build: 'bad word' } });
+    const wrongType = (await runDoctor(project)).filter((found) => found.title === 'A setting has the wrong type');
+    expect(wrongType).toEqual([
+      expect.objectContaining({
+        level: 'cost',
+        detail:
+          'Invalid remote.build setting "bad word". Expected local, auto, remote, remote-only, or a tailnet machine name.',
       }),
     ]);
   });

@@ -2,18 +2,26 @@ import { existsSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { configCorruptRepair } from '../workspace/config.ts';
 import type { Finding } from './doctor.ts';
+import { envSettingRefusal } from '../workspace/settings-payload.ts';
 import { compilerCacheFallbackMessage, type CompilerCacheFallback, type Optimizations } from '../optimizations.ts';
 import {
   mergeSettingsLayers,
   PATH_SETTINGS,
   SETTINGS_WITH_RESOLVE_TIME_FALLBACK,
   settingOrigin,
+  SETTING_SHAPE_REMEDY,
   settingsLayers,
   settingValueAt,
   unknownSettingKeys,
   type SettingsLayer,
 } from '../workspace/settings.ts';
-import { REPLACED_SETTINGS, replacementAdvice, settingDefinition, type SettingsObject } from '@stim-cli/core/state';
+import {
+  REPLACED_SETTINGS,
+  replacementAdvice,
+  settingDefinition,
+  settingValueError,
+  type SettingsObject,
+} from '@stim-cli/core/state';
 
 export interface MachineSettings {
   settings: SettingsObject;
@@ -54,6 +62,7 @@ export function checkMachineSettings({
   reportedElsewhere = [],
   exists = existsSync,
   env = process.env,
+  remoteBuild,
 }: {
   settings: SettingsObject;
   layers: SettingsLayer[];
@@ -62,6 +71,7 @@ export function checkMachineSettings({
   reportedElsewhere?: readonly string[];
   exists?: (path: string) => boolean;
   env?: NodeJS.ProcessEnv;
+  remoteBuild?: unknown;
 }): Finding[] {
   const findings: Finding[] = [];
 
@@ -125,6 +135,25 @@ export function checkMachineSettings({
       });
     }
   }
+
+  const buildSetting = settingDefinition('remote.build');
+  const buildValueError =
+    buildSetting && remoteBuild !== undefined ? settingValueError(buildSetting, remoteBuild) : null;
+  if (buildValueError)
+    findings.push({
+      level: 'cost',
+      title: 'A setting has the wrong type',
+      detail: `Invalid remote.build setting ${JSON.stringify(remoteBuild)}. Expected ${buildValueError}.`,
+      fix: SETTING_SHAPE_REMEDY,
+    });
+  const buildEnvRefusal = envSettingRefusal('remote.build', env);
+  if (buildEnvRefusal)
+    findings.push({
+      level: 'cost',
+      title: 'A setting has the wrong type',
+      detail: buildEnvRefusal.message,
+      fix: buildEnvRefusal.remedy,
+    });
 
   for (const [key, replaced] of Object.entries(REPLACED_SETTINGS)) {
     if (!replaced.env || !env[replaced.env]?.trim()) continue;

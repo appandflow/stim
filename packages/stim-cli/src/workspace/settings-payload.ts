@@ -5,6 +5,7 @@ import {
   replacementAdvice,
   SETTING_SCOPES,
   SETTINGS,
+  settingDefinition,
   settingValueError,
   type SettingDefinition,
   type SettingEntry,
@@ -156,6 +157,20 @@ function envSettingValue(setting: SettingDefinition, raw: string): unknown {
     );
   }
   return value;
+}
+
+/** The refusal `stim settings get` gives for an invalid environment override of `key`, or null when it is unset, blank or valid. */
+export function envSettingRefusal(key: string, env: NodeJS.ProcessEnv): SettingsRefusal | null {
+  const setting = settingDefinition(key);
+  const raw = setting?.env ? env[setting.env]?.trim() : undefined;
+  if (!setting || !raw) return null;
+  try {
+    envSettingValue(setting, raw);
+    return null;
+  } catch (error) {
+    if (error instanceof SettingsRefusal) return error;
+    throw error;
+  }
 }
 
 export function settingEntry(context: SettingsContext, setting: SettingDefinition): SettingEntry {

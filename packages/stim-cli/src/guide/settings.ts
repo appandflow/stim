@@ -943,7 +943,8 @@ stim-server too old to report one needs the same Stim build as this machine.
 \`remote.build\` (machine scope, default auto) selects placement for
 \`ios\`, \`android\` and \`macos\`. \`--remote-build <local|auto|remote|remote-only|name>\`
 overrides STIM_REMOTE_BUILD, which overrides the setting. A blank environment
-value is unset. Trimmed placement words are case-insensitive. Machine names match
+value is unset. \`doctor\` flags an invalid value in the machine config or in
+STIM_REMOTE_BUILD before a build refuses on it. Trimmed placement words are case-insensitive. Machine names match
 configured names case-insensitively, with port 7443 when omitted; reports use
 the configured entry.
 
