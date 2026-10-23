@@ -9,6 +9,7 @@ import {
   SETTINGS_WITH_RESOLVE_TIME_FALLBACK,
   settingOrigin,
   settingsLayers,
+  settingValueAt,
   unknownSettingKeys,
   type SettingsLayer,
 } from '../workspace/settings.ts';
@@ -104,24 +105,25 @@ export function checkMachineSettings({
   }
 
   for (const key of unknownSettingKeys(settings)) {
-    const origin = settingOrigin(layers, key);
-    const file = origin?.file ?? null;
-    const advice = replacementAdvice(key, origin?.value);
-    if (advice) {
+    for (const holder of layers.filter((layer) => settingValueAt(layer.settings, key) !== undefined)) {
+      const file = holder.file;
+      const advice = replacementAdvice(key, settingValueAt(holder.settings, key));
+      if (advice) {
+        findings.push({
+          level: 'note',
+          title: `${key} was replaced by ${advice.key}`,
+          detail: `${key} in ${file} is not read by Stim, so ${advice.key} decides placement and its default applies until you set it.`,
+          fix: `${advice.command ? `Run \`${advice.command}\`` : `Set ${advice.key}`}, then remove ${key} from ${file}.`,
+        });
+        continue;
+      }
       findings.push({
         level: 'note',
-        title: `${key} was replaced by ${advice.key}`,
-        detail: `${key}${file ? ` in ${file}` : ''} is not read by Stim, so ${advice.key} decides placement and its default applies until you set it.`,
-        fix: `${advice.command ? `Run \`${advice.command}\`` : `Set ${advice.key}`}, then remove ${key}${file ? ` from ${file}` : ''}.`,
+        title: 'A key in the config is inert',
+        detail: `${key} in ${file} is not read by Stim, so its value changes nothing.`,
+        fix: `Remove ${key} from ${file}, or run \`stim guide settings\` for the name that replaced it.`,
       });
-      continue;
     }
-    findings.push({
-      level: 'note',
-      title: 'A key in the config is inert',
-      detail: `${key}${file ? ` in ${file}` : ''} is not read by Stim, so its value changes nothing.`,
-      fix: `Remove ${key}${file ? ` from ${file}` : ''}, or run \`stim guide settings\` for the name that replaced it.`,
-    });
   }
 
   for (const [key, replaced] of Object.entries(REPLACED_SETTINGS)) {

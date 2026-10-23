@@ -208,7 +208,7 @@ export function settingEntry(context: SettingsContext, setting: SettingDefinitio
   };
 }
 
-function unknownEntries(context: SettingsContext): SettingsPayload['unknown'] {
+export function unknownEntries(context: SettingsContext): SettingsPayload['unknown'] {
   const sources: Array<{ scope: SettingScope; file: string | null; settings: unknown }> = [
     {
       scope: 'machine',

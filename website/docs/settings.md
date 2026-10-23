@@ -432,6 +432,12 @@ entry:
 - A tailnet name requires a matching entry in `remote.machines`, already
   paired and approved. It ignores this machine's load and slots.
 
+`remote.buildMode` and `STIM_REMOTE_BUILD_MODE` were removed and are no longer read.
+`stim doctor` and `stim settings` report any left in a config file or the environment.
+Use `remote.build` instead: `auto` stays `auto`, `force` becomes `remote` and `off`
+becomes `local`. `stim settings unset remote.buildMode` removes the leftover key from
+every layer that has it, and `--scope` removes it from one.
+
 A named selection never prompts for pairing, uses another machine or falls
 back locally. Missing configuration/pairing, denied or pending approval,
 unreachability or a changed server key, incompatible toolchain/CPU/runtime,

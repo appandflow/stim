@@ -262,6 +262,16 @@ describe('against a config file on disk', () => {
     ]);
   });
 
+  test('a remote.buildMode left in two layers is reported once for each file', () => {
+    writeConfig({ version: 2, repos: {}, projects: {}, remote: { buildMode: 'force' } });
+    writeFileSync(join(project, '.stim.json'), JSON.stringify({ remote: { buildMode: 'off' } }));
+    const findings = checkMachineSettings({ ...machineSettings(), projectRoot: project, env: {} });
+    expect(findings.map((finding) => finding.fix)).toEqual([
+      `Run \`stim settings set remote.build local\`, then remove remote.buildMode from ${join(project, '.stim.json')}.`,
+      `Run \`stim settings set remote.build remote\`, then remove remote.buildMode from ${join(home, 'config.json')}.`,
+    ]);
+  });
+
   test('a projects entry for a checkout that is gone is left to gc while its settings are swept', () => {
     const dead = join(home, 'deleted-checkout');
     writeConfig({

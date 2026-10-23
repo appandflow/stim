@@ -958,6 +958,13 @@ the configured entry.
   name         requires a matching entry in remote.machines, already paired and
                approved for builds; ignores this machine's load/slot gating
 
+\`remote.buildMode\` and STIM_REMOTE_BUILD_MODE were removed and are no longer read.
+\`doctor\` and \`stim settings\` report any left in a config file or the environment,
+\`stim settings set remote.buildMode\` refuses with the \`remote.build\` command that
+replaces it (auto stays auto, force becomes remote, off becomes local), and
+\`stim settings unset remote.buildMode\` removes the leftover key from every layer
+that has it (--scope limits it to one).
+
 A name never prompts for pairing, tries another remote machine or falls back here.
 remote-only refuses instead of building here for a build that cannot leave this
 machine (device, Release, an unknown simulator runtime, the build cache off), and
