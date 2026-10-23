@@ -69,7 +69,8 @@ FLAGS
                   shared untagged Metro and app client records (not the web
                   page's); default also includes untagged legacy records
   --source <s...>  metro, client, device, build, agent, maintenance, placement (one or more), or all.
-                   gc alone reads the machine-wide gc log (GC LOG below).
+                   gc alone reads the machine-wide gc log (GC LOG below);
+                   builds alone reads the machine-wide build ledger (BUILD LEDGER below).
                    An unknown value is REJECTED rather than quietly matching
                    nothing.
   --level <l>      minimum level: debug, info, warn, error, fatal
@@ -267,6 +268,43 @@ Each record has src: gc, level (info, or error for a failed item), msg and
            and the reason a kept or failed item was left
 Records of one run share runId. See stim guide cleanup, WHAT WAS CLEARED.
 
+BUILD LEDGER
+stim logs --source builds reads $STIM_HOME/builds/builds.ndjson from any
+directory: one record per native build run (ios, android or macos; compiled
+here, offloaded or fetched from a cache; succeeded, failed or cancelled). It
+keeps the newest 500 records, outlives the workspace that ran the build, and
+is never removed by gc. It cannot be combined with other sources, and --source
+all does not include it. --errors shows the failed runs. A record has
+src: builds, event: build, level (info, warn for cancelled, error for failed),
+msg and
+  ts, startedAt   epoch milliseconds when the run finished and started
+  id              the run
+  project, workspace, branch
+                  project root, workspace id and the branch checked out
+  platform        ios, android or macos
+  scheme, variant, configuration
+                  the iOS scheme when one was selected, the Android variant,
+                  the build configuration
+  placement       { where: local | offloaded, machine?, fellBack?, reason? };
+                  machine is the build machine that compiled the app, and
+                  fellBack with reason marks a build that considered
+                  offloading and compiled here
+  cache           { result: hit | miss | bypassed, source?: local | remote,
+                  key, fingerprint, missReason? }
+  durationMs, phases
+                  wall time and milliseconds in each local phase (prepare,
+                  cache-lookup, wait, prebuild, pods, compile, device,
+                  install, launch)
+  offloadPhases   milliseconds on the build machine: sync, deps, prebuild,
+                  pods, build, fetch
+  outcome         succeeded, failed or cancelled
+  failure         failed or cancelled runs: { code, message, remedy, phase }
+  device          { name, runtime? } of the simulator, emulator or device;
+                  never its serial or UDID
+  stimVersion     the stim that ran the build
+A run that stopped before it had an app to build (a refused flag, a missing
+project) writes no record. Writing the record never changes the run's result.
+
 REMOTE REQUEST RECORDS
 A request to another machine that fails is a warn record with src: build in the
 run's build log: remote_connect_failed { host, capability, ms, timeoutMs, msg,
@@ -328,6 +366,8 @@ WHAT WRITES WHAT
   maintenance.ndjson   workspace maintenance actions, failures and explaining skips
   $STIM_HOME/gc/gc.ndjson  machine-wide, not in a workspace: what gc, maintenance
                        and the budget gate cleared (stim logs --source gc)
+  $STIM_HOME/builds/builds.ndjson  machine-wide: the last 500 native builds
+                       (stim logs --source builds)
   metro.ndjson         the bundler, in every supervisor mode. Stim's
                        middleware adds one record per bundle request
                        (bundle_response_started, _progress, _finished,

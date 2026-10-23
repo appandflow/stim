@@ -775,6 +775,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         status: 'failed',
         errorCode: code,
         diagnostics: rawDiagnostics,
+        message,
+        remedy,
         out,
       });
     }

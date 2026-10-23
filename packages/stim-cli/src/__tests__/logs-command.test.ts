@@ -184,6 +184,13 @@ describe('option validation', () => {
     expect(validateSources(['gc', 'all']).error).toMatch(/cannot be combined/);
   });
 
+  test('validateSources takes builds alone, keeps it out of all, and refuses it beside other sources', async () => {
+    expect(validateSources(['builds'])).toEqual({ sources: ['builds'] });
+    expect(validateSources(['all']).sources).not.toContain('builds');
+    expect(validateSources(['builds', 'metro']).error).toMatch(/cannot be combined/);
+    expect(validateSources(['builds', 'gc']).error).toMatch(/cannot be combined/);
+  });
+
   test('validateLevel accepts the Contract-1 levels and names the valid set otherwise', async () => {
     expect(validateLevel('warn')).toEqual({ level: 'warn' });
     const r = validateLevel('loud');
@@ -324,6 +331,46 @@ describe('logs command', () => {
       await run({ source: ['gc', 'metro'] });
       expect(exitCode).toBe(1);
       expect(errOut.join('\n')).toMatch(/cannot be combined/);
+    });
+  });
+
+  describe('--source builds', () => {
+    const buildRecord = (ts: number, id: string, outcome: string, level: string) => ({
+      ts,
+      src: 'builds',
+      level,
+      msg: `${outcome} ${id}`,
+      event: 'build',
+      id,
+      platform: 'ios',
+      outcome,
+      placement: { where: 'local' },
+      cache: { result: 'miss', key: null, fingerprint: null },
+    });
+
+    beforeEach(() => {
+      mkdirSync(join(tmpHome, 'builds'), { recursive: true });
+      writeFileSync(
+        join(tmpHome, 'builds', 'builds.ndjson'),
+        [buildRecord(1, 'a', 'succeeded', 'info'), buildRecord(2, 'b', 'failed', 'error')]
+          .map((r) => `${JSON.stringify(r)}\n`)
+          .join(''),
+      );
+    });
+
+    test('prints the machine build ledger from a directory that is no workspace', async () => {
+      process.chdir(tmpHome);
+      await run({ source: ['builds'], json: true });
+      expect(exitCode).toBe(null);
+      expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['a', 'b']);
+    });
+
+    test('filters by level and tail like any other source', async () => {
+      await run({ source: ['builds'], json: true, errors: true });
+      expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['b']);
+      out.length = 0;
+      await run({ source: ['builds'], json: true, tail: '1' });
+      expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['b']);
     });
   });
 

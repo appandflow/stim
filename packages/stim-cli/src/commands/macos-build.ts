@@ -145,6 +145,7 @@ export async function buildMacosOperation(
               offloadedTo: build.offloadedTo,
               offloadFallback: build.offloadFallback,
               compileSteps: progress.steps(),
+              ...(build.error ? { ledger: { message: build.error } } : {}),
             },
             { artifactOnly: true },
           );

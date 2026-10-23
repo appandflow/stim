@@ -6,6 +6,7 @@ import { clearWorkspaceStateKey, updateWorkspaceState } from '../workspace/works
 import { readStats, type RunHistory, type RunOutcomeKind, type RunSample } from './stats.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createBuildDetailParser } from './build-detail.ts';
+import { writeBuildLedger } from './build-ledger.ts';
 import {
   BUILD_HISTORY_KEY,
   BUILD_HISTORY_LIMIT,
@@ -51,6 +52,8 @@ export interface ActiveBuildRecord {
   missReason?: BuildMissReason;
   missProvisional?: true;
   placement?: Exclude<BuildPlacement, 'local'>;
+  /** The build machine the run offloaded to and the time spent in each of its finished phases there. */
+  offload?: { host: string; phaseMs: Record<string, number> };
   /** The workspace whose identical build this run waits on, while its phase is `wait`. */
   waitingOn?: { path: string };
   waitingFor?: BuildWaitingFor;
@@ -323,12 +326,13 @@ export function startBuildProgress({
     },
     place(remote) {
       const current = record.placement;
+      if (remote && current?.host === remote.host && current.phase === remote.phase) return;
+      if (current) record.offload = withOffloadPhase(record.offload, current, now());
       if (!remote) {
         if (!current) return;
         delete record.placement;
         return write();
       }
-      if (current?.host === remote.host && current.phase === remote.phase) return;
       const at = new Date(now()).toISOString();
       record.placement = {
         host: remote.host,
@@ -388,6 +392,18 @@ export function startBuildProgress({
       });
     },
   };
+}
+
+/** `offload` with the time `placement` has spent in its current phase as of `now` added to that phase. */
+export function withOffloadPhase(
+  offload: ActiveBuildRecord['offload'],
+  placement: Exclude<BuildPlacement, 'local'>,
+  now: number,
+): NonNullable<ActiveBuildRecord['offload']> {
+  const phaseMs = { ...offload?.phaseMs };
+  const ms = Math.max(0, now - Date.parse(placement.phaseStartedAt));
+  if (Number.isFinite(ms)) phaseMs[placement.phase] = (phaseMs[placement.phase] ?? 0) + ms;
+  return { host: placement.host, phaseMs };
 }
 
 function phaseDurations(phases: ActiveBuildRecord['phases'], now: number): Record<string, number> {
@@ -450,22 +466,56 @@ function finishedResult(record: Record<string, unknown>): BuildResult {
 
 export function recordFinishedBuild(
   root: string,
-  record: Record<string, unknown>,
+  recorded: Record<string, unknown>,
   {
     update = updateWorkspaceState,
     now = Date.now,
     artifactOnly = false,
-  }: { update?: typeof updateWorkspaceState; now?: () => number; artifactOnly?: boolean } = {},
+    ledger = writeBuildLedger,
+  }: {
+    update?: typeof updateWorkspaceState;
+    now?: () => number;
+    artifactOnly?: boolean;
+    ledger?: typeof writeBuildLedger;
+  } = {},
+): void {
+  const { ledger: extras, ...record } = recorded;
+  const ran: Partial<Parameters<typeof writeBuildLedger>[1]> = {};
+  try {
+    updateFinishedBuild(root, record, ran, { update, now, artifactOnly });
+  } finally {
+    ledger(root, {
+      now: now(),
+      outcome: finishedResult(record),
+      record,
+      extras: isJsonObject(extras) ? extras : {},
+      phases: {},
+      phase: null,
+      ...ran,
+    });
+  }
+}
+
+function updateFinishedBuild(
+  root: string,
+  record: Record<string, unknown>,
+  ran: Partial<Parameters<typeof writeBuildLedger>[1]>,
+  { update, now, artifactOnly }: { update: typeof updateWorkspaceState; now: () => number; artifactOnly: boolean },
 ): void {
   const platform = record.platform as BuildPlatform;
   update(root, (state) => {
     const active = parseActiveBuild(state[ACTIVE_BUILD_KEY]);
     const own = active?.platform === platform ? active : null;
+    const phases = own ? phaseDurations(own.phases, now()) : {};
+    if (own) {
+      const offload = own.placement ? withOffloadPhase(own.offload, own.placement, now()) : own.offload;
+      Object.assign(ran, { id: own.claim.claimId, phases, phase: own.phase, ...(offload ? { offload } : {}) });
+    }
     const entry: Record<string, unknown> = {
       ...Object.fromEntries(HISTORY_FIELDS.filter((key) => key in record).map((key) => [key, record[key]])),
       result: finishedResult(record),
       slot: own?.slot ?? 'default',
-      phases: own ? phaseDurations(own.phases, now()) : {},
+      phases,
     };
     if (artifactOnly || platform === 'macos') return withHistoryEntry(state, platform, entry);
     const slot = own?.slot ?? 'default';
@@ -546,6 +596,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
   const waitingFor = parseWaitingFor(record.waitingFor);
   const estimate = parseEstimate(record.estimate);
   const activity = parseActivity(record.activity);
+  const offload = parseOffload(record.offload);
   return {
     platform: record.platform,
     slot: typeof record.slot === 'string' ? record.slot : 'default',
@@ -556,6 +607,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     ...(missReason ? { missReason } : {}),
     ...(missReason && record.missProvisional === true ? { missProvisional: true as const } : {}),
     ...(placement ? { placement } : {}),
+    ...(offload ? { offload } : {}),
     ...(waitingOn ? { waitingOn } : {}),
     ...(waitingFor ? { waitingFor } : {}),
     ...(typeof record.deviceSetup === 'boolean' ? { deviceSetup: record.deviceSetup } : {}),
@@ -569,6 +621,15 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
       pid: typeof claim.pid === 'number' ? claim.pid : 0,
     },
   };
+}
+
+function parseOffload(value: unknown): ActiveBuildRecord['offload'] | null {
+  if (!isJsonObject(value) || typeof value.host !== 'string' || !isJsonObject(value.phaseMs)) return null;
+  const phaseMs: Record<string, number> = {};
+  for (const [phase, ms] of Object.entries(value.phaseMs)) {
+    if (typeof ms === 'number' && Number.isFinite(ms) && ms >= 0) phaseMs[phase] = ms;
+  }
+  return { host: value.host, phaseMs };
 }
 
 function parsePlacement(value: unknown): ActiveBuildRecord['placement'] | null {
