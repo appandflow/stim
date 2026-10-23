@@ -89,19 +89,20 @@ export function applyServeEnvironment(
   env: string[],
   pathPrepend: string[],
   source: NodeJS.ProcessEnv = process.env,
+  warn: (line: string) => void = console.error,
 ): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = { ...base };
   for (const entry of env) {
     const parsed = parseEnvAssignment(entry);
     const name = typeof parsed === 'string' ? entry : parsed.key;
     if (JOB_KEYS.includes(name)) {
-      console.error(`stim-server: ignoring --env ${name}; the service takes it from the process that installed it.`);
+      warn(`stim-server: ignoring --env ${name}; the service takes it from the process that installed it.`);
     } else if (typeof parsed !== 'string') {
       result[name] = parsed.value;
     } else if (ENV_KEY_PATTERN.test(entry)) {
       const value = source[entry];
       if (value === undefined)
-        console.error(`stim-server: --env ${entry} has no value in the service environment; skipping it.`);
+        warn(`stim-server: --env ${entry} has no value in the service environment; skipping it.`);
       else result[entry] = value;
     }
   }

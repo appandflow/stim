@@ -587,6 +587,35 @@ describe('inspectBuildMachines', () => {
     );
   });
 
+  it('gives the install command of a missing CocoaPods as the fix', async () => {
+    await approvedCredential();
+    const { findings } = await inspectBuildMachines(
+      {
+        fix: false,
+        check: () =>
+          Promise.resolve({
+            capacity: null,
+            problems: [
+              {
+                code: 'cocoapods',
+                reason: 'no CocoaPods there, CocoaPods 1.16.2 here',
+                commands: ['brew install cocoapods'],
+                lead: 'install CocoaPods',
+              },
+            ],
+          }),
+      },
+      fakeIo([approved()]).io,
+      ['mini'],
+    );
+    expect(findings).toEqual([
+      expect.objectContaining({
+        code: 'build-machine-cocoapods',
+        fix: 'On mini, install CocoaPods:\nbrew install cocoapods',
+      }),
+    ]);
+  });
+
   it('fixes a deselected Xcode with the exact command, and a runtime that follows from it with a pointer', async () => {
     await approvedCredential();
     const { findings } = await inspectBuildMachines(

@@ -333,9 +333,9 @@ A missing simulator runtime on a working Xcode gets
 `xcode-select`, the runtime row says it follows from the Xcode row. The worker
 also needs
 an iPhone simulator on the target runtime. The Stim build compatibility version
-must match (see [Stim versions](#stim-versions)), and so must the CPU architecture for iOS and macOS builds (macOS builds that run on the same worker excepted). Project-selected CocoaPods versions must match unless the
-project's `Gemfile.lock`, in `ios/` or the project root, pins it; then both
-machines use Bundler and the pinned version. For macOS, Xcode and the macOS SDK must match, except when `stim macos --remote <machine> --remote-build <machine>` builds and runs the app on the same Mac; then only the Stim build compatibility version must match (see [Run it on another Mac](./macos.md#run-it-on-another-mac)). For Android, JDK major
+must match (see [Stim versions](#stim-versions)), and so must the CPU architecture for iOS and macOS builds (macOS builds that run on the same worker excepted). A global CocoaPods that is missing or another version keeps `auto` placement from choosing the machine but never refuses a named one; see
+[CocoaPods on the worker](#cocoapods-on-the-worker). When the project's `Gemfile.lock`, in `ios/` or the project root, pins CocoaPods,
+the worker needs Bundler and both machines use the pinned version. For macOS, Xcode and the macOS SDK must match, except when `stim macos --remote <machine> --remote-build <machine>` builds and runs the app on the same Mac; then only the Stim build compatibility version must match (see [Run it on another Mac](./macos.md#run-it-on-another-mac)). For Android, JDK major
 versions must match: the worker builds on an installed JDK of this machine's major
 when its default JDK is another one, so no restart is needed, and the fix for a
 missing major is the install command for the worker's OS (for example
@@ -350,7 +350,22 @@ be an x86_64 Linux or Windows machine; see [Linux worker](#linux-worker) and
 [Windows worker](#windows-worker). See [machine settings](./settings.md#machine-settings) for the
 full toolchain and placement rules.
 
-The CocoaPods comparison selects the project's `.ruby-version` when that Ruby
+### CocoaPods on the worker
+
+The worker runs `pod install` only when its `ios/Pods` is not installed or does
+not match `Podfile.lock`. Stim syncs the files git lists, and `Pods` is
+gitignored, so the first build of a project on a worker installs them there.
+A worker without CocoaPods, or with another version, fails or rewrites the
+`COCOAPODS:` line of a committed `Podfile.lock` there, which the fingerprint check
+reports as `fingerprint-mismatch`. So `auto` placement skips it for a project
+that does not pin CocoaPods, unless it already holds the exact artifact, and
+the placement line and `stim doctor` say why, with `brew install cocoapods` for a
+worker that has none. A named `--remote-build` still sends the build there. If
+`pod install` fails, the build reports "pod install failed" and the command to
+run on that machine, and stops. For `stim ios`, a named `--remote-build` is also checked against the
+machine's Xcode, runtime and CPU before this Mac runs prebuild and `pod install`.
+
+The CocoaPods version is read in the project's `.ruby-version` when that Ruby
 is installed, using the same UTF-8 locale defaults as `pod install`. Without
 an installed project Ruby, it uses rvm's or rbenv's default Ruby, and without
 one of those the `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries of each
@@ -479,11 +494,10 @@ so there is no Check again button:
      the first build there. Otherwise Android builds stay on this machine, and
      the row shows the `sdkmanager` commands to run on the worker, each with a
      **Copy** button; `sdkmanager --licenses` accepts the licenses.
-   - A different project-selected CocoaPods. Projects whose `Gemfile.lock` pins
-     CocoaPods run that version through Bundler on both machines. Other projects
-     build on this machine until the selected versions match. Pin it with
-     `bundle add cocoapods --version <version>` and `bundle install`, or run
-     `gem install cocoapods -v <version>` using the project's Ruby on the worker.
+   - A missing or different global CocoaPods: `auto` builds skip the machine,
+     and the Test Build, which names it, still goes there. With no CocoaPods the
+     row shows `brew install cocoapods` to run on the worker. Projects whose `Gemfile.lock` pins CocoaPods run that
+     version through Bundler on both machines and need Bundler there.
 5. **Done.** Copy the **Try it** agent prompt, or run
    `stim ios --remote-build <machine>` yourself (`stim android` for a Linux or Windows machine).
    - **Builds** sets `remote.buildMode`: **Auto**, **Always** or **Never**
