@@ -149,6 +149,7 @@ const NOTE_TITLES: Partial<Record<OffloadProblem['code'], string>> = {
   ndk: "downloads this project's NDK on its first Android build",
   'build-tools': "downloads this project's Android build-tools on its first Android build",
   'compile-sdk': "downloads this project's Android compile platform on its first Android build",
+  cocoapods: 'runs another CocoaPods, or none',
 };
 
 function commandFix(problem: OffloadProblem, entry: string): string | null {
@@ -209,6 +210,22 @@ function problemFix(problem: OffloadProblem, entry: string): string {
 
 const TRANSIENT: ReadonlySet<OffloadProblem['code']> = new Set(['unreachable', 'busy']);
 
+const UNPREDICTABLE: ReadonlySet<OffloadProblem['code']> = new Set(['unreachable', 'busy', 'disk', 'checkout']);
+
+/**
+ * Why a build on the machine named for it cannot work, from problems found before this machine changes the checkout:
+ * the toolchain differences, whose fix is on that machine. A machine that did not answer, is busy, is low on disk
+ * or holds no checkout is left to the build itself, which the cause may clear by then.
+ */
+export function predictedRefusal(entry: string, problems: OffloadProblem[]): { reason: string; remedy: string } | null {
+  const known = problems.filter((problem) => !UNPREDICTABLE.has(problem.code));
+  if (known.length === 0) return null;
+  return {
+    reason: known.map((problem) => problem.reason).join('; '),
+    remedy: known.map((problem) => problemFix(problem, entry)).join('\n'),
+  };
+}
+
 function offloadFindings(entry: string, problems: OffloadProblem[], notes: OffloadProblem[]): Finding[] {
   return [
     ...problems.map((problem) => ({
@@ -223,7 +240,7 @@ function offloadFindings(entry: string, problems: OffloadProblem[], notes: Offlo
       level: 'note' as const,
       title: `Remote machine ${entry} ${NOTE_TITLES[each.code] ?? 'needs a first-build download'}`,
       detail: `The build goes there anyway: ${each.reason}.`,
-      fix: null,
+      fix: commandFix(each, entry),
     })),
   ];
 }

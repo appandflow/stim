@@ -7,6 +7,7 @@ import * as buildMachines from '../offload/build-machines.ts';
 import {
   buildPlacementSettings,
   parseBuildMachineOption,
+  podsFailedRemedy,
   requireConfiguredMachine,
   resolveBuildMachine,
   resolveBuildPlacement,
@@ -170,7 +171,6 @@ describe('pickOffer', () => {
     for (const mode of ['auto', 'force'] as const) {
       for (const refused of [
         offer({ toolchain: { compat: 2 } }),
-        offer({ toolchain: { cocoapods: '1.17.0' } }),
         offer({ toolchain: { xcode: 'Xcode 26.4' } }),
         offer({ toolchain: { simulatorSdk: '27.1' } }),
         offer({ toolchain: { arch: 'x64' } }),
@@ -304,13 +304,39 @@ describe('pickOffer', () => {
     expect(offerProblems(offered, IOS).map((problem) => problem.code)).toEqual(['stim-build', 'runtime', 'busy']);
   });
 
-  it('compares global CocoaPods only when the Gemfile.lock pins none, and then needs Bundler there', () => {
+  it('needs Bundler there when the Gemfile.lock pins CocoaPods, and never refuses over the global CocoaPods', () => {
     const PINNED: BuildTarget = { ...IOS, cocoapodsPinned: true };
     const codes = (offered: BuildOffer, target: BuildTarget) =>
       offerProblems(offered, target).map((problem) => problem.code);
     expect(codes(offer({ toolchain: { cocoapods: '1.17.0' } }), PINNED)).toEqual([]);
     expect(codes(offer({ toolchain: { cocoapods: '1.17.0', bundler: null } }), PINNED)).toEqual(['bundler']);
     expect(codes(offer({ toolchain: { bundler: null } }), IOS)).toEqual([]);
+    expect(codes(offer({ toolchain: { cocoapods: '1.17.0' } }), IOS)).toEqual([]);
+    expect(codes(offer({ toolchain: { cocoapods: null } }), IOS)).toEqual([]);
+  });
+
+  it('notes the CocoaPods a pod install there runs when it differs, with the install when there is none', () => {
+    const notes = (toolchain: Partial<WorkerToolchain>, target: BuildTarget = IOS) =>
+      toolchainNotes(target, offer({ toolchain }).toolchain);
+    expect(notes({ cocoapods: '1.16.2' })).toEqual([]);
+    expect(notes({ cocoapods: '1.17.0' })).toEqual([
+      {
+        code: 'cocoapods',
+        reason:
+          'CocoaPods 1.17.0 there, CocoaPods 1.16.2 here; a pod install there rewrites the COCOAPODS line of a committed Podfile.lock',
+      },
+    ]);
+    expect(notes({ cocoapods: null })).toEqual([
+      {
+        code: 'cocoapods',
+        reason: 'no CocoaPods there, so a build whose pods are not installed there fails at pod install',
+        commands: ['brew install cocoapods'],
+        lead: 'install CocoaPods (this Mac has 1.16.2; `gem install cocoapods -v 1.16.2` instead of Homebrew installs that version)',
+      },
+    ]);
+    expect(notes({ cocoapods: null }, { ...IOS, cocoapodsPinned: true })).toEqual([]);
+    expect(notes({ cocoapods: null }, { ...IOS, native: 'xcode' })).toEqual([]);
+    expect(notes({ cocoapods: '1.17.0' }, { ...IOS, local: { ...LOCAL, cocoapods: null } })).toEqual([]);
   });
 
   it('names a missing tool instead of printing null, on either side', () => {
@@ -319,10 +345,7 @@ describe('pickOffer', () => {
     expect(reasons(offer({ toolchain: { xcode: null, simulatorSdk: null, cocoapods: null } }), IOS)).toEqual([
       'no Xcode there, Xcode 27.0 / Build version 27A266a here',
       'no simulator SDK there, simulator SDK 27.0 here',
-      'no CocoaPods there, CocoaPods 1.16.2 here',
     ]);
-    const bare: BuildTarget = { ...IOS, local: { ...LOCAL, cocoapods: null } };
-    expect(reasons(offer(), bare)).toEqual(['CocoaPods 1.16.2 there, no CocoaPods here']);
     const macos: BuildTarget = {
       platform: 'macos',
       local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
@@ -1181,10 +1204,10 @@ test('excluded local builds require a remote regardless of relative load and ref
   ).toEqual([0]);
 });
 
-test('native Xcode worker matching ignores CocoaPods while retaining Xcode, SDK, runtime and CPU requirements', () => {
+test('worker matching ignores global CocoaPods for every iOS build while retaining Xcode, SDK, runtime and CPU requirements', () => {
   const worker = offer({ toolchain: { cocoapods: null, bundler: null } }).toolchain;
   expect(toolchainMismatches({ ...IOS, native: 'xcode', cocoapodsPinned: true }, worker)).toEqual([]);
-  expect(toolchainMismatches(IOS, worker)).toEqual([expect.objectContaining({ code: 'cocoapods' })]);
+  expect(toolchainMismatches(IOS, worker)).toEqual([]);
   expect(toolchainMismatches({ ...IOS, native: 'xcode' }, { ...worker, simulatorSdk: null, runtimes: [] })).toEqual([
     expect.objectContaining({ code: 'simulator-sdk' }),
     expect.objectContaining({ code: 'runtime' }),
@@ -1238,4 +1261,50 @@ test("two operations resolve STIM_REMOTE_BUILD from their own environments, not 
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+describe('a named machine refused before this Mac changes the checkout', () => {
+  const problems = (toolchain: Partial<WorkerToolchain>, target: BuildTarget = IOS) =>
+    offerProblems(offer({ toolchain }), target);
+
+  it('refuses a toolchain difference with the fix on that machine, and a global CocoaPods difference never', () => {
+    expect(buildMachines.predictedRefusal('mini', problems({ cocoapods: null }))).toBeNull();
+    expect(buildMachines.predictedRefusal('mini', problems({ cocoapods: '1.17.0' }))).toBeNull();
+    expect(buildMachines.predictedRefusal('mini', problems({ runtimes: [], cocoapods: null }))).toEqual({
+      reason: 'no iPhone simulator on com.apple.CoreSimulator.SimRuntime.iOS-27-0 there',
+      remedy: expect.stringContaining('mini'),
+    });
+    expect(buildMachines.predictedRefusal('mini', problems({ xcode: 'Xcode 26.4' }))?.reason).toContain('Xcode');
+  });
+
+  it('leaves a busy, unreachable or low-disk machine to the build itself', () => {
+    const transient = offer({ capacity: capacity({ running: 1, declined: 'already running 1 offloaded build(s)' }) });
+    expect(buildMachines.predictedRefusal('mini', offerProblems(transient, IOS))).toBeNull();
+    expect(buildMachines.predictedRefusal('mini', [{ code: 'unreachable', reason: 'timed out' }])).toBeNull();
+  });
+});
+
+describe('podsFailedRemedy', () => {
+  it('names the CocoaPods install on the machine that has none', () => {
+    expect(
+      podsFailedRemedy(
+        'mini',
+        'pod install failed: CocoaPods is not installed: no `pod` executable on PATH.',
+        '1.17.0',
+      ),
+    ).toBe(
+      [
+        'On mini, install CocoaPods (this Mac has 1.17.0; `gem install cocoapods -v 1.17.0` instead of Homebrew installs that version):',
+        'brew install cocoapods',
+        'Then run the same command again, or rerun with --remote-build auto or --remote-build local.',
+      ].join('\n'),
+    );
+  });
+
+  it('points at the error for any other pod install failure and ignores other failures', () => {
+    expect(podsFailedRemedy('mini', 'pod install failed: [!] Unable to find a specification', null)).toContain(
+      'Fix the pod install error above on mini',
+    );
+    expect(podsFailedRemedy('mini', 'fingerprint-mismatch: the checkout there differs', null)).toBeUndefined();
+  });
 });

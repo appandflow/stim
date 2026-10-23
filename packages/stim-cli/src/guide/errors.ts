@@ -396,7 +396,10 @@ too old to speak protocol 2, incompatible
 toolchain/runtime/CPU, low disk, busy, sync/build failure, artifact failure,
 or a checkout that changed while it built. Unsupported build kinds also refuse.
 No local xcodebuild, Gradle or SwiftPM compile or alternate machine follows a
-refusal. Prebuild and pod install still run on this machine before a named offload.
+refusal. A toolchain difference on the named machine, such as Xcode, the simulator
+runtime or the CPU, refuses before this machine runs prebuild or pod install. A
+missing or different global CocoaPods never refuses; a pod install that fails on
+the machine reports "pod install failed" with the command to run there.
 Unlisted or unpaired names refuse at setup before consulting the cache, without
 a build record or failed-run stats. A listed paired name with a cache hit needs
 no build and does not contact the selected machine.

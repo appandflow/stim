@@ -932,7 +932,8 @@ at setup before consulting the cache; they create no build record or failed-run
 stats. A listed paired name with a cache hit compiles nothing, contacts no worker
 and records buildMachine with builtOn absent. Build failures retain the selected
 value; builtOn is here or the configured machine entry when compilation ran.
-Prebuild and pod install still run on this machine before a named offload. A refusal
+Prebuild and pod install run on this machine before a named offload, after a
+check of the machine's toolchain. A refusal
 starts no local xcodebuild, Gradle or SwiftPM compile.
 A React Native offload sends the tracked and untracked files, and the gitignored
 files the native fingerprint hashes or the Expo config reads, such as .env.local
@@ -1040,9 +1041,13 @@ install <version> with no Xcode app. A runtime the machine lacks gets
 xcodebuild -downloadPlatform iOS -buildVersion <version>, or a pointer to the
 Xcode problem when xcode-select is the cause. A stim-server that reports no
 developerDir keeps the prose fix. It also needs an
-iPhone simulator on the target runtime. Its project-selected CocoaPods must match too, unless
-the app's Gemfile.lock, in ios/ or the project root, pins CocoaPods: both machines then run that version through
-bundler, so the machine needs only Bundler on its stim-server PATH and
+iPhone simulator on the target runtime. A missing or different global CocoaPods
+never stops a build: the machine runs pod install only when its Pods are not
+installed or stale, doctor and the placement line show a note with the install
+command, and a pod install that fails there reports "pod install failed" with
+the fix on that machine. When the app's Gemfile.lock, in ios/ or the project
+root, pins CocoaPods, both machines run that version through
+bundler, so the machine needs Bundler on its stim-server PATH and
 installs the pinned gems itself on the first build. This Mac's side of the
 comparison runs \`pod --version\` in the directory pod install runs in. The comparison selects
 the app's .ruby-version when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the GEM_HOME, GEM_PATH and Ruby-related PATH entries of the machine's login shell (read once with $SHELL -lic), unless the caller already sets GEM_HOME, with pod install's UTF-8 locale defaults. pod install, including the Bundler run, uses the same environment.
