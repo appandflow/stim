@@ -267,7 +267,15 @@ PATH).
   Repository development needs
   Node 22.18 or later because tsdown has the higher floor. A Windows lane,
   `test (windows)`, repeats install, build, typecheck and the unit suite on
-  `windows-latest`.
+  `windows-latest`. A macOS lane, `test (macos)`, runs on `macos-15` the unit
+  test files that skip or branch on darwin, which the Linux and Windows lanes
+  cannot run. `scripts/ci-darwin-unit-test-files.mjs` derives the list from
+  the test sources (`process.platform` compared with `'darwin'`, plus the
+  `/bin/zsh` and case-insensitive-filesystem gates), so a new gated file joins
+  without a workflow edit. It runs each selected file in full, with a 60 second
+  test timeout, and uploads `unit-test-timings-macos`. Like every `ci.yml` job
+  it is part of the `merge gate` poll on a pull request and does not run in the
+  merge queue.
 
 - **`stim-ci.yml`** -- "Stim CI dogfood": builds, launches, probes and stops
   the mobile app on iOS (`xcode-27`) and Android (`ubuntu-latest`) and the

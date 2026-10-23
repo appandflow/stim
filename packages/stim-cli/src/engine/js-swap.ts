@@ -136,6 +136,7 @@ export function assetCatalogTarget(infoPlist: unknown): AssetCatalogTarget | nul
 }
 
 // plutil -convert json refuses a whole plist that holds <data> or <date>, so read single keys.
+// plutil on macOS 15 prints the missing-key error on stdout, not stderr.
 async function readPlistKey(
   context: StimContext | undefined,
   e: Executor,
@@ -148,7 +149,8 @@ async function readPlistKey(
       timeoutMs: 10_000,
     });
   } catch (err) {
-    if (/No value at that key path/.test(describe(err))) return null;
+    const stdout = typeof err === 'object' && err !== null && 'stdout' in err ? String(err.stdout) : '';
+    if (/No value at that key path/.test(`${describe(err)}\n${stdout}`)) return null;
     throw err;
   }
 }
