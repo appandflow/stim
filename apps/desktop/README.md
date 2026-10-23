@@ -802,6 +802,19 @@ kept or failed item was left. A **Do it** from the bundled app appears as Cleanu
 Desktop, and from an unbundled development build as Cleanup from stim gc. With a `stim` that has
 no gc log (1.25.0 or older), the section says to update `stim`.
 
+## Builds
+
+The **Builds** item in the sidebar (Command-5) lists the native builds Stim recorded on this Mac, newest
+first and grouped by day. It runs `stim logs --source builds --json` from the home directory every 30
+seconds while the page is showing and never reads `$STIM_HOME`. A row shows the project and platform, the
+branch and target, where the build ran (this Mac, a build machine, or this Mac after an offload fell
+back), the cache result, the duration and the outcome. The filters choose a project, a platform, a
+machine (**This Mac** or a build machine) and an outcome. Clicking a row opens its phases as bars, the
+failure code, message and remedy of a failed build, and the device, cache key and fingerprint. The model
+is `BuildHistory` in `StimKit` (parsing, filters, day groups and the phase timeline), which the tests in
+`BuildHistoryTests` cover. With a `stim` that has no build ledger (1.25.0 or older), the page says to
+update `stim`.
+
 ## Logs
 
 A workspace's page shows its logs beside the devices, or on a **Logs** tab when
