@@ -334,6 +334,33 @@ Events: run_start, run_end { exit, ms }, exec { program, ms, ok, exit? }, and
 remote_connect and remote_request { ms, ok, code? } for requests to another
 machine. They carry no arguments, tokens or tickets.
 
+TIMING TRACES
+STIM_TRACE=<path> makes a stim command write a timeline of where it spent its
+time, as Chrome trace events. Open the file in Perfetto (ui.perfetto.dev) or
+chrome://tracing. Unset, nothing is written and no file is opened. There is no
+setting for it, and the trace goes only to that file, never to stdout or stderr.
+Use a new path for each command: the command you start truncates the file, and
+the processes it starts (a Metro supervisor, collectors, a nested stim) append
+to it.
+  STIM_TRACE=/tmp/ios.json stim ios
+The file is a JSON array with one event per line and no closing bracket, so
+read it with JSON.parse(text.trimEnd().replace(/,$/, '') + ']'). Every event
+has pid; spans have ts and dur in microseconds since the epoch. Events:
+  command  one span named "stim <command>" with the exit code in args.exit
+  exec     one span per child process. args.argv (or args.command for a shell
+           command) has the values of secret-looking flags, credentials in
+           URLs and token shapes replaced by [redacted]; args also has cwd,
+           ok, exit and signal
+  phase    the build phases of an ios, android or macos run on a
+           "phases: <platform> build" track, named as in stats.json and the
+           build ledger (prepare, cache-lookup, wait, prebuild, pods, compile,
+           device, install, launch), and the steps of worktree warm
+  span     fingerprint, wait for metro and carry ignored entries
+  mark     instant events such as a fingerprint memo hit
+Children running at the same time are drawn on separate tracks. A span still
+open when its process exits is written with unfinished: true. A trace holds
+full paths and arguments, so treat it like a log.
+
 Placement records use src: placement and sit in the run's build log
 (build-*.ndjson), so a new run replaces the previous run's. A run writes one
 record per decision it makes (a build that compiles and has a remote machine to

@@ -8,6 +8,7 @@ import {
   fingerprintMemoFile,
   fingerprintMemoLock,
   readFingerprintMemo,
+  trace,
   type FingerprintMemoRecord,
 } from '@stim-cli/core/state';
 import { shortHash } from '../command-output.ts';
@@ -232,6 +233,7 @@ export async function memoizedFingerprint(
       else {
         if (record) dropRecord(target.platform, before.digest);
         debugLog.log('fingerprint_memo_hit', { platform: target.platform });
+        trace.mark('fingerprint memo hit', { platform: target.platform });
         return {
           fingerprint: { hash: stored.hash, sources: stored.sources },
           memoHit: true,

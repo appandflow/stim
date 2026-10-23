@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
-import { runId } from '@stim-cli/core/state';
+import { runId, trace } from '@stim-cli/core/state';
 import { debugLog } from '../src/debug-log.ts';
 import { refuseRelativeStimPaths } from '../src/workspace/config.ts';
 
@@ -44,9 +44,10 @@ try {
     for (const module of modules) module.default(program, pkg.version);
   }
   program.hook('preAction', async (_command, action) => {
+    const path: string[] = [];
+    for (let each: Command | null = action; each?.parent; each = each.parent) path.unshift(each.name());
+    trace.command(`stim ${path.join(' ')}`, { version: pkg.version });
     if (debugLog.enabled()) {
-      const path: string[] = [];
-      for (let each: Command | null = action; each?.parent; each = each.parent) path.unshift(each.name());
       const started = Date.now();
       debugLog.log('run_start', {
         version: pkg.version,

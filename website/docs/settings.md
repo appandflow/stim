@@ -757,6 +757,7 @@ Stim also reads these variables, which have no setting:
 | `STIM_METRO_PUBLIC_URL` | Public Metro URL for remote use                                                                                                                                                  |
 | `STIM_NO_UPDATE_CHECK`  | Set to disable the daily check for a newer Stim release in `stim guide`                                                                                                          |
 | `STIM_RUN_ID`           | Id for this `stim` invocation (letters, digits, `.`, `_`, `-`, at most 64); stamped as `runId` on every log record it writes and sent to stim-server. Default: generated per run |
+| `STIM_TRACE`            | Path of a Chrome trace file the command writes its timeline to; see [Timing traces](#timing-traces). Default: unset, nothing written                                             |
 
 Processes a command starts, such as the Metro supervisor and the collectors, inherit its `STIM_RUN_ID`, so their records carry the id of the command that started them.
 
@@ -847,4 +848,30 @@ Try this with your agent:
 Turn on debug.logs, rerun the command that stalled, then read
 ~/.stim/logs/debug/cli.ndjson and tell me which child process or remote request
 took the time.
+```
+
+## Timing traces
+
+`STIM_TRACE=<path>` writes a timeline of one command to `<path>` as Chrome trace
+events. Open the file in [Perfetto](https://ui.perfetto.dev) or `chrome://tracing`
+to see where `worktree warm`, `start`, `ios`, `android` or `stop` spent its time:
+one span per child process, one per build phase (the phases `stats.json` and the
+build ledger record), and spans for the fingerprint and the wait for Metro.
+Unset, Stim writes nothing. There is no setting for it, and the trace goes only
+to that file, never to stdout or stderr, so `--json` output is unchanged.
+
+<StimTabs code="STIM_TRACE=/tmp/ios.json stim ios" />
+
+The command you start truncates the file; the processes it starts, such as the
+Metro supervisor, append to it, so use a new path for each command. The file is a
+JSON array with one event per line and no closing bracket, which Perfetto and
+`chrome://tracing` accept. Argument values of flags that look like secrets and
+credentials in URLs are replaced with `[redacted]`. A trace still holds full
+paths and arguments, so treat it like a log.
+
+Try this with your agent:
+
+```text
+Run stim ios with STIM_TRACE=/tmp/ios.json, then read the file and tell me which
+build phase and which child process took the most time.
 ```

@@ -41,6 +41,7 @@ import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
+import { trace } from '@stim-cli/core/state';
 import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
@@ -328,7 +329,9 @@ export async function warmWorktreeTarget(opts: {
             }
             const excluded = readWorktreeExclude(root);
             const patterns = excluded?.length ? excluded : (settings as WorktreeSettings).worktree?.exclude || [];
-            const result = await cloneIgnoredEntries({ root, target, patterns, operation });
+            const result = await trace.spanAsync('carry ignored entries', () =>
+              cloneIgnoredEntries({ root, target, patterns, operation }),
+            );
             for (const entry of result.skipped) {
               out(chalk.dim(phaseLine('carry', `kept ${entry.file} (${entry.reason})`)));
             }

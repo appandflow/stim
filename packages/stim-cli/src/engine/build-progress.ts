@@ -27,6 +27,7 @@ import {
   type BuildResult,
   type MetroBundleState,
   type PlannedPhase,
+  trace,
   type WorkspaceState,
 } from '@stim-cli/core/state';
 
@@ -254,6 +255,8 @@ export function startBuildProgress({
   const write = (before: (state: WorkspaceState) => WorkspaceState = (state) => state) =>
     guard(() => updateWorkspaceState(root, (state) => ({ ...before(state), [ACTIVE_BUILD_KEY]: record })));
   write(withInterruptedBuild);
+  const phases = trace.phases(`${platform} build`);
+  phases.enter('prepare');
   let projectKey: string | null = null;
   const parser = createBuildDetailParser();
   let detailWrittenAt = -Infinity;
@@ -277,6 +280,7 @@ export function startBuildProgress({
       record.phase = phase;
       record.phaseStartedAt = at;
       record.phases.push({ phase, startedAt: at });
+      phases.enter(phase);
       if (phase !== 'wait') delete record.waitingOn;
       delete record.activity;
       const outcome = record.outcome || platform === 'macos' ? null : settledOutcome(phase, record.phases);
@@ -380,6 +384,7 @@ export function startBuildProgress({
       return detail?.unit === 'steps' ? detail.total : null;
     },
     clear() {
+      phases.end();
       if (detailTimer) clearTimeout(detailTimer);
       detailTimer = null;
       guard(() => rmSync(workspaceBuildDetailFile(root), { force: true }));
