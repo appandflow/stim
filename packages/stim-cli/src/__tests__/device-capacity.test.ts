@@ -13,7 +13,8 @@ import {
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { createRunRecorder, readStats, recordRunStats } from '../engine/stats.ts';
-import { goneClaimOwner, plantClaim, makeIosSim, makeConfig, makeAdbDevices } from './_factories.ts';
+import { goneClaimOwner, plantClaim, makeIosSim, makeConfig, makeAdbDevices, makeExecutor } from './_factories.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
 
 vi.mock('../devices/queue-reclaim.ts', () => ({
   reclaimIdleDevice: vi.fn<typeof import('../devices/queue-reclaim.ts').reclaimIdleDevice>(async () => 0),
@@ -140,6 +141,41 @@ test('a dead waiter is reaped by process identity and cannot block an available 
     }),
   ).resolves.toBe('booted');
   expect(existsSync(path)).toBe(false);
+});
+
+test('admission lists simulators and emulators through the async executor', async () => {
+  const listed: string[] = [];
+  setExecutor(
+    makeExecutor({
+      runFile: () => {
+        throw new Error('a synchronous device listing blocks the event loop');
+      },
+      runFileAsync: async (file) => {
+        listed.push(file.split('/').at(-1) ?? file);
+        return file === 'xcrun' ? '{"devices":{}}' : 'List of devices attached\nemulator-5554\tdevice\n';
+      },
+    }),
+  );
+  try {
+    await expect(
+      withDeviceBootAdmission({ platform: 'android', key: 'new' }, async () => 'booted', {
+        root,
+        max: 1,
+        noWait: true,
+        sources: {
+          config: makeConfig({
+            projects: {
+              '/work/holder': { platforms: { android: { owned: true, avdName: 'stim-holder', consolePort: 5554 } } },
+            },
+          }),
+          booting: [],
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+    expect(listed).toContain('adb');
+  } finally {
+    resetExecutor();
+  }
 });
 
 test.each([{ noWait: true }, { waitMs: 0 }])(

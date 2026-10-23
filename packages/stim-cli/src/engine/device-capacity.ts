@@ -229,6 +229,51 @@ function listed<T>(source: Listing<T>, empty: T, absent: (error: unknown) => boo
   }
 }
 
+async function listedAwait<T>(
+  source: T | (() => T | Promise<T>),
+  empty: T,
+  absent: (error: unknown) => boolean = () => false,
+): Promise<T> {
+  try {
+    return (await (typeof source === 'function' ? (source as () => T | Promise<T>)() : source)) ?? empty;
+  } catch (error) {
+    if (absent(error)) return empty;
+    throw new DeviceCountUnavailable('', { cause: error });
+  }
+}
+
+type AsyncListing<T> = T | (() => T | Promise<T>);
+
+interface AsyncInventorySources {
+  sims?: AsyncListing<SimRecord[]>;
+  adb?: AsyncListing<AdbDevices>;
+  config?: AsyncListing<Config | null>;
+  booting?: AsyncListing<BootingDevice[]>;
+}
+
+async function readInventoryAsync({
+  sims = () => (process.platform === 'darwin' ? listAllIosSimsAsync({ timeoutMs: LISTING_TIMEOUT_MS }) : []),
+  adb = () => listAdbDevicesAsync({ timeoutMs: LISTING_TIMEOUT_MS }),
+  config = loadConfig,
+  booting = readBootingDevices,
+}: AsyncInventorySources): Promise<DeviceInventory | CapacityRefusal> {
+  try {
+    const recorded = await listedAwait(config, null);
+    return {
+      booting: await listedAwait(booting, []),
+      sims: await listedAwait<SimRecord[]>(sims, [], toolAbsent),
+      adb: recordsOwnedEmulator(recorded) ? await listedAwait(adb, NO_ADB, toolAbsent) : NO_ADB,
+      config: recorded,
+    };
+  } catch (error) {
+    if (error instanceof DeviceCountUnavailable) {
+      if (isClaimRefusal(error.cause)) throw error.cause;
+      return uncountedRefusal(error.cause);
+    }
+    throw error;
+  }
+}
+
 function readInventory({
   sims = listSimsForCount,
   adb = listAdbForCount,
@@ -644,7 +689,7 @@ export async function withDeviceBootAdmission<T>(
               if (claims.some((entry) => deviceKey(entry.platform, entry.key) === own)) return admit();
               return wait(lastInventory);
             }
-            const inventory = readInventory(sources);
+            const inventory = await readInventoryAsync(sources);
             if ('code' in inventory) throw new DeviceAdmissionRefusal(inventory);
             const keys = inventoryKeys(inventory);
             const own = deviceKey(device.platform, device.key);
