@@ -136,7 +136,8 @@ export function buildLedgerRecord(run: BuildLedgerRun): BuildLedgerRecord {
 
 function lineId(line: string): unknown {
   try {
-    return (JSON.parse(line) as { id?: unknown }).id;
+    const parsed: unknown = JSON.parse(line);
+    return typeof parsed === 'object' && parsed !== null && 'id' in parsed ? parsed.id : undefined;
   } catch {
     return undefined;
   }

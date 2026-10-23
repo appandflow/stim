@@ -18,7 +18,7 @@ struct BuildsView: View {
         if let error = history.error, history.items.isEmpty {
           VStack(alignment: .leading, spacing: Space.sm) {
             Text(abbreviatingHome(error)).foregroundStyle(Palette.error)
-            Text("The build history needs a stim newer than 1.25.0; with an older one, update stim.")
+            Text("If this stim is 1.25.0 or older, update it: the build history needs a newer stim.")
               .font(.stim(.footnote)).foregroundStyle(Palette.warning)
           }
         } else if days.isEmpty {
@@ -155,43 +155,44 @@ struct LedgerBuildList: View {
   }
 }
 
-private struct LedgerBuildRow: View {
+struct LedgerBuildRow: View {
   var item: LedgerBuild
   var expanded: Bool
   var toggle: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      HStack(alignment: .center, spacing: Space.lg) {
-        Image(systemName: symbol)
-          .iconFont(IconSize.row, weight: .semibold)
-          .foregroundStyle(tint)
-          .frame(width: 20)
-          .help(item.outcome.title)
-        VStack(alignment: .leading, spacing: Space.xxs) {
-          Text("\(item.projectName) \u{00B7} \(item.platformTitle)").textStyle(.callout, weight: .semibold).lineLimit(1)
-          Text(subtitle).textStyle(.footnote).foregroundStyle(Palette.secondary).lineLimit(1)
+      Button(action: toggle) {
+        HStack(alignment: .center, spacing: Space.lg) {
+          Image(systemName: symbol)
+            .iconFont(IconSize.row, weight: .semibold)
+            .foregroundStyle(tint)
+            .frame(width: 20)
+            .help(item.outcome.title)
+          VStack(alignment: .leading, spacing: Space.xxs) {
+            Text("\(item.projectName) \u{00B7} \(item.platformTitle)").textStyle(.callout, weight: .semibold).lineLimit(1)
+            Text(subtitle).textStyle(.footnote).foregroundStyle(Palette.secondary).lineLimit(1)
+          }
+          Spacer(minLength: Space.md)
+          VStack(alignment: .trailing, spacing: Space.xxs) {
+            Text(item.durationText).textStyle(.callout).monospacedDigit()
+            Text(item.date.formatted(date: .omitted, time: .shortened)).textStyle(.caption).foregroundStyle(Palette.tertiary)
+          }
+          .fixedSize()
+          Image(systemName: "chevron.right").iconFont(IconSize.micro, weight: .semibold)
+            .foregroundStyle(Palette.tertiary).rotationEffect(.degrees(expanded ? 90 : 0))
+            .accessibilityHidden(true)
         }
-        Spacer(minLength: Space.md)
-        VStack(alignment: .trailing, spacing: Space.xxs) {
-          Text(item.durationText).textStyle(.callout).monospacedDigit()
-          Text(item.date.formatted(date: .omitted, time: .shortened)).textStyle(.caption).foregroundStyle(Palette.tertiary)
-        }
-        .fixedSize()
-        Image(systemName: "chevron.right").iconFont(IconSize.micro, weight: .semibold)
-          .foregroundStyle(Palette.tertiary).rotationEffect(.degrees(expanded ? 90 : 0))
-          .accessibilityHidden(true)
+        .padding(.horizontal, Space.xl)
+        .padding(.vertical, Space.lg)
+        .contentShape(Rectangle())
       }
-      .padding(.horizontal, Space.xl)
-      .padding(.vertical, Space.lg)
-      .contentShape(Rectangle())
+      .buttonStyle(.plain)
       .hoverHighlight(radius: 0)
-      .onTapGesture(perform: toggle)
       .accessibilityElement(children: .combine)
       .accessibilityLabel(
         "\(item.outcome.title), \(item.projectName), \(item.platformTitle), \(item.whereText), \(item.cacheText), \(item.durationText)"
       )
-      .accessibilityAddTraits(.isButton)
       .accessibilityValue(expanded ? "Expanded" : "Collapsed")
       if expanded { LedgerBuildDetail(item: item).padding(.horizontal, Space.xl).padding(.bottom, Space.xl) }
     }
@@ -316,5 +317,35 @@ private struct LedgerPhaseBar: View {
     }
     .accessibilityElement(children: .combine)
     .accessibilityLabel("\(segment.title), \(Format.elapsed(ms: segment.ms))\(segment.failed ? ", where it failed" : "")")
+  }
+}
+
+/// The latest builds a build machine ran for this Mac, on that machine's detail page.
+struct MachineBuildsSection: View {
+  var builds: [LedgerBuild]
+  /// What to show when `builds` is empty: still loading, an older stim, or none yet.
+  var note: String
+  @State private var selected: String?
+
+  private static let shown = 10
+
+  var body: some View {
+    Section {
+      if builds.isEmpty {
+        Text(note).foregroundStyle(Palette.secondary)
+      } else {
+        ForEach(builds.prefix(Self.shown)) { item in
+          LedgerBuildRow(item: item, expanded: selected == item.id) {
+            selected = selected == item.id ? nil : item.id
+          }
+        }
+        if builds.count > Self.shown {
+          Text("Showing the latest \(Self.shown) of \(builds.count). The Builds page lists them all.")
+            .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+        }
+      }
+    } header: {
+      Text("Builds on This Machine")
+    }
   }
 }

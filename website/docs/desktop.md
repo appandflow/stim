@@ -698,7 +698,7 @@ See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for 
 (**Approved**, **Waiting for approval**, the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading),
 a line with its running builds and free disk, what each does (**Builds**, **Simulators**), **Details** and
 **Remove...**. The status shows only a state that stops this Mac using the machine; notes, such as an
-Android SDK package Gradle downloads on the first build, never change it. It updates itself; there is no Refresh button. With none, it
+Android SDK package Gradle downloads on the first build, never change it. A machine's page also lists the ten newest builds that ran there, each opening to its phases and failure like the **Builds** page. It updates itself; there is no Refresh button. With none, it
 offers **Add Remote Machine…**, which guides you through five steps:
 
 1. Check Tailscale and pick a Mac, Linux or Windows machine on your tailnet.

@@ -396,7 +396,7 @@ describe('logs command', () => {
             if (before.has(listener)) continue;
             process.removeListener(signal, listener);
             try {
-              (listener as () => void)();
+              Reflect.apply(listener, undefined, []);
             } catch {}
           }
         }

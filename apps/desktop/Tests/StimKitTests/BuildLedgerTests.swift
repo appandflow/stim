@@ -65,6 +65,8 @@ import Testing
     #expect(ids(LedgerFilter(outcome: .failed)) == ["4"])
     #expect(ids(LedgerFilter(platform: "ios", machine: "mini", outcome: .succeeded)) == ["3"])
     #expect(BuildLedger.items(on: "mini", in: all).map(\.id) == ["4", "3"])
+    #expect(BuildLedger.items(on: "Mini:7787", in: all).map(\.id) == ["4", "3"])
+    #expect(BuildLedger.items(on: "studio", in: all).isEmpty)
   }
 
   @Test func groupsByLocalDayNewestFirst() {

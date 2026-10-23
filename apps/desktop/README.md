@@ -1452,6 +1452,10 @@ list for the page of one machine. It shows, from the list's doctor report and on
   and whether its Stim build matches this Mac's;
 - **Approvals**: the build approval and, for a machine that can host simulators, the
   device-host approval;
+- **Builds on This Machine**: the ten newest recorded builds that ran there (from
+  `stim logs --source builds --json`, read while the page is open), each opening to its
+  phases and failure as on the **Builds** page, with a note when none ran, the stim is
+  too old to record builds, or the read has not finished;
 - **Use This Machine For**: the **Builds enabled** and **Simulators enabled**
   switches, as on the row; and **Remove...**, **Ask** and **Ask Again**.
 

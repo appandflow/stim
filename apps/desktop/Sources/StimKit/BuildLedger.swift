@@ -90,7 +90,7 @@ public struct LedgerBuild: Decodable, Hashable, Identifiable, Sendable {
     }
   }
 
-  /// "This Mac", the build machine's name, or "This Mac" with the reason an offload fell back.
+  /// The build machine's name, "This Mac (fell back)" for a build that considered offloading, or "This Mac".
   public var whereText: String {
     if let machine { return machine }
     return placement.fellBack == true ? "This Mac (fell back)" : "This Mac"
@@ -225,9 +225,10 @@ public enum BuildLedger {
     return out
   }
 
-  /// The builds that ran on one build machine.
-  public static func items(on machine: String, in items: [LedgerBuild]) -> [LedgerBuild] {
-    items.filter { $0.machine == machine }
+  /// The builds that ran on the build machine a `remote.machines` entry names, newest first when `items` is.
+  public static func items(on entry: String, in items: [LedgerBuild]) -> [LedgerBuild] {
+    let name = OffloadMachines.name(entry)
+    return items.filter { $0.machine.map(OffloadMachines.name) == name }
   }
 
   public struct ProjectChoice: Hashable, Sendable {
