@@ -1,7 +1,7 @@
 import Foundation
 
 /// One native build run of `stim logs --source builds --json`. Fields newer than this app are ignored.
-public struct BuildHistoryItem: Decodable, Hashable, Identifiable, Sendable {
+public struct LedgerBuild: Decodable, Hashable, Identifiable, Sendable {
   public enum Outcome: String, Decodable, CaseIterable, Sendable {
     case succeeded, failed, cancelled
 
@@ -111,7 +111,7 @@ public struct BuildHistoryItem: Decodable, Hashable, Identifiable, Sendable {
 }
 
 /// One bar of a build's timeline.
-public struct BuildPhaseSegment: Identifiable, Hashable, Sendable {
+public struct LedgerPhase: Identifiable, Hashable, Sendable {
   public enum Lane: Hashable, Sendable {
     case local
     case machine(String)
@@ -126,7 +126,7 @@ public struct BuildPhaseSegment: Identifiable, Hashable, Sendable {
   public var failed: Bool
 }
 
-extension BuildHistoryItem {
+extension LedgerBuild {
   private static let localOrder = [
     "prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "device", "install", "launch",
   ]
@@ -141,7 +141,7 @@ extension BuildHistoryItem {
 
   /// The phases of the run in the order they happen: this Mac's, then the build machine's, which ran
   /// inside the local compile phase. A phase with no time is left out.
-  public var timeline: [BuildPhaseSegment] {
+  public var timeline: [LedgerPhase] {
     var out = Self.segments(phases, order: Self.localOrder, lane: .local, failedPhase: failure?.phase)
     if let offloadPhases, let machine {
       out += Self.segments(
@@ -151,8 +151,8 @@ extension BuildHistoryItem {
   }
 
   private static func segments(
-    _ phases: [String: Double], order: [String], lane: BuildPhaseSegment.Lane, failedPhase: String?
-  ) -> [BuildPhaseSegment] {
+    _ phases: [String: Double], order: [String], lane: LedgerPhase.Lane, failedPhase: String?
+  ) -> [LedgerPhase] {
     let known = order.filter { phases[$0] != nil }
     let unknown = phases.keys.filter { !order.contains($0) }.sorted()
     let prefix: String
@@ -162,7 +162,7 @@ extension BuildHistoryItem {
     }
     return (known + unknown).compactMap { name in
       guard let ms = phases[name], ms > 0 else { return nil }
-      return BuildPhaseSegment(
+      return LedgerPhase(
         id: "\(prefix):\(name)", lane: lane, name: name, title: titles[name] ?? name, ms: ms,
         failed: lane == .local && name == failedPhase)
     }
@@ -170,7 +170,7 @@ extension BuildHistoryItem {
 }
 
 /// The history's filters; nil shows every project, platform, machine or outcome.
-public struct BuildFilter: Equatable, Sendable {
+public struct LedgerFilter: Equatable, Sendable {
   /// The machine filter value for builds that ran on this Mac.
   public static let thisMac = ""
 
@@ -178,11 +178,11 @@ public struct BuildFilter: Equatable, Sendable {
   public var platform: String?
   /// A build machine's name, or `thisMac`.
   public var machine: String?
-  public var outcome: BuildHistoryItem.Outcome?
+  public var outcome: LedgerBuild.Outcome?
 
   public init(
     project: String? = nil, platform: String? = nil, machine: String? = nil,
-    outcome: BuildHistoryItem.Outcome? = nil
+    outcome: LedgerBuild.Outcome? = nil
   ) {
     self.project = project
     self.platform = platform
@@ -190,20 +190,20 @@ public struct BuildFilter: Equatable, Sendable {
     self.outcome = outcome
   }
 
-  public func matches(_ item: BuildHistoryItem) -> Bool {
+  public func matches(_ item: LedgerBuild) -> Bool {
     (project == nil || item.project == project) && (platform == nil || item.platform == platform)
       && (machine == nil || (item.machine ?? Self.thisMac) == machine)
       && (outcome == nil || item.outcome == outcome)
   }
 }
 
-public enum BuildHistory {
+public enum BuildLedger {
   /// Parses `stim logs --source builds --json`: newest build first, lines that are not build records skipped, a
   /// repeated build kept once.
-  public static func parse(_ output: Data) -> [BuildHistoryItem] {
+  public static func parse(_ output: Data) -> [LedgerBuild] {
     var seen = Set<String>()
-    let items = String(decoding: output, as: UTF8.self).split(separator: "\n").compactMap { line -> BuildHistoryItem? in
-      guard let item = try? JSONDecoder().decode(BuildHistoryItem.self, from: Data(line.utf8)) else { return nil }
+    let items = String(decoding: output, as: UTF8.self).split(separator: "\n").compactMap { line -> LedgerBuild? in
+      guard let item = try? JSONDecoder().decode(LedgerBuild.self, from: Data(line.utf8)) else { return nil }
       return seen.insert(item.id).inserted ? item : nil
     }
     return items.sorted { $0.ts > $1.ts }
@@ -211,9 +211,9 @@ public enum BuildHistory {
 
   /// The builds the filter shows, grouped by local day, newest first.
   public static func days(
-    _ items: [BuildHistoryItem], _ filter: BuildFilter = BuildFilter(), calendar: Calendar = .current
-  ) -> [(day: Date, items: [BuildHistoryItem])] {
-    var out: [(day: Date, items: [BuildHistoryItem])] = []
+    _ items: [LedgerBuild], _ filter: LedgerFilter = LedgerFilter(), calendar: Calendar = .current
+  ) -> [(day: Date, items: [LedgerBuild])] {
+    var out: [(day: Date, items: [LedgerBuild])] = []
     for item in items where filter.matches(item) {
       let day = calendar.startOfDay(for: item.date)
       if out.last?.day == day {
@@ -226,7 +226,7 @@ public enum BuildHistory {
   }
 
   /// The builds that ran on one build machine.
-  public static func items(on machine: String, in items: [BuildHistoryItem]) -> [BuildHistoryItem] {
+  public static func items(on machine: String, in items: [LedgerBuild]) -> [LedgerBuild] {
     items.filter { $0.machine == machine }
   }
 
@@ -243,7 +243,7 @@ public enum BuildHistory {
   }
 
   /// What the filters can choose from: the projects, platforms and machines the history has builds of.
-  public static func choices(_ items: [BuildHistoryItem]) -> Choices {
+  public static func choices(_ items: [LedgerBuild]) -> Choices {
     var paths: [String] = []
     for item in items where !paths.contains(item.project) { paths.append(item.project) }
     let names = paths.map { URL(fileURLWithPath: $0).lastPathComponent }
@@ -261,7 +261,7 @@ public enum BuildHistory {
 }
 
 extension StimCLI {
-  public func buildHistory(limit: Int = 500) async throws -> [BuildHistoryItem] {
-    BuildHistory.parse(try await run(["logs", "--source", "builds", "--json", "--tail", String(limit)], cwd: NSHomeDirectory()))
+  public func buildLedger(limit: Int = 500) async throws -> [LedgerBuild] {
+    BuildLedger.parse(try await run(["logs", "--source", "builds", "--json", "--tail", String(limit)], cwd: NSHomeDirectory()))
   }
 }

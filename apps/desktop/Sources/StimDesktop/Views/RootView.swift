@@ -44,7 +44,7 @@ struct RootView: View {
   private let planChecks: BuildPlanChecks
   private let statsReader: StatsReader
   @StateObject private var tutorial = TutorialModel()
-  @StateObject private var builds: BuildHistoryModel
+  @StateObject private var builds: BuildLedgerModel
   @State private var selection: SidebarItem? = .overview
   @State private var previousSelection: SidebarItem? = .overview
   @StateObject private var navigation = NavigationController()
@@ -95,7 +95,7 @@ struct RootView: View {
     self.tips = tips
     self.buildMachines = buildMachines
     self.cli = cli
-    _builds = StateObject(wrappedValue: BuildHistoryModel(cli: cli))
+    _builds = StateObject(wrappedValue: BuildLedgerModel(cli: cli))
     self.onboarding = onboarding
     self.store = store
     self.actions = actions

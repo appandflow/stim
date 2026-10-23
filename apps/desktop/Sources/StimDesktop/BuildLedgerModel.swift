@@ -2,8 +2,8 @@ import Foundation
 import StimKit
 
 @MainActor
-final class BuildHistoryModel: ObservableObject {
-  @Published private(set) var items: [BuildHistoryItem] = []
+final class BuildLedgerModel: ObservableObject {
+  @Published private(set) var items: [LedgerBuild] = []
   @Published private(set) var error: String?
   @Published private(set) var loaded = false
 
@@ -22,7 +22,7 @@ final class BuildHistoryModel: ObservableObject {
 
   private func refresh() async {
     let cli = await cli.value
-    let result = await Result.awaiting { try await cli.buildHistory() }
+    let result = await Result.awaiting { try await cli.buildLedger() }
     guard !Task.isCancelled else { return }
     switch result {
     case .success(let items):

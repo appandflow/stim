@@ -811,8 +811,8 @@ branch and target, where the build ran (this Mac, a build machine, or this Mac a
 back), the cache result, the duration and the outcome. The filters choose a project, a platform, a
 machine (**This Mac** or a build machine) and an outcome. Clicking a row opens its phases as bars, the
 failure code, message and remedy of a failed build, and the device, cache key and fingerprint. The model
-is `BuildHistory` in `StimKit` (parsing, filters, day groups and the phase timeline), which the tests in
-`BuildHistoryTests` cover. With a `stim` that has no build ledger (1.25.0 or older), the page says to
+is `BuildLedger` in `StimKit` (parsing, filters, day groups and the phase timeline), which the tests in
+`BuildLedgerTests` cover. With a `stim` that has no build ledger (1.25.0 or older), the page says to
 update `stim`.
 
 ## Logs

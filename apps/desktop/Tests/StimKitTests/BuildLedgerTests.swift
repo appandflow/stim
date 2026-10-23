@@ -3,7 +3,7 @@ import Testing
 
 @testable import StimKit
 
-@Suite struct BuildHistoryTests {
+@Suite struct BuildLedgerTests {
   private static let hour = 3_600_000.0
   /// 2026-10-22 12:00 UTC.
   private static let noon = 1_792_670_400_000.0
@@ -21,8 +21,8 @@ import Testing
     """
   }
 
-  private static func items(_ lines: [String]) -> [BuildHistoryItem] {
-    BuildHistory.parse(Data(lines.joined(separator: "\n").utf8))
+  private static func items(_ lines: [String]) -> [LedgerBuild] {
+    BuildLedger.parse(Data(lines.joined(separator: "\n").utf8))
   }
 
   private static var utc: Calendar {
@@ -41,7 +41,7 @@ import Testing
       Self.line(id: "b", ts: Self.noon + Self.hour),
     ]
     #expect(Self.items(output).map(\.id) == ["c", "b", "a"])
-    #expect(BuildHistory.parse(Data()).isEmpty)
+    #expect(BuildLedger.parse(Data()).isEmpty)
   }
 
   @Test func anOutcomeNewerThanThisAppReadsAsFailed() {
@@ -56,15 +56,15 @@ import Testing
       Self.line(id: "3", ts: Self.noon + 3, placement: offloaded),
       Self.line(id: "4", ts: Self.noon + 4, outcome: "failed", placement: offloaded),
     ])
-    func ids(_ filter: BuildFilter) -> [String] { all.filter(filter.matches).map(\.id) }
-    #expect(ids(BuildFilter()) == ["4", "3", "2", "1"])
-    #expect(ids(BuildFilter(project: "/w/other")) == ["2"])
-    #expect(ids(BuildFilter(platform: "ios")) == ["4", "3", "1"])
-    #expect(ids(BuildFilter(machine: "mini")) == ["4", "3"])
-    #expect(ids(BuildFilter(machine: BuildFilter.thisMac)) == ["2", "1"])
-    #expect(ids(BuildFilter(outcome: .failed)) == ["4"])
-    #expect(ids(BuildFilter(platform: "ios", machine: "mini", outcome: .succeeded)) == ["3"])
-    #expect(BuildHistory.items(on: "mini", in: all).map(\.id) == ["4", "3"])
+    func ids(_ filter: LedgerFilter) -> [String] { all.filter(filter.matches).map(\.id) }
+    #expect(ids(LedgerFilter()) == ["4", "3", "2", "1"])
+    #expect(ids(LedgerFilter(project: "/w/other")) == ["2"])
+    #expect(ids(LedgerFilter(platform: "ios")) == ["4", "3", "1"])
+    #expect(ids(LedgerFilter(machine: "mini")) == ["4", "3"])
+    #expect(ids(LedgerFilter(machine: LedgerFilter.thisMac)) == ["2", "1"])
+    #expect(ids(LedgerFilter(outcome: .failed)) == ["4"])
+    #expect(ids(LedgerFilter(platform: "ios", machine: "mini", outcome: .succeeded)) == ["3"])
+    #expect(BuildLedger.items(on: "mini", in: all).map(\.id) == ["4", "3"])
   }
 
   @Test func groupsByLocalDayNewestFirst() {
@@ -73,10 +73,10 @@ import Testing
       Self.line(id: "noon", ts: Self.noon),
       Self.line(id: "yesterday", ts: Self.noon - 24 * Self.hour),
     ])
-    let days = BuildHistory.days(all, calendar: Self.utc)
+    let days = BuildLedger.days(all, calendar: Self.utc)
     #expect(days.map { $0.items.map(\.id) } == [["late", "noon"], ["yesterday"]])
     #expect(days[0].day > days[1].day)
-    #expect(BuildHistory.days(all, BuildFilter(project: "/none"), calendar: Self.utc).isEmpty)
+    #expect(BuildLedger.days(all, LedgerFilter(project: "/none"), calendar: Self.utc).isEmpty)
   }
 
   @Test func describesWhereTheBuildRanAndWhatTheCacheDid() {
@@ -118,7 +118,7 @@ import Testing
       Self.line(id: "2", ts: Self.noon + 2, project: "/b/app"),
       Self.line(id: "3", ts: Self.noon + 3, project: "/a/zed", placement: #"{"where":"offloaded","machine":"mini"}"#),
     ])
-    let choices = BuildHistory.choices(all)
+    let choices = BuildLedger.choices(all)
     #expect(choices.projects.map(\.title) == ["app (a)", "app (b)", "zed"])
     #expect(choices.platforms == ["android", "ios"])
     #expect(choices.machines == ["mini"])

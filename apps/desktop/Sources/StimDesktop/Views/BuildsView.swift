@@ -3,13 +3,13 @@ import SwiftUI
 
 /// Every native build this Mac recorded, newest first, from `stim logs --source builds`.
 struct BuildsView: View {
-  @ObservedObject var history: BuildHistoryModel
-  @State private var filter = BuildFilter()
+  @ObservedObject var history: BuildLedgerModel
+  @State private var filter = LedgerFilter()
   @State private var visibleCount = 50
 
   var body: some View {
-    let days = BuildHistory.days(history.items, filter)
-    let choices = BuildHistory.choices(history.items)
+    let days = BuildLedger.days(history.items, filter)
+    let choices = BuildLedger.choices(history.items)
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxl) {
         header(choices)
@@ -21,8 +21,8 @@ struct BuildsView: View {
           }
         } else if days.isEmpty {
           EmptyState(
-            title: filter == BuildFilter() ? "No Builds Yet" : "Nothing Matches",
-            message: filter == BuildFilter()
+            title: filter == LedgerFilter() ? "No Builds Yet" : "Nothing Matches",
+            message: filter == LedgerFilter()
               ? (history.loaded
                 ? "Every ios, android and macos build Stim runs is recorded here, even after its workspace is removed."
                 : "Loading\u{2026}")
@@ -31,7 +31,7 @@ struct BuildsView: View {
           .frame(maxWidth: .infinity)
           .padding(.top, Space.huge)
         } else {
-          BuildHistoryList(days: days, limit: visibleCount)
+          LedgerBuildList(days: days, limit: visibleCount)
           if visibleCount < days.reduce(0, { $0 + $1.items.count }) {
             Button("Show Older Builds") { visibleCount += 50 }
               .buttonStyle(.stim())
@@ -46,7 +46,7 @@ struct BuildsView: View {
     .onChange(of: filter) { _, _ in visibleCount = 50 }
   }
 
-  private func header(_ choices: BuildHistory.Choices) -> some View {
+  private func header(_ choices: BuildLedger.Choices) -> some View {
     ViewThatFits(in: .horizontal) {
       HStack(spacing: Space.md) {
         Text("Builds").font(.stim(.title)).fixedSize()
@@ -60,7 +60,7 @@ struct BuildsView: View {
     }
   }
 
-  @ViewBuilder private func filters(_ choices: BuildHistory.Choices) -> some View {
+  @ViewBuilder private func filters(_ choices: BuildLedger.Choices) -> some View {
     MenuPill(
       label: "Project",
       selection: $filter.project,
@@ -82,7 +82,7 @@ struct BuildsView: View {
       selection: $filter.machine,
       options: [
         MenuPillOption(value: String?.none, title: "All Machines"),
-        MenuPillOption(value: Optional(BuildFilter.thisMac), title: "This Mac"),
+        MenuPillOption(value: Optional(LedgerFilter.thisMac), title: "This Mac"),
       ] + choices.machines.map { MenuPillOption(value: Optional($0), title: $0) },
       isActive: filter.machine != nil
     )
@@ -90,8 +90,8 @@ struct BuildsView: View {
     MenuPill(
       label: "Outcome",
       selection: $filter.outcome,
-      options: [MenuPillOption(value: BuildHistoryItem.Outcome?.none, title: "Any Outcome")]
-        + BuildHistoryItem.Outcome.allCases.map { MenuPillOption(value: Optional($0), title: $0.title) },
+      options: [MenuPillOption(value: LedgerBuild.Outcome?.none, title: "Any Outcome")]
+        + LedgerBuild.Outcome.allCases.map { MenuPillOption(value: Optional($0), title: $0.title) },
       isActive: filter.outcome != nil
     )
     .help("Show builds that ended this way")
@@ -108,8 +108,8 @@ struct BuildsView: View {
 }
 
 /// Builds grouped by day, each a row that opens to its phases and failure.
-struct BuildHistoryList: View {
-  var days: [(day: Date, items: [BuildHistoryItem])]
+struct LedgerBuildList: View {
+  var days: [(day: Date, items: [LedgerBuild])]
   var limit: Int
   @State private var selected: String?
   @Environment(\.calendar) private var calendar
@@ -128,7 +128,7 @@ struct BuildHistoryList: View {
           VStack(spacing: 0) {
             ForEach(Array(day.items.enumerated()), id: \.element.id) { index, item in
               if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
-              BuildRow(item: item, expanded: selected == item.id) {
+              LedgerBuildRow(item: item, expanded: selected == item.id) {
                 selected = selected == item.id ? nil : item.id
               }
             }
@@ -147,8 +147,8 @@ struct BuildHistoryList: View {
   }
 }
 
-private struct BuildRow: View {
-  var item: BuildHistoryItem
+private struct LedgerBuildRow: View {
+  var item: LedgerBuild
   var expanded: Bool
   var toggle: () -> Void
 
@@ -185,7 +185,7 @@ private struct BuildRow: View {
       )
       .accessibilityAddTraits(.isButton)
       .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-      if expanded { BuildDetail(item: item).padding(.horizontal, Space.xl).padding(.bottom, Space.xl) }
+      if expanded { LedgerBuildDetail(item: item).padding(.horizontal, Space.xl).padding(.bottom, Space.xl) }
     }
   }
 
@@ -211,8 +211,8 @@ private struct BuildRow: View {
 }
 
 /// What one build did: the failure first, then its phases as bars, then the facts that explain it.
-struct BuildDetail: View {
-  var item: BuildHistoryItem
+struct LedgerBuildDetail: View {
+  var item: LedgerBuild
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.xl) {
@@ -224,7 +224,7 @@ struct BuildDetail: View {
     .textSelection(.enabled)
   }
 
-  private func failureBlock(_ failure: BuildHistoryItem.Failure) -> some View {
+  private func failureBlock(_ failure: LedgerBuild.Failure) -> some View {
     VStack(alignment: .leading, spacing: Space.sm) {
       if let code = failure.code { Text(code).font(.stim(.callout, mono: true)).foregroundStyle(Palette.error) }
       Text(failure.message ?? "No reason was recorded.").textStyle(.callout)
@@ -249,13 +249,13 @@ struct BuildDetail: View {
             Text(laneTitle(segment.lane)).textStyle(.caption, weight: .semibold).foregroundStyle(Palette.tertiary)
               .padding(.top, segment.lane == .local ? 0 : Space.sm)
           }
-          PhaseBar(segment: segment, scale: scale)
+          LedgerPhaseBar(segment: segment, scale: scale)
         }
       }
     }
   }
 
-  private func laneTitle(_ lane: BuildPhaseSegment.Lane) -> String {
+  private func laneTitle(_ lane: LedgerPhase.Lane) -> String {
     switch lane {
     case .local: return "On this Mac"
     case .machine(let name): return "On \(name), during Compile"
@@ -288,8 +288,8 @@ struct BuildDetail: View {
   }
 }
 
-private struct PhaseBar: View {
-  var segment: BuildPhaseSegment
+private struct LedgerPhaseBar: View {
+  var segment: LedgerPhase
   var scale: Double
 
   var body: some View {
