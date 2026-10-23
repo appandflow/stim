@@ -220,12 +220,7 @@ const UNPREDICTABLE: ReadonlySet<OffloadProblem['code']> = new Set([
   'cocoapods',
 ]);
 
-/**
- * Why a build on the machine named for it cannot work, from problems found before this machine changes the checkout:
- * the toolchain differences, whose fix is on that machine. A machine that did not answer, is busy, is low on disk
- * or holds no checkout is left to the build itself, which the cause may clear by then. A CocoaPods difference never
- * refuses a named machine; only `auto` placement skips it.
- */
+/** Why a build on the machine named for it cannot work, from the toolchain differences found before this machine changes the checkout. */
 export function predictedRefusal(entry: string, problems: OffloadProblem[]): { reason: string; remedy: string } | null {
   const known = problems.filter((problem) => !UNPREDICTABLE.has(problem.code));
   if (known.length === 0) return null;
@@ -241,7 +236,7 @@ function offloadFindings(entry: string, problems: OffloadProblem[], notes: Offlo
       code: `build-machine-${problem.code}`,
       level: TRANSIENT.has(problem.code) ? ('note' as const) : ('cost' as const),
       title: `Remote machine ${entry} ${PROBLEM_TITLES[problem.code]}`,
-      detail: `Builds fall back to this machine: ${problem.reason}.`,
+      detail: `Builds fall back to this machine: ${problem.reason}.${problem.code === 'cocoapods' ? ` A build sent there with --remote-build ${entry} still runs.` : ''}`,
       fix: problemFix(problem, entry),
     })),
     ...notes.map((each) => ({

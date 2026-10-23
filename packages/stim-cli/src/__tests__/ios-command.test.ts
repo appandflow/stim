@@ -14,7 +14,7 @@ import type { HostedNativeTarget } from '../device-host/hosted-native.ts';
 import { withDeviceBootAdmission } from '../engine/device-capacity.ts';
 import { workspaceId } from '@stim-cli/core';
 import { approvableSchemes } from '../engine/app-schemes.ts';
-import { PODS_FAILED_PREFIX } from '../offload/selection.ts';
+import { workerFailureReason } from '../offload/selection.ts';
 import { POD_MISSING_REASON } from '../engine/deps.ts';
 import * as offloadClient from '../offload/client.ts';
 import * as tailnet from '../offload/tailnet.ts';
@@ -8978,12 +8978,13 @@ describe('strict remote machine selection', () => {
     reserve();
     configureMini();
     writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
+    vi.spyOn(offloadClient, 'offloadCheck').mockReturnValue(async () => ({ capacity: null, problems: [] }));
     const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
     vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
       ok: false,
       machine: 'mini',
-      reason: `${PODS_FAILED_PREFIX}${POD_MISSING_REASON}`,
+      reason: workerFailureReason('pods-failed', POD_MISSING_REASON),
     });
     const fallback = await run({ remoteBuild: 'auto', json: true });
     expect(fallback.exitCode).toBeNull();

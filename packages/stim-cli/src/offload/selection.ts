@@ -16,7 +16,14 @@ export function fingerprintMismatchRemedy(reason: string): string | undefined {
   return reason.startsWith('fingerprint-mismatch: the checkout there ') ? FINGERPRINT_MISMATCH_REMEDY : undefined;
 }
 
-export const PODS_FAILED_PREFIX = 'pod install failed: ';
+const PODS_FAILED_PREFIX = 'pod install failed: ';
+
+/** The reason a failed worker job is reported with: a `pods-failed` code reads as a failed pod install. */
+export function workerFailureReason(code: unknown, message: unknown): string {
+  return code === 'pods-failed'
+    ? `${PODS_FAILED_PREFIX}${String(message ?? '')}`
+    : `${String(code ?? 'failed')}: ${String(message ?? '')}`;
+}
 
 /** The remedy for a worker whose `pod install` failed, naming the install when it has no CocoaPods; undefined for any other reason. */
 export function podsFailedRemedy(machine: string, reason: string, localCocoapods: string | null): string | undefined {

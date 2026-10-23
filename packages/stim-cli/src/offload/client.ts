@@ -56,7 +56,7 @@ import { nativeGradleTransfer, type GradleTransfer } from '../integrations/nativ
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
-import { namedBuildMachine, OffloadRefusal, PODS_FAILED_PREFIX } from './selection.ts';
+import { namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import {
   toolchainMismatches,
@@ -1717,7 +1717,8 @@ export async function offloadBuild(
     const { connection, machine } = choice;
     connection.onProgress(null);
     const workerMs = cacheHit ? 0 : Date.now() - workerStarted;
-    if (result.ok !== true) return keepCorruptCacheMessage(fail(workerFailure(result)), result);
+    if (result.ok !== true)
+      return keepCorruptCacheMessage(fail(workerFailureReason(result.code, result.message)), result);
     if (!cacheHit && native && (result.sourceDigest !== sourceDigest || result.fingerprint !== expectedFingerprint))
       return fail('The worker returned a different native source or artifact identity.');
     if (native?.provider === 'gradle' && !ANDROID_PACKAGE.test(String(result.androidPackage ?? '')))
@@ -1803,13 +1804,6 @@ function offloadCacheActivity(
     compilationCache: platform === 'ios' ? compilationActivity(activity) : COMPILATION_CACHE_UNAVAILABLE,
     ccache: platform === 'android' ? ccacheActivity(activity) : CCACHE_UNAVAILABLE,
   };
-}
-
-function workerFailure(result: Record<string, unknown>): string {
-  const message = String(result.message ?? '');
-  return result.code === 'pods-failed'
-    ? `${PODS_FAILED_PREFIX}${message}`
-    : `${String(result.code ?? 'failed')}: ${message}`;
 }
 
 function packageName(projectRoot: string): string | null {

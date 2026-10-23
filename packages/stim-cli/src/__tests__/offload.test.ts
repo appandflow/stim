@@ -8,11 +8,13 @@ import {
   buildPlacementSettings,
   parseBuildMachineOption,
   podsFailedRemedy,
+  workerFailureReason,
   requireConfiguredMachine,
   resolveBuildMachine,
   resolveBuildPlacement,
 } from '../offload/selection.ts';
 import { withAmbientContext } from '@stim-cli/core';
+import { POD_MISSING_REASON } from '../engine/deps.ts';
 import { testContext } from './_context.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import type { MachineCapacity, OffloadMode, BuildMachineCredential } from '@stim-cli/core/state';
@@ -1317,6 +1319,22 @@ describe('a named machine refused before this Mac changes the checkout', () => {
     const transient = offer({ capacity: capacity({ running: 1, declined: 'already running 1 offloaded build(s)' }) });
     expect(buildMachines.predictedRefusal('mini', offerProblems(transient, IOS))).toBeNull();
     expect(buildMachines.predictedRefusal('mini', [{ code: 'unreachable', reason: 'timed out' }])).toBeNull();
+  });
+});
+
+describe('workerFailureReason', () => {
+  it('reports a pods-failed job as a failed pod install, and any other job by its code', () => {
+    expect(workerFailureReason('pods-failed', 'boom')).toBe('pod install failed: boom');
+    expect(workerFailureReason('fingerprint-mismatch', 'the checkout there fingerprints x')).toBe(
+      'fingerprint-mismatch: the checkout there fingerprints x',
+    );
+    expect(workerFailureReason(undefined, undefined)).toBe('failed: ');
+  });
+
+  it('is what podsFailedRemedy recognizes', () => {
+    expect(podsFailedRemedy('mini', workerFailureReason('pods-failed', POD_MISSING_REASON), null)).toContain(
+      'brew install cocoapods',
+    );
   });
 });
 
