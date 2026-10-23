@@ -93,7 +93,7 @@ it appends the default Node of nvm, fnm, Volta, mise or asdf, Homebrew,
 `JAVA_HOME` to a Homebrew `openjdk` (17, then 21, then the newest), else Android
 Studio's bundled runtime, when no JDK is installed under
 `/Library/Java/JavaVirtualMachines`. It never replaces a variable it was given,
-and its own Node's directory is always the last `PATH` entry. CocoaPods uses the
+and its own Node's directory is always the last `PATH` entry. The build host repeats this discovery each time it reads the machine's toolchain (at most once a minute) and when it starts a build, so a tool installed after the server started, such as Homebrew's directory, a JDK or the Android SDK, is found without a restart. A `PATH` line added to a shell profile is never read. CocoaPods uses the
 project's `.ruby-version` Ruby, else rvm's or rbenv's default Ruby, and reads the
 login shell only when neither exists. Anything else a shell profile sets, such as
 `STIM_*` variables, reaches the server only through its environment or `--env`.

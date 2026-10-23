@@ -134,12 +134,18 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
       : undefined;
   delete process.env.NODE_COMPILE_CACHE;
   const captureHost = hostFromExecutable(process.env.STIM_HOST_EXECUTABLE);
-  const env = applyServeEnvironment(discoverToolchain(process.env).env, extraEnv, pathPrepend);
-  delete env.CLAUDE_CODE_SESSION_ID;
-  delete env.CODEX_THREAD_ID;
+  const inherited = { ...process.env };
+  const serveEnvironment = () => {
+    const found = applyServeEnvironment(discoverToolchain(inherited).env, extraEnv, pathPrepend);
+    delete found.CLAUDE_CODE_SESSION_ID;
+    delete found.CODEX_THREAD_ID;
+    return found;
+  };
+  const env = serveEnvironment();
   if (!process.env.STIM_HOME && env.STIM_HOME) process.env.STIM_HOME = env.STIM_HOME;
   if (process.env.STIM_HOME) env.STIM_HOME = process.env.STIM_HOME;
   Object.assign(process.env, env);
+  const currentEnv = () => ({ ...serveEnvironment(), ...(env.STIM_HOME ? { STIM_HOME: env.STIM_HOME } : {}) });
 
   const loaded = await loadTransport({
     reference: '@stim-cli/transport-tailscale',
@@ -165,6 +171,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
       stimVersion: stim.version,
       serverVersion: pkg.version,
       env,
+      currentEnv,
       transports: [transport],
       service: {
         label: serviceManagerOrNull()?.runningLabel(process.env) ?? null,

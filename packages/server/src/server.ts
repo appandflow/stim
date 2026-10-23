@@ -249,6 +249,8 @@ export interface ServerOptions {
   stimVersion: string;
   serverVersion: string;
   env: NodeJS.ProcessEnv;
+  /** The environment now, for builds run for other machines to see tools installed since `env` was built. */
+  currentEnv?: () => NodeJS.ProcessEnv;
   /**
    * The transports that carry phones and other machines to this server. Without them, the server uses a Tailscale
    * transport built from `tailscale`, `tailscaleState` and `tailscaleMonitor`. The server listens on each
@@ -1371,6 +1373,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const builds = new BuildHost({
     worker: join(dirname(options.stimCli), 'offload-worker.mjs'),
     env: options.env,
+    currentEnv: options.currentEnv,
     limits: options.buildLimits,
     ready: () => startup.state === 'ready',
     finished: ({ client, repo, ok, error, durationMs }) =>
