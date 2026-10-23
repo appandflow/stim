@@ -279,8 +279,9 @@ today. Reclaiming under load was one of the reported harms.
   non-reaping `readClaimSet` and report an unresolved ticket instead of
   failing, as `peekDeviceSlots` does for `device-waits`.
 - **Housekeeping.** `doctor` reports an unresolved `load-waits` ticket with
-  its `rm` command. `gc` clears a free `load-waits` set through
-  `clearFreeClaimSet`, as it does for the other claim sets.
+  its `rm` command. `gc` does not touch the set: `inspectClaimSet` already
+  tidies an empty one, and taking the set's exclusive claim would make a
+  concurrent ticket take refuse.
 - **The transaction.** It reads `os.loadavg()`, the set and the spacing file,
   all in process, and starts no subprocess.
 - **Spacing file.** An admitted invocation holds no load claim. The spacing
