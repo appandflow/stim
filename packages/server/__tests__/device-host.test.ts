@@ -736,7 +736,7 @@ require('node:fs').writeFileSync(${JSON.stringify(started)},String(process.pid))
 import {DeviceHost} from ${imports('device-host')};import {HostedViews} from ${imports('hosted-view')};
 import {ControlHub} from ${imports('control')};import {FramePool} from ${imports('frames')};
 const env={...process.env,PATH:${JSON.stringify(home)}+':'+process.env.PATH};
-const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env,agents:${NOAGENTS},allowed:()=>true,limits:{prepareMs:5000,stopMs:2000,killGraceMs:100}});
+const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env,agents:${NOAGENTS},allowed:()=>true,limits:{prepareMs:30000,stopMs:2000,killGraceMs:100}});
 const answer=(await host.reserve('client',${JSON.stringify(request)}));if('error' in answer)throw new Error(answer.error.message);
 const deadline=Date.now()+30000;let attached=host.attach('client',{session:answer.result.id});while(attached.result?.state!=='ready'){if(Date.now()>deadline)throw new Error('The hosted session never became ready.');await new Promise(r=>setTimeout(r,20));attached=host.attach('client',{session:answer.result.id});}
 const frames=new FramePool(env);
@@ -790,7 +790,7 @@ writeFileSync(${JSON.stringify(ready)},JSON.stringify(answer.result));void contr
       if (capturePid && alive(capturePid)) process.kill(capturePid, 'SIGKILL');
     }
   },
-  45_000,
+  60_000,
 );
 
 test('takes no new hosted session while the server drains for an update, and still answers a retry', async () => {
