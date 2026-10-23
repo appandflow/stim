@@ -14,12 +14,11 @@ import { phase } from './progress.ts';
 import { candidateRootsAsync, type UnlistedWorktreeDir, type WorktreeSweep } from './worktrees.ts';
 import { runOperationFile } from '../../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
-import { eachLimited, readConcurrency } from './limited.ts';
+import { eachLimited, mapLimited, readConcurrency, sizeConcurrency } from './limited.ts';
 
 const SIZE_TIMEOUT_MS = 30_000;
 const BUILD_STATE_MAX_AGE_MS = 60 * 60_000;
 const BUILD_STATE_TIMEOUT_MS = 10_000;
-const BUILD_STATE_CONCURRENCY = 4;
 const PNPM_STORE = '.pnpm-store';
 const WORKTREES_DIR = '.worktrees';
 
@@ -99,8 +98,8 @@ interface PendingWorktree {
 /**
  * Sizes the regenerable directories maintenance clears and a project-local `.pnpm-store` in each worktree of the
  * sweep, from the disk-usage cache while an entry is under an hour old and no entry was added to or removed from the
- * directory since. Stale directories are measured with one `du` each, sequentially with an operation and at most
- * 4 at once otherwise, with 10 seconds each, so a
+ * directory since. Stale directories are measured with one `du` each, at most 4 at once, one at a time while the
+ * operation declares its children on a claim, with 10 seconds each, so a
  * slow tree delays only itself; a directory du could not measure in time is reported unmeasured (null). Without
  * `measure`, stale directories are reported unmeasured without a `du`. Also lists
  * the directories directly under a repository's `.worktrees/` that are no git worktree at all.
@@ -129,7 +128,7 @@ export async function measureWorktreeSweep(
     : [];
   const worktrees = new Set(due.map(({ sizes }) => sizes)).size;
   if (due.length) phase('worktrees', `measuring the build state of ${plural(worktrees, 'worktree')}`, operation);
-  await eachLimited(due, operation ? 1 : BUILD_STATE_CONCURRENCY, async ({ dir, sizes }) => {
+  await eachLimited(due, sizeConcurrency(operation), async ({ dir, sizes }) => {
     operation?.signal.throwIfAborted();
     const measuredAt = new Date().toISOString();
     const bytes = await duSize(dir, operation);
@@ -184,7 +183,7 @@ async function unlistedWorktreeDirs(operation?: StimContext): Promise<UnlistedWo
       entries.map((entry) => canonicalPath(entry.path)),
     );
   }
-  const found: UnlistedWorktreeDir[] = [];
+  const unlisted: { path: string; repository: string }[] = [];
   for (const [repository, listed] of repositories) {
     operation?.signal.throwIfAborted();
     const parent = join(repository, WORKTREES_DIR);
@@ -200,16 +199,17 @@ async function unlistedWorktreeDirs(operation?: StimContext): Promise<UnlistedWo
       if (!isDirectory(path) || hasLiveGitDir(path)) continue;
       const real = canonicalPath(path);
       if (listed.some((entry) => entry === real || entry.startsWith(`${real}${sep}`))) continue;
-      found.push({
-        path,
-        repository,
-        bytes: await measuredDirectorySizeAsync(path, {
-          timeoutMs: SIZE_TIMEOUT_MS,
-          operation,
-          signal: operation?.signal,
-        }),
-      });
+      unlisted.push({ path, repository });
     }
   }
+  const found = await mapLimited(unlisted, sizeConcurrency(operation), async ({ path, repository }) => ({
+    path,
+    repository,
+    bytes: await measuredDirectorySizeAsync(path, {
+      timeoutMs: SIZE_TIMEOUT_MS,
+      operation,
+      signal: operation?.signal,
+    }),
+  }));
   return found;
 }

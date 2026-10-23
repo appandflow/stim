@@ -172,7 +172,7 @@ async function emptyCache(
 
 function reportFailures(cache: CacheDescriptor, failed: number | undefined, { log, record, fail }: GcOutput): boolean {
   if (!failed) return false;
-  const message = `${failed} entr${failed === 1 ? 'y' : 'ies'} in ${cache.dir} could not be removed`;
+  const message = `${failed} entr${failed === 1 ? 'y' : 'ies'} in ${cache.dir} could not be read or removed`;
   log(chalk.red(`${cache.name}: ${message}`));
   record('cache', 'failed', cache.name, { id: cache.dir, detail: message });
   fail();
