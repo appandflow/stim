@@ -1084,7 +1084,7 @@ xcodebuild -downloadPlatform iOS -buildVersion <version>, or a pointer to the
 Xcode problem when xcode-select is the cause. A stim-server that reports no
 developerDir keeps the prose fix. It also needs an
 iPhone simulator on the target runtime. A missing or different global CocoaPods
-keeps automatic placement from choosing the machine for a project that does not
+keeps auto, remote and remote-only placement from choosing the machine for a project that does not
 pin it, unless the machine already holds the exact artifact; the placement line
 says why and doctor shows the install command. A named --remote-build still
 sends the build, and a pod install that fails there reports "pod install failed"

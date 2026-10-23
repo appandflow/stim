@@ -688,7 +688,7 @@ describe('macOS build placement and promotion', () => {
     it.each([
       ['another node hosts it', { buildMachine: 'mini', hostServerKey: 'OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOA' }],
       ['it is hosted on no remote Mac', { buildMachine: 'mini' }],
-      ['the build machine is not named', { buildMachine: 'auto', hostServerKey: nodeKey }],
+      ['the build machine is not named', { buildMachine: 'remote', hostServerKey: nodeKey }],
     ])('keeps the full toolchain match with this Mac when %s', async (_name, extras) => {
       const client = clientCache();
       await build({ ...extras, cache: client.cache });

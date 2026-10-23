@@ -354,7 +354,7 @@ A missing simulator runtime on a working Xcode gets
 `xcode-select`, the runtime row says it follows from the Xcode row. The worker
 also needs
 an iPhone simulator on the target runtime. The Stim build compatibility version
-must match (see [Stim versions](#stim-versions)), and so must the CPU architecture for iOS and macOS builds (macOS builds that run on the same worker excepted). A global CocoaPods that is missing or another version keeps `auto` placement from choosing the machine but never refuses a named one; see
+must match (see [Stim versions](#stim-versions)), and so must the CPU architecture for iOS and macOS builds (macOS builds that run on the same worker excepted). A global CocoaPods that is missing or another version keeps `auto`, `remote` and `remote-only` placement from choosing the machine but never refuses a named one; see
 [CocoaPods on the worker](#cocoapods-on-the-worker). When the project's `Gemfile.lock`, in `ios/` or the project root, pins CocoaPods,
 the worker needs Bundler and both machines use the pinned version. For macOS, Xcode and the macOS SDK must match, except when `stim macos --remote <machine> --remote-build <machine>` builds and runs the app on the same Mac; then only the Stim build compatibility version must match (see [Run it on another Mac](./macos.md#run-it-on-another-mac)). For Android, JDK major
 versions must match: the worker builds on an installed JDK of this machine's major
@@ -378,7 +378,7 @@ not match `Podfile.lock`. Stim syncs the files git lists, and `Pods` is
 gitignored, so the first build of a project on a worker installs them there.
 A worker without CocoaPods, or with another version, fails or rewrites the
 `COCOAPODS:` line of a committed `Podfile.lock` there, which the fingerprint check
-reports as `fingerprint-mismatch`. So `auto` placement skips it for a project
+reports as `fingerprint-mismatch`. So `auto`, `remote` and `remote-only` placement skip it for a project
 that does not pin CocoaPods, unless it already holds the exact artifact, and
 the placement line and `stim doctor` say why, with `brew install cocoapods` for a
 worker that has none. A named `--remote-build` still sends the build there. If

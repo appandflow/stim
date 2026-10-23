@@ -365,12 +365,13 @@ describe('pickOffer', () => {
   it('skips a worker with another CocoaPods in auto and shows why, sends a named build there, and takes a held artifact', () => {
     for (const cocoapods of [null, '1.17.0']) {
       const toolchain = { cocoapods };
-      const auto = pick([offer({ toolchain })]);
-      expect(auto.order).toEqual([]);
-      expect(auto.reasons[0]).toContain('CocoaPods');
-      expect(auto.candidates[0]).toMatchObject({ code: 'version-mismatch', detail: ['cocoapods'] });
+      for (const selected of ['auto', 'remote', 'remote-only']) {
+        const automatic = pick([offer({ toolchain })], { selected });
+        expect(automatic.order).toEqual([]);
+        expect(automatic.reasons[0]).toContain('CocoaPods');
+        expect(automatic.candidates[0]).toMatchObject({ code: 'version-mismatch', detail: ['cocoapods'] });
+      }
       const named = pickOffer({
-        mode: 'auto',
         here: { ...IDLE, builds: 3 },
         target: IOS,
         selected: 'mac0',
@@ -392,7 +393,6 @@ describe('pickOffer', () => {
     });
     expect(
       pickOffer({
-        mode: 'auto',
         here: { ...IDLE, builds: 3 },
         target: IOS,
         artifact: 'react-native-ios',
