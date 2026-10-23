@@ -131,8 +131,6 @@ public struct MachineDetail: Equatable, Sendable {
   public var versions: [MachineDetailRow]
   public var approvals: [MachineDetailRow]
 
-  public var isEmpty: Bool { groups.isEmpty }
-
   public struct Input: Sendable {
     public var entry: String
     public var status: BuildMachineStatus?
