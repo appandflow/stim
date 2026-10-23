@@ -136,6 +136,16 @@ describe('buildLedgerRecord', () => {
     expect(record.placement).toEqual({ where: 'local', fellBack: true, reason: 'mini refused: busy' });
   });
 
+  test('an offload that started and then fell back is recorded as a local build', () => {
+    const record = buildLedgerRecord(
+      run({
+        record: { offloadFallback: 'mini lost its connection' },
+        offload: { host: 'mini', phaseMs: { sync: 2_000 } },
+      }),
+    );
+    expect(record.placement).toEqual({ where: 'local', fellBack: true, reason: 'mini lost its connection' });
+  });
+
   test('maps cache hits, bypasses and miss reasons', () => {
     expect(buildLedgerRecord(run({ record: { cacheHit: 'remote' } })).cache).toMatchObject({
       result: 'hit',
@@ -179,6 +189,25 @@ describe('the ledger file', () => {
     const existing = '{"n":1}\n{"n":2}\n{"n":3}\n';
     expect(appendCapped(existing, '{"n":4}', 2)).toBe('{"n":3}\n{"n":4}\n');
     expect(appendCapped('', '{"n":1}', 2)).toBe('{"n":1}\n');
+  });
+
+  test('a run that records twice keeps its last record', () => {
+    appendBuildLedger(buildLedgerRecord(run({ id: 'same', now: T0 + 1 })));
+    appendBuildLedger(buildLedgerRecord(run({ id: 'other', now: T0 + 2 })));
+    appendBuildLedger(
+      buildLedgerRecord(
+        run({
+          id: 'same',
+          now: T0 + 3,
+          outcome: 'failed',
+          record: { status: 'failed', errorCode: 'STIM_LAUNCH_FAILED' },
+        }),
+      ),
+    );
+    expect(readBuildLedger().map((record) => [record.id, record.outcome])).toEqual([
+      ['other', 'succeeded'],
+      ['same', 'failed'],
+    ]);
   });
 
   test('keeps the last 500 records in order and reads them oldest first', () => {

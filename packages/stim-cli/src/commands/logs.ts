@@ -421,8 +421,10 @@ function printMachineLog(
   const query = { sources: [log.source], minLevel, since: opts.since, grep: opts.grep };
   const dir = log.dir();
   const offsets = opts.follow ? fileSizes(dir) : null;
-  const records = queryLogs({ ...query, records: log.read(), tail });
+  const all = log.read();
+  const records = queryLogs({ ...query, records: all, tail });
   for (const record of records) emit(record);
+  if (opts.follow && log.key) for (const record of all) printed.add(log.key(record));
   if (!opts.follow) {
     if (records.length === 0 && !opts.json) console.error(chalk.dim(`No matching log records in ${dir}`));
     return;

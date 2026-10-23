@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -371,6 +372,35 @@ describe('logs command', () => {
       out.length = 0;
       await run({ source: ['builds'], json: true, tail: '1' });
       expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['b']);
+    });
+
+    test('--follow with --tail prints only a build that finished after it started, when the ledger is rewritten', async () => {
+      const file = join(tmpHome, 'builds', 'builds.ndjson');
+      const before = new Set([...process.listeners('SIGINT'), ...process.listeners('SIGTERM')]);
+      try {
+        await run({ source: ['builds'], json: true, tail: '1', follow: true });
+        expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['b']);
+        const next = [
+          buildRecord(1, 'a', 'succeeded', 'info'),
+          buildRecord(2, 'b', 'failed', 'error'),
+          buildRecord(3, 'c', 'succeeded', 'info'),
+        ];
+        writeFileSync(`${file}.tmp`, next.map((r) => `${JSON.stringify(r)}\n`).join(''));
+        renameSync(`${file}.tmp`, file);
+        await vi.waitFor(() => expect(out.length).toBeGreaterThan(1), { timeout: 4000 });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['b', 'c']);
+      } finally {
+        for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+          for (const listener of process.listeners(signal)) {
+            if (before.has(listener)) continue;
+            process.removeListener(signal, listener);
+            try {
+              (listener as () => void)();
+            } catch {}
+          }
+        }
+      }
     });
   });
 

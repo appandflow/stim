@@ -145,7 +145,9 @@ export function lastBuildRecord({
   offloadFallback = null,
   message = null,
   remedy = null,
+  deviceSerial = null,
 }: {
+  deviceSerial?: string | null;
   message?: string | null;
   remedy?: string | null;
   devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
@@ -195,7 +197,7 @@ export function lastBuildRecord({
   if (recorded.length) record.diagnostics = recorded;
   const device = deviceName ?? avdName;
   const ledger: BuildLedgerExtras = {
-    ...(device ? { device: { name: device } } : {}),
+    ...(device && device !== deviceSerial ? { device: { name: device } } : {}),
     ...(message ? { message } : {}),
     ...(remedy ? { remedy } : {}),
   };

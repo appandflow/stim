@@ -182,10 +182,13 @@ export function iosFacts({
 }
 
 export function iosLedgerDevice(
-  device: { deviceName?: string | null; name?: string | null; runtime?: string | null } | null | undefined,
+  device:
+    | { deviceName?: string | null; deviceUdid?: string | null; name?: string | null; runtime?: string | null }
+    | null
+    | undefined,
 ): BuildLedgerExtras['device'] {
   const name = device?.deviceName ?? device?.name;
-  return name ? { name, runtime: device?.runtime ?? null } : null;
+  return name && name !== device?.deviceUdid ? { name, runtime: device?.runtime ?? null } : null;
 }
 
 export function writeLastBuild(
