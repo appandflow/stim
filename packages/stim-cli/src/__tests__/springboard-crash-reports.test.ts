@@ -152,6 +152,16 @@ test('copySpringBoardCrashReports still lists reports already stored when the di
   expect(again).toEqual(first);
 });
 
+test('copySpringBoardCrashReports lists stored reports that are older than a new one the full directory cannot take', async () => {
+  mkdirSync(dest);
+  for (let i = 0; i < 39; i++) writeFileSync(join(dest, `SpringBoard-old-${i}.ips`), 'x');
+  report('', 'SpringBoard-2026-10-22-235802.ips', own('2026-10-22 23:58:02.0000 -0400'), 2000);
+  await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home });
+  report('', 'SpringBoard-2026-10-22-235815.ips', own('2026-10-22 23:58:15.0000 -0400'), 1000);
+  const result = await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home });
+  expect(result).toEqual({ files: ['SpringBoard-2026-10-22-235802.ips'], dropped: 1 });
+});
+
 test('copySpringBoardCrashReports finds this simulator among many newer reports of other simulators', async () => {
   report('', 'SpringBoard-2026-10-22-235700.ips', own('2026-10-22 23:57:00.0000 -0400'), 120_000);
   for (let i = 0; i < 30; i++) {

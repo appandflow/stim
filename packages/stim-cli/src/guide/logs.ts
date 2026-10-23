@@ -253,8 +253,9 @@ default, level info unless noted. They show in a plain \`logs\` and in
     bootstatus_done     simctl bootstatus -b returned
     springboard_started SpringBoard finished starting; pid is its pid
     viewer_opened       the simulator viewer was asked to open it
-    simslim_reboot      SimSlim changed the simulator and SpringBoard has a new
-                        pid; pidBefore is null when it could not be read
+    simslim_reboot      SimSlim changed the simulator and SpringBoard's pid
+                        changed; pidBefore and pidAfter are null when the pid
+                        could not be read
     restart             warn: SpringBoard is not running after boot and the
                         simulator was shut down; Stim boots it once more
   event springboard_crash_reports, written before that restart and again if

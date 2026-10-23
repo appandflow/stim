@@ -91,11 +91,15 @@ export async function copySpringBoardCrashReports({
       continue;
     }
     const bytes = Buffer.byteLength(text);
-    if (stored >= MAX_STORED || copiedBytes + bytes > MAX_COPIED_BYTES) break;
+    if (stored >= MAX_STORED || copiedBytes + bytes > MAX_COPIED_BYTES) continue;
     try {
       await writeFile(join(destDir, name), text, { flag: 'wx', mode: 0o600 });
     } catch (error) {
-      await rm(join(destDir, name), { force: true });
+      if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
+        files.push(name);
+        continue;
+      }
+      await rm(join(destDir, name), { force: true }).catch(() => {});
       return { files, dropped: 0, failure: error instanceof Error ? error.message : String(error) };
     }
     stored++;

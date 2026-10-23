@@ -677,6 +677,8 @@ async function preserveSpringBoardReports(record: IosBootRecorder, udid: string,
     record('springboard_crash_reports', {
       level: 'warn',
       files: [],
+      dropped: 0,
+      failure: error instanceof Error ? error.message : String(error),
       dir,
       msg: `could not copy SpringBoard crash reports for ${udid}: ${error instanceof Error ? error.message : String(error)}`,
     });
