@@ -170,10 +170,30 @@ function statsSample(platform, startedMs, endedMs, wallMs) {
 const STEPS = [
   { scenario: 'warm', group: 'warm', args: ['worktree', 'warm'] },
   { scenario: 'start', group: 'start', args: ['start'] },
-  { scenario: 'ios-first', group: 'ios', args: ['ios'], platform: 'ios' },
-  { scenario: 'ios-rerun', group: 'ios', args: ['ios'], platform: 'ios' },
-  { scenario: 'android-first', group: 'android', args: ['android'], platform: 'android' },
-  { scenario: 'android-rerun', group: 'android', args: ['android'], platform: 'android' },
+  {
+    scenario: 'ios-first',
+    group: 'ios',
+    args: ['ios', '--remote', 'local', '--remote-build', 'local'],
+    platform: 'ios',
+  },
+  {
+    scenario: 'ios-rerun',
+    group: 'ios',
+    args: ['ios', '--remote', 'local', '--remote-build', 'local'],
+    platform: 'ios',
+  },
+  {
+    scenario: 'android-first',
+    group: 'android',
+    args: ['android', '--remote', 'local', '--remote-build', 'local'],
+    platform: 'android',
+  },
+  {
+    scenario: 'android-rerun',
+    group: 'android',
+    args: ['android', '--remote', 'local', '--remote-build', 'local'],
+    platform: 'android',
+  },
   { scenario: 'stop', group: 'stop', args: ['stop'] },
 ].filter((step) => wanted.has(step.group));
 

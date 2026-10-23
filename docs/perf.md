@@ -49,7 +49,7 @@ the machine (model, CPU, memory, macOS, Xcode, Node), the Stim version, and the 
 Versions older than `STIM_TRACE` report wall time and the stats.json phases only. The format is in the `perf-data`
 branch README.
 
-It runs the real commands against your real Stim home, on real simulators and emulators, and uses the same machine
+`ios` and `android` run with `--remote local --remote-build local`, so the benchmark measures this machine and never uses a remote Mac, whatever `remote.*` and `ios.remote` say. It runs the real commands against your real Stim home, on real simulators and emulators, and uses the same machine
 caps as any other run. It sets `STIM_MAINTENANCE=off` for them, so automatic maintenance cannot touch other
 worktrees or devices during a measurement, and it removes only the worktrees it added, through `stim worktree
 remove`; it does so on interrupt too, and keeps the scratch directory and says so when a removal fails. It refuses to start while the 1-minute load average is above `--max-load` (80); with
