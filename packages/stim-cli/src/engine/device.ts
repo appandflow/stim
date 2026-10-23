@@ -199,6 +199,7 @@ export async function ensureBooted({
     return ensureIosBooted({
       device,
       projectPath,
+      slot,
       deviceSlotWait,
       simulatorApp,
       timeoutMs: timeoutMs ?? IOS_BOOT_TIMEOUT_MS,

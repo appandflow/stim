@@ -4,7 +4,7 @@ import { ambientContext } from '@stim-cli/core';
 import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
-import { workspaceId } from '../workspace/paths.ts';
+import { workspaceId, workspaceLogsDir } from '../workspace/paths.ts';
 import {
   clearDevice,
   getConfigDir,
@@ -18,6 +18,7 @@ import { getExecutor } from '../exec.ts';
 import { hostMemoryPressureAdvice, readHostMemoryPressure, reportMemoryCulprits } from '../host-memory.ts';
 import {
   bootIosSim,
+  type IosBootEvent,
   createOwnedIosSim,
   iosSimulatorFailureAdvice,
   readSpringBoardPid,
@@ -53,6 +54,8 @@ import {
 } from './device-capacity.ts';
 import type { BootResult, DeviceFlags, DeviceSettings, Notify, OwnedDeviceRecord } from './device.ts';
 import { cancellableSleep } from '../cancellation.ts';
+import { copySpringBoardCrashReports } from '../devices/springboard-crash-reports.ts';
+import { iosBootRecorder, type IosBootRecorder } from './ios-boot-log.ts';
 import { isJsonObject } from '@stim-cli/core/state';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
@@ -62,6 +65,21 @@ export interface IosBoot {
   done: Promise<void>;
 }
 
+type IosBootOrigin = 'adopted' | 'created' | 'existing' | 'restart';
+
+function recordBootPhase(record: IosBootRecorder, udid: string, origin?: IosBootOrigin) {
+  return (event: IosBootEvent) => {
+    const pid = 'pid' in event ? event.pid : undefined;
+    const boot = event.phase === 'boot_requested' ? origin : undefined;
+    record('ios_boot', {
+      phase: event.phase,
+      ...(pid === undefined ? {} : { pid }),
+      ...(boot === undefined ? {} : { boot }),
+      msg: `ios boot ${udid}: ${event.phase}${pid === undefined ? '' : ` pid ${pid}`}${boot === undefined ? '' : ` (${boot})`}`,
+    });
+  };
+}
+
 function startIosBoot(
   udid: string,
   configure: () => Promise<unknown>,
@@ -69,13 +87,21 @@ function startIosBoot(
   out: Notify,
   simulatorApp: IosSimulatorApp | undefined,
   root: string,
+  slot: string | undefined,
+  origin: IosBootOrigin,
   deviceSlotWait?: DeviceSlotWaitPolicy,
 ): IosBoot {
   const done = withDeviceBootAdmission(
     { platform: 'ios', key: udid },
     async () => {
       out(chalk.dim(phaseLine('device', `booting ${label} (${udid})`)));
-      await bootIosSim(udid, { label, out, simulatorApp, env: ambientContext()?.env });
+      await bootIosSim(udid, {
+        label,
+        out,
+        simulatorApp,
+        env: ambientContext()?.env,
+        onPhase: recordBootPhase(iosBootRecorder(root, slot, udid), udid, origin),
+      });
       await configure();
       await muteBootedSimulator(udid, out);
     },
@@ -232,6 +258,8 @@ export async function ensureOwnedIosDevice({
               out,
               flags.simulatorApp,
               projectPath,
+              slot,
+              record.adoptionPending ? 'adopted' : 'existing',
               flags.deviceSlotWait,
             ),
             ...facts,
@@ -298,6 +326,8 @@ export async function ensureOwnedIosDevice({
       out,
       flags.simulatorApp,
       projectPath,
+      slot,
+      'adopted',
       flags.deviceSlotWait,
     );
     return { ...adopted, booting, deviceType: choice.deviceType, runtime: choice.runtime };
@@ -335,6 +365,8 @@ export async function ensureOwnedIosDevice({
     out,
     flags.simulatorApp,
     projectPath,
+    slot,
+    'created',
     flags.deviceSlotWait,
   );
   return {
@@ -558,12 +590,27 @@ async function configureOwnedIosSim({
     updated.simslimApplied = { profile: identity, springBoardPid: springBoardAfter };
   }
   await withConfigLockAsync(() => setDevice(projectPath, 'ios', updated, slot));
-  return { record: updated, rebooted: slimConfigured && springBoardAfter !== springBoardBefore };
+  const rebooted = slimConfigured && springBoardAfter !== springBoardBefore;
+  if (rebooted && !result.notInstalled) {
+    iosBootRecorder(
+      projectPath,
+      slot,
+      record.deviceUdid,
+    )('ios_boot', {
+      phase: 'simslim_reboot',
+      pidBefore: springBoardBefore,
+      pidAfter: springBoardAfter,
+      msg: `ios boot ${record.deviceUdid}: simslim_reboot (SpringBoard pid ${springBoardBefore ?? 'unknown'} to ${springBoardAfter ?? 'unknown'})`,
+    });
+  }
+  return { record: updated, rebooted };
 }
 
 type IosBootArgs = {
   device?: OwnedDeviceRecord | null;
   projectPath: string;
+  slot?: string;
+  origin?: IosBootOrigin;
   deviceSlotWait?: DeviceSlotWaitPolicy;
   simulatorApp?: IosSimulatorApp;
   timeoutMs: number;
@@ -581,12 +628,24 @@ export async function ensureIosBooted(args: IosBootArgs): Promise<BootResult> {
   const udid = device?.deviceUdid;
   if (!springBoardDown || !device || !udid) return first;
   out(chalk.yellow(phaseLine('device', `SpringBoard is not running on ${udid}; restarting the simulator once`)));
+  const record = iosBootRecorder(projectPath, args.slot, udid);
+  await preserveSpringBoardReports(record, udid, projectPath);
+  record('ios_boot', {
+    phase: 'restart',
+    level: 'warn',
+    msg: `ios boot ${udid}: restart (SpringBoard is not running after boot; restarting once)`,
+  });
   const stopped = await teardownOwnedIosSim(udid, { workspace: projectPath });
   if (stopped.status !== 'torn-down') {
     return { ...first, reason: `${first.reason} The restart did not run: ${stopped.reason ?? stopped.status}.` };
   }
   const { booted: _booted, booting: _booting, ...unbooted } = device;
-  const { springBoardDown: stillDown, ...second } = await bootOwnedIosSim({ ...args, device: unbooted });
+  const { springBoardDown: stillDown, ...second } = await bootOwnedIosSim({
+    ...args,
+    device: unbooted,
+    origin: 'restart',
+  });
+  if (stillDown) await preserveSpringBoardReports(record, udid, projectPath);
   return stillDown
     ? {
         ...second,
@@ -595,9 +654,33 @@ export async function ensureIosBooted(args: IosBootArgs): Promise<BootResult> {
     : second;
 }
 
+async function preserveSpringBoardReports(record: IosBootRecorder, udid: string, root: string): Promise<void> {
+  const dir = workspaceLogsDir(root);
+  try {
+    const files = await copySpringBoardCrashReports({ udid, destDir: dir });
+    record('springboard_crash_reports', {
+      level: files.length ? 'warn' : 'info',
+      files,
+      dir,
+      msg: files.length
+        ? `copied ${files.length} SpringBoard crash report(s) for ${udid} to ${dir}: ${files.join(', ')}`
+        : `no SpringBoard crash report for ${udid} from the last 10 minutes`,
+    });
+  } catch (error) {
+    record('springboard_crash_reports', {
+      level: 'warn',
+      files: [],
+      dir,
+      msg: `could not copy SpringBoard crash reports for ${udid}: ${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
+}
+
 async function bootOwnedIosSim({
   device,
   projectPath,
+  slot,
+  origin,
   deviceSlotWait,
   simulatorApp,
   timeoutMs,
@@ -606,6 +689,12 @@ async function bootOwnedIosSim({
 }: IosBootArgs): Promise<IosBootAttempt> {
   const udid = device?.deviceUdid;
   if (!udid) return { failed: true, reason: 'No iOS simulator is recorded for this project.' };
+  const record = iosBootRecorder(projectPath, slot, udid);
+  const onPhase = recordBootPhase(record, udid, origin ?? (device.adoptionPending ? 'adopted' : 'existing'));
+  const openViewer = async () => {
+    await configuredIosSimulatorViewer(simulatorApp, ambientContext()?.env).open(udid);
+    onPhase({ phase: 'viewer_opened' });
+  };
   const ready = async (): Promise<IosBootAttempt> => {
     try {
       // Apple simctl spawn searches the device PATH for bare names; absolute paths use the host root.
@@ -642,7 +731,7 @@ async function bootOwnedIosSim({
   }
   const readiness = device?.booted === udid ? await ready() : null;
   if (readiness?.ok) {
-    if (simulatorApp !== undefined) await configuredIosSimulatorViewer(simulatorApp, ambientContext()?.env).open(udid);
+    if (simulatorApp !== undefined) await openViewer();
     return readiness;
   }
 
@@ -667,8 +756,7 @@ async function bootOwnedIosSim({
   const sim = resolved.sim as SimRecord;
   if (sim.state === 'Booted') {
     const result = readiness ?? (await ready());
-    if (result.ok && simulatorApp !== undefined)
-      await configuredIosSimulatorViewer(simulatorApp, ambientContext()?.env).open(udid);
+    if (result.ok && simulatorApp !== undefined) await openViewer();
     return result;
   }
 
@@ -678,7 +766,14 @@ async function bootOwnedIosSim({
       { platform: 'ios', key: udid },
       async () => {
         out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
-        await bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp, env: ambientContext()?.env });
+        await bootIosSim(udid, {
+          timeoutMs,
+          label: sim.name,
+          out,
+          simulatorApp,
+          env: ambientContext()?.env,
+          onPhase,
+        });
         await muteBootedSimulator(udid, out);
       },
       { ...deviceSlotWait, root: projectPath, out },
