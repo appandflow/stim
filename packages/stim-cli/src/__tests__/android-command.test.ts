@@ -7396,7 +7396,7 @@ describe('strict remote machine selection', () => {
   });
 
   test.each([null, 'release'])(
-    'local overrides force mode for %s and records the actual local compile',
+    'local overrides a remote setting for %s and records the actual local compile',
     async (variant) => {
       configureMini();
       writeConfigSetting({ scope: 'machine' }, 'remote.build', 'remote');

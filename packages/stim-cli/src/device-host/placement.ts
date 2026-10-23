@@ -21,7 +21,6 @@ export interface PlacementOffer {
   choice: HostedIosChoice | HostedAndroidChoice | HostedMacosChoice | null;
   declined: string | null;
   capacity: { available: number | null };
-  /** `maxLoadPerCore` is the host's own `server.maxLoadPerCore`; a stim-server that predates it reports none. */
   resources: {
     loadPerCore: number | null;
     maxLoadPerCore?: number;

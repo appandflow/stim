@@ -11,21 +11,17 @@ export const PLACEMENT_WORDS = ['local', 'auto', 'remote', 'remote-only'] as con
 
 export type PlacementWord = (typeof PLACEMENT_WORDS)[number];
 
-/** The automatic words, which choose among the machines in `remote.machines`. */
 export type AutomaticPlacement = Exclude<PlacementWord, 'local'>;
 
-/** The placement word `value` spells, ignoring case and surrounding space, or null when it is not one. */
 export function placementWord(value: string): PlacementWord | null {
   const word = value.trim().toLowerCase();
   return PLACEMENT_WORDS.find((each) => each === word) ?? null;
 }
 
-/** Whether the word asks for remote machines before this one. */
 export function prefersRemote(word: PlacementWord): boolean {
   return word === 'remote' || word === 'remote-only';
 }
 
-/** Whether the word may run on this machine when no remote machine takes the run. */
 export function mayRunHere(word: PlacementWord): boolean {
   return word !== 'remote-only';
 }

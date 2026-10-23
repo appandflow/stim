@@ -301,7 +301,6 @@ export interface DoctorReport {
   stim: StimVersionReport;
   budget: BudgetReport | null;
   maintenance: ReturnType<typeof maintenanceStatus> & { logPath: string };
-  /** `priority` is the 1-based position in `remote.machines`, the order placement tries the machines in. */
   remoteMachines: Array<BuildMachinesInspection['machines'][number] & { priority?: number }>;
   deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>['machines'][number] & { priority?: number }>;
   toolchain: ToolchainReport | null;

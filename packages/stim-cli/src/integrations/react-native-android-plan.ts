@@ -286,7 +286,7 @@ export async function planReactNativeAndroid(
     if (hostedPlan.kind === 'unknown') {
       return refuse({
         code: 'STIM_BAD_ARG',
-        message: `android.remote is ${target.machine}, and its emulator ABI is unknown here: ${hostedPlan.reason}.`,
+        message: `android.remote is ${target.placement ?? target.machine}, and its emulator ABI is unknown here: ${hostedPlan.reason}.`,
         remedy:
           'Run `stim android` to build for the remote device, or unset android.remote to plan the owned emulator.',
       });

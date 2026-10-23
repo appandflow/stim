@@ -962,7 +962,7 @@ three seconds per probe and the run's device selectors. It skips declined
 hosts, incompatible choices, elevated or unknown memory pressure, zero
 available capacity and a host whose load per core is at or above its own
 `server.maxLoadPerCore` (a host that reports no limit uses this machine's). If this
-machine has a free slot, unknown host load is skipped; when the cap is full or a queue
+machine has a free slot, unknown host load is skipped under `auto` (`remote` admits it); when the cap is full or a queue
 is ahead, it is allowed. It resolves the build preference from `--remote-build`, then
 `STIM_REMOTE_BUILD`, then `remote.build`. A named preference ranks first, followed by
 `remote.machines` order, so the first host with room fills before the next gets a run.

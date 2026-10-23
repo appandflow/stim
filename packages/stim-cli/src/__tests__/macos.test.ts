@@ -362,7 +362,6 @@ describe('macOS build placement and promotion', () => {
     swiftTmpdirs = [];
     plist = { CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' };
     buildRecord = { state: 'running', startedAt: new Date().toISOString() };
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildPoolDisabled', []);
     vi.spyOn(machines, 'pairedMachines').mockReturnValue([
       { machine: 'mini' } as ReturnType<typeof machines.pairedMachines>[number],
     ]);
@@ -784,6 +783,7 @@ describe('macOS build placement and promotion', () => {
   });
 
   it('automatic placement never falls back to Swift when local is excluded', async () => {
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildPoolDisabled', []);
     const config = loadConfig()!;
     config.remote = { ...config.remote, buildPoolDisabled: ['local'] };
     saveConfig(config);

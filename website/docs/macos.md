@@ -379,7 +379,7 @@ another Mac over your tailnet, without SSH. List that Mac in
 a person on that Mac runs the `stim-server setup` command it printed, then run
 `stim doctor` once more. Stim connects only to the stim-server that proves it
 holds the key pinned at approval. If the host refuses or is
-unreachable, the command fails; it never launches the app locally instead.
+unreachable, the command fails; with a named Mac it never launches the app locally instead.
 
 The `--remote` flag and the `macos.remote` setting take a placement word or a
 remote Mac name from `remote.machines`; the flag overrides the setting:

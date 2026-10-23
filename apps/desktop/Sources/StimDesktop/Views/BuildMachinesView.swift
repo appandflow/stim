@@ -357,7 +357,6 @@ struct BuildMachinesContent<ThisMac: View>: View {
 
 private struct BuildMachineRow<Toggles: View>: View {
   var entry: String
-  /// 1-based place in `remote.machines`, the order builds, simulators and macOS apps try the machines in.
   var position: Int
   var count: Int
   var move: (Int) -> Void

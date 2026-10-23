@@ -20,7 +20,6 @@ final class AddMachineModel {
 
   typealias Page = SetupPage
   var page: Page = .setup
-  /// Where this Mac builds; nil keeps a current `remote.build` the wizard does not offer, like a machine's name.
   var mode: WizardMode? = .local
   private(set) var toolsStatus: BuildMachineStatus?
   private(set) var androidStatus: BuildMachineStatus?

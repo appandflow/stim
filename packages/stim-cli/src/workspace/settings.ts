@@ -629,7 +629,6 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   return unknown;
 }
 
-/** The warning for a key Stim no longer reads, naming the command that sets what a removed setting meant. */
 export function inertSettingWarning(settings: unknown, key: string): string {
   const advice = replacementAdvice(key, settingValueAt(settings, key));
   const instead = advice
@@ -668,7 +667,6 @@ const MACHINE_READABLE_SETTINGS = SETTINGS.filter(
     isLayeredSetting(setting) && setting.scopes.includes('machine') && !setting.key.startsWith('optimizations.'),
 );
 
-/** The removed settings `machine` still holds, nested as in the config, so doctor and settings can name their replacements. */
 export function removedMachineSettings(machine: unknown): SettingsObject {
   const settings: SettingsObject = {};
   for (const key of Object.keys(REPLACED_SETTINGS)) {
@@ -917,7 +915,6 @@ export function cacheProviderSettingError(settings: SettingsObject): string | nu
   return null;
 }
 
-/** `machine: 'auto'` stands for a placement word that chooses among machines; `placement` says which one. */
 export type IosRemoteTarget =
   | { kind: 'backend'; backend: RemoteDeviceBackend }
   | { kind: 'machine'; machine: string; placement?: AutomaticPlacement };

@@ -93,7 +93,6 @@ export interface MachineCapacity {
   maxLoadPerCore: number;
 }
 
-/** This machine's `server.maxLoadPerCore`. */
 export function maxLoadPerCore(): number {
   const value = loadConfig()?.server?.maxLoadPerCore;
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;

@@ -80,7 +80,6 @@ export type HostedNativeOffer = {
     cpus: number;
     /** Five-minute system load divided by available CPU count. */
     loadPerCore: number;
-    /** The host's `server.maxLoadPerCore`, at or above which it counts as saturated; absent from an older stim-server. */
     maxLoadPerCore?: number;
     memoryFreeBytes: number;
     memoryPressure: 'normal' | 'warning' | 'critical' | null;

@@ -45,7 +45,6 @@ export async function planHostedDevice({
   slot: string;
   platform: 'ios' | 'android';
   machine: string;
-  /** Which automatic placement `machine: 'auto'` stands for. */
   placement?: AutomaticPlacement;
   selectors: HostedDeviceSelectors;
   /** Whether the choice keys the build as this machine's own device would; null when this machine's key is unknown. */

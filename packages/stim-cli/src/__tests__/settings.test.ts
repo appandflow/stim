@@ -478,7 +478,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'macos.remote': {
     valid: 'remote-only',
     invalid: 'bad name',
-    expected: 'local, auto, remote, remote-only, or a tailnet machine name',
+    expected: 'local, auto, remote, remote-only, or a tailnet machine name (macOS has no eas or proxy backend)',
   },
   'ios.projectPath': { valid: '.', invalid: {}, expected: 'a string path' },
   'ios.simslim': { valid: 'on', invalid: true, expected: 'one of: on, off' },

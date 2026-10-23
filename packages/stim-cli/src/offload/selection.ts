@@ -47,16 +47,11 @@ export function parseBuildMachineOption(value: string): string {
   }
 }
 
-/** Whether `selected` lets Stim choose among this machine and `remote.machines` rather than naming one place. */
 export function automaticBuild(selected: string): boolean {
   const word = placementWord(selected);
   return word !== null && word !== 'local';
 }
 
-/**
- * Refuses a build that would run on this machine when the selection or the build pool excludes it, giving `reason`
- * (why the build could not go elsewhere) first.
- */
 export function requireLocalBuild(selected: string, reason?: string): void {
   const word = placementWord(selected);
   const lead = reason ? `${reason}; ` : '';
@@ -68,7 +63,6 @@ export function requireLocalBuild(selected: string, reason?: string): void {
     );
 }
 
-/** Whether `selected` names one machine, which takes the build with no fallback and no other machine considered. */
 export function namedBuildMachine(selected: string): boolean {
   return placementWord(selected) === null;
 }

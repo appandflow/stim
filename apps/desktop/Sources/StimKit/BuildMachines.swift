@@ -613,8 +613,6 @@ public enum OffloadMachines {
     return rest.isEmpty ? nil : encode(rest)
   }
 
-  /// The list with `entry` moved `offset` places toward the front (negative) or back as JSON text, or nil when it
-  /// is not listed or the move would leave the list as it is. The order is the placement priority.
   public static func moving(_ entry: String, by offset: Int, in entries: [String]) -> String? {
     guard let from = entries.firstIndex(of: entry) else { return nil }
     let to = min(max(from + offset, 0), entries.count - 1)

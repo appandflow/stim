@@ -679,7 +679,7 @@ one that tailscale status reports as running an OS other than macOS, with a
 A compatible choice, no declined reason, normal memory pressure, available
 capacity and a load per core under the host's own server.maxLoadPerCore are
 required (a host that reports no limit uses this machine's). With a free local
-slot, a host with unknown load is skipped; with a full cap or a queue ahead, an
+slot, a host with unknown load is skipped under auto (remote admits it); with a full cap or a queue ahead, an
 admitted host with unknown load is allowed. Admitted hosts are tried in order:
 the host named by the build preference (flag > STIM_REMOTE_BUILD > remote.build)
 when it names a machine, then remote.machines order, so the first listed host with

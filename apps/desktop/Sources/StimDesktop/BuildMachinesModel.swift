@@ -378,8 +378,6 @@ final class BuildMachinesModel {
     await write(entry, value: OffloadMachines.removing(entry, from: entries ?? []), ask: repins, checkout: checkout)
   }
 
-  /// Moves `entry` one place toward the front (-1) or back (+1) of `remote.machines`, the order placement tries the
-  /// machines in. The statuses are keyed by entry, so nothing needs asking again.
   func move(_ entry: String, by offset: Int) async {
     guard !isBusy, let value = OffloadMachines.moving(entry, by: offset, in: entries ?? []) else { return }
     working = entry

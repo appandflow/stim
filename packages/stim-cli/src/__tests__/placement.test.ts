@@ -318,6 +318,32 @@ describe('remote and remote-only placement', () => {
       expect(place('remote-only', local, [offered('mini')])).toMatchObject({ kind: 'host' });
   });
 
+  it('remote admits a host that reports no load, where auto skips it while this machine has room', () => {
+    expect(machines(place('remote', here, [offered('unknown', null)]))).toEqual(['unknown']);
+    expect(place('auto', { ...here, memoryPressure: 'warning' }, [offered('unknown', null)]).kind).toBe('local');
+  });
+
+  it('macOS auto stays here until this machine is busy, then takes the first host in order', () => {
+    const mac = (machine: string): PlacementProbe => ({
+      machine,
+      offer: {
+        platform: 'macos',
+        choice: { architecture: 'arm64', macosVersion: '27.0' },
+        declined: null,
+        capacity: { available: null },
+        resources: { loadPerCore: 0.4, memoryFreeBytes: 100, memoryPressure: 'normal' },
+      },
+    });
+    const inputs = { platform: 'macos', placement: 'auto', noWait: false } as const;
+    const offers = [mac('first'), mac('second')];
+    const devices = { count: 0, max: 0, queued: 0 };
+    expect(decideDevicePlacement({ ...inputs, offers, here: { ...here, devices } }).kind).toBe('local');
+    expect(decideDevicePlacement({ ...inputs, offers, here: { ...here, devices, loadPerCore: 3 } })).toMatchObject({
+      kind: 'host',
+      machines: [{ machine: 'first' }, { machine: 'second' }],
+    });
+  });
+
   it('places a macOS app with the same order, and a macOS offer answers only for macOS', () => {
     const mac = (machine: string, load: number): PlacementProbe => ({
       machine,

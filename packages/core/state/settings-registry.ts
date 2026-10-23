@@ -64,7 +64,6 @@ export type SettingsPayload = {
   project: string | null;
   files: Partial<Record<SettingScope, string>>;
   settings: SettingEntry[];
-  /** `replacement` is the command that sets what a removed setting's value meant. */
   unknown: Array<{ key: string; scope: SettingScope; file: string; value: unknown; replacement?: string }>;
 };
 
@@ -84,7 +83,6 @@ export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop'] as con
 
 export const ANDROID_EMULATOR_APPS = ['emulator', 'stim-desktop'] as const;
 
-/** Settings that no longer exist, with the setting that replaced each and how its old value maps onto the new one. */
 export const REPLACED_SETTINGS: Readonly<
   Record<string, { key: string; env?: string; value: (old: unknown) => string | null }>
 > = {
@@ -95,10 +93,6 @@ export const REPLACED_SETTINGS: Readonly<
   },
 };
 
-/**
- * What to do instead of a removed setting: the command that sets what its value meant, or just the replacing setting
- * when the value maps to nothing. Null when `key` was never replaced.
- */
 export function replacementAdvice(key: string, old: unknown): { key: string; command: string | null } | null {
   const replaced = REPLACED_SETTINGS[key];
   if (!replaced) return null;
@@ -428,8 +422,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'macos.remote',
     type: {
       kind: 'string',
-      pattern: TAILNET_MACHINE_PATTERN,
-      patternHelp: 'local, auto, remote, remote-only, or a tailnet machine name',
+      pattern: `^(?![Ee][Aa][Ss]$|[Pp][Rr][Oo][Xx][Yy]$)${TAILNET_MACHINE_PATTERN.slice(1)}`,
+      patternHelp: 'local, auto, remote, remote-only, or a tailnet machine name (macOS has no eas or proxy backend)',
     },
     scopes: EVERY,
     description:

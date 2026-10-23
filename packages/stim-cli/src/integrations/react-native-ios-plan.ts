@@ -210,7 +210,7 @@ export async function planReactNativeIos(
     if (planned.kind === 'unknown') {
       return refuse({
         code: 'STIM_BAD_ARG',
-        message: `ios.remote is ${iosRemote.machine}, and its simulator architecture is unknown here: ${planned.reason}.`,
+        message: `ios.remote is ${iosRemote.placement ?? iosRemote.machine}, and its simulator architecture is unknown here: ${planned.reason}.`,
         remedy: 'Run `stim ios` to build for the remote device, or unset ios.remote to plan the owned simulator.',
       });
     }

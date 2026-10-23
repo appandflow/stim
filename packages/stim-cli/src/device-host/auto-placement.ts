@@ -155,7 +155,6 @@ export async function automaticDevicePlacement(
   }: {
     root: string;
     slot: string;
-    /** `macos` is placed on a hosting machine for `stim macos`, which keeps its own record of where the app runs. */
     platform: 'ios' | 'android' | 'macos';
     placement?: AutomaticPlacement;
     selectors: HostedDeviceSelectors;
@@ -267,7 +266,7 @@ export async function automaticDevicePlacement(
     decision = decideDevicePlacement({ ...inputs(offers), eas: await eas() });
   if (decision.kind === 'refused')
     throw Object.assign(
-      new Error(devicePlacementLine({ decision: 'local', reason: decision.reason }, decision.skipped)),
+      new Error([decision.reason, ...decision.skipped.map((each) => `${each.machine}: ${each.reason}`)].join('; ')),
       {
         code: 'STIM_HOSTING_REFUSED',
         remedy:
