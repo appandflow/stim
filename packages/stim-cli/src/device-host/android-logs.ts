@@ -7,13 +7,13 @@ import { assertHostedAndroidSerial } from './android-app.ts';
 import { collectHostedNativeLogs } from './native-logs.ts';
 
 /** Captures bounded logcat output from the installed app on this home's exact ledger-owned serial. */
-export function collectHostedAndroidLogs(
+export async function collectHostedAndroidLogs(
   home: string,
   session: string,
   attempt: string,
   since: number,
   final = false,
-): boolean {
+): Promise<boolean> {
   const deadline = Date.now() + 10_000;
   const device = readHostedDevice(home, 'android');
   assertHostedAndroidSerial(home, device);
@@ -22,9 +22,12 @@ export function collectHostedAndroidLogs(
   const exec = getExecutor();
   const adb = androidToolPath('adb');
   const clockOffsetMs =
-    androidClockOffset(device.serial, {
-      exec: { ...exec, runFile: (file, args, options) => exec.runFile(file === 'adb' ? adb : file, args, options) },
-    }) ?? 0;
+    (await androidClockOffset(device.serial, {
+      exec: {
+        ...exec,
+        runFileAsync: (file, args, options) => exec.runFileAsync(file === 'adb' ? adb : file, args, options),
+      },
+    })) ?? 0;
   const previous = readHostedNativeLogsCheckpoint(home, 'android');
   let current: number | null = null;
   try {

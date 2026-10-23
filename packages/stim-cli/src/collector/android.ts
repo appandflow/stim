@@ -128,15 +128,18 @@ export function logcatArgs(serial: string, pid: number | string): string[] {
   return ['-s', serial, 'logcat', '--pid', String(pid), '-v', 'time,epoch'];
 }
 
-export function androidClockOffset(
+export async function androidClockOffset(
   serial: string,
   { exec = getExecutor(), now = Date.now }: { exec?: Executor; now?: () => number } = {},
-): number | null {
+): Promise<number | null> {
   const before = now();
   try {
-    const output = exec
-      .runFile('adb', ['-s', serial, 'shell', 'date', '+%s%3N'], { timeoutMs: 1000, cwd: androidToolCwd() })
-      .trim();
+    const output = (
+      await exec.runFileAsync('adb', ['-s', serial, 'shell', 'date', '+%s%3N'], {
+        timeoutMs: 1000,
+        cwd: androidToolCwd(),
+      })
+    ).trim();
     const after = now();
     if (!/^\d{13}$/.test(output) || after < before || after - before > 1000) return null;
     return Math.round((before + after) / 2) - Number(output);
@@ -153,14 +156,16 @@ export function parsePidof(text: unknown): number | null {
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-function resolveAppPid(
+async function resolveAppPid(
   serial: string,
   packageName: string,
   { exec = null }: { exec?: Executor | null } = {},
-): number | null {
+): Promise<number | null> {
   const e = exec || getExecutor();
   try {
-    return parsePidof(e.runFile('adb', ['-s', serial, 'shell', 'pidof', '-s', packageName], { timeoutMs: 10_000 }));
+    return parsePidof(
+      await e.runFileAsync('adb', ['-s', serial, 'shell', 'pidof', '-s', packageName], { timeoutMs: 10_000 }),
+    );
   } catch {
     return null;
   }
@@ -192,7 +197,7 @@ export async function waitForAppPid({
 }): Promise<PidResolution> {
   const deadline = now() + timeoutMs;
   for (;;) {
-    const pid = resolveAppPid(serial, packageName, { exec });
+    const pid = await resolveAppPid(serial, packageName, { exec });
     if (pid) return { ok: true, pid };
     if (now() >= deadline) {
       return {
@@ -233,7 +238,7 @@ export function pidWatchInterval(): number {
 
 export interface PidWatcher {
   stop(): void;
-  probe(): number | null;
+  probe(): Promise<number | null>;
   readonly pid: number | null;
 }
 
@@ -254,7 +259,11 @@ export function watchAppPid({
   intervalMs?: number | null;
   exec?: Executor | null;
   onChange: (nextPid: number) => void | Promise<void>;
-  resolve?: (serial: string, packageName: string, opts: { exec?: Executor | null }) => number | null;
+  resolve?: (
+    serial: string,
+    packageName: string,
+    opts: { exec?: Executor | null },
+  ) => number | null | Promise<number | null>;
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (t: ReturnType<typeof setTimeout>) => void;
 }): PidWatcher {
@@ -267,7 +276,7 @@ export function watchAppPid({
     if (stopped) return;
     let next: number | null = null;
     try {
-      next = resolve(serial, packageName, { exec });
+      next = await resolve(serial, packageName, { exec });
     } catch {}
     if (next && next !== current) {
       current = next;
@@ -284,9 +293,9 @@ export function watchAppPid({
       if (timer) clearTimer(timer);
       timer = null;
     },
-    probe() {
+    async probe() {
       try {
-        return resolve(serial, packageName, { exec });
+        return await resolve(serial, packageName, { exec });
       } catch {
         return null;
       }

@@ -19,6 +19,7 @@ import {
   parseLogcatTimestamp,
   parsePidof,
   pidWatchInterval,
+  waitForAppPid,
   watchAppPid,
   NOISE_TAGS,
 } from '../collector/android.ts';
@@ -650,7 +651,7 @@ describe('android: logcat -v time', () => {
     expect(parseLogcatLine(line.replace('.542', '.542987'))!.ts).toBe(1788902582542);
   });
 
-  test('clock alignment uses the midpoint of a bounded adb sample and rejects unsupported or slow clocks', () => {
+  test('clock alignment uses the midpoint of a bounded adb sample and rejects unsupported or slow clocks', async () => {
     const before = 1788902585000;
     let after = before + 40;
     let output = '1788902582281\n';
@@ -668,18 +669,47 @@ describe('android: logcat -v time', () => {
       },
     });
     const sample = () => androidClockOffset('serial', { exec, now: () => (calls++ % 2 === 0 ? before : after) });
-    expect(sample()).toBe(2739);
+    expect(await sample()).toBe(2739);
     output = '1788902587759';
-    expect(sample()).toBe(-2739);
+    expect(await sample()).toBe(-2739);
     output = '1788902582%3N';
-    expect(sample()).toBe(null);
+    expect(await sample()).toBe(null);
     output = '1788902582281';
     after = before + 1001;
-    expect(sample()).toBe(null);
+    expect(await sample()).toBe(null);
     after = before - 1;
-    expect(sample()).toBe(null);
+    expect(await sample()).toBe(null);
     failed = true;
-    expect(sample()).toBe(null);
+    expect(await sample()).toBe(null);
+  });
+
+  test('the clock sample and the pid reads leave the event loop free for the log stream', async () => {
+    const asyncCalls: string[][] = [];
+    const exec = makeExecutor({
+      runFile: () => {
+        throw new Error('a synchronous adb read blocks the log stream');
+      },
+      runFileQuiet: () => {
+        throw new Error('a synchronous adb read blocks the log stream');
+      },
+      runFileAsync: async (_file, args) => {
+        asyncCalls.push(args);
+        return args.includes('date') ? String(Date.now()) : '3132\n';
+      },
+    });
+    expect(await androidClockOffset('serial', { exec })).not.toBeNull();
+    expect(await waitForAppPid({ serial: 'serial', packageName: 'com.x', exec })).toEqual({ ok: true, pid: 3132 });
+    const watcher = watchAppPid({ serial: 'serial', packageName: 'com.x', pid: 3132, exec, onChange: () => {} });
+    try {
+      expect(await watcher.probe()).toBe(3132);
+    } finally {
+      watcher.stop();
+    }
+    expect(asyncCalls).toEqual([
+      ['-s', 'serial', 'shell', 'date', '+%s%3N'],
+      ['-s', 'serial', 'shell', 'pidof', '-s', 'com.x'],
+      ['-s', 'serial', 'shell', 'pidof', '-s', 'com.x'],
+    ]);
   });
 
   test('parsePidof reads the single pid, and nothing from empty output', () => {
