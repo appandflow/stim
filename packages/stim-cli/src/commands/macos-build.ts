@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { MacosBuild } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
 import { workspaceShareURL } from '../devices/stim-desktop.ts';
+import { errorRemedy } from '../engine/build-ledger.ts';
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../engine/build-progress.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { cancelledError, throwIfCancelled } from '../cancellation.ts';
@@ -78,6 +79,7 @@ export async function buildMacosOperation(
       };
       let directory: string | undefined;
       let succeeded = false;
+      let remedy: string | undefined;
       try {
         const artifacts = join(workspaceDir(root), 'artifacts');
         mkdirSync(artifacts, { recursive: true });
@@ -122,6 +124,7 @@ export async function buildMacosOperation(
         build.state = 'failed';
         build.error = failure instanceof Error ? failure.message : String(failure);
         build.errorCode = (failure as { code?: string }).code;
+        remedy = errorRemedy(failure);
         throw failure;
       } finally {
         build.finishedAt = new Date().toISOString();
@@ -145,6 +148,7 @@ export async function buildMacosOperation(
               offloadedTo: build.offloadedTo,
               offloadFallback: build.offloadFallback,
               compileSteps: progress.steps(),
+              ...(build.error ? { ledger: { message: build.error, remedy } } : {}),
             },
             { artifactOnly: true },
           );

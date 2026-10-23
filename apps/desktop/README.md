@@ -802,6 +802,19 @@ kept or failed item was left. A **Do it** from the bundled app appears as Cleanu
 Desktop, and from an unbundled development build as Cleanup from stim gc. With a `stim` that has
 no gc log (1.25.0 or older), the section says to update `stim`.
 
+## Builds
+
+The **Builds** item in the sidebar (Command-5) lists the native builds Stim recorded on this Mac, newest
+first and grouped by day. It runs `stim logs --source builds --json` from the home directory every 30
+seconds while the page is showing and never reads `$STIM_HOME`. A row shows the project and platform, the
+branch and target, where the build ran (this Mac, a build machine, or this Mac after an offload fell
+back), the cache result, the duration and the outcome. The filters choose a project, a platform, a
+machine (**This Mac** or a build machine) and an outcome. Clicking a row opens its phases as bars, the
+failure code, message and remedy of a failed build, and the device, cache key and fingerprint. The model
+is `BuildLedger` in `StimKit` (parsing, filters, day groups and the phase timeline), which the tests in
+`BuildLedgerTests` cover. With a `stim` that has no build ledger (1.25.0 or older), the page says to
+update `stim`.
+
 ## Logs
 
 A workspace's page shows its logs beside the devices, or on a **Logs** tab when
@@ -1439,6 +1452,10 @@ list for the page of one machine. It shows, from the list's doctor report and on
   and whether its Stim build matches this Mac's;
 - **Approvals**: the build approval and, for a machine that can host simulators, the
   device-host approval;
+- **Builds on This Machine**: the ten newest recorded builds that ran there (from
+  `stim logs --source builds --json`, read while the page is open), each opening to its
+  phases and failure as on the **Builds** page, with a note when none ran, the stim is
+  too old to record builds, or the read has not finished;
 - **Use This Machine For**: the **Builds enabled** and **Simulators enabled**
   switches, as on the row; and **Remove...**, **Ask** and **Ask Again**.
 

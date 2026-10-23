@@ -81,7 +81,7 @@ export async function readWorkspaceLogs(context: StimContext, options: StimLogsO
   }
 }
 
-const WORKSPACE_SOURCES = SOURCES.filter((source) => source !== 'gc');
+const WORKSPACE_SOURCES = SOURCES.filter((source) => source !== 'gc' && source !== 'builds');
 
 function validateLogOptions(options: StimLogsOptions): void {
   const bad =

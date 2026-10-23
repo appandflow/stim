@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -184,6 +185,13 @@ describe('option validation', () => {
     expect(validateSources(['gc', 'all']).error).toMatch(/cannot be combined/);
   });
 
+  test('validateSources takes builds alone, keeps it out of all, and refuses it beside other sources', async () => {
+    expect(validateSources(['builds'])).toEqual({ sources: ['builds'] });
+    expect(validateSources(['all']).sources).not.toContain('builds');
+    expect(validateSources(['builds', 'metro']).error).toMatch(/cannot be combined/);
+    expect(validateSources(['builds', 'gc']).error).toMatch(/cannot be combined/);
+  });
+
   test('validateLevel accepts the Contract-1 levels and names the valid set otherwise', async () => {
     expect(validateLevel('warn')).toEqual({ level: 'warn' });
     const r = validateLevel('loud');
@@ -324,6 +332,76 @@ describe('logs command', () => {
       await run({ source: ['gc', 'metro'] });
       expect(exitCode).toBe(1);
       expect(errOut.join('\n')).toMatch(/cannot be combined/);
+    });
+  });
+
+  describe('--source builds', () => {
+    const buildRecord = (ts: number, id: string, outcome: string, level: string) => ({
+      ts,
+      src: 'builds',
+      level,
+      msg: `${outcome} ${id}`,
+      event: 'build',
+      id,
+      platform: 'ios',
+      outcome,
+      placement: { where: 'local' },
+      cache: { result: 'miss', key: null, fingerprint: null },
+    });
+
+    beforeEach(() => {
+      mkdirSync(join(tmpHome, 'builds'), { recursive: true });
+      writeFileSync(
+        join(tmpHome, 'builds', 'builds.ndjson'),
+        [buildRecord(1, 'a', 'succeeded', 'info'), buildRecord(2, 'b', 'failed', 'error')]
+          .map((r) => `${JSON.stringify(r)}\n`)
+          .join(''),
+      );
+    });
+
+    test('prints the machine build ledger from a directory that is no workspace', async () => {
+      process.chdir(tmpHome);
+      await run({ source: ['builds'], json: true });
+      expect(exitCode).toBe(null);
+      expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['a', 'b']);
+    });
+
+    test('filters by level and tail like any other source', async () => {
+      await run({ source: ['builds'], json: true, errors: true });
+      expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['b']);
+      out.length = 0;
+      await run({ source: ['builds'], json: true, tail: '1' });
+      expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['b']);
+    });
+
+    test('--follow with --tail prints a build that finished or was re-recorded after it started, and no older one, when the ledger is rewritten', async () => {
+      const file = join(tmpHome, 'builds', 'builds.ndjson');
+      const before = new Set([...process.listeners('SIGINT'), ...process.listeners('SIGTERM')]);
+      try {
+        await run({ source: ['builds'], json: true, tail: '1', follow: true });
+        expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['b']);
+        const next = [
+          buildRecord(1, 'a', 'succeeded', 'info'),
+          buildRecord(2, 'b', 'failed', 'error'),
+          buildRecord(3, 'c', 'succeeded', 'info'),
+          buildRecord(4, 'a', 'failed', 'error'),
+        ];
+        writeFileSync(`${file}.tmp`, next.map((r) => `${JSON.stringify(r)}\n`).join(''));
+        renameSync(`${file}.tmp`, file);
+        await vi.waitFor(() => expect(out.length).toBeGreaterThan(1), { timeout: 4000 });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['b', 'c', 'a']);
+      } finally {
+        for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+          for (const listener of process.listeners(signal)) {
+            if (before.has(listener)) continue;
+            process.removeListener(signal, listener);
+            try {
+              Reflect.apply(listener, undefined, []);
+            } catch {}
+          }
+        }
+      }
     });
   });
 

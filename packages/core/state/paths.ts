@@ -186,6 +186,18 @@ export function gcLogFile(): string {
   return join(gcLogDir(), 'gc.ndjson');
 }
 
+export function buildLedgerDir(): string {
+  return join(configDir(), 'builds');
+}
+
+export function buildLedgerFile(): string {
+  return join(buildLedgerDir(), 'builds.ndjson');
+}
+
+export function buildLedgerLock(): string {
+  return join(buildLedgerDir(), 'builds.lock');
+}
+
 export function maintenanceChildLogFile(): string {
   return join(maintenanceDir(), 'child.log');
 }

@@ -1587,6 +1587,10 @@ RULES
     build: ios compile on janics-mac-mini (build, 2m10s), 3m05s elapsed
     build: ios launch (bundling JS 45%, 12s), 58s elapsed
 
+  The machine keeps every native build run, not only the latest, in
+  $STIM_HOME/builds/builds.ndjson (newest 500), read with
+  \`stim logs --source builds --json\` (\`guide logs\`, BUILD LEDGER).
+
   An environment with a recorded run also carries lastBuilds, each
   platform's most recent ios or android run, finished or failed:
 

@@ -144,7 +144,7 @@ export async function buildAndroidOperation(
         let directory: string | undefined;
         let built: AndroidBuildFacts | null = null;
         let failureAfterCleanup: ReturnType<typeof cancelledError> | null = null;
-        const finishRecord = (status: 'ok' | 'failed', errorCode?: string) =>
+        const finishRecord = (status: 'ok' | 'failed', errorCode?: string, message?: string) =>
           persistLastBuild({
             root,
             record,
@@ -152,6 +152,7 @@ export async function buildAndroidOperation(
             durationMs: Date.now() - started,
             status,
             errorCode,
+            message,
             out: note,
             recordBuild: (at, entry) => recordFinishedBuild(at, entry, { artifactOnly: true }),
           });
@@ -265,7 +266,11 @@ export async function buildAndroidOperation(
           };
         } catch (error) {
           const failure = runCancellationSignal(context)?.aborted ? cancelledError('Android build', error) : error;
-          finishRecord('failed', (failure as { code?: string }).code);
+          finishRecord(
+            'failed',
+            (failure as { code?: string }).code,
+            failure instanceof Error ? failure.message : String(failure),
+          );
           stats.record({ failed: true, durationMs: Date.now() - started });
           throw failure;
         } finally {
@@ -273,7 +278,7 @@ export async function buildAndroidOperation(
           failureAfterCleanup =
             built && runCancellationSignal(context)?.aborted ? cancelledError('Android build') : null;
           if (failureAfterCleanup) {
-            finishRecord('failed', failureAfterCleanup.code);
+            finishRecord('failed', failureAfterCleanup.code, failureAfterCleanup.message);
             stats.record({ failed: true, durationMs: Date.now() - started });
           }
           if ((!built || failureAfterCleanup) && directory) await fs.rm(directory, { recursive: true, force: true });

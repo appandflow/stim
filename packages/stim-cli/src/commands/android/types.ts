@@ -72,6 +72,8 @@ export interface AndroidRecord {
   bundleId?: string | null;
   avdName?: string | null;
   deviceName?: string | null;
+  /** The serial `deviceName` falls back to for a device with no known model; never recorded as a name. */
+  deviceSerial?: string | null;
   systemImage?: string | null;
   deviceProfile?: string | null;
   /** The remote machine that compiled the APK, when the build was offloaded. */

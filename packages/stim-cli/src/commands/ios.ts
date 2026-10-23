@@ -96,7 +96,8 @@ import {
   resolveIosBuildSetup,
   simulatorBuildArch,
 } from './ios/support.ts';
-import { lastBuildRecord, writeLastBuild } from './ios/result.ts';
+import { iosLedgerDevice, lastBuildRecord, writeLastBuild } from './ios/result.ts';
+import type { BuildLedgerExtras } from '../engine/build-ledger.ts';
 import { finishIosRun, type IosRunCompletion } from './ios/launch.ts';
 import { planIos } from './ios/next-build.ts';
 
@@ -461,10 +462,17 @@ async function runIos(
   let builtConfiguration: string | null = null;
   let acquiredBuild: BuildFailureFields | null = null;
 
-  const recordFailedBuild = (build: BuildFailureFields, errorCode?: string) =>
+  let builtScheme: string | undefined;
+  let builtDevice: BuildLedgerExtras['device'] = null;
+  const recordFailedBuild = (
+    build: BuildFailureFields,
+    errorCode?: string,
+    why: { message?: string | null; remedy?: string | null } = {},
+  ) =>
     writeLastBuild(
       root,
       lastBuildRecord({
+        ledger: { scheme: builtScheme, device: builtDevice, message: why.message, remedy: why.remedy },
         devicePlacement,
         buildMachine,
         ...build,
@@ -499,7 +507,7 @@ async function runIos(
     if (remedy) note(chalk.dim(phaseLine('remedy', remedy)));
     if (logPath) note(chalk.dim(phaseLine('log', logPath)));
     const failedBuild = build ?? acquiredBuild;
-    if (failedBuild) recordFailedBuild(failedBuild, code);
+    if (failedBuild) recordFailedBuild(failedBuild, code, { message, remedy });
     if (acquiredBuild) logWriter().write(runFailureRecord({ code, message, phase: progress.phase() }));
     note(chalk.red(phaseLine('failed', code)));
     if (!setup) recordRun({ failed: true, durationMs: elapsed() });
@@ -583,6 +591,7 @@ async function runIos(
   const configuration = opts.easProfile !== undefined ? null : resolveConfiguration(opts.configuration, settings);
   builtConfiguration = configuration ?? 'Debug';
   const buildScheme = resolveSchemeSelection(opts, settings);
+  builtScheme = buildScheme;
   const release = isReleaseConfiguration(configuration);
   const appMode = ({ metro: 'development', process: 'process', 'embedded-js': 'release' } as const)[
     integration.runtimeKind(configuration)
@@ -862,6 +871,7 @@ async function runIos(
       }
     }
 
+    builtDevice = iosLedgerDevice(device);
     let bootDuration = '';
     let bootPending = false;
     let bootPromise!: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined>;
@@ -1025,7 +1035,9 @@ async function runIos(
       if (cancelled) return fail(cancelled);
       if (acquiredBuild) {
         const { code } = error as { code?: unknown };
-        recordFailedBuild(acquiredBuild, typeof code === 'string' ? code : undefined);
+        recordFailedBuild(acquiredBuild, typeof code === 'string' ? code : undefined, {
+          message: error instanceof Error ? error.message : String(error),
+        });
         logWriter().write(thrownRunFailureRecord(error, progress.phase()));
       }
       recordRun({ failed: true, durationMs: elapsed() });

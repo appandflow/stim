@@ -351,6 +351,15 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   the run, when, how many items it cleared, kept and failed, and the bytes freed; expand it
   for each item's path and the reason a kept or failed item was left. It reads
   `stim logs --source gc --json`, so it needs a Stim version that writes the gc log.
+- **Builds.** **Builds** in the sidebar (Command-5) lists every native build Stim recorded on this Mac,
+  newest first, grouped by day: when it ran, the project and platform, the branch and target, where
+  it ran (this Mac or a build machine, and whether an offload fell back), the cache result, the
+  duration and whether it succeeded, failed or was cancelled. Filter by project, platform, machine
+  and outcome. Click a build to see its phases as bars (this Mac's phases, and a build machine's
+  sync, dependency, build and fetch time inside Compile), the failure code, message and remedy of a
+  failed build, and its device, cache key and fingerprint. It reads `stim logs --source builds --json`
+  every 30 seconds while the page is showing, so it needs a Stim version that writes the build
+  ledger. The ledger keeps the newest 500 builds and outlives the workspaces that ran them.
 - **Workspace Changes.** Click the workspace header's Git chip, then **Review
   changes**, to browse staged, unstaged and new files. The built-in viewer loads
   each patch when you select its file, with a 200-file list and 256 KiB preview
@@ -689,7 +698,7 @@ See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for 
 (**Approved**, **Waiting for approval**, the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading),
 a line with its running builds and free disk, what each does (**Builds**, **Simulators**), **Details** and
 **Remove...**. The status shows only a state that stops this Mac using the machine; notes, such as an
-Android SDK package Gradle downloads on the first build, never change it. It updates itself; there is no Refresh button. With none, it
+Android SDK package Gradle downloads on the first build, never change it. A machine's page also lists the ten newest builds that ran there, each opening to its phases and failure like the **Builds** page. It updates itself; there is no Refresh button. With none, it
 offers **Add Remote Machine…**, which guides you through five steps:
 
 1. Check Tailscale and pick a Mac, Linux or Windows machine on your tailnet.

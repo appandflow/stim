@@ -13,6 +13,8 @@ struct MachineDetailPage<Toggles: View>: View {
   var progress: String?
   var canAsk: Bool
   var hosted: [HostedOnMachine]
+  var builds: [LedgerBuild]
+  var buildsNote: String
   var update: MachineUpdatePhase?
   var install: StimInstall?
   var back: () -> Void
@@ -58,6 +60,7 @@ struct MachineDetailPage<Toggles: View>: View {
       if !detail.capacity.isEmpty { rows("Capacity", detail.capacity) }
       if !detail.versions.isEmpty { rows("Versions", detail.versions) }
       if !detail.approvals.isEmpty { rows("Approvals", detail.approvals) }
+      MachineBuildsSection(builds: builds, note: buildsNote)
       if showsToggles { Section("Use This Machine For") { toggles } }
     }
     .formStyle(.grouped)
