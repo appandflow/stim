@@ -494,8 +494,8 @@ so there is no Check again button:
      `auto` (run there when this machine is full) and **Always** names the Mac's
      `remote.machines` entry. A current value the
      wizard does not offer, such as `eas`, is kept unless you choose another.
-   - **Run a Test Build with a Sample App** builds a sample through the worker,
-     for Android on a Linux or Windows machine.
+   - **Run a Test Build with a Sample App** builds a sample through the worker
+     (iOS, or Android on a Linux or Windows machine).
 
 Desktop adds entries when it finds the setup journal and connects with that
 command's ticket. When adding the first remote machine
@@ -765,7 +765,7 @@ The test runs `stim ios --remote-build <name> --no-build-cache --json` once.
 It must report the selected `offloadedTo` and a launch state of `true` or
 `bundling`. Desktop reads the `offload_done` log's offer, sync, worker and fetch
 timings and shows them as Upload / sync, Build, Download / fetch and Total. It
-runs no local build. The first build on a new Mac is cold, with no DerivedData
+runs no local build. The first build on a new machine is cold, with no DerivedData
 and no compiler cache, so later builds are faster. The test does not
 deliberately disconnect the worker to trigger automatic fallback.
 

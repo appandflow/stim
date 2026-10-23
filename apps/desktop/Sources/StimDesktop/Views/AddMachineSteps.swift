@@ -84,7 +84,7 @@ struct AddMachineSteps: View {
             timeRow("Build", timings.workerMs)
             timeRow("Download / fetch", timings.fetchMs)
             timeRow("Total", timings.totalMs)
-            Text("The first build on a new Mac is cold, so later builds are faster.").font(.stim(.footnote))
+            Text("The first build on a new machine is cold, so later builds are faster.").font(.stim(.footnote))
               .foregroundStyle(Palette.secondary)
           }
         }
