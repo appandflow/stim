@@ -84,7 +84,7 @@ struct Sidebar: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverRow(outset: Space.sm))
         .padding(Space.lg)
         .accessibilityAddTraits(selection == .discover ? .isSelected : [])
         HiddenWorkspacesFooter(
