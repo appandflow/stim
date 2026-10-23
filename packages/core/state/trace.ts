@@ -31,8 +31,10 @@ const CREDENTIAL_FLAGS: Record<string, Record<string, readonly string[]>> = {
 };
 
 function credentialFlagsOf(program: string, subcommand: string | undefined): ReadonlySet<string> {
-  const flags = CREDENTIAL_FLAGS[basename(program)];
-  return new Set(flags?.[''] ?? flags?.[subcommand ?? ''] ?? []);
+  const name = basename(program);
+  const flags = Object.hasOwn(CREDENTIAL_FLAGS, name) ? CREDENTIAL_FLAGS[name] : undefined;
+  const key = flags && Object.hasOwn(flags, '') ? '' : (subcommand ?? '');
+  return new Set(flags && Object.hasOwn(flags, key) ? flags[key] : []);
 }
 
 function scrubText(text: string, exact: readonly string[]): string {

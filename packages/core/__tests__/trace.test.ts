@@ -250,6 +250,11 @@ test.each<[string, string, string[]]>([
   expect(redactArgv(args, [], program)).toEqual(args);
 });
 
+test('redactArgv treats an argument named like an object property as plain text', () => {
+  expect(redactArgv(['constructor', '-p', 'x'], [], 'security')).toEqual(['constructor', '-p', 'x']);
+  expect(redactArgv(['length', 'x'], [], 'constructor')).toEqual(['length', 'x']);
+});
+
 test('redactArgv ignores the credential flags of a program it does not list', () => {
   expect(redactArgv(['-u', 'user:pw'])).toEqual(['-u', 'user:pw']);
   expect(redactArgv(['-u', 'user:pw'], [], 'docker')).toEqual(['-u', 'user:pw']);
