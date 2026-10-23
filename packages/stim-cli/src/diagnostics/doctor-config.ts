@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { configCorruptRepair } from '../workspace/config.ts';
 import type { Finding } from './doctor.ts';
 import { configSettingRefusal, envSettingRefusal } from '../workspace/settings-payload.ts';
@@ -7,6 +7,7 @@ import { compilerCacheFallbackMessage, type CompilerCacheFallback, type Optimiza
 import {
   mergeSettingsLayers,
   PATH_SETTINGS,
+  readCommittedSettings,
   SETTINGS_WITH_RESOLVE_TIME_FALLBACK,
   settingOrigin,
   settingsLayers,
@@ -19,6 +20,7 @@ import { REPLACED_SETTINGS, replacementAdvice, settingDefinition, type SettingsO
 export interface MachineSettings {
   settings: SettingsObject;
   layers: SettingsLayer[];
+  repositoryLayer?: SettingsLayer | null;
   corrupt: Finding | null;
 }
 
@@ -29,7 +31,20 @@ export function readMachineSettings(context: {
 }): MachineSettings {
   try {
     const layers = settingsLayers(context);
-    return { settings: mergeSettingsLayers(layers.map((layer) => layer.settings)), layers, corrupt: null };
+    const repositoryLayer =
+      context.projectPath && context.repoRoot && context.repoRoot !== context.projectPath
+        ? {
+            scope: 'committed' as const,
+            file: join(context.repoRoot, '.stim.json'),
+            settings: readCommittedSettings(context.repoRoot),
+          }
+        : null;
+    return {
+      settings: mergeSettingsLayers(layers.map((layer) => layer.settings)),
+      layers,
+      repositoryLayer,
+      corrupt: null,
+    };
   } catch (error) {
     if ((error as { code?: string }).code !== 'STIM_CONFIG_CORRUPT') throw error;
     return {
@@ -50,6 +65,7 @@ const PATH_SETTINGS_TRIMMED_BY_THEIR_CONSUMER: ReadonlySet<string> = new Set(['a
 export function checkMachineSettings({
   settings,
   layers,
+  repositoryLayer = null,
   projectRoot,
   optimizations = null,
   reportedElsewhere = [],
@@ -59,6 +75,7 @@ export function checkMachineSettings({
 }: {
   settings: SettingsObject;
   layers: SettingsLayer[];
+  repositoryLayer?: SettingsLayer | null;
   projectRoot: string;
   optimizations?: Optimizations | null;
   reportedElsewhere?: readonly string[];
@@ -107,8 +124,13 @@ export function checkMachineSettings({
     findings.push(compilerCacheFinding({ fallback: reported, optimizations, file: fallbackEntry?.file ?? null }));
   }
 
-  for (const key of unknownSettingKeys(settings)) {
-    for (const holder of layers.filter((layer) => settingValueAt(layer.settings, key) !== undefined)) {
+  const holders = repositoryLayer ? [...layers, repositoryLayer] : layers;
+  const unknownKeys = new Set([
+    ...unknownSettingKeys(settings),
+    ...(repositoryLayer ? unknownSettingKeys(repositoryLayer.settings) : []),
+  ]);
+  for (const key of unknownKeys) {
+    for (const holder of holders.filter((layer) => settingValueAt(layer.settings, key) !== undefined)) {
       const file = holder.file;
       const advice = replacementAdvice(key, settingValueAt(holder.settings, key));
       if (advice) {

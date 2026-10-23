@@ -231,7 +231,7 @@ test('an invalid remote.build in the machine config is flagged as a wrong type',
       fix: 'Replace it with `stim settings set remote.build <value>`; `stim guide settings` lists the values it takes.',
     },
   ]);
-  for (const remoteBuild of [undefined, 'auto', 'remote-only', 'mini:7444'])
+  for (const remoteBuild of [undefined, null, 'auto', ' auto ', 'remote-only', 'mini:7444'])
     expect(checkMachineSettings({ settings: {}, layers: [], projectRoot: '/app', env: {}, remoteBuild })).toEqual([]);
 });
 
@@ -306,6 +306,25 @@ describe('against a config file on disk', () => {
           'Invalid remote.build setting "bad word". Expected local, auto, remote, remote-only, or a tailnet machine name.',
       }),
     ]);
+  });
+
+  test('a remote.buildMode in the repository .stim.json above the project is reported too', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'stim-doctor-config-repo-'));
+    try {
+      const app = join(repo, 'apps', 'mobile');
+      mkdirSync(app, { recursive: true });
+      writeFileSync(join(repo, '.stim.json'), JSON.stringify({ remote: { buildMode: 'off' } }));
+      writeFileSync(join(app, '.stim.json'), JSON.stringify({ remote: { buildMode: 'force' } }));
+      writeConfig({ version: 2, repos: {}, projects: {} });
+      const machine = readMachineSettings({ projectPath: app, gitCommonDir: null, repoRoot: repo });
+      const findings = checkMachineSettings({ ...machine, projectRoot: app, env: {} });
+      expect(findings.map((finding) => finding.fix)).toEqual([
+        `Run \`stim settings set remote.build remote\`, then remove remote.buildMode from ${join(app, '.stim.json')}.`,
+        `Run \`stim settings set remote.build local\`, then remove remote.buildMode from ${join(repo, '.stim.json')}.`,
+      ]);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   test('a remote.buildMode left in two layers is reported once for each file', () => {

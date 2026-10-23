@@ -176,7 +176,8 @@ export function envSettingRefusal(key: string, env: NodeJS.ProcessEnv): Settings
 /** The refusal for an invalid configured value of a machine setting, or null when it is unset or valid. */
 export function configSettingRefusal(key: string, value: unknown): SettingsRefusal | null {
   const setting = settingDefinition(key);
-  const error = setting && value !== undefined ? settingValueError(setting, value) : null;
+  const checked = typeof value === 'string' ? value.trim() : value;
+  const error = setting && checked !== undefined && checked !== null ? settingValueError(setting, checked) : null;
   if (!error) return null;
   return new SettingsRefusal(
     'STIM_BAD_ARG',

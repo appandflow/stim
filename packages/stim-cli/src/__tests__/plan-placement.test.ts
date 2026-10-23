@@ -142,6 +142,17 @@ test('an invalid remote.build setting is refused as that setting, and a valid en
   expect(overridden).toEqual({ kind: 'unknown', reason: 'placement must not run' });
 });
 
+test('a padded remote.build is accepted as a run accepts it', async () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, remote: { build: ' auto ' } });
+  const planned = await planHostedDevice({
+    ...base,
+    machine: 'auto',
+    sameKey: () => true,
+    deps: { automatic: noAutomatic },
+  });
+  expect(planned).toEqual({ kind: 'unknown', reason: 'placement must not run' });
+});
+
 test('remote-only with no remote machines plans the STIM_HOSTING_REFUSED a run gives, with a remedy that adds a machine', async () => {
   const planned = await planHostedDevice({
     ...base,

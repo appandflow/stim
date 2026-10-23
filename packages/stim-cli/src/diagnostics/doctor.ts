@@ -1176,6 +1176,7 @@ export async function runDoctor(
     ...checkMachineSettings({
       settings: projectSettings,
       layers: machineSettings.layers,
+      repositoryLayer: machineSettings.repositoryLayer,
       projectRoot,
       optimizations,
       env: options.operation?.env ?? options.remoteEnv ?? process.env,
