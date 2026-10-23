@@ -44,7 +44,7 @@ full and `*-first` measures a restore, not a cold compile (`--no-prime` skips it
 recorded as skipped: the repository checks in no bare fixture, and `test/e2e` generates one from the network.
 
 For each command it records the wall time, the 1-minute load average before and after, the phases and spans from
-`STIM_TRACE` when the Stim version writes one, and the phases stats.json recorded for the run. Per result it records
+`STIM_TRACE` when the Stim version writes one, and for a version that writes no trace, the phases stats.json recorded for the run when exactly one sample matches its time window. Per result it records
 the machine (model, CPU, memory, macOS, Xcode, Node), the Stim version, and the git sha of the app source.
 Versions older than `STIM_TRACE` report wall time and the stats.json phases only. The format is in the `perf-data`
 branch README.
@@ -69,7 +69,7 @@ node scripts/perf/compare.mjs
 clones `perf-data` and prints, per machine, the latest run against the run before it: median wall time per
 scenario, the change, the spread between the fastest and slowest repetition, and how many repetitions failed. A
 scenario is flagged `REGRESSION` when its median grew by more than 10% and by at least 250 ms
-(`--threshold`, `--min-delta-ms`). Medians ignore one slow repetition, and failed repetitions are left out; a flagged change whose repetitions spread by
+(`--threshold`, `--min-delta-ms`). With three or more repetitions medians ignore one slow repetition, and failed repetitions are left out; a flagged change whose repetitions spread by
 more than 50% is marked `(noisy)`.
 
 Load is judged per scenario. A scenario is not compared when the median load before its commands differs by more

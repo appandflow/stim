@@ -14,7 +14,7 @@ const USAGE = `usage: node scripts/perf/bench.mjs (--version <x.y.z> | --cli <pa
 
   --reps <n>              measured repetitions (default 3)
   --sha <ref>             commit of this repository whose apps/mobile the scenarios run (default HEAD)
-  --scenarios <list>      comma list of warm,start,ios,android,stop (default all)
+  --scenarios <list>      comma list of warm,start,ios,android,stop (default all; the others need warm)
   --no-prime              skip the unmeasured first pass that fills the build caches (results are then not
                           comparable with primed runs)
   --max-load <n>          refuse to start while the 1-minute load average is above n (default 80)
@@ -264,6 +264,12 @@ async function pass(cli, sha, label) {
           timeout: COMMAND_TIMEOUT_MS,
         });
         log(`[${label}] pnpm install (not measured): exit ${installed.status}`);
+        if (installed.status !== 0) {
+          log(scrubOutput(installed.error?.message ?? installed.stderr, { home: homedir(), tmp: tmpdir() }));
+          throw new Error(
+            'pnpm install failed in the bench worktree, so later timings would run on stale node_modules',
+          );
+        }
       }
       log(
         `[${label}] ${step.scenario}: ${(results[step.scenario].wallMs / 1000).toFixed(1)}s exit ${results[step.scenario].exit}`,
