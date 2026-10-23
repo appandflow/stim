@@ -404,34 +404,6 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     }
   }
 
-  /// A reason an approved machine takes no builds now, with what fixes it when that is known.
-  public struct ProblemLine: Equatable, Sendable {
-    public enum Fix: Equatable, Sendable {
-      /// A command to run on the remote Mac.
-      case command(String)
-      case advice(String)
-    }
-
-    public var code = ""
-    public var reason: String
-    public var fix: Fix?
-  }
-
-  /// Each reason of an approved machine that is not offloadable, in doctor's order, except Busy, which the pill
-  /// covers; empty otherwise.
-  public var problemLines: [ProblemLine] {
-    guard state == .approved, offloadable == false else { return [] }
-    return (problems ?? []).filter { $0.code != "busy" }.map { problem in
-      if problem.code == "cocoapods", let command = Self.cocoapodsFix(problem.reason) {
-        return ProblemLine(code: problem.code, reason: problem.reason, fix: .command(command))
-      }
-      let reason = problem.code == "stim-build" ? Self.shortStimBuild(problem.reason) : problem.reason
-      let advice = MachineReadiness.problems[problem.code]?.1
-      return ProblemLine(
-        code: problem.code, reason: reason, fix: advice.map { .advice($0.prefix(1).uppercased() + $0.dropFirst() + ".") })
-    }
-  }
-
   /// "Stim build 5773060 there, d9b8bdb here" from doctor's full 16-digit build digests.
   static func shortStimBuild(_ reason: String) -> String {
     guard let match = reason.wholeMatch(of: /Stim build (\S+) there, (\S+) here/) else { return reason }
@@ -447,12 +419,13 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     return words[1] == "null" ? "brew install cocoapods" : "gem install cocoapods -v \(here)"
   }
 
-  /// The text line under the machine's name when it has no resources to show: `detail`, empty when the listed
-  /// problems already say why builds stay on this Mac.
+  /// The text line under the machine's name when it has no resources to show: `detail`, empty when the pill and the
+  /// machine's page already say why builds stay on this Mac.
   public var rowDetail: String {
     guard state == .approved else { return detail }
     if let capacity, !capacity.resources.isEmpty { return "" }
-    return problemLines.isEmpty ? detail : ""
+    let blocking = offloadable == false && (problems ?? []).contains { $0.code != "busy" }
+    return blocking ? "" : detail
   }
 
   /// Its MagicDNS name, cores and offloaded builds, which the resource summary leaves out; nil when none is known.

@@ -137,6 +137,8 @@ public struct MachineDetail: Equatable, Sendable {
     public var findings: [DoctorReport.Finding] = []
     public var host: BuildMachineStatus?
     public var hostsSimulators = true
+    /// Whether the doctor report listed device-host approvals at all.
+    public var hostsKnown = true
     public var android: MachineAndroidReport = .idle
     public var install: StimInstall?
     public var update: MachineUpdatePhase?
@@ -183,7 +185,7 @@ public struct MachineDetail: Equatable, Sendable {
     }
     capacity = Self.capacity(status.capacity)
     versions = Self.versions(status, thisMac: input.thisMacVersion, server: input.serverVersion)
-    approvals = Self.approvals(status, host: input.host, hostsSimulators: input.hostsSimulators)
+    approvals = Self.approvals(status, host: input.host, hostsSimulators: input.hostsSimulators && input.hostsKnown)
   }
 
   static func situation(_ status: BuildMachineStatus) -> MachineSituation? {
@@ -266,7 +268,7 @@ public struct MachineDetail: Equatable, Sendable {
       rows.append(
         MachineDetailRow(
           label: "Build compatibility", value: BuildMachineStatus.shortStimBuild(mismatch.reason), tone: .warning))
-    } else {
+    } else if !(status.problems ?? []).contains(where: { $0.code == "unreachable" || $0.code == "checkout" }) {
       rows.append(MachineDetailRow(label: "Build compatibility", value: "Same as this Mac", tone: .success))
     }
     return rows

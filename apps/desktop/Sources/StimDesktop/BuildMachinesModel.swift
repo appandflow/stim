@@ -23,7 +23,6 @@ final class BuildMachinesModel {
     var findings: [DoctorReport.Finding] = []
     var readAt: Date?
     var failure: String?
-    var loading = false
   }
 
   /// Whether Tailscale is running, once checked.
@@ -390,26 +389,25 @@ final class BuildMachinesModel {
 
   /// Reads what only the machine's page shows: the Android doctor report, which is slower than the list's, and the
   /// version its stim-server reports. The list's poll never calls it.
-  func loadDetails(_ entry: String, checkout: String?) async {
+  /// Returns false while the list's report has no approved status for the machine yet, so a caller tries again soon.
+  @discardableResult
+  func loadDetails(_ entry: String, checkout: String?) async -> Bool {
     guard let checkout, let status = check(in: checkout)?.statuses.first(where: { $0.machine == entry }),
       status.state == .approved
-    else { return }
+    else { return false }
     async let android: Void = loadAndroid(checkout: checkout)
     async let version: Void = loadServerVersion(entry, status: status)
     _ = await (android, version)
+    return true
   }
 
   private func loadAndroid(checkout: String) async {
     if let running = androidLoads[checkout] { return await running.value }
     if let readAt = androidChecks[checkout]?.readAt, now().timeIntervalSince(readAt) < 30 { return }
-    var current = androidChecks[checkout] ?? AndroidCheck()
-    current.loading = true
-    androidChecks[checkout] = current
     let task = Task {
       let result = await Result.awaiting { try await androidDoctor(checkout) }
       androidLoads[checkout] = nil
       var next = androidChecks[checkout] ?? AndroidCheck()
-      next.loading = false
       switch result {
       case .success(let report):
         next.statuses = report.remoteMachines ?? []
@@ -437,6 +435,7 @@ final class BuildMachinesModel {
     input.findings = check?.findings ?? []
     input.host = check?.hosts?.first { OffloadMachines.name($0.machine) == OffloadMachines.name(entry) }
     input.hostsSimulators = !androidOnlyNames.contains(OffloadMachines.name(entry))
+    input.hostsKnown = check?.hosts != nil
     if let status {
       input.install = install(for: status)
       input.update = updates[entry]

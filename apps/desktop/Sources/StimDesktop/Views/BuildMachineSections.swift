@@ -21,6 +21,11 @@ struct ThisMacPlacements: View {
   }
 }
 
+private struct MachinePageKey: Hashable {
+  var machine: String
+  var checkout: String?
+}
+
 /// The selected remote Mac's readiness, problems and notes, capacity and build history from the page's minute refresh.
 struct MachineBuildMachines: View {
   var model: BuildMachinesModel
@@ -57,10 +62,10 @@ struct MachineBuildMachines: View {
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .task(id: selectedMachine) {
+    .task(id: MachinePageKey(machine: selectedMachine, checkout: checkout)) {
       while !Task.isCancelled {
-        await model.loadDetails(selectedMachine, checkout: checkout)
-        try? await Task.sleep(for: .seconds(60))
+        let loaded = await model.loadDetails(selectedMachine, checkout: checkout)
+        try? await Task.sleep(for: .seconds(loaded ? 60 : 3))
       }
     }
   }

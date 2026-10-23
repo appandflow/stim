@@ -139,8 +139,8 @@ struct BuildMachinesView: View {
     )
     .task(id: DetailKey(entry: entry, checkout: checkout)) {
       while !Task.isCancelled {
-        await model.loadDetails(entry, checkout: checkout)
-        try? await Task.sleep(for: .seconds(60))
+        let loaded = await model.loadDetails(entry, checkout: checkout)
+        try? await Task.sleep(for: .seconds(loaded ? 60 : 3))
       }
     }
   }

@@ -101,6 +101,7 @@ import Testing
     let detail = MachineDetail(input)
     #expect(detail.pill == MachineListStatus(title: "Update this Mac", tone: .warning))
     #expect(detail.groups.flatMap(\.issues).map(\.code) == ["stim-build", "runtime"])
+    #expect(detail.groups.flatMap(\.issues).first?.fix == nil)
   }
 
   @Test func theAndroidReportsProgressAndFailureAreSaidOnThePage() throws {
@@ -161,8 +162,33 @@ import Testing
         MachineDetailRow(label: "Hosted simulators", value: "Approved", tone: .success),
       ])
     input.host = nil
+    #expect(MachineDetail(input).approvals.last?.value == "Not requested")
+    input.hostsKnown = false
+    #expect(MachineDetail(input).approvals.map(\.label) == ["Builds"])
+    input.hostsKnown = true
     input.hostsSimulators = false
     #expect(MachineDetail(input).approvals.map(\.label) == ["Builds"])
+
+    let unreachable = try status(
+      #"{"machine":"mini","state":"approved","offloadable":false,"problems":[{"code":"unreachable","reason":"timed out"}]}"#)
+    #expect(
+      !MachineDetail(MachineDetail.Input(entry: "mini", status: unreachable)).versions.contains {
+        $0.label == "Build compatibility"
+      })
+  }
+
+  @Test func aFindingTitledRemoteMacStillSuppliesTheFix() throws {
+    let list = try status(
+      #"{"machine":"mini","state":"approved","offloadable":false,"problems":[{"code":"jdk","reason":"Android: JDK 25 there, 17 here"}]}"#
+    )
+    var input = MachineDetail.Input(entry: "mini", status: list)
+    input.findings = try findings(
+      #"[{"code":"build-machine-jdk","level":"cost","title":"Remote Mac mini runs another JDK","detail":"Builds fall back to this Mac: Android: JDK 25 there, 17 here.","fix":"On mini, install JDK 17:\nbrew install --cask zulu@17"}]"#
+    )
+    let issue = try #require(MachineDetail(input).groups.first?.issues.first)
+    #expect(issue.platform == .android)
+    #expect(issue.reason == "JDK 25 there, 17 here")
+    #expect(issue.fix?.commands == ["brew install --cask zulu@17"])
   }
 
   @Test func aFixSplitsIntoSentencesAndCommands() {
