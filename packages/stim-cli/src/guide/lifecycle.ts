@@ -2143,7 +2143,14 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
        (\`gc --delete\` semantics; the next build installs from the shared
        cache). A workspace whose last use is unknown is kept
     4. trim shared cache entries nothing has used for 14 days
-       (\`gc --delete --older-than 14\` for the caches)
+       (\`gc --delete --older-than 14\` for the caches). Caches with nothing
+       to trim print one line, not one each. A trim that removed nothing is
+       recorded in $STIM_HOME/budget-sweep.json and not repeated for 5
+       minutes while the set of caches is the same and free disk has not
+       fallen by more than 1 GB since; the run prints one budget line saying
+       it skipped. \`gc\` and automatic maintenance never skip, and a dry
+       run (\`doctor\`) still plans the step. The STIM_LOW_DISK message
+       measures the largest uses of disk at the same time.
 
   IDLE SHUTDOWN (30 MINUTES BY DEFAULT): with devices.idleShutdownMinutes above
   0, a workspace's supervisor shuts down that workspace's owned simulators and
@@ -2322,12 +2329,22 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   .stim.json, else \`git symbolic-ref --short refs/remotes/origin/HEAD\`;
   when neither answers it says so and makes no warning.
 
-  Dependencies install where the lockfile is, which in a monorepo is the
-  repository root, when the lockfile moved or nothing is installed. Pods run
-  for the app the command was invoked from, and only that app, when its
-  ios/Podfile.lock moved or ios/Pods/Manifest.lock does not match it. Each
-  completed or skipped deps and pods step names its source directory and
-  reason. A failed install refuses with STIM_DEPS_FAILED and nothing is copied.
+  The app is the one warm prepares: the app the command was invoked from, or,
+  from a monorepo root, the one app registered in the source checkout.
+  Dependencies install where the repository root's lockfile is and, when the
+  app has its own lockfile (a nested package outside the root workspaces),
+  there too; a root that has neither installed dependencies nor an install
+  record is left alone when the app has its own lockfile. Each installs when
+  its lockfile moved, when its patches/ directory moved (npm projects only),
+  when nothing is installed, or when npm reports a tree that differs from the
+  one it reported after the last completed install. An npm project whose
+  npm config sets ignore-scripts gets no postinstall from \`npm ci\`, so when its
+  package.json defines one the refresh runs \`npm run postinstall\` next
+  (patch-package, usually); dependencies' own install scripts stay blocked.
+  Pods run for that app, and only that app, when its ios/Podfile.lock moved or
+  ios/Pods/Manifest.lock does not match it. Each completed or skipped deps and
+  pods step names its source directory and reason. A failed install or
+  postinstall refuses with STIM_DEPS_FAILED and nothing is copied.
 
   An install that did not finish is remembered, and a PLAIN warm reads that
   before it copies. The refresh records the completed install of the lockfile it

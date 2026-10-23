@@ -7,6 +7,7 @@ import SwiftUI
 /// `stim settings` and asks for access with `stim doctor --fix`; approving happens on the other Mac.
 struct BuildMachinesView: View {
   var model: BuildMachinesModel
+  @ObservedObject var ledger: BuildLedgerModel
   @ObservedObject var store: StatusStore
   var workspace: String?
   var actions: ActionCenter?
@@ -127,7 +128,8 @@ struct BuildMachinesView: View {
       entry: entry, detail: model.detail(for: entry, checkout: checkout), status: status,
       capabilities: buildMachineCapabilities(entry, hosts: model.check(in: checkout)?.hosts),
       working: model.working == entry, progress: model.working == entry ? model.progress : nil, canAsk: checkout != nil,
-      hosted: hostedDevices(on: entry, in: store.payload?.environments ?? []), update: update,
+      hosted: hostedDevices(on: entry, in: store.payload?.environments ?? []),
+      builds: BuildLedger.items(on: entry, in: ledger.items), buildsNote: buildsNote(ledger), update: update,
       install: status.flatMap { model.install(for: $0) }, back: { opened = nil },
       ask: { Task { await model.ask(entry, checkout: checkout) } },
       startUpdate: { Task { await model.update(entry, checkout: checkout) } },
@@ -137,12 +139,20 @@ struct BuildMachinesView: View {
         hostsSimulators: !model.androidOnlyNames.contains(OffloadMachines.name(entry)), disabled: model.isBusy,
         setPool: { role, machine, enabled in Task { await model.setPool(role, machine: machine, enabled: enabled) } })
     )
+    .task { await ledger.poll() }
     .task(id: DetailKey(entry: entry, checkout: checkout)) {
       while !Task.isCancelled {
         let loaded = await model.loadDetails(entry, checkout: checkout)
         try? await Task.sleep(for: .seconds(loaded ? 60 : 3))
       }
     }
+  }
+
+  private func buildsNote(_ ledger: BuildLedgerModel) -> String {
+    if ledger.error != nil && ledger.items.isEmpty {
+      return "Builds could not be read. If this stim is 1.25.0 or older, update it: the build history needs a newer stim."
+    }
+    return ledger.loaded ? "No recorded build ran on this machine yet." : "Loading\u{2026}"
   }
 
   private func stopHosted(_ entry: String, _ devices: [HostedOnMachine]) {

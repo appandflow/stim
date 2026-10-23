@@ -12,6 +12,7 @@ enum SidebarItem: Hashable {
   case worktree(String)
   case notifications
   case machine
+  case builds
 
   var logName: String {
     switch self {
@@ -23,6 +24,7 @@ enum SidebarItem: Hashable {
     case .worktree(let path): "worktree \(path)"
     case .notifications: "notifications"
     case .machine: "machine"
+    case .builds: "builds"
     }
   }
 }
@@ -42,6 +44,7 @@ struct RootView: View {
   private let planChecks: BuildPlanChecks
   private let statsReader: StatsReader
   @StateObject private var tutorial = TutorialModel()
+  @StateObject private var builds: BuildLedgerModel
   @State private var selection: SidebarItem? = .overview
   @State private var previousSelection: SidebarItem? = .overview
   @StateObject private var navigation = NavigationController()
@@ -92,6 +95,7 @@ struct RootView: View {
     self.tips = tips
     self.buildMachines = buildMachines
     self.cli = cli
+    _builds = StateObject(wrappedValue: BuildLedgerModel(cli: cli))
     self.onboarding = onboarding
     self.store = store
     self.actions = actions
@@ -243,7 +247,8 @@ struct RootView: View {
         ? InspectorToggle(isShown: inspector != .hidden || tutorialDocked, toggle: toggleInspector) : nil
     )
     .focusedSceneValue(
-      \.sidebarNavigation, SidebarNavigation { navigate($0, .command("Overview, Active Workspaces, Notifications or Machines")) }
+      \.sidebarNavigation,
+      SidebarNavigation { navigate($0, .command("Overview, Active Workspaces, Notifications, Machines or Builds")) }
     )
     .focusedSceneValue(
       \.historyNavigation,
@@ -1009,6 +1014,8 @@ struct RootView: View {
     case .machine:
       MachineView(
         buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot, tips: tips)
+    case .builds:
+      BuildsView(history: builds)
     case .overview:
       OverviewView(
         store: store, metrics: metrics,

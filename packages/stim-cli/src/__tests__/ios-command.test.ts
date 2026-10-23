@@ -1162,6 +1162,7 @@ function simctlClock(step: number) {
     makeExecutor({
       runFile: (file, args = []) => {
         const cmd = [file, ...args].join(' ');
+        if (cmd.includes('launchctl list')) return '4242\t0\tcom.apple.SpringBoard\n';
         if (!cmd.includes('simctl list devices')) return '';
         state.now += step;
         return JSON.stringify({
@@ -3808,6 +3809,21 @@ describe('--remote', () => {
     expect(failure.remedy.includes('stim doctor --platform ios')).toBe(!isRemote);
     expect(failure.remedy.includes('xcrun simctl')).toBe(!isRemote);
     expect(failure.remedy.includes('`stim stop`')).toBe(isRemote);
+  });
+
+  test('a launch refused because the simulator system shell died names the reboot', async () => {
+    reserve();
+    const launchIosApp = () => ({
+      failed: true,
+      code: 'STIM_LAUNCH_FAILED',
+      reason: 'simctl launch com.example.app failed: The system shell (SpringBoard:4242) probably crashed.',
+    });
+    const { logs, exitCode } = await run({ json: true }, { launchIosApp });
+    expect(exitCode).toBe(1);
+    const failure = parseFirst(logs);
+    expect(failure.code).toBe('STIM_LAUNCH_FAILED');
+    expect(failure.remedy).toMatch(/`stim stop`.*`stim ios`/);
+    expect(failure.remedy).not.toContain('host memory pressure');
   });
 
   test('a remote install failure names the running session and how to end it', async () => {

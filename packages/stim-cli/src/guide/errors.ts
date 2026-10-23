@@ -152,7 +152,8 @@ Branch on the code, never on the message.`,
   note naming which of the two set it; Gemfile.lock is never edited either way.
   \`worktree warm --refresh\` reports the same code for the install it runs in
   the SOURCE CHECKOUT -- the lockfile's own command (\`pnpm install\`,
-  \`yarn install\`, \`bun install\`, \`npm ci\`) or that same pod ladder. The
+  \`yarn install\`, \`bun install\`, \`npm ci\`), the \`npm run postinstall\`
+  it runs when npm's config there sets ignore-scripts, or that same pod ladder. The
   message names the command, quotes its last lines, and nothing is copied: fix
   the source checkout, then warm again.`,
     },
@@ -801,6 +802,13 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   installation. If it fails, the refusal includes observed host memory pressure
   when available. Free memory before retrying under pressure; see
   \`stim guide lifecycle simslim\`. Booted alone does not prove readiness.
+  The same probe lists the simulator's launchd jobs and requires a running
+  SpringBoard. A simulator that reports Booted while SpringBoard has died
+  (\`simctl launch\` then says "The system shell probably crashed") is shut
+  down through teardown and booted once more; if SpringBoard is still not
+  running, the refusal names the udid and the remedy: \`stim stop\`, then
+  \`stim ios\` again. Repeated SpringBoard crashes leave reports in
+  ~/Library/Logs/DiagnosticReports.
   On Android the emulator's own stdio is captured to
   the global workspace logs/emulator.log (truncated per boot), and when it printed a
   \`FATAL |\` / \`ERROR |\` / \`PANIC:\` line THAT is the message and the remedy
@@ -1571,8 +1579,9 @@ not on any remote"  (worktree remove)
   lockfile says nothing about the one on disk now, whose dependencies may well
   have been installed since; and a repository with no record at all -- every
   repository before its first \`--refresh\` -- copies as it always has.
-  In a monorepo the record is keyed on the directory that owns the lockfile,
-  which is usually the repository root, so every app of it reads the same one.`,
+  Each directory that owns a lockfile the refresh installs has its own record:
+  the repository root and, when the app has a lockfile of its own, the app. A
+  plain warm reads both.`,
     },
     warm: {
       summary: 'worktree warm claim storage refusals and recovery',

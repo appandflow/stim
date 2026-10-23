@@ -279,6 +279,10 @@ export async function readSpringBoardPid(udid: string): Promise<number | null> {
   }
 }
 
+export function springBoardRunning(launchctlList: string): boolean {
+  return /^\d+[ \t]+\S+[ \t]+com\.apple\.SpringBoard$/m.test(launchctlList);
+}
+
 // `simctl bootstatus -b` returns before SpringBoard has started. Until it has,
 // `simctl launch` blocks and SpringBoard resets the volume (#4075). It sets the
 // `com.apple.springboard.finishedstartup` notify state to its pid once started.

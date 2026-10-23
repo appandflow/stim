@@ -777,6 +777,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         status: 'failed',
         errorCode: code,
         diagnostics: rawDiagnostics,
+        message,
+        remedy,
         out,
       });
     }
@@ -1248,6 +1250,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
   record.avdName = device.avdName ?? null;
   record.deviceName = device.deviceName ?? device.avdName ?? null;
+  record.deviceSerial = device.serial;
   record.systemImage = device.systemImage;
   record.deviceProfile = device.deviceProfile;
 

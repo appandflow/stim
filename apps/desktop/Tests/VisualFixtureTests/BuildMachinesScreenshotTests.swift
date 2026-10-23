@@ -156,12 +156,44 @@
         "fix":"On janics-mac-mini-2, install the package now so the first build does not download it:\n/Users/janic/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager \"platforms;android-36\""}]
       """#
 
+    private func ledgerLine(
+      _ id: String, minutesAgo: Double, platform: String, outcome: String = "succeeded", durationMs: Int,
+      failure: String = ""
+    ) -> String {
+      let ts = Int((Date().timeIntervalSince1970 - minutesAgo * 60) * 1000)
+      return """
+        {"ts":\(ts),"src":"builds","level":"info","msg":"m","event":"build","id":"\(id)","startedAt":\(ts - durationMs),\
+        "project":"/Users/me/dev/mobile-app","workspace":"w--1","branch":"feat/checkout","platform":"\(platform)",\
+        "configuration":"Debug","placement":{"where":"offloaded","machine":"janics-mac-mini-2"},\
+        "cache":{"result":"miss","key":"k","fingerprint":"f"},"durationMs":\(durationMs),\
+        "phases":{"prepare":2000,"compile":\(durationMs - 2000)},"offloadPhases":{"sync":9000,"build":\(durationMs - 20000)},\
+        "outcome":"\(outcome)"\(failure),"stimVersion":"1.26.0"}
+        """
+    }
+
+    private var machineBuilds: [LedgerBuild] {
+      BuildLedger.parse(
+        Data(
+          [
+            ledgerLine("a", minutesAgo: 12, platform: "ios", durationMs: 205_000),
+            ledgerLine(
+              "b", minutesAgo: 70, platform: "android", outcome: "failed", durationMs: 140_000,
+              failure:
+                #","failure":{"code":"STIM_GRADLE_FAILED","message":"Gradle exited 1 on janics-mac-mini-2","remedy":"Run stim logs --errors","phase":"compile"}"#
+            ),
+            ledgerLine("c", minutesAgo: 300, platform: "ios", durationMs: 188_000),
+          ].joined(separator: "\n").utf8))
+    }
+
     @MainActor private func page(
-      _ detail: MachineDetail, status: BuildMachineStatus?, install: StimInstall? = nil, update: MachineUpdatePhase? = nil
+      _ detail: MachineDetail, status: BuildMachineStatus?, install: StimInstall? = nil, update: MachineUpdatePhase? = nil,
+      builds: [LedgerBuild] = []
     ) -> some View {
       MachineDetailPage(
         entry: detail.entry, detail: detail, status: status, capabilities: ["Builds", "Simulators"], working: false,
-        progress: nil, canAsk: true, hosted: [], update: update, install: install, back: {}, ask: {}, startUpdate: {},
+        progress: nil, canAsk: true, hosted: [], builds: builds,
+        buildsNote: "No recorded build ran on this machine yet.", update: update, install: install, back: {}, ask: {},
+        startUpdate: {},
         stopHosted: { _ in }, remove: {}, showsToggles: true,
         toggles: BuildMachinePoolToggles(
           machine: detail.entry, poolDisabled: ["build": [], "device": []], hostsSimulators: true, disabled: false,
@@ -170,7 +202,7 @@
       .font(.stim(.body))
       .foregroundStyle(Palette.text)
       .background(Palette.background)
-      .frame(width: 780, height: 560)
+      .frame(width: 780, height: builds.isEmpty ? 560 : 1500)
     }
 
     @MainActor private func detailFixtures() throws -> [(String, AnyView)] {
@@ -213,6 +245,10 @@
       let down = try layers()[0]
       return [
         ("detail-notes", AnyView(page(MachineDetail(android), status: try noted()))),
+        (
+          "detail-builds",
+          AnyView(page(MachineDetail(android), status: try noted(), builds: machineBuilds))
+        ),
         ("detail-old-worker", AnyView(page(MachineDetail(strict), status: try strictSdk()))),
         ("detail-update-this-mac", AnyView(page(MachineDetail(mixed), status: mixed.status, install: newer.install))),
         (

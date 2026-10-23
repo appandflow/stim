@@ -909,7 +909,7 @@ device and inspect `stim logs --errors` before claiming recovery.
 ## `logs`
 
 ```text
-stim logs [--slot <name>] [--source <metro|client|device|build|agent|maintenance|gc|all...>]
+stim logs [--slot <name>] [--source <metro|client|device|build|agent|maintenance|gc|builds|all...>]
           [--level <debug|info|warn|error|fatal>] [--since <duration>]
           [--grep <expression>] [--tail <count>] [--errors]
           [--follow] [--json]
@@ -939,6 +939,16 @@ result.
   clear, with the trigger, size and reason. It works from any directory, stands
   alone (`--source all` leaves it out), and takes `--json`, `--since`, `--tail`
   and `--follow`; `--errors` shows only failed items.
+- `--source builds` shows the machine-wide build ledger: one record per native
+  `ios`, `android` or `macos` build run, newest 500, whether it compiled here, was
+  offloaded to a build machine or came from a cache, and whether it succeeded,
+  failed or was cancelled. A record has the project, workspace and branch, the
+  scheme or variant, where it ran (and why an offload fell back to this Mac), the cache
+  result and key, the time in each phase, the failure code, message and remedy,
+  the simulator or emulator it targeted, and the Stim version. It outlives the
+  workspace, works from any directory, stands alone (`--source all` leaves it
+  out), and takes the same options as `--source gc`; `--errors` shows only failed
+  builds. `stim gc` never removes it.
 - `--source agent` shows what agent-device did on this workspace's owned
   simulators and emulators: taps, typing, app opens, screenshots, and failed
   commands. A plain `logs` includes it; `--errors` includes it only when
@@ -1703,7 +1713,7 @@ checkout refuses.
 
 `--refresh` updates the source checkout before the copy: it checks the upstream, fetches changes when needed,
 fast-forwards whatever branch is checked out there, and installs dependencies or
-Pods when the new commits moved a lockfile, when nothing is installed, or when
+Pods when the new commits moved a lockfile (or `patches/` in an npm project), when nothing is installed, or when
 `ios/Pods` does not match `ios/Podfile.lock`. See
 [worktree isolation](./worktrees.md#refresh-the-source-checkout-first).
 
