@@ -8613,6 +8613,30 @@ describe('iOS placement on a hosting Mac', () => {
       expect(queryLogs({ dir: logsDir, slot, errorsOnly: true }).map((r) => r.msg)).toEqual(['after']);
   });
 
+  test('a hosted placement that fails after the device is ready still leaves the launch marker', async () => {
+    reserve();
+    const { exitCode } = await run(
+      { remote: 'mini', json: true },
+      {
+        prepareHostedIos: async () => ({
+          host: { machine: 'mini', connection: { close() {} } },
+          choice: hostedDevice,
+          session: null,
+        }),
+        buildIos: async () => makeIosBuildSuccess({ appPath: join(root, 'Fixture.app'), bundleId: 'com.example.app' }),
+        placeHostedIos: async (_target, args) => {
+          await args.reserved({ ...placement, device: null });
+          await args.reserved(placement);
+          throw Object.assign(new Error('launch failed'), { code: 'STIM_HOSTING_REFUSED' });
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(buildRecords().filter((r) => r.marker)).toMatchObject([
+      { event: 'launch_attempt', remote: true, host: 'mini', deviceId: placement.session },
+    ]);
+  });
+
   test('a hosted refusal after the build records the build as failed with its code', async () => {
     reserve();
     const { exitCode } = await run(

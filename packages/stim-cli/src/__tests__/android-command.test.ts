@@ -7956,6 +7956,26 @@ describe('named Android hosting placement', () => {
     },
   );
 
+  test('a hosted placement that fails after the device is ready still leaves the launch marker', async () => {
+    const h = harness({
+      json: true,
+      remoteDevice: 'mini',
+      prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: hostDevice, session: null }),
+      placeHostedAndroid: async (_target: unknown, args: { reserved: (value: unknown) => unknown }) => {
+        await args.reserved({ ...placement, device: undefined });
+        await args.reserved(placement);
+        throw Object.assign(new Error('launch failed'), { code: 'STIM_HOSTING_REFUSED' });
+      },
+      build: async () => makeAndroidBuildSuccess({ apkPath: fakeApk() }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
+    expect(records.filter((r) => r.marker === true)).toMatchObject([
+      { event: 'launch_attempt', remote: true, host: 'mini', deviceId: placement.session },
+    ]);
+  });
+
   test('a hosted native crash names the hosted rerun command', async () => {
     const h = harness({
       json: true,

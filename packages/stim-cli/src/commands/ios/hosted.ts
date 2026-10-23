@@ -70,6 +70,7 @@ export async function finishHostedIosRun({
   const devClientScheme =
     appMode === 'development' && isExpo ? (d.devClientScheme(root, artifact.path) ?? undefined) : undefined;
   const launchedAt = d.now();
+  let marked = false;
   let run;
   try {
     run = await d.placeHostedIos(target, {
@@ -83,7 +84,25 @@ export async function finishHostedIosRun({
       mode: appMode,
       ...(appMode === 'development' && isExpo ? { devClientScheme } : {}),
       metroPort,
-      reserved: (placement) => d.writeHostedIos(root, slot, placement),
+      reserved: (placement) => {
+        if (placement.device && !marked) {
+          marked = true;
+          logWriter().write({
+            src: 'build',
+            level: 'info',
+            marker: true,
+            event: 'launch_attempt',
+            ts: d.now(),
+            platform: 'ios',
+            appId: bundleId,
+            deviceId: placement.session,
+            remote: true,
+            host: target.host.machine,
+            msg: `launching ${bundleId} on ${target.host.machine}`,
+          });
+        }
+        return d.writeHostedIos(root, slot, placement);
+      },
       note,
       enterPhase,
     });
@@ -98,19 +117,6 @@ export async function finishHostedIosRun({
     });
   }
   await d.writeHostedIos(root, slot, run.placement);
-  logWriter().write({
-    src: 'build',
-    level: 'info',
-    marker: true,
-    event: 'launch_attempt',
-    ts: launchedAt,
-    platform: 'ios',
-    appId: bundleId,
-    deviceId: run.placement.session,
-    remote: true,
-    host: target.host.machine,
-    msg: `launching ${bundleId} on ${target.host.machine}`,
-  });
   await d.writeWorkspaceLaunch(
     root,
     'ios',

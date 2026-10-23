@@ -90,6 +90,7 @@ export async function finishHostedAndroidRun({
       ? ((await resolveDevClientScheme(root, artifact.apkPath)) ?? undefined)
       : undefined;
   const launchedAt = now();
+  let marked = false;
   try {
     const run = await place(target, {
       root,
@@ -102,24 +103,29 @@ export async function finishHostedAndroidRun({
       metroPort,
       selectors,
       ...(appMode === 'development' && isExpo ? { devClientScheme } : {}),
-      reserved: (placement) => writePlacement(root, slot, placement),
+      reserved: (placement) => {
+        if (placement.device && !marked) {
+          marked = true;
+          report.writer.write({
+            src: 'build',
+            level: 'info',
+            marker: true,
+            event: 'launch_attempt',
+            ts: now(),
+            platform: 'android',
+            appId: packageName,
+            deviceId: placement.session,
+            remote: true,
+            host: target.host.machine,
+            msg: `launching ${packageName} on ${target.host.machine}`,
+          });
+        }
+        return writePlacement(root, slot, placement);
+      },
       note: out,
       enterPhase,
     });
     await writePlacement(root, slot, run.placement);
-    report.writer.write({
-      src: 'build',
-      level: 'info',
-      marker: true,
-      event: 'launch_attempt',
-      ts: launchedAt,
-      platform: 'android',
-      appId: packageName,
-      deviceId: run.placement.session,
-      remote: true,
-      host: target.host.machine,
-      msg: `launching ${packageName} on ${target.host.machine}`,
-    });
     await writeLaunch(
       root,
       'android',
