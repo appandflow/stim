@@ -338,7 +338,7 @@ export async function pruneCacheAsync(
     for (const parent of entries) {
       signal?.throwIfAborted();
       const names = await readdir(parent).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== 'ENOENT') unlisted++;
+        if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') unlisted++;
         return [];
       });
       next.push(...names.map((name) => join(parent, name)));
