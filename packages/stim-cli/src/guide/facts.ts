@@ -615,9 +615,10 @@ leased until <time>" for each one.`,
                   lead, the lines to run on that machine (sdkmanager, the JDK install,
                   xcode-select, xcodebuild or xcodes) and what they do, or followsFrom, the
                   code of the problem whose fix also clears it. notes lists what a build there does without stopping:
-                  { code, reason } for an ndk, build-tools or compile-sdk package its
+                  { code, reason, commands, lead } for an ndk, build-tools or compile-sdk package its
                   Android SDK lacks and Gradle downloads on the first build (licenses
-                  accepted there, no android.builder.sdkDownload=false in the app), each
+                  accepted there, no android.builder.sdkDownload=false in the app), with the sdkmanager
+                  command that installs it ahead of time; each
                   also a build-machine-<code> finding at level note. capacity
                   is the machine's offer: { running, max, diskFreeBytes,
                   minDiskFreeBytes, cpus?, loadPerCore?, builds?, maxBuilds?,

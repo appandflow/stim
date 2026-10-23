@@ -656,9 +656,12 @@ export function toolchainNotes(target: BuildTarget, worker: WorkerToolchain): Of
     return pods ? [{ ...pods, reason: `${pods.reason}; its pod install runs anyway and a failure is reported` }] : [];
   }
   if (target.platform !== 'android' || !worker.androidSdk || !gradleDownloads(target.requires, worker)) return [];
+  const sdkManager = sdkManagerPath(worker);
   return sdkGaps(target.requires, worker.androidSdk).map((gap) => ({
     code: gap.code,
     reason: `${gap.label} is not installed there; Gradle downloads it on the first build${gap.size ? ` (${gap.size})` : ''}`,
+    commands: [`${sdkManager} "${gap.id}"`],
+    lead: 'install the package now so the first build does not download it',
   }));
 }
 

@@ -696,8 +696,9 @@ See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for 
 
 **Settings > Remote Machines** lists your remote machines with a status
 (**Approved**, **Waiting for approval**, the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading),
-a line with its running builds and free disk, any problem that keeps builds on
-this Mac with its fix, what each does (**Builds**, **Simulators**) and **Remove...**. It updates itself; there is no Refresh button. With none, it
+a line with its running builds and free disk, what each does (**Builds**, **Simulators**), **Details** and
+**Remove...**. The status shows only a state that stops this Mac using the machine; notes, such as an
+Android SDK package Gradle downloads on the first build, never change it. It updates itself; there is no Refresh button. With none, it
 offers **Add Remote Machine…**, which guides you through five steps:
 
 1. Check Tailscale and pick a Mac, Linux or Windows machine on your tailnet.
@@ -729,6 +730,14 @@ requests if you have no listed workspace. The wizard removes it when it closes.
 Cancel removes only settings the wizard added and shows revoke commands for the
 worker Mac. **Remove** in Remote Machines shows the optional cleanup to run on that
 Mac.
+
+**Details** opens the page of one machine. It shows why this Mac cannot use the machine, with
+the remedy and a **Copy** button for each command; every problem and note grouped by iOS, Android,
+macOS and the machine itself, each with the exact command that fixes it; the machine's load, RAM, disk
+and builds; the Stim versions; the build and simulator approvals; the **Builds enabled** and
+**Simulators enabled** switches; and **Remove...**. The Android tools are checked when the page opens,
+so the first look at the Android section can take a moment. A machine that runs a newer Stim than this
+Mac shows **Update this Mac**, and its other problems stay listed on its page.
 
 See [Remote machines](./remote-machines.md) for requirements, CLI setup, permissions and troubleshooting.
 
