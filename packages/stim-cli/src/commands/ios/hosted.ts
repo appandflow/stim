@@ -7,6 +7,7 @@ import type { FailArgs } from './types.ts';
 import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
 import { verifyIosMetroRun, type IosRunCompletion } from './launch.ts';
 import { LAUNCH_BUNDLING, LAUNCH_FATAL } from '../../engine/launch-verify.ts';
+import { launchOutcomeRecord } from '../native-runtime.ts';
 
 export async function finishHostedIosRun({
   target,
@@ -27,6 +28,7 @@ export async function finishHostedIosRun({
   enterActivity,
   selectors,
   projectBundleId,
+  logWriter,
   ...report
 }: Pick<
   ReportIosResultArgs,
@@ -61,6 +63,7 @@ export async function finishHostedIosRun({
   enterActivity?: BuildProgress['activity'];
   selectors: HostedDeviceSelectors;
   projectBundleId: () => string | null | Promise<string | null>;
+  logWriter: () => { write: (record: Record<string, unknown>) => void };
 }): Promise<IosRunCompletion | null> {
   const bundleId = artifact.bundleId ?? ((await d.readBundleId(artifact.path)) || (await projectBundleId()));
   if (!bundleId) return fail({ code: 'STIM_INSTALL_FAILED', message: 'The built app has no bundle identifier.' });
@@ -95,6 +98,19 @@ export async function finishHostedIosRun({
     });
   }
   await d.writeHostedIos(root, slot, run.placement);
+  logWriter().write({
+    src: 'build',
+    level: 'info',
+    marker: true,
+    event: 'launch_attempt',
+    ts: launchedAt,
+    platform: 'ios',
+    appId: bundleId,
+    deviceId: run.placement.session,
+    remote: true,
+    host: target.host.machine,
+    msg: `launching ${bundleId} on ${target.host.machine}`,
+  });
   await d.writeWorkspaceLaunch(
     root,
     'ios',
@@ -110,6 +126,7 @@ export async function finishHostedIosRun({
   );
   let launched: true | 'unverified' | 'bundling' = run.launched;
   let launchWarning: string | undefined;
+  let unattributed = false;
   if (appMode === 'development') {
     const hostedLogs = d.followHostedLaunchLogs(root, slot, 'ios', launchedAt);
     let verification;
@@ -152,7 +169,19 @@ export async function finishHostedIosRun({
       });
     launched = verification.state === true ? true : verification.state === LAUNCH_BUNDLING ? 'bundling' : 'unverified';
     launchWarning = verification.warning;
+    unattributed = verification.unattributed ?? false;
   }
+  logWriter().write(
+    launchOutcomeRecord({
+      launchState: launched,
+      release,
+      process: appMode === 'process',
+      bundleId,
+      configuration: report.configuration,
+      metroPort,
+      unattributed,
+    }),
+  );
   if (launched === 'unverified')
     note(
       `Launch on ${target.host.machine} is unverified; check the hosted app, then retry stim ios --remote ${target.host.machine}.`,

@@ -1191,6 +1191,7 @@ async function runIos(
           enterPhase: progress.step,
           enterActivity: progress.activity,
           selectors,
+          logWriter,
         });
       if (!localBoot) {
         progress.step('device');
