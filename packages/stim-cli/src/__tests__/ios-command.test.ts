@@ -9000,10 +9000,9 @@ describe('strict remote machine selection', () => {
     expect(choose).not.toHaveBeenCalled();
   });
 
-  test('a pod install that fails on the worker builds here in auto and stops a named machine with the install command', async () => {
+  test('a pod install that fails on the worker builds here in remote and stops a named machine with the install command', async () => {
     reserve();
     configureMini();
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
     vi.spyOn(offloadClient, 'offloadCheck').mockReturnValue(async () => ({ capacity: null, problems: [] }));
     const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
@@ -9012,7 +9011,7 @@ describe('strict remote machine selection', () => {
       machine: 'mini',
       reason: workerFailureReason('pods-failed', POD_MISSING_REASON),
     });
-    const fallback = await run({ remoteBuild: 'auto', json: true });
+    const fallback = await run({ remoteBuild: 'remote', json: true });
     expect(fallback.exitCode).toBeNull();
     expect(fallback.stderr).toContain('building here');
     expect(fallback.calls.order).toContain('buildIos');
