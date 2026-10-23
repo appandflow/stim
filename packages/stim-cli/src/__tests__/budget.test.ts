@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, chmodSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import fsPromises from 'node:fs/promises';
@@ -530,6 +530,20 @@ describe('repeat runs below the disk floor', () => {
     expect(first.notes).toMatch(/Trimmed cache-a/);
     const second = await run(T0 + MINUTE);
     expect(second.notes).not.toMatch(/cache trim skipped/);
+  });
+
+  test('a cache that could not be listed is not recorded as empty, so the next run walks it again', async () => {
+    const { dir } = cacheWithEntry('cache-a', 30);
+    chmodSync(dir, 0o000);
+    try {
+      const first = await run(T0);
+      expect(first.notes).not.toMatch(/1 cache: nothing older/);
+    } finally {
+      chmodSync(dir, 0o700);
+    }
+    const second = await run(T0 + MINUTE);
+    expect(second.notes).not.toMatch(/cache trim skipped/);
+    expect(existsSync(join(dir, 'entry'))).toBe(false);
   });
 
   test('a dry run still plans the trim after an empty one was recorded', async () => {

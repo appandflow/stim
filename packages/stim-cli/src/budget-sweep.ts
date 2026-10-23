@@ -7,24 +7,18 @@ import { withDirLock } from './dir-lock.ts';
 export const EMPTY_SWEEP_WINDOW_MS: number = 5 * 60 * 1000;
 export const EMPTY_SWEEP_DISK_DROP_MB: number = 1024;
 
-/** A cache trim that removed nothing: when it ran, the lowest free disk it saw, and which caches it walked. */
 export interface EmptySweep {
   at: number;
   freeMb: number;
   marker: string;
 }
 
-/** Identifies the set of caches a trim walked and the age it trimmed at; a new or removed cache changes it. */
 export function sweepMarker(caches: readonly { name: string; dir: string }[], olderThanDays: number): string {
   const hash = createHash('sha256').update(String(olderThanDays));
   for (const line of caches.map((cache) => `${cache.name}\0${cache.dir}`).toSorted()) hash.update('\n').update(line);
   return hash.digest('hex');
 }
 
-/**
- * Whether a trim can be skipped: the last one removed nothing, from the same caches, under
- * EMPTY_SWEEP_WINDOW_MS ago, and free disk has not fallen more than EMPTY_SWEEP_DISK_DROP_MB since.
- */
 export function canSkipEmptySweep(
   recorded: EmptySweep | null,
   now: { at: number; freeMb: number; marker: string },
@@ -47,7 +41,6 @@ export function readEmptySweep(): EmptySweep | null {
     : null;
 }
 
-/** Records an empty trim, or forgets the record when `sweep` is null. A failed write only costs the next run a walk. */
 export function writeEmptySweep(sweep: EmptySweep | null): void {
   const file = budgetSweepFile();
   try {
