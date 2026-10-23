@@ -5,6 +5,7 @@ import SwiftUI
 
 enum SidebarItem: Hashable {
   case overview
+  case discover
   case wall
   case project(Project)
   case environment(String)
@@ -17,6 +18,7 @@ enum SidebarItem: Hashable {
   var logName: String {
     switch self {
     case .overview: "overview"
+    case .discover: "discover"
     case .wall: "wall"
     case .archived(let id): "archived \(id)"
     case .project(let project): "project \(project.root)"
@@ -58,13 +60,18 @@ struct RootView: View {
   @State private var focusedDeviceID: String?
   @State private var logQuery = LogQuery()
   @State private var archivedLogQuery = LogQuery()
+  @State private var tutorialDestinationHighlight: UUID?
+  @State private var tutorialHighlightDestination: SidebarItem?
+
   @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
   @AppStorage(AppPreferences.Key.showsInspector) private var showsInspector = true
-  @AppStorage(AppPreferences.Key.tutorialFloats) private var tutorialFloats = false
-  @AppStorage(AppPreferences.Key.tutorialFloatPinned) private var tutorialFloatPinned = true
   @State private var showsInspectorOverlay = false
   @State private var inspectorWidth = WorkspaceDetail.inspectorWidth
   @State private var windowSize = CGSize.zero
+  @State private var isFullScreen = false
+  @State private var tutorialPinned = false
+  @State private var tutorialWindowTransitioning = false
+  @State private var tutorialPopupOpen = false
   @State private var sidebarWidth: CGFloat = 0
   @State private var settledInspectorFits: Bool?
   @State private var detailWidth: CGFloat = 0
@@ -125,8 +132,7 @@ struct RootView: View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
       Sidebar(
         store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: attributed(.click("sidebar")),
-        openLogs: showLogs,
-        tips: tips
+        openLogs: showLogs
       )
       .toolbar(removing: .sidebarToggle)
       .toolbar {
@@ -142,12 +148,21 @@ struct RootView: View {
     } detail: {
       HStack(spacing: 0) {
         detail.frame(maxWidth: .infinity, maxHeight: .infinity)
-        if inspectorFits { tutorialPanel }
+        if tutorialDocked, let snapshot = tutorial.snapshot {
+          TutorialDockHost(transitioning: tutorialWindowTransitioning) {
+            HStack(spacing: 0) {
+              Divider()
+              tutorialPanelContent(snapshot)
+                .disabled(tutorialPopupOpen)
+                .allowsHitTesting(!tutorialPopupOpen && !tutorialWindowTransitioning)
+            }
+          }
+          .frame(width: WorkspaceDetail.inspectorWidth + 1)
+        }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Palette.background)
       .overlay(alignment: .bottom) { onboardingPopup }
-      .overlay(alignment: .trailing) { if !inspectorFits { HStack(spacing: 0) { tutorialPanel }.frame(maxHeight: .infinity) } }
       .background(alignment: .topLeading) {
         machineSummary(measuresNarrowest: true)
           .onGeometryChange(for: CGFloat.self) {
@@ -163,7 +178,7 @@ struct RootView: View {
       }
       .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
       .onGeometryChange(for: CGFloat.self) {
-        $0.size.width
+        max(0, $0.size.width - tutorialDockWidth)
       } action: {
         detailWidth = $0
       }
@@ -241,10 +256,17 @@ struct RootView: View {
     }
     .tutorialHighlights(showFallback: columnVisibility == .detailOnly)
     .environment(\.tutorialHint, tutorialHint)
+    .environment(
+      \.tutorialLogsHighlight,
+      tutorialLogsHighlight
+    )
+    .onChange(of: showsLogs) {
+      if !showsLogs, case .environment = tutorialHighlightDestination { tutorialDestinationHighlight = nil }
+    }
+
     .focusedSceneValue(
       \.inspectorToggle,
-      showsWorkspace || tutorialDocked
-        ? InspectorToggle(isShown: inspector != .hidden || tutorialDocked, toggle: toggleInspector) : nil
+      showsWorkspace ? InspectorToggle(isShown: inspector != .hidden, toggle: toggleInspector) : nil
     )
     .focusedSceneValue(
       \.sidebarNavigation,
@@ -290,6 +312,13 @@ struct RootView: View {
     }
     .modifier(TutorialRestartDialogs(tutorial: tutorial))
     .background(floatingTutorial)
+    .background(
+      TutorialWindowObserver(
+        isFullScreen: $isFullScreen, popupOpen: $tutorialPopupOpen, transitioning: $tutorialWindowTransitioning)
+    )
+    .onChange(of: isFullScreen) {
+      if !isFullScreen { tutorialPinned = false }
+    }
     .onAppear {
       navigation.resolves = resolves
       navigation.apply = show
@@ -305,7 +334,11 @@ struct RootView: View {
       navigation.apply = { _ in }
     }
     .onChange(of: onboarding.stimUpdate, initial: true) { _, latest in showStimUpdate(latest) }
-    .onChange(of: onboarding.showsGuide || tutorial.isOpen, initial: true) { _, suppressed in tips.suppressed = suppressed }
+    .onReceive(openRequests.$showsDiscover) { requested in
+      guard requested else { return }
+      openRequests.showsDiscover = false
+      navigate(.discover, .command("Discover Stim"))
+    }
     .onChange(of: openRequests.target, initial: true) { _, target in show(target, in: store.payload) }
     .onReceive(openRequests.$addMachine) { request in
       guard request != nil else { return }
@@ -392,6 +425,8 @@ struct RootView: View {
       }
     }
     .onChange(of: selection) { old, item in
+      if item != tutorialHighlightDestination { tutorialDestinationHighlight = nil }
+
       if case .archived = item {
         archivedLogQuery = LogQuery()
         if case .archived = old {} else { previousSelection = old }
@@ -400,7 +435,7 @@ struct RootView: View {
       restoredProject = true
       if case .project = item {} else { showingAllWorktrees = nil }
       switch item {
-      case .overview, .wall:
+      case .overview, .wall, .discover:
         projectFilter = nil
         openRequests.selectedWorkspace = nil
       case .project(let project):
@@ -417,6 +452,11 @@ struct RootView: View {
     }
   }
 
+  private var tutorialLogsHighlight: UUID? {
+    guard case .environment = selection, selection == tutorialHighlightDestination, showsLogs else { return nil }
+    return tutorialDestinationHighlight
+  }
+
   private var tutorialHint: TutorialHint? {
     guard tutorial.isOpen else { return nil }
     let selected: String? = if case .environment(let path) = selection { path } else { nil }
@@ -426,7 +466,9 @@ struct RootView: View {
       ticks: tutorial.snapshot?.steps.first { $0.id == tutorial.snapshot?.currentStep }?.ticks ?? [],
       showMe: {
         if tutorial.snapshot?.isFinished == true {
-          openTutorialArchive()
+          if let archive = tutorial.snapshot?.record.latestArchive(in: store.payload?.archived ?? []) {
+            navigate(.archived(archive.id), .click("tutorial Show me"))
+          }
         } else if let path = tutorial.tourPath {
           navigate(.environment(path), .click("tutorial Show me"))
           if ["logs", "refresh", "agent"].contains(tutorial.snapshot?.currentStep ?? "") { showsLogs = true }
@@ -468,10 +510,14 @@ struct RootView: View {
     openRequests.viewer = ViewedDevice(id: device.id, workspace: path)
   }
 
-  private func openTutorialArchive() {
-    if let archive = ArchivedWorkspace.newest(removedFrom: tutorial.tourPath ?? "", in: store.payload?.archived ?? []) {
-      navigate(.archived(archive.id), .click("tutorial Show me"))
+  private var tutorialArchiveUnavailableReason: String {
+    if store.payload == nil { return "Waiting for Stim to load saved archives." }
+    if tutorial.archiveEnabled == false { return "Archiving is off. No saved archive is available for this tutorial run." }
+    let paths = tutorial.snapshot?.record.trackedPaths ?? []
+    if store.payload?.environments.contains(where: { paths.contains($0.path) }) == true {
+      return "Finish removing the tutorial worktrees to see their saved builds and logs in Archived."
     }
+    return "No saved archive is available for this tutorial run. It may have expired or been removed."
   }
 
   private var showsWorkspace: Bool {
@@ -497,25 +543,23 @@ struct RootView: View {
       })
   }
 
-  private var tutorialDocked: Bool { tutorial.isOpen && !tutorialFloats }
-
-  @ViewBuilder private var tutorialPanel: some View {
-    if tutorialDocked, let snapshot = tutorial.snapshot {
-      Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
-      tutorialPanelContent(snapshot).frame(width: WorkspaceDetail.inspectorWidth)
-    }
+  private var tutorialDocked: Bool {
+    (isFullScreen || tutorialPinned) && tutorial.isOpen && tutorial.snapshot != nil
   }
+
+  private var tutorialDockWidth: CGFloat { tutorialDocked ? WorkspaceDetail.inspectorWidth + 1 : 0 }
 
   private var floatingTutorial: some View {
     ExperimentalTutorialFloat(
-      isPresented: tutorial.isOpen && tutorialFloats && tutorial.snapshot != nil, pinned: tutorialFloatPinned
+      isPresented: tutorial.isOpen && tutorial.snapshot != nil && !tutorialDocked && !tutorialWindowTransitioning
     ) {
       if let snapshot = tutorial.snapshot { tutorialPanelContent(snapshot) }
     }
   }
 
   private func tutorialPanelContent(_ snapshot: TutorialSnapshot) -> some View {
-    TutorialPanel(
+    let archive = snapshot.record.latestArchive(in: store.payload?.archived ?? [])
+    return TutorialPanel(
       snapshot: snapshot, message: tutorial.notice,
       issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState,
       agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
@@ -523,7 +567,16 @@ struct RootView: View {
       copied: { tutorial.copiedPrompt() }, next: tutorial.next,
       restart: tutorial.restart,
       close: tutorial.close,
-      openArchived: openTutorialArchive,
+      isDocked: tutorialDocked, isFullScreen: isFullScreen,
+      togglePin: { if !isFullScreen { tutorialPinned.toggle() } },
+      openArchived: archive.map { archive in
+        {
+          navigate(.archived(archive.id), .click("tutorial Open Archived"))
+          tutorialHighlightDestination = .archived(archive.id)
+          tutorialDestinationHighlight = UUID()
+        }
+      },
+      archiveUnavailableReason: tutorialArchiveUnavailableReason,
       openBuild: tutorial.tourPath.map { path in
         {
           navigate(.environment(path), .click("tutorial Open the build"))
@@ -534,6 +587,8 @@ struct RootView: View {
       openLogs: tutorialShortcut.map { path in
         {
           showLogs(path)
+          tutorialHighlightDestination = .environment(path)
+          tutorialDestinationHighlight = UUID()
           logQuery.errorsOnly = false
           TutorialViewerEvents.shared.logsOpened(path)
         }
@@ -542,15 +597,12 @@ struct RootView: View {
       updateCLI: {
         onboarding.openGuide()
         onboarding.guideStep = .cli
-      },
-      floating: TutorialPanel.Floating(
-        isOn: tutorialFloats, pinned: tutorialFloatPinned, toggle: { tutorialFloats.toggle() },
-        togglePin: { tutorialFloatPinned.toggle() })
+      }
     )
   }
 
   private var detailRoom: CGFloat {
-    windowSize.width - (columnVisibility == .detailOnly ? 0 : sidebarWidth)
+    windowSize.width - (columnVisibility == .detailOnly ? 0 : sidebarWidth) - tutorialDockWidth
   }
 
   private var inspectorFits: Bool {
@@ -570,7 +622,6 @@ struct RootView: View {
   }
 
   private var inspector: InspectorPresentation {
-    if tutorialDocked { return .hidden }
     if inspectorFits { return showsInspector ? .column : .hidden }
     return showsInspectorOverlay ? .overlay : .hidden
   }
@@ -582,11 +633,6 @@ struct RootView: View {
   }
 
   private func toggleInspector() {
-    if tutorialDocked {
-      tutorial.close()
-      if inspectorFits { showsInspector = true } else { showsInspectorOverlay = true }
-      return
-    }
     if inspectorFits { showsInspector.toggle() } else { showsInspectorOverlay.toggle() }
   }
 
@@ -594,9 +640,7 @@ struct RootView: View {
   @ViewBuilder private var onboardingPopup: some View {
     HStack(spacing: 0) {
       OnboardingBanner(onboarding: onboarding).frame(maxWidth: .infinity)
-      if tutorialDocked {
-        Color.clear.frame(width: WorkspaceDetail.inspectorWidth + 1)
-      } else if showsWorkspace, inspector == .column {
+      if showsWorkspace, inspector == .column {
         Color.clear.frame(width: WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1)
       } else if showsWorkspace, inspector == .overlay {
         Color.clear.frame(width: WorkspaceDetail.inspectorWidth)
@@ -669,7 +713,7 @@ struct RootView: View {
         .overlay(alignment: .topTrailing) {
           if unread > 0 {
             Text(unread > 99 ? "99+" : "\(unread)")
-              .font(.system(size: 9, weight: .bold))
+              .font(.system(size: 10, weight: .bold))
               .monospacedDigit()
               .foregroundStyle(.white)
               .fixedSize()
@@ -710,7 +754,6 @@ struct RootView: View {
       - bellWidth
       - Self.historyButtonsWidth
       - (columnVisibility == .detailOnly && !operations.runs.isEmpty ? Self.operationsButtonWidth : 0)
-      - (tutorialDocked ? WorkspaceDetail.inspectorWidth + 1 : 0)
       - (showsWorkspace && inspector == .column
         ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1
         : showsWorkspace && inspector == .overlay ? max(0, WorkspaceDetail.inspectorWidth - 88 - bellWidth) : 0)
@@ -729,7 +772,7 @@ struct RootView: View {
   /// NSToolbar measures an item when it is inserted or the window resizes, not when a SwiftUI item grows, so the
   /// summary is reinserted whenever the room it gets changes.
   private func summaryItemID(for summary: MachineSummary) -> String {
-    "machine-summary-\(summary.contentKey)-\(detailWidth > 0)-\(tutorialDocked)-\(showsWorkspace)-\(showsWorkspace && inspector == .column)-\(showsWorkspace && inspector == .overlay)-\(bellWidth)-\(summaryFits)"
+    "machine-summary-\(summary.contentKey)-\(detailWidth > 0)-\(showsWorkspace)-\(showsWorkspace && inspector == .column)-\(showsWorkspace && inspector == .overlay)-\(bellWidth)-\(summaryFits)"
   }
 
   private func restoreLastProject() {
@@ -820,8 +863,8 @@ struct RootView: View {
     }
     notices.show(
       Notice(
-        icon: "arrow.down.circle", title: "stim \(latest.description) available",
-        detail: "You have \(installed.description)", actionTitle: "Update",
+        icon: "arrow.down.circle", title: "Stim \(latest.description)",
+        detail: "Installed: \(installed.description)", actionTitle: "Update",
         perform: onboarding.installStim,
         onDismiss: { dismissedStimUpdate = latest.description }, key: "stim-update"))
   }
@@ -998,6 +1041,9 @@ struct RootView: View {
           inspector: inspector, inspectorWidth: $inspectorWidth, logQuery: $archivedLogQuery,
           openReplacement: { navigate(.environment($0), .click("archived workspace replacement")) }
         )
+        .tutorialDestinationGlow(
+          trigger: tutorialHighlightDestination == .archived(id) ? tutorialDestinationHighlight : nil
+        )
         .id(id)
       }
     case .worktree(let path):
@@ -1014,6 +1060,10 @@ struct RootView: View {
     case .machine:
       MachineView(
         buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot, tips: tips)
+    case .discover:
+      DiscoverView(
+        replayUnavailableReason: discoverReplayUnavailableReason,
+        perform: performDiscoverAction)
     case .builds:
       BuildsView(history: builds)
     case .overview:
@@ -1039,6 +1089,41 @@ struct RootView: View {
           focusedDeviceID = deviceID
           navigate(.environment(path), .click("wall page"))
         })
+    }
+  }
+
+  private var discoverReplayArchive: ArchivedWorkspace? {
+    var inputs = TipInputs()
+    inputs.workspaces = store.payload?.environments ?? []
+    inputs.archived = store.payload?.archived ?? []
+    inputs.serverRunning = ServerController.shared.isRunning
+    return Tips.replayArchive(inputs)
+  }
+
+  private var discoverReplayUnavailableReason: String? {
+    if store.payload == nil { return "Waiting for Stim to load saved recordings." }
+    if !ServerController.shared.isRunning { return "Connect the Stim server to open saved recordings." }
+    return discoverReplayArchive == nil
+      ? "Replay needs an archived workspace with a saved recording. Run an app, then archive its workspace to try it."
+      : nil
+  }
+
+  private func performDiscoverAction(_ topic: TipTopic) {
+    switch topic {
+    case .tutorial: openRequests.showTutorial()
+    case .buildMachine, .hostedSimulators:
+      openRequests.addMachine = AddMachineRequest(
+        machineID: Tips.preselected(buildMachines.peers, hostedSimulators: topic == .hostedSimulators)?.id,
+        hostedSimulators: topic == .hostedSimulators)
+    case .phone: openRequests.pairsPhone = true
+    case .hideWorkspaces, .statusFilter:
+      columnVisibility = .all
+      openRequests.showsViewOptions = true
+    case .replay:
+      if let archive = discoverReplayArchive {
+        navigate(.archived(archive.id), .click("Discover replay"))
+      }
+    case .easProfile, .macos, .logs: break
     }
   }
 }
@@ -1494,7 +1579,7 @@ struct LogsToggleButton: View {
     .overlay(alignment: .topTrailing) {
       if errors > 0, !isShown {
         Text(errors > 99 ? "99+" : String(errors))
-          .font(.system(size: 9, weight: .bold))
+          .font(.system(size: 10, weight: .bold))
           .monospacedDigit()
           .foregroundStyle(.white)
           .lineLimit(1)

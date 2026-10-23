@@ -4,21 +4,44 @@ import SwiftUI
 struct TutorialCompletionCard: View {
   var snapshot: TutorialSnapshot
   var steps: [TutorialStep]
-  var archiveOff: Bool
-  var openArchived: () -> Void
-  var restart: () -> Void = {}
+  var archiveUnavailableReason: String
+  var openArchived: (() -> Void)?
 
   private var record: TutorialRecord { snapshot.record }
   private var stats: TutorialStats { record.stats ?? TutorialStats() }
+  private var completed: Bool { record.hasCompletedRequiredSteps(in: steps) }
+  private var completedCount: Int { steps.filter { record.done.contains($0.id) }.count }
+  private var skippedCount: Int { steps.filter { record.skipped.contains($0.id) }.count }
+  private let ownAppPrompt =
+    "In my app's repository, follow stim guide agent to run the app and check it on a simulator."
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
       VStack(alignment: .leading, spacing: Space.xxs) {
-        Label("Tutorial Complete", systemImage: "checkmark.circle.fill")
-          .font(.stim(.headline)).foregroundStyle(Palette.success)
+        Label(completed ? "Tutorial Complete" : "Tutorial Ended", systemImage: completed ? "checkmark.circle.fill" : "flag")
+          .font(.stim(.headline)).foregroundStyle(completed ? Palette.success : Palette.text)
+        Text("\(completedCount) completed, \(skippedCount) skipped")
+          .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         if let total {
-          Text("\(Format.duration(total)) from clone to archive")
+          Text("Time in tutorial: \(Format.duration(total))")
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        }
+      }
+      VStack(alignment: .leading, spacing: Space.sm) {
+        Text("Try Stim with your own app").font(.stim(.callout, weight: .semibold))
+        Text("Open your app's repository in your agent, then send this prompt.")
+          .foregroundStyle(Palette.secondary)
+        Card {
+          VStack(alignment: .leading, spacing: Space.md) {
+            Text(ownAppPrompt)
+              .textSelection(.enabled)
+              .fixedSize(horizontal: false, vertical: true)
+            HStack {
+              Spacer()
+              CopyButton(ownAppPrompt, accessibilityLabel: "Copy prompt to try Stim with your own app")
+            }
+          }
+          .padding(Space.lg)
         }
       }
       if !tiles.isEmpty {
@@ -55,17 +78,15 @@ struct TutorialCompletionCard: View {
         }
       }
       Text(
-        archiveOff
-          ? "Archived is off. The tutorial workspace has been removed."
-          : "Your workspace, builds, logs and recordings stay in Archived when archiving is enabled."
+        openArchived == nil
+          ? archiveUnavailableReason
+          : "Review your tutorial's saved builds, logs and recordings in Archived."
       )
       .foregroundStyle(Palette.secondary)
       .fixedSize(horizontal: false, vertical: true)
-      HStack(spacing: Space.md) {
+      if let openArchived {
         Button("Open Archived", action: openArchived)
           .buttonStyle(.stim(.primary)).accessibilityLabel("Open Archived workspaces")
-        Button("Restart Tutorial", action: restart)
-          .buttonStyle(.stim(.secondary)).accessibilityLabel("Restart the Stim tutorial")
       }
     }
   }
@@ -75,7 +96,7 @@ struct TutorialCompletionCard: View {
   }
 
   private var total: TimeInterval? {
-    let end = record.stepTimes?["delete"] ?? record.stepTimes?["done"]
+    let end = record.stepTimes?["done"] ?? record.stepTimes?["delete"]
     return end.map { $0.timeIntervalSince(record.startedAt) }.flatMap { $0 > 0 ? $0 : nil }
   }
 

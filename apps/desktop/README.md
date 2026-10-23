@@ -1872,38 +1872,32 @@ the device limit suggests one at most once, ever, across both. The X snoozes a s
 wait for completed setup and the second launch, never appear during a running
 build, and appear at most once per day.
 
-The **Tip** card at the bottom of the sidebar appears after setup is complete and
-Desktop has been used on at least **3 calendar days**, with either **3 distinct
-workspaces seen running** or **5 builds observed**. It stays hidden while a build
-runs, the setup guide or tutorial is open, the main window is closed, or any
-notice is showing. Only builds that start after Desktop first sees status count.
-Usage is stored locally in Desktop preferences: the latest 30 active days and,
-until the thresholds are met, the workspace paths and build IDs counted.
+**Explore Stim's features** at the bottom of the sidebar opens **Discover Stim**.
+You can also open it from **Help > Discover Stim** or **Settings > App > Features**.
+The page starts with a tutorial banner, followed by Everyday workflows,
+Use more devices, and Other workflows. Each card explains the benefit
+and opens an existing action or offers a copyable agent prompt. The full prompt appears
+in a container with a Copy button. Phone access appears only when the Phone app feature
+flag is enabled.
 
-Tips cover remote Macs, phone pairing, the tutorial, hiding workspaces when
-there are more than 10 workspace rows and none are hidden, status filters, replay, and hosted
-simulators. The replay tip appears when an archived workspace still has recordings and opens it.
-Three tips offer **Copy Prompt** for your coding agent instead of a button that opens a page: EAS
-development builds when a project has an `eas.json`, `stim macos` when a project has a Swift
-package app that has not run as a macOS app yet, and `stim logs --errors` when a workspace has
-errors. Only applicable tips appear. One tip stays for the calendar day;
-the next day picks the least recently shown applicable tip, with unseen tips
-first. **Next Tip** cycles through the remaining choices. The X hides the card
-until tomorrow. Turn off **Settings > App > Show tips** to disable tips and the lightbulb suggestion
-banners in the bottom-left stack; the Machine page card stays, and suggestions that go to system
-notifications are unchanged. Turn off **Offer the tutorial** to remove the tutorial tip and the setup
-guide's **Take the Tutorial** button and to stop the panel from opening on its own at launch or when a
-tutorial workspace appears. **Help > Stim Tutorial…** still opens it.
+Discover is always available, without waiting for usage milestones. Replay opens
+the newest eligible archived workspace with recordings. When recordings are not
+available, the card explains why and disables its action. View Options opens the
+sidebar's existing controls for hiding and filtering workspaces. Discover replaces
+the rotating sidebar tips; opening it does not mark tips as seen or suppress
+contextual suggestions.
 
-Tips and suggestions share state for remote Macs, phone pairing, and
-hosted simulators. A shown, permanently dismissed, or currently snoozed
-suggestion suppresses the matching tip. Once that tip has been shown, the
-matching suggestions (new Mac, build slot waits, away
-builds, device limit) no longer appear. Disk-pressure suggestions are
-unaffected. Suggestions keep their own once-per-day limit.
+The Machine page's remote-machine suggestion still requires completed setup and
+at least **3 calendar days** of usage, with either **3 distinct workspaces seen
+running** or **5 builds observed**. Only builds that start after Desktop first
+sees status count. This usage stays in local Desktop preferences.
+
+Turn off **Settings > App > Offer the tutorial** to hide the setup guide's
+**Take the Tutorial** button and stop the tutorial from opening automatically.
+**Help > Stim Tutorial** and Discover Stim still let you open it manually.
 
 **File > Add Remote Machine…** (**Cmd+Shift+B**) always opens the existing build
-machine wizard. After the same usage threshold, **Machines > This Mac** shows a
+machine wizard. After this usage threshold, **Machines > This Mac** shows a
 card when no remote machine is configured. With another Mac, Linux or Windows machine
 online on the tailnet it offers **Add Remote Machine…**; otherwise it explains
 how to connect both machines with Tailscale. The remote machines tip also
@@ -2147,9 +2141,25 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 
 ## Tutorial panel
 
+Longer steps show a short instruction with an expandable **Why this step?**
+explanation. Waiting messages name the next action. Completed stepper segments
+are green; skipped segments stay gray. Prompt buttons briefly show **Copied**.
+The summary includes a copyable prompt to try Stim with your own app.
+
 **Help > Stim Tutorial…** and the setup guide's **Take the Tutorial** button open
-an inspector-width trailing column. It replaces the inspector until closed;
-Cmd-Opt-I returns to the inspector. A new tutorial path opens it once, after open
+a floating window beside the main app window, kept within the screen and on the
+same desktop Space as that window. It stays
+freely draggable while open; reopening positions it beside the app again.
+Until you drag it, resizing Stim keeps the tutorial beside the app with a 12-point
+gap where screen space permits. The pin at the bottom right docks it in the sidebar;
+click it again to float the tutorial. In full-screen mode, the tutorial docks inside
+the right side of the main window and the pin is disabled. Leaving full screen
+restores the floating tutorial with the same progress. The tutorial hides during
+the transition and fades back in when it finishes, respecting Reduce Motion.
+It uses the same window level as Stim, so other apps can cover both windows.
+While a popup is open in the Stim window, the tutorial stays visible but its controls
+and arrow-key navigation are disabled until the popup closes.
+A new tutorial path opens it once, after open
 sheets close. UserDefaults stores progress and skipped steps.
 Unfinished tours resume at launch when status lists the tracked path; archived
 ones show Done. Closing preserves progress. Restart shows the agent prompt and
@@ -2172,10 +2182,11 @@ tutorial version is 2, from the repository's `expo.extra.stimTutorial`. A stored
 version 1 record is dropped and starts over on a version 2 workspace. Restart and
 "take the tutorial" start a fresh record at the current time that forgets the old tour paths even
 while the old worktrees are still registered; only linked worktrees whose creation time is after
-that start count, and the oldest one becomes the tour. Every step has one Next
+that start count, and the oldest one becomes the tour. Every step has one Skip step
 button: it records the step as done when its non-optional ticks are all done or
 its checkpoint completed, and as skipped otherwise. Detected steps advance on
-their own.
+their own, including Agent Actions after viewing and replaying. The first step explains automatic advancement. Waiting states show a spinner; blocked or interactive steps show an information icon and guidance.
+The summary distinguishes completed required steps from an ended tour with skipped steps, shows completed/skipped counts and time in the tutorial, and keeps Restart only in the footer. Open Archived selects the newest archive from either tracked worktree removed after this run began; when unavailable, the summary explains why. Stepper tooltips include the number, title and status, with the viewing ring separate from the current-step dot.
 Pair a Phone opens the Pair a Phone wizard, which
 turns on serving itself when the server is off. A pairing that exists when the step starts shows Done Already,
 followed by "Open Stim on your phone: the tutorial workspaces are there".

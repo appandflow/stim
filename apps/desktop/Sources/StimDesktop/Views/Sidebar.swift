@@ -9,7 +9,7 @@ struct Sidebar: View {
   let actions: ActionCenter
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
-  @ObservedObject var tips: TipCoordinator
+  @ObservedObject private var openRequests = OpenRequests.shared
   @State private var showsViewOptions = false
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -75,16 +75,18 @@ struct Sidebar: View {
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       VStack(spacing: 0) {
-        if let topic = tips.topic {
-          TipCard(
-            topic: topic, prompt: TipPrompts.byTopic[topic.rawValue], hasNext: tips.hasNext,
-            perform: {
-              if topic == .hideWorkspaces || topic == .statusFilter { showsViewOptions = true }
-              tips.perform()
-            }, next: tips.next, close: tips.close
-          )
-          .padding(Space.md)
+        Button {
+          selection = .discover
+        } label: {
+          Label("Explore Stim's features", systemImage: "sparkles")
+            .font(.stim(.callout))
+            .foregroundStyle(Palette.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.hoverRow(outset: Space.sm))
+        .padding(Space.lg)
+        .accessibilityAddTraits(selection == .discover ? .isSelected : [])
         HiddenWorkspacesFooter(
           count: store.sidebarStatusCounts(options)[.hidden] ?? 0, showing: options.statuses.contains(.hidden)
         ) {
@@ -102,6 +104,11 @@ struct Sidebar: View {
       .background(Palette.sidebar)
     }
     .onAppear { forgetStaleHidden() }
+    .onReceive(openRequests.$showsViewOptions) { requested in
+      guard requested else { return }
+      showsViewOptions = true
+      openRequests.showsViewOptions = false
+    }
     .onChange(of: staleHidden) { forgetStaleHidden() }
     .onChange(of: store.payload == nil, initial: true) { _, missing in
       if !missing { LaunchMilestones.reach("sidebar-rows") }

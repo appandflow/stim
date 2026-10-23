@@ -40,8 +40,6 @@ public enum AppPreferences {
     /// `KEY=VALUE` lines Desktop adds to the environment of every Stim command and of stim-server.
     public static let environmentOverrides = "environmentOverrides"
     public static let showsInspector = "showsInspector"
-    public static let tutorialFloats = "tutorial.floats"
-    public static let tutorialFloatPinned = "tutorial.floatPinned"
     public static let showsLogs = "workspace.showsLogs"
     public static let logsDrawerHeight = "workspace.logsDrawerHeight"
     public static let viewerShowsActions = "viewer.showsActions"
