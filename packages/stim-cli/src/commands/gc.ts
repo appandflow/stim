@@ -1314,7 +1314,7 @@ async function runGcCore(
 
   throwIfCancelled(signal, 'GC');
   if (all) {
-    await emptyCaches(caches, output, signal, deps.operation);
+    deleteFailures += await emptyCaches(caches, output, signal, deps.operation);
   } else if (olderThan === null) {
     if (caches.length) {
       output.log(
@@ -1322,7 +1322,7 @@ async function runGcCore(
       );
     }
   } else {
-    await trimCaches(caches, olderThan, output, signal, deps.operation);
+    deleteFailures += (await trimCaches(caches, olderThan, output, signal, deps.operation)).failures;
   }
   return payload(deleteFailures);
 }
