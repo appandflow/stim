@@ -943,7 +943,8 @@ stim-server too old to report one needs the same Stim build as this machine.
 \`remote.build\` (machine scope, default auto) selects placement for
 \`ios\`, \`android\` and \`macos\`. \`--remote-build <local|auto|remote|remote-only|name>\`
 overrides STIM_REMOTE_BUILD, which overrides the setting. A blank environment
-value is unset. Trimmed placement words are case-insensitive. Machine names match
+value is unset. \`doctor\` flags an invalid value in the machine config or in
+STIM_REMOTE_BUILD before a build refuses on it. Trimmed placement words are case-insensitive. Machine names match
 configured names case-insensitively, with port 7443 when omitted; reports use
 the configured entry.
 
@@ -957,6 +958,13 @@ the configured entry.
                it refuses with STIM_OFFLOAD_REFUSED
   name         requires a matching entry in remote.machines, already paired and
                approved for builds; ignores this machine's load/slot gating
+
+\`remote.buildMode\` and STIM_REMOTE_BUILD_MODE were removed and are no longer read.
+\`doctor\` and \`stim settings\` report any left in a config file or the environment,
+\`stim settings set remote.buildMode\` refuses with the \`remote.build\` command that
+replaces it (auto stays auto, force becomes remote, off becomes local), and
+\`stim settings unset remote.buildMode\` removes the leftover key from every layer
+that has it (--scope limits it to one).
 
 A name never prompts for pairing, tries another remote machine or falls back here.
 remote-only refuses instead of building here for a build that cannot leave this

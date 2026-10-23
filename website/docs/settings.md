@@ -421,7 +421,8 @@ Put the fastest machine first and set the order with
 `remote.build` is a machine setting, defaulting to `auto`. On `ios`,
 `android` and `macos`, `--remote-build <local|auto|remote|remote-only|name>` overrides
 `STIM_REMOTE_BUILD`, which overrides the setting. A blank environment value
-is unset. Trimmed placement words are case-insensitive; names match configured
+is unset, and `stim doctor` flags an invalid value in the machine config or in
+`STIM_REMOTE_BUILD`. Trimmed placement words are case-insensitive; names match configured
 names case-insensitively with port 7443 when omitted. Reports use the configured
 entry:
 
@@ -431,6 +432,12 @@ entry:
 - `remote-only` is `remote` without the local build: it refuses with `STIM_OFFLOAD_REFUSED` when no remote machine accepts the build, or the build cannot leave this machine.
 - A tailnet name requires a matching entry in `remote.machines`, already
   paired and approved. It ignores this machine's load and slots.
+
+`remote.buildMode` and `STIM_REMOTE_BUILD_MODE` were removed and are no longer read.
+`stim doctor` and `stim settings` report any left in a config file or the environment.
+Use `remote.build` instead: `auto` stays `auto`, `force` becomes `remote` and `off`
+becomes `local`. `stim settings unset remote.buildMode` removes the leftover key from
+every layer that has it, and `--scope` removes it from one.
 
 A named selection never prompts for pairing, uses another machine or falls
 back locally. Missing configuration/pairing, denied or pending approval,

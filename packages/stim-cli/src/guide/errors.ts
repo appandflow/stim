@@ -1358,8 +1358,8 @@ Inspect what remains with gc() before retrying a mutation.
 `,
     },
     STIM_CANCELLED: {
-      summary: 'an ios or android run was interrupted by `stim stop` or Ctrl-C before it finished',
-      body: () => `STIM_CANCELLED  (ios, android; exit 130)
+      summary: 'an ios, android or macos run was interrupted by `stim stop` or Ctrl-C before it finished',
+      body: () => `STIM_CANCELLED  (ios, android, macos; exit 130)
   "The ios run was cancelled by \`stim stop\` (pid <n>) before it finished."
   The run was interrupted: by \`stim stop\`, which cancels a build it leaves
   with nothing to deploy to, or by Ctrl-C. It forwarded the interrupt

@@ -312,7 +312,9 @@ export async function automaticDevicePlacement(
       code: 'STIM_HOSTING_REFUSED',
       remedy:
         placement === 'remote-only'
-          ? 'Wait for a remote machine in remote.machines to have room, check stim doctor for the ones that are unreachable or unapproved, or select a placement that may run here.'
+          ? entries.length === 0
+            ? 'Add an approved Mac to remote.machines (stim guide settings), or select a placement that may run here.'
+            : 'Wait for a remote machine in remote.machines to have room, check stim doctor for the ones that are unreachable or unapproved, or select a placement that may run here.'
           : 'Enable an available member in remote.devicePoolDisabled or select a machine explicitly.',
     });
   if (decision.kind === 'eas') return viaEas(decision.code, decision.reason, decision.skipped);

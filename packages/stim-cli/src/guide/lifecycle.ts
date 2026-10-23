@@ -675,7 +675,8 @@ only full, loaded or short of memory, it waits for one to have room, polling eve
 --wait 0 or the end of the wait refuse with STIM_AT_CAPACITY. When no host can ever take
 the run (none configured, unreachable, declined for another reason such as paused),
 it refuses at once with STIM_HOSTING_REFUSED, naming each skipped host and its reason.
---plan never waits.
+--plan never waits. It prints the same STIM_HOSTING_REFUSED, or a STIM_BAD_ARG naming
+an invalid remote.build or STIM_REMOTE_BUILD.
 Excluding local in remote.devicePoolDisabled has the same effect on auto and remote.
 
 Otherwise Stim asks every approved remote.machines host in parallel, skipping

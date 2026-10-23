@@ -498,17 +498,21 @@ test('the settings topic documents every registered setting and its environment 
   expect(names.filter((name) => !body.includes(name))).toEqual([]);
 });
 
-test('the placement words are documented for every workload, and a removed setting is not', () => {
+test('the placement words are documented for every workload, and a removed setting only in the settings topic', () => {
   for (const body of [renderTopic('settings'), renderTopic('macos'), renderSection('lifecycle', 'hosted-ios')]) {
     assert(body);
     expect(PLACEMENT_WORDS.filter((word) => !body.includes(word))).toEqual([]);
+  }
+  for (const body of [renderTopic('macos'), renderSection('lifecycle', 'hosted-ios')]) {
     for (const key of Object.keys(REPLACED_SETTINGS)) expect(body).not.toContain(key);
   }
   const settings = renderTopic('settings');
   assert(settings);
   expect(settings).toContain(`stim settings set remote.machines '["fast-mini","slow-mini"]'`);
-  for (const env of Object.values(REPLACED_SETTINGS).flatMap((each) => (each.env ? [each.env] : [])))
-    expect(settings).not.toContain(env);
+  for (const [key, replaced] of Object.entries(REPLACED_SETTINGS)) {
+    for (const name of [`\`${key}\``, replaced.env ?? key, `stim settings unset ${key}`])
+      expect(settings).toContain(name);
+  }
 });
 
 test('the static skill is only the agent guide router', () => {

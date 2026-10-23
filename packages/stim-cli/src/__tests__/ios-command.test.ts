@@ -7932,6 +7932,24 @@ describe('--plan', () => {
     expect(calls.order).not.toContain('fingerprintProject');
   });
 
+  test('ios.remote auto with an invalid STIM_REMOTE_BUILD blames the variable, not ios.remote', async () => {
+    process.env.STIM_REMOTE_BUILD = 'bad word';
+    try {
+      const { logs, exitCode } = await run(
+        { plan: true, json: true },
+        { resolveSettings: () => ({ ios: { remote: 'auto' } }) },
+      );
+      expect(exitCode).toBe(1);
+      const refusal = parseFirst(logs);
+      expect(refusal).toMatchObject({ code: 'STIM_BAD_ARG' });
+      expect(refusal.message).toContain('Invalid STIM_REMOTE_BUILD value "bad word"');
+      expect(refusal.message).not.toContain('ios.remote');
+      expect(refusal.remedy).toContain('stim settings set remote.build');
+    } finally {
+      delete process.env.STIM_REMOTE_BUILD;
+    }
+  });
+
   function storeEntry(key: string): string {
     const entry = entryDir('ios', key);
     mkdirSync(join(entry, 'Fixture.app'), { recursive: true });

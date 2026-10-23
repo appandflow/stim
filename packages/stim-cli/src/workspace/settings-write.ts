@@ -2,7 +2,7 @@ import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 
 import { join } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
-import { getConfigPath, withConfigLockAsync, writeConfigSettingAsync } from './config.ts';
+import { getConfigPath, withConfigLockAsync, writeConfigSettingAsync, type ConfigSettingsTarget } from './config.ts';
 import { NO_PROJECT_REFUSAL } from './project.ts';
 import type { SettingsObject } from './settings.ts';
 import {
@@ -12,12 +12,15 @@ import {
   settingEntry,
   settingExample,
   SettingsRefusal,
+  unknownEntries,
   type SettingsContext,
 } from './settings-payload.ts';
 import {
   coerceSettingText,
   isJsonObject,
   isSensitiveReference,
+  REPLACED_SETTINGS,
+  replacementAdvice,
   SETTING_SCOPES,
   settingDefinition,
   settingValueError,
@@ -28,14 +31,34 @@ import {
 import { stimDesktopInstalledAsync } from '../devices/stim-desktop.ts';
 import { deleteTurnedOffRecordings, recordingLayers } from './recordings.ts';
 
-export function requireSetting(key: string): SettingDefinition {
+export function requireSetting(key: string, raw?: string): SettingDefinition {
   const setting = settingDefinition(key);
   if (setting) return setting;
+  const replaced = Object.hasOwn(REPLACED_SETTINGS, key) ? REPLACED_SETTINGS[key] : undefined;
+  if (replaced) {
+    const command = replacementAdvice(key, raw)?.command;
+    throw new SettingsRefusal(
+      'STIM_BAD_ARG',
+      `${JSON.stringify(key)} was replaced by ${replaced.key} and is no longer read by Stim.`,
+      `${command ? `Run \`${command}\`` : `Set ${replaced.key} (\`stim guide settings\` lists its values)`}, then run \`stim settings unset ${key}\` to remove the leftover key.`,
+    );
+  }
   throw new SettingsRefusal(
     'STIM_BAD_ARG',
     `${JSON.stringify(key)} is not a Stim setting.`,
     'Run `stim settings` to list every setting, or `stim guide settings` for what each one does.',
   );
+}
+
+function parseScopeName(raw: string): SettingScope {
+  if (!(SETTING_SCOPES as readonly string[]).includes(raw)) {
+    throw new SettingsRefusal(
+      'STIM_BAD_ARG',
+      `--scope takes ${SETTING_SCOPES.join(', ')}, not ${JSON.stringify(raw)}.`,
+      null,
+    );
+  }
+  return raw as SettingScope;
 }
 
 export function readScope(raw: string | undefined, setting: SettingDefinition): SettingScope {
@@ -47,14 +70,7 @@ export function readScope(raw: string | undefined, setting: SettingDefinition): 
       `Pass --scope ${setting.scopes.join('|')}.`,
     );
   }
-  if (!(SETTING_SCOPES as readonly string[]).includes(raw)) {
-    throw new SettingsRefusal(
-      'STIM_BAD_ARG',
-      `--scope takes ${SETTING_SCOPES.join(', ')}, not ${JSON.stringify(raw)}.`,
-      null,
-    );
-  }
-  const scope = raw as SettingScope;
+  const scope = parseScopeName(raw);
   if (!setting.scopes.includes(scope)) {
     throw new SettingsRefusal(
       'STIM_BAD_ARG',
@@ -192,7 +208,7 @@ export async function mutateSetting(
 ): Promise<SettingWriteResult> {
   signal?.throwIfAborted();
   const { key } = request;
-  const setting = requireSetting(key);
+  const setting = requireSetting(key, request.action === 'set' ? request.value : undefined);
   const scope = readScope(request.scope, setting);
   const value = request.action === 'set' ? parseSettingValue(setting, request.value) : undefined;
   if (setting.sensitive && scope === 'committed' && value !== undefined && !isSensitiveReference(value)) {
@@ -227,4 +243,43 @@ export async function mutateSetting(
   return key === 'recording.enabled'
     ? withWorkspaceProcessLock(configDir(), 'recording-settings', apply, { external: true, signal })
     : apply();
+}
+
+function configTarget(context: SettingsContext, scope: SettingScope): ConfigSettingsTarget | null {
+  if (scope === 'workspace') return context.projectPath ? { scope, projectPath: context.projectPath } : null;
+  if (scope === 'repo') return context.gitCommonDir ? { scope, gitCommonDir: context.gitCommonDir } : null;
+  return scope === 'machine' ? { scope } : null;
+}
+
+export interface ReplacedSettingRemoval {
+  key: string;
+  replacedBy: string;
+  removed: Array<{ scope: SettingScope; file: string }>;
+}
+
+/** Removes a key Stim no longer reads from every layer that has it, or from one with `scope`. */
+export async function unsetReplacedSetting(
+  request: { key: string; scope?: string },
+  {
+    cwd,
+    env,
+    note = () => {},
+    signal,
+  }: { cwd: string; env: NodeJS.ProcessEnv; note?: (line: string) => void; signal?: AbortSignal },
+): Promise<ReplacedSettingRemoval> {
+  signal?.throwIfAborted();
+  const { key } = request;
+  const only = request.scope === undefined ? undefined : parseScopeName(request.scope);
+  const context = await readSettingsContext(cwd, env, note, signal);
+  const removed: ReplacedSettingRemoval['removed'] = [];
+  for (const entry of unknownEntries(context)) {
+    if (entry.key !== key || (only && entry.scope !== only)) continue;
+    const target = configTarget(context, entry.scope);
+    const changed =
+      entry.scope === 'committed'
+        ? await writeCommitted(entry.file, key, undefined, signal)
+        : target && (await writeConfigSettingAsync(target, key, undefined, signal));
+    if (changed) removed.push({ scope: entry.scope, file: entry.file });
+  }
+  return { key, replacedBy: REPLACED_SETTINGS[key]?.key ?? key, removed };
 }
