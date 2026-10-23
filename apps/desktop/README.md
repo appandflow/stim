@@ -1763,34 +1763,28 @@ the device limit suggests one at most once, ever, across both. The X snoozes a s
 wait for completed setup and the second launch, never appear during a running
 build, and appear at most once per day.
 
-The **Tip** card at the bottom of the sidebar appears after setup is complete and
-Desktop has been used on at least **3 calendar days**, with either **3 distinct
-workspaces seen running** or **5 builds observed**. It stays hidden while a build
-runs, the setup guide or tutorial is open, the main window is closed, or any
-notice is showing. Only builds that start after Desktop first sees status count.
-Usage is stored locally in Desktop preferences: the latest 30 active days and,
-until the thresholds are met, the workspace paths and build IDs counted.
+**Explore Stim's features** at the bottom of the sidebar opens **Discover Stim**.
+You can also open it from **Help > Discover Stim** or **Settings > App > Features**.
+The page groups features into Get started, Understand your app, Organize
+workspaces, Use more devices, and Other workflows. Each card explains the benefit
+and opens an existing action or offers a copyable agent prompt. Expand the prompt
+to read it before copying. Phone access appears only when the Phone app feature
+flag is enabled.
 
-The general rotation has five topics: the tutorial, remote builds, organizing
-workspaces, replay, and error logs. The workspace tip combines hiding workspaces
-and filtering by status. Phone, hosted simulator, EAS, and macOS tips are outside
-this rotation. The replay tip opens an archived workspace with recordings; the
-error-log tip offers a copyable agent prompt when a workspace has errors.
-Only applicable tips appear. The bottom-right counter, such as **1/5**, shows the
-current position among available tips. One tip stays for the calendar day;
-the next day picks the least recently shown applicable tip, with unseen tips
-first. The left and right arrows cycle through available tips in either direction and wrap at each end. They are hidden when only one tip is available. The X hides the card
-until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
+Discover is always available, without waiting for usage milestones. Replay opens
+the newest eligible archived workspace with recordings. When recordings are not
+available, the card explains why and disables its action. View Options opens the
+sidebar's existing controls for hiding and filtering workspaces. Discover replaces
+the rotating sidebar tips; opening it does not mark tips as seen or suppress
+contextual suggestions.
 
-Tips and suggestions share state for remote Macs, phone pairing, and
-hosted simulators. A shown, permanently dismissed, or currently snoozed
-suggestion suppresses the matching tip. Once that tip has been shown, the
-matching suggestions (new Mac, build slot waits, away
-builds, device limit) no longer appear. Disk-pressure suggestions are
-unaffected. Suggestions keep their own once-per-day limit.
+The Machine page's remote-machine suggestion still requires completed setup and
+at least **3 calendar days** of usage, with either **3 distinct workspaces seen
+running** or **5 builds observed**. Only builds that start after Desktop first
+sees status count. This usage stays in local Desktop preferences.
 
 **File > Add Remote Machine…** (**Cmd+Shift+B**) always opens the existing build
-machine wizard. After the same usage threshold, **Machines > This Mac** shows a
+machine wizard. After this usage threshold, **Machines > This Mac** shows a
 card when no remote machine is configured. With another Mac, Linux or Windows machine
 online on the tailnet it offers **Add Remote Machine…**; otherwise it explains
 how to connect both machines with Tailscale. The remote machines tip also
@@ -2043,6 +2037,8 @@ The summary includes a copyable prompt to try Stim with your own app.
 a floating window beside the main app window, kept within the screen and on the
 same desktop Space as that window. It stays
 freely draggable while open; reopening positions it beside the app again.
+In full-screen mode, the tutorial docks inside the right side of the main
+window. Leaving full screen restores the floating tutorial with the same progress.
 It uses the same window level as Stim, so other apps can cover both windows.
 While a popup is open in the Stim window, the tutorial stays visible but its controls
 and arrow-key navigation are disabled until the popup closes.

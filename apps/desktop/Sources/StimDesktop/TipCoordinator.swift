@@ -11,7 +11,7 @@ final class TipCoordinator: ObservableObject {
   @Published private(set) var position = 0
   @Published private(set) var total = 0
   @Published private(set) var established = false
-  var suppressed = false {
+  var suppressed = true {
     didSet { if suppressed != oldValue { evaluate() } }
   }
   private let status: StatusStore

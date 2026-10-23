@@ -457,7 +457,7 @@ private struct TutorialExplanationStyle: DisclosureGroupStyle {
   }
 }
 
-private struct TutorialPromptBox: View {
+struct TutorialPromptBox: View {
   var prompt: String
   var onCopy: () -> Void
 

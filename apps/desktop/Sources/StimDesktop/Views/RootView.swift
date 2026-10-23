@@ -5,6 +5,7 @@ import SwiftUI
 
 enum SidebarItem: Hashable {
   case overview
+  case discover
   case wall
   case project(Project)
   case environment(String)
@@ -16,6 +17,7 @@ enum SidebarItem: Hashable {
   var logName: String {
     switch self {
     case .overview: "overview"
+    case .discover: "discover"
     case .wall: "wall"
     case .archived(let id): "archived \(id)"
     case .project(let project): "project \(project.root)"
@@ -60,6 +62,8 @@ struct RootView: View {
   @State private var showsInspectorOverlay = false
   @State private var inspectorWidth = WorkspaceDetail.inspectorWidth
   @State private var windowSize = CGSize.zero
+  @State private var isFullScreen = false
+  @State private var tutorialPopupOpen = false
   @State private var sidebarWidth: CGFloat = 0
   @State private var settledInspectorFits: Bool?
   @State private var detailWidth: CGFloat = 0
@@ -119,8 +123,7 @@ struct RootView: View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
       Sidebar(
         store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: attributed(.click("sidebar")),
-        openLogs: showLogs,
-        tips: tips
+        openLogs: showLogs
       )
       .toolbar(removing: .sidebarToggle)
       .toolbar {
@@ -155,9 +158,20 @@ struct RootView: View {
       }
       .overlay(alignment: .bottomLeading) { NoticeStack(center: notices, onDismissAll: dismissAllCards) }
       .onGeometryChange(for: CGFloat.self) {
-        $0.size.width
+        max(0, $0.size.width - tutorialDockWidth)
       } action: {
         detailWidth = $0
+      }
+      .safeAreaInset(edge: .trailing, spacing: 0) {
+        if tutorialDocked, let snapshot = tutorial.snapshot {
+          HStack(spacing: 0) {
+            Divider()
+            tutorialPanelContent(snapshot)
+              .frame(width: WorkspaceDetail.inspectorWidth)
+              .disabled(tutorialPopupOpen)
+              .allowsHitTesting(!tutorialPopupOpen)
+          }
+        }
       }
       .navigationSplitViewColumnWidth(min: 440, ideal: 900)
       .toolbar {
@@ -280,6 +294,7 @@ struct RootView: View {
     }
     .modifier(TutorialRestartDialogs(tutorial: tutorial))
     .background(floatingTutorial)
+    .background(TutorialWindowObserver(isFullScreen: $isFullScreen, popupOpen: $tutorialPopupOpen))
     .onAppear {
       navigation.resolves = resolves
       navigation.apply = show
@@ -295,7 +310,11 @@ struct RootView: View {
       navigation.apply = { _ in }
     }
     .onChange(of: onboarding.stimUpdate, initial: true) { _, latest in showStimUpdate(latest) }
-    .onChange(of: onboarding.showsGuide || tutorial.isOpen, initial: true) { _, suppressed in tips.suppressed = suppressed }
+    .onReceive(openRequests.$showsDiscover) { requested in
+      guard requested else { return }
+      openRequests.showsDiscover = false
+      navigate(.discover, .command("Discover Stim"))
+    }
     .onChange(of: openRequests.target, initial: true) { _, target in show(target, in: store.payload) }
     .onReceive(openRequests.$addMachine) { request in
       guard request != nil else { return }
@@ -390,7 +409,7 @@ struct RootView: View {
       restoredProject = true
       if case .project = item {} else { showingAllWorktrees = nil }
       switch item {
-      case .overview, .wall:
+      case .overview, .wall, .discover:
         projectFilter = nil
         openRequests.selectedWorkspace = nil
       case .project(let project):
@@ -493,9 +512,13 @@ struct RootView: View {
       })
   }
 
+  private var tutorialDocked: Bool { isFullScreen && tutorial.isOpen && tutorial.snapshot != nil }
+
+  private var tutorialDockWidth: CGFloat { tutorialDocked ? WorkspaceDetail.inspectorWidth + 1 : 0 }
+
   private var floatingTutorial: some View {
     ExperimentalTutorialFloat(
-      isPresented: tutorial.isOpen && tutorial.snapshot != nil
+      isPresented: tutorial.isOpen && tutorial.snapshot != nil && !isFullScreen
     ) {
       if let snapshot = tutorial.snapshot { tutorialPanelContent(snapshot) }
     }
@@ -538,7 +561,7 @@ struct RootView: View {
   }
 
   private var detailRoom: CGFloat {
-    windowSize.width - (columnVisibility == .detailOnly ? 0 : sidebarWidth)
+    windowSize.width - (columnVisibility == .detailOnly ? 0 : sidebarWidth) - tutorialDockWidth
   }
 
   private var inspectorFits: Bool {
@@ -997,6 +1020,10 @@ struct RootView: View {
     case .machine:
       MachineView(
         buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot, tips: tips)
+    case .discover:
+      DiscoverView(
+        replayUnavailableReason: discoverReplayUnavailableReason,
+        perform: performDiscoverAction)
     case .overview:
       OverviewView(
         store: store, metrics: metrics,
@@ -1020,6 +1047,41 @@ struct RootView: View {
           focusedDeviceID = deviceID
           navigate(.environment(path), .click("wall page"))
         })
+    }
+  }
+
+  private var discoverReplayArchive: ArchivedWorkspace? {
+    var inputs = TipInputs()
+    inputs.workspaces = store.payload?.environments ?? []
+    inputs.archived = store.payload?.archived ?? []
+    inputs.serverRunning = ServerController.shared.isRunning
+    return Tips.replayArchive(inputs)
+  }
+
+  private var discoverReplayUnavailableReason: String? {
+    if store.payload == nil { return "Waiting for Stim to load saved recordings." }
+    if !ServerController.shared.isRunning { return "Connect the Stim server to open saved recordings." }
+    return discoverReplayArchive == nil
+      ? "Replay needs an archived workspace with a saved recording. Run an app, then archive its workspace to try it."
+      : nil
+  }
+
+  private func performDiscoverAction(_ topic: TipTopic) {
+    switch topic {
+    case .tutorial: openRequests.showTutorial()
+    case .buildMachine, .hostedSimulators:
+      openRequests.addMachine = AddMachineRequest(
+        machineID: Tips.preselected(buildMachines.peers, hostedSimulators: topic == .hostedSimulators)?.id,
+        hostedSimulators: topic == .hostedSimulators)
+    case .phone: openRequests.pairsPhone = true
+    case .hideWorkspaces, .statusFilter:
+      columnVisibility = .all
+      openRequests.showsViewOptions = true
+    case .replay:
+      if let archive = discoverReplayArchive {
+        navigate(.archived(archive.id), .click("Discover replay"))
+      }
+    case .easProfile, .macos, .logs: break
     }
   }
 }
