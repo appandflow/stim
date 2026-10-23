@@ -9,7 +9,7 @@
     case command, expired, starting, awaitingApproval, awaitingPermission, approved
     case noAnswer, stepFailed, serverTooOld, requestLapsed, grantedOther, funneled, permissionSkipped, noWorkspace
     case toolsOK, toolsFixes, toolsBusy, toolsAndroid
-    case testPreparingSample, sampleFailed, offloading, offloaded, localBuilding, testPassed, testFailed, testSkipped
+    case testPreparingSample, sampleFailed, offloading, testPassed, testFailed, testSkipped
     case summaryAuto, summaryNever, summaryUndo, summarySkippedAfterFailure
     case linuxChoose, linuxCommand, linuxApproved, linuxTools, linuxSummary
     case windowsChoose, windowsCommand
@@ -23,8 +23,8 @@
 
     @MainActor func make() -> AddMachineModel {
       let later: [Self] = [
-        .toolsOK, .toolsFixes, .toolsBusy, .toolsAndroid, .testPreparingSample, .sampleFailed, .offloading, .offloaded,
-        .localBuilding, .testPassed, .testFailed, .testSkipped, .summaryAuto, .summaryNever, .summaryUndo,
+        .toolsOK, .toolsFixes, .toolsBusy, .toolsAndroid, .testPreparingSample, .sampleFailed, .offloading,
+        .testPassed, .testFailed, .testSkipped, .summaryAuto, .summaryNever, .summaryUndo,
         .summarySkippedAfterFailure, .linuxTools, .linuxSummary,
       ]
       if later.contains(self) {

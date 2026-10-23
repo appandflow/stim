@@ -710,9 +710,7 @@ final class AddMachineModel {
             """.utf8))
       default:
         page = [.summaryAuto, .summaryNever, .summaryUndo, .summarySkippedAfterFailure].contains(fixture) ? .summary : .test
-        var events: [BuildTest.Event] = [
-          .prepared, .start, .offload(.success), .timings(times), .localStart, .localFinished(passed: true, ms: 250000),
-        ]
+        var events: [BuildTest.Event] = [.prepared, .start, .offload(.success), .timings(times)]
         switch fixture {
         case .testPreparingSample: events = []
         case .sampleFailed:
@@ -722,8 +720,6 @@ final class AddMachineModel {
               remedy: nil)
           ]
         case .offloading: events = [.prepared, .start, .progress("Syncing the sample checkout")]
-        case .offloaded: events.removeLast(2)
-        case .localBuilding: events.removeLast()
         case .testFailed:
           let refusal = try! JSONDecoder().decode(
             CommandRefusal.self,
@@ -742,7 +738,7 @@ final class AddMachineModel {
         }
         sample?.fixture(
           events,
-          lines: fixture == .offloading || fixture == .localBuilding
+          lines: fixture == .offloading
             ? [
               .init(text: "$ stim ios --remote-build mini --no-build-cache --json", kind: .command),
               .init(text: "offer accepted; syncing checkout", kind: .output),

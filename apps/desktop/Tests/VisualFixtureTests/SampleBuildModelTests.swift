@@ -33,7 +33,6 @@ final class SampleBuildModelTests: XCTestCase {
     var failInstall = false
     var cancelled = false
     var invalidOutput: WizardCommandOutput?
-    var invalidLocal = false
     func make() -> SampleBuildModel {
       SampleBuildModel(
         dependencies: .init(
@@ -57,17 +56,14 @@ final class SampleBuildModelTests: XCTestCase {
             }
             if command.arguments.first == "ios" {
               onLine(OutputLine(.stderr, "building"))
-              if command.arguments.contains("local") == self.invalidLocal, let output = self.invalidOutput { return output }
+              if let output = self.invalidOutput { return output }
               if self.waitForCancel {
                 do { try await Task.sleep(for: .seconds(100)) } catch {
                   self.cancelled = true
                   throw error
                 }
               }
-              if command.arguments.contains("local") {
-                self.now = self.now.addingTimeInterval(250)
-                stdout = "{\"launched\":true}"
-              } else if self.refusal {
+              if self.refusal {
                 return WizardCommandOutput(
                   exit: 1,
                   stdout: Data(
@@ -254,7 +250,7 @@ final class SampleBuildModelTests: XCTestCase {
     }
   }
 
-  @MainActor func testBothBuildsPassAndCleanupRunsButSilentFallbackDoesNotPass() async {
+  @MainActor func testRemoteBuildAloneReachesDoneAndCleanupRunsButSilentFallbackDoesNotPass() async {
     for fallback in [false, true] {
       let harness = Harness()
       harness.files.insert(harness.sample.marker)
@@ -265,11 +261,13 @@ final class SampleBuildModelTests: XCTestCase {
       model.run(entry: "mini:7447", platform: "ios")
       await settle(model)
       XCTAssertEqual(model.test.passed, !fallback)
-      XCTAssertEqual(harness.commands.filter { $0.arguments.contains("local") }.count, fallback ? 0 : 1)
+      XCTAssertEqual(
+        harness.commands.filter { $0.arguments.first == "ios" }.map(\.arguments),
+        [["ios", "--remote-build", "mini:7447", "--no-build-cache", "--json"]])
       XCTAssertEqual(harness.commands.last?.arguments, ["stop"])
       XCTAssertTrue(harness.commands.allSatisfy { $0.cwd == harness.sample.folder.path })
       if !fallback {
-        XCTAssertEqual(model.test.localMs, 250000)
+        XCTAssertEqual(model.test.state, .done)
         XCTAssertEqual(model.test.timings?.workerMs, 161000)
       }
     }
@@ -307,22 +305,19 @@ final class SampleBuildModelTests: XCTestCase {
   }
 
   @MainActor func testNonObjectBuildOutputShowsStderrAndStillStopsTheSample() async {
-    for local in [false, true] {
-      for stdout in ["", "Usage: stim ios", "[]"] {
-        let harness = Harness()
-        harness.files.insert(harness.sample.marker)
-        harness.invalidLocal = local
-        harness.invalidOutput = WizardCommandOutput(exit: 9, stdout: Data(stdout.utf8), stderr: "Unknown build option")
-        let model = harness.make()
-        model.prepare()
-        await settle(model)
-        model.run(entry: "mini", platform: "ios")
-        await settle(model)
-        guard case .failed(_, let message, _) = model.test.state else { return XCTFail("Invalid output passed") }
-        XCTAssertTrue(message.contains("Unknown build option"))
-        XCTAssertTrue(message.contains("9"))
-        XCTAssertEqual(harness.commands.last?.arguments, ["stop"])
-      }
+    for stdout in ["", "Usage: stim ios", "[]"] {
+      let harness = Harness()
+      harness.files.insert(harness.sample.marker)
+      harness.invalidOutput = WizardCommandOutput(exit: 9, stdout: Data(stdout.utf8), stderr: "Unknown build option")
+      let model = harness.make()
+      model.prepare()
+      await settle(model)
+      model.run(entry: "mini", platform: "ios")
+      await settle(model)
+      guard case .failed(_, let message, _) = model.test.state else { return XCTFail("Invalid output passed") }
+      XCTAssertTrue(message.contains("Unknown build option"))
+      XCTAssertTrue(message.contains("9"))
+      XCTAssertEqual(harness.commands.last?.arguments, ["stop"])
     }
   }
 }

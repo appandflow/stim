@@ -495,7 +495,7 @@ so there is no Check again button:
      `remote.machines` entry. A current value the
      wizard does not offer, such as `eas`, is kept unless you choose another.
    - **Run a Test Build with a Sample App** builds a sample through the worker
-     and then locally, for Android on a Linux or Windows machine.
+     (iOS, or Android on a Linux or Windows machine).
 
 Desktop adds entries when it finds the setup journal and connects with that
 command's ticket. When adding the first remote machine
@@ -761,12 +761,13 @@ network access. Desktop uses the sample for setup requests when no workspace
 is listed. It is optional: start it with **Run a Test Build with a Sample App**
 on the wizard's last step. It tests iOS builds.
 
-The first run uses `stim ios --remote-build <name> --no-build-cache --json`.
+The test runs `stim ios --remote-build <name> --no-build-cache --json` once.
 It must report the selected `offloadedTo` and a launch state of `true` or
 `bundling`. Desktop reads the `offload_done` log's offer, sync, worker and fetch
-timings. The second run uses `--remote-build local --no-build-cache` to prove
-this machine can still build and launch. This tests local build readiness; it does
-not deliberately disconnect the worker to trigger automatic fallback.
+timings and shows them as Upload / sync, Build, Download / fetch and Total. It
+runs no local build. The first build on a new machine is cold, with no DerivedData
+and no compiler cache, so later builds are faster. The test does not
+deliberately disconnect the worker to trigger automatic fallback.
 
 The sample stops when the test ends. **Run again** reuses the folder. When the
 sheet closes, Desktop removes the sample's Stim workspace and folder and releases

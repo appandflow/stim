@@ -788,9 +788,7 @@ final class AddMachineModelTests: XCTestCase {
             var stdout = ""
             switch command.arguments.first {
             case "ios":
-              stdout =
-                command.arguments.contains("local")
-                ? "{\"launched\":true}" : "{\"offloadedTo\":\"mini:7447\",\"launched\":true}"
+              stdout = "{\"offloadedTo\":\"mini:7447\",\"launched\":true}"
             case "stop": stops += 1
             default: break
             }
