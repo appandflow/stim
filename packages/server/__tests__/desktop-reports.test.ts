@@ -218,3 +218,38 @@ test('reclaims abandoned first reads after invalidation and unsubscribe', async 
   await final;
   expect(cache).toHaveProperty('entries.size', 1);
 });
+
+test('invalidation aborts the stale load so a waiting get takes only the fresh one', async () => {
+  const signals: AbortSignal[] = [];
+  const fresh = deferred<DetailsRead>();
+  const cache = new DesktopReports((_target, signal) => {
+    signals.push(signal);
+    if (signals.length > 1) return fresh.promise;
+    return new Promise((resolve) =>
+      signal.addEventListener('abort', () => resolve({ ok: false, message: 'aborted' }), { once: true }),
+    );
+  });
+  caches.push(cache);
+  const waiting = cache.get(TARGET);
+  await vi.waitFor(() => expect(signals).toHaveLength(1));
+  cache.invalidate();
+  expect(signals[0]?.aborted).toBe(true);
+  await vi.waitFor(() => expect(signals).toHaveLength(2));
+  fresh.resolve({ ok: true, report: { version: 2 } });
+  expect((await waiting).value).toEqual({ version: 2 });
+});
+
+test('a targeted invalidation leaves other targets loading', async () => {
+  const signals = new Map<string, AbortSignal>();
+  const cache = new DesktopReports((target, signal) => {
+    signals.set(target.report, signal);
+    return new Promise<DetailsRead>(() => {});
+  });
+  caches.push(cache);
+  void cache.get({ report: 'gc' });
+  void cache.get(TARGET);
+  await vi.waitFor(() => expect(signals.size).toBe(2));
+  cache.invalidate(TARGET);
+  expect(signals.get('doctor')?.aborted).toBe(true);
+  expect(signals.get('gc')?.aborted).toBe(false);
+});
