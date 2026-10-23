@@ -92,6 +92,12 @@ afterEach(() => {
   resetExecutor();
 });
 
+const SPRINGBOARD_ROW = '4242\t0\tcom.apple.SpringBoard\n';
+
+function simctlSpawnStub(file: string, args: readonly string[]): string {
+  return file === 'xcrun' && args[1] === 'spawn' && args[3] === 'launchctl' ? SPRINGBOARD_ROW : '';
+}
+
 function simList(devices: SimEntry[]) {
   return JSON.stringify({
     devices: {
@@ -125,7 +131,7 @@ describe('ensureBooted: ios', () => {
         runFile(file, args = [], options) {
           if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
           probes.push([file, ...args, options]);
-          return '';
+          return SPRINGBOARD_ROW;
         },
         spawn: (cmd: string, args: readonly string[] = []) => {
           commands.push([cmd, ...args].join(' '));
@@ -181,6 +187,82 @@ describe('ensureBooted: ios', () => {
     expect(result.reason).not.toMatch(/out of memory|OOM/i);
   });
 
+  describe('a Booted simulator whose SpringBoard is not running', () => {
+    function deadShellExecutor({ rows, recoversOnBoot }: { rows: string[]; recoversOnBoot: boolean }) {
+      let state = 'Booted';
+      let shellUp = false;
+      let listings = 0;
+      const commands: string[] = [];
+      setExecutor({
+        findExecutable: () => null,
+        run: () => simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]),
+        runQuiet: () => '',
+        runFileQuiet: (file, args = []) => {
+          commands.push([file, ...args].join(' '));
+          if (args[1] === 'shutdown') state = 'Shutdown';
+          return '';
+        },
+        runFile(file, args = []) {
+          commands.push([file, ...args].join(' '));
+          if (file === 'xcrun' && args[1] === 'list')
+            return simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]);
+          if (file === 'xcrun' && args[3] === 'launchctl') {
+            if (shellUp) return SPRINGBOARD_ROW;
+            return rows[Math.min(listings++, rows.length - 1)] ?? '';
+          }
+          if (file === 'xcrun' && args[3] === 'notifyutil') return 'com.apple.springboard.finishedstartup 4242';
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+          }
+          return '';
+        },
+        spawn: (cmd: string, args: readonly string[] = []) => {
+          commands.push([cmd, ...args].join(' '));
+          if (args[1] === 'boot') {
+            state = 'Booted';
+            shellUp = recoversOnBoot;
+          }
+          return makeExitingChild();
+        },
+      });
+      return commands;
+    }
+    const ensure = (out: string[] = []) =>
+      ensureBooted({
+        projectPath: tmpHome,
+        platform: 'ios',
+        device: { deviceUdid: 'U1', owned: true, booted: 'U1' },
+        timeoutMs: 5000,
+        pollMs: 1,
+        out: (line) => out.push(line),
+      });
+
+    test('restarts it once through teardown and launches nothing on the dead shell', async () => {
+      const commands = deadShellExecutor({ rows: [''], recoversOnBoot: true });
+      const notes: string[] = [];
+      expect(await ensure(notes)).toEqual({ ok: true, udid: 'U1' });
+      expect(commands.filter((c) => c === 'xcrun simctl shutdown U1')).toHaveLength(1);
+      expect(commands.filter((c) => c === 'xcrun simctl boot U1')).toHaveLength(1);
+      expect(commands.indexOf('xcrun simctl shutdown U1')).toBeLessThan(commands.indexOf('xcrun simctl boot U1'));
+      expect(notes.some((line) => line.includes('SpringBoard is not running on U1'))).toBe(true);
+    });
+
+    test('waits out a respawn without restarting the simulator', async () => {
+      const commands = deadShellExecutor({ rows: ['', '', SPRINGBOARD_ROW], recoversOnBoot: false });
+      expect(await ensure()).toEqual({ ok: true, udid: 'U1' });
+      expect(commands.some((c) => c.includes('simctl shutdown') || c.includes('simctl boot'))).toBe(false);
+    });
+
+    test('restarts only once and then names the stop and rerun remedy', async () => {
+      const commands = deadShellExecutor({ rows: ['-\t-5\tcom.apple.SpringBoard\n'], recoversOnBoot: false });
+      const result = await ensure();
+      expect(result.failed).toBe(true);
+      expect(result.reason).toMatch(/U1.*SpringBoard.*not running.*`stim stop`.*`stim ios`/);
+      expect(commands.filter((c) => c === 'xcrun simctl shutdown U1')).toHaveLength(1);
+      expect(commands.filter((c) => c === 'xcrun simctl boot U1')).toHaveLength(1);
+    });
+  });
+
   const springBoardStarting = 'com.apple.springboard.finishedstartup 0';
   const springBoardStarted = 'com.apple.springboard.finishedstartup 4242';
   test.each([
@@ -226,7 +308,7 @@ describe('ensureBooted: ios', () => {
           }
           return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
             ? this.run!([file, ...args].join(' '))
-            : '';
+            : simctlSpawnStub(file, args);
         },
         spawn: (cmd: string, args: readonly string[] = []) => {
           commands.push([cmd, ...args].join(' '));
@@ -271,7 +353,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => {
         const child = makeChildProcess();
@@ -308,7 +390,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => makeExitingChild(1, 'CoreLocationMigrator failed'),
     });
@@ -332,7 +414,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => {
         throw new Error('must not boot a foreign sim');
@@ -351,7 +433,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => null,
     });
@@ -371,7 +453,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => makeExitingChild(),
     });
@@ -393,7 +475,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => null,
     });
@@ -418,7 +500,7 @@ describe('ensureBooted: ios', () => {
       runFile: (file, args = []) => {
         expect(finished).toBe(true);
         commands.push([file, ...args].join(' '));
-        return '';
+        return SPRINGBOARD_ROW;
       },
       spawn: () => null,
     });
@@ -446,7 +528,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => null,
     });
@@ -473,7 +555,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => null,
     });
@@ -498,7 +580,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => null,
     });
@@ -1211,7 +1293,7 @@ function iosExecutor(devices: SimEntry[]) {
         files.push([file, ...args]);
         if (file === 'xcrun' && args[0] === 'simctl' && ['list', 'boot', 'create'].includes(args[1] ?? ''))
           return this.run!([file, ...args].join(' '));
-        return '';
+        return simctlSpawnStub(file, args);
       },
       spawn(cmd: string, args: readonly string[] = []) {
         if (args[1] === 'boot') run.push([cmd, ...args].join(' '));

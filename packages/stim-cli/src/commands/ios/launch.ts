@@ -709,8 +709,12 @@ function launchFailureRemedy(
   udid: string,
   bundleId: string,
   logFile: string,
+  reason: string | undefined,
 ): string {
   if (remoteDevice) return remoteDevice.failureRemedy();
+  if (reason && /system shell .*probably crashed/.test(reason)) {
+    return `SpringBoard, the simulator's system shell, is not running, and only a reboot brings it back. Run \`stim stop\`, then \`stim ios\` again. Repeated crashes leave SpringBoard reports in ~/Library/Logs/DiagnosticReports.`;
+  }
   return `If the simulator timed out, run \`stim doctor --platform ios\` and resolve any reported host memory pressure before retrying. Otherwise run \`xcrun simctl launch --terminate-running-process --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`;
 }
 
@@ -1041,7 +1045,7 @@ export async function finishIosRun({
       return fail({
         code: launched.code || 'STIM_LAUNCH_FAILED',
         message: launched.reason,
-        remedy: launchFailureRemedy(remoteDevice, udid, bundleId!, logFile),
+        remedy: launchFailureRemedy(remoteDevice, udid, bundleId!, logFile, launched.reason),
         build: { ...buildFailure, appPath, bundleId },
       });
     }

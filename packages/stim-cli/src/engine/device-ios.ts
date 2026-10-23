@@ -21,6 +21,7 @@ import {
   createOwnedIosSim,
   iosSimulatorFailureAdvice,
   readSpringBoardPid,
+  springBoardRunning,
   waitForSpringBoard,
   listAllIosSims,
   listAllIosSimsAsync,
@@ -39,7 +40,7 @@ import {
 } from '../devices/ios.ts';
 import { adoptParked, dropParked, parkedMaxSetting, readParked, selectParked } from '../devices/sim-pool.ts';
 import { iosSimSlimDefaultSetting, iosSimSlimProfileSetting } from '../workspace/settings.ts';
-import { teardownParkedIosSim } from '../devices/teardown.ts';
+import { teardownOwnedIosSim, teardownParkedIosSim } from '../devices/teardown.ts';
 import { reconcileSimSlim } from './simslim.ts';
 import { withWorkspaceProcessLock } from './workspace-process-lock.ts';
 import { claimFailure } from '../ownership-claim.ts';
@@ -560,15 +561,7 @@ async function configureOwnedIosSim({
   return { record: updated, rebooted: slimConfigured && springBoardAfter !== springBoardBefore };
 }
 
-export async function ensureIosBooted({
-  device,
-  projectPath,
-  deviceSlotWait,
-  simulatorApp,
-  timeoutMs,
-  pollMs,
-  out,
-}: {
+type IosBootArgs = {
   device?: OwnedDeviceRecord | null;
   projectPath: string;
   deviceSlotWait?: DeviceSlotWaitPolicy;
@@ -576,13 +569,60 @@ export async function ensureIosBooted({
   timeoutMs: number;
   pollMs: number;
   out: Notify;
-}): Promise<BootResult> {
+};
+
+type IosBootAttempt = BootResult & { springBoardDown?: true };
+
+const SPRINGBOARD_RESPAWN_POLLS = 20;
+
+export async function ensureIosBooted(args: IosBootArgs): Promise<BootResult> {
+  const { springBoardDown, ...first } = await bootOwnedIosSim(args);
+  const { device, projectPath, out } = args;
+  const udid = device?.deviceUdid;
+  if (!springBoardDown || !device || !udid) return first;
+  out(chalk.yellow(phaseLine('device', `SpringBoard is not running on ${udid}; restarting the simulator once`)));
+  const stopped = await teardownOwnedIosSim(udid, { workspace: projectPath });
+  if (stopped.status !== 'torn-down') {
+    return { ...first, reason: `${first.reason} The restart did not run: ${stopped.reason ?? stopped.status}.` };
+  }
+  const { booted: _booted, booting: _booting, ...unbooted } = device;
+  const { springBoardDown: stillDown, ...second } = await bootOwnedIosSim({ ...args, device: unbooted });
+  return stillDown
+    ? {
+        ...second,
+        reason: `${second.reason} Stim already restarted the simulator once, so it did not restart it again.`,
+      }
+    : second;
+}
+
+async function bootOwnedIosSim({
+  device,
+  projectPath,
+  deviceSlotWait,
+  simulatorApp,
+  timeoutMs,
+  pollMs,
+  out,
+}: IosBootArgs): Promise<IosBootAttempt> {
   const udid = device?.deviceUdid;
   if (!udid) return { failed: true, reason: 'No iOS simulator is recorded for this project.' };
-  const ready = async (): Promise<BootResult> => {
+  const ready = async (): Promise<IosBootAttempt> => {
     try {
       // Apple simctl spawn searches the device PATH for bare names; absolute paths use the host root.
-      await getExecutor().runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 30000 });
+      const listSpringBoard = () =>
+        getExecutor().runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 30000 });
+      let listing = await listSpringBoard();
+      for (let poll = 0; !springBoardRunning(listing) && poll < SPRINGBOARD_RESPAWN_POLLS; poll++) {
+        await cancellableSleep(pollMs);
+        listing = await listSpringBoard();
+      }
+      if (!springBoardRunning(listing)) {
+        return {
+          failed: true,
+          springBoardDown: true,
+          reason: `Simulator ${udid} reports Booted, but SpringBoard (the system shell) is not running, so apps cannot launch. Run \`stim stop\`, then \`stim ios\` again. If it repeats, look for SpringBoard crash reports in ~/Library/Logs/DiagnosticReports.`,
+        };
+      }
       return { ok: true, udid };
     } catch (error) {
       return {
