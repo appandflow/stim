@@ -30,6 +30,7 @@ interface CrashTarget {
   until?: number;
   appPath?: string | null;
   physical?: boolean;
+  clockOffsetMs?: number | null;
 }
 
 interface CrashFrame {
@@ -380,6 +381,21 @@ async function simulatorFatalConsole(target: CrashTarget, signal?: AbortSignal):
   return records;
 }
 
+export async function androidCrashClockOffset(deviceId: string, signal?: AbortSignal): Promise<number | null> {
+  const before = Date.now();
+  const clock = (
+    await crashCommand(
+      'adb',
+      ['-s', deviceId, 'shell', 'date', '+%s%3N'],
+      { timeoutMs: 1000, cwd: androidToolCwd() },
+      signal,
+    )
+  )?.trim();
+  const after = Date.now();
+  if (!/^\d{13}$/.test(clock ?? '') || after < before || after - before > 1000) return null;
+  return Math.round((before + after) / 2) - Number(clock);
+}
+
 /** Reads platform crash evidence without starting, stopping or modifying a device. */
 export async function captureNativeCrashes(
   target: CrashTarget,
@@ -413,21 +429,11 @@ export async function captureNativeCrashes(
       }
       if (nativeReports.length) records = nativeReports;
     } else if (target.platform === 'android') {
-      const before = Date.now();
-      const clock = (
-        await crashCommand(
-          'adb',
-          ['-s', target.deviceId, 'shell', 'date', '+%s%3N'],
-          {
-            timeoutMs: 1000,
-            cwd: androidToolCwd(),
-          },
-          signal,
-        )
-      )?.trim();
-      const after = Date.now();
-      if (!/^\d{13}$/.test(clock ?? '') || after < before || after - before > 1000) return [];
-      const offset = Math.round((before + after) / 2) - Number(clock);
+      const offset =
+        target.clockOffsetMs === undefined
+          ? await androidCrashClockOffset(target.deviceId, signal)
+          : target.clockOffsetMs;
+      if (offset === null) return [];
       const text = await crashCommand(
         'adb',
         ['-s', target.deviceId, 'logcat', '-b', 'crash', '-d', '-v', 'time,epoch', '-t', '2000'],
