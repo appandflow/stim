@@ -338,7 +338,7 @@ describe('pickOffer', () => {
         offers: [{ machine: 'mac0', offer: offer({ toolchain }) }],
       });
       expect(named.order).toEqual([0]);
-      expect(named.candidates[0]!.msg).toContain('CocoaPods');
+      expect(named.candidates[0]?.msg).toContain('CocoaPods');
     }
     const fingerprint = 'a'.repeat(64);
     const held = offer({
@@ -349,7 +349,7 @@ describe('pickOffer', () => {
         sha256: 'b'.repeat(64),
         fingerprint,
         cacheKey: `react-native-ios-${fingerprint}`,
-      } as BuildOffer['artifact'],
+      },
     });
     expect(
       pickOffer({
