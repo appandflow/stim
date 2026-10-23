@@ -30,6 +30,7 @@ struct WorkspaceDetail: View {
   @ObservedObject private var server = ServerSession.shared
   @Environment(\.windowSize) private var windowSize
   @Environment(\.tutorialHint) private var tutorialHint
+  @Environment(\.tutorialLogsHighlight) private var tutorialLogsHighlight
   @State private var logsResizeStart: CGFloat?
   @AppStorage(AppPreferences.Key.logsDrawerHeight) private var logsHeight = Double(WorkspaceDetail.defaultLogsHeight)
   @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
@@ -294,6 +295,7 @@ struct WorkspaceDetail: View {
               .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
             }
           }
+          .tutorialDestinationGlow(trigger: tutorialLogsHighlight)
 
         }
       }

@@ -189,7 +189,7 @@ struct DeviceViewer: View {
         }
       }
     }
-    .tutorialHighlights(showFallback: false, agentGlowDismissed: agentGlowDismissed)
+    .tutorialHighlights(showFallback: false, agentGlowDismissed: agentGlowDismissed, includesViewerTargets: true)
   }
 
   private func canvas(_ device: DeviceRef, replay: ReplayController?, replaying: Bool) -> some View {

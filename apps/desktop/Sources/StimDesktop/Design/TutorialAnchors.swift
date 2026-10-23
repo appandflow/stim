@@ -48,7 +48,16 @@ private struct TutorialHintKey: EnvironmentKey {
   static let defaultValue: TutorialHint? = nil
 }
 
+private struct TutorialLogsHighlightKey: EnvironmentKey {
+  static let defaultValue: UUID? = nil
+}
+
 extension EnvironmentValues {
+  var tutorialLogsHighlight: UUID? {
+    get { self[TutorialLogsHighlightKey.self] }
+    set { self[TutorialLogsHighlightKey.self] = newValue }
+  }
+
   var tutorialHint: TutorialHint? {
     get { self[TutorialHintKey.self] }
     set { self[TutorialHintKey.self] = newValue }
@@ -56,14 +65,31 @@ extension EnvironmentValues {
 }
 
 extension View {
+  func tutorialDestinationGlow(trigger: UUID?) -> some View {
+    overlay {
+      if let trigger {
+        GeometryReader { geometry in
+          TutorialGlow(
+            rect: CGRect(origin: .zero, size: geometry.size).insetBy(dx: 5, dy: 5),
+            bounds: geometry.size, callout: nil, restartKey: trigger.uuidString)
+        }
+        .id(trigger)
+      }
+    }
+  }
+
   func tutorialAnchor(_ id: TutorialAnchorID, workspace: String? = nil) -> some View {
     anchorPreference(key: TutorialAnchorPreference.self, value: .bounds) {
       [TutorialAnchorKey(id: id, workspace: workspace): $0]
     }
   }
 
-  func tutorialHighlights(showFallback: Bool = true, agentGlowDismissed: Bool = false) -> some View {
-    modifier(TutorialHighlights(showFallback: showFallback, agentGlowDismissed: agentGlowDismissed))
+  func tutorialHighlights(showFallback: Bool = true, agentGlowDismissed: Bool = false, includesViewerTargets: Bool = false)
+    -> some View
+  {
+    modifier(
+      TutorialHighlights(
+        showFallback: showFallback, agentGlowDismissed: agentGlowDismissed, includesViewerTargets: includesViewerTargets))
   }
 
   func tutorialGlowInPlace(_ hint: TutorialHint?, _ anchor: TutorialAnchorID, workspaces: [String] = []) -> some View {
@@ -72,7 +98,7 @@ extension View {
         GeometryReader { geometry in
           TutorialGlow(
             rect: CGRect(origin: .zero, size: geometry.size), bounds: geometry.size, callout: nil,
-            restartKey: "\(hint.step ?? "")|\(hint.selectedPath ?? "")|\(anchor)", overflowsWindow: false,
+            restartKey: "\(hint.step ?? "")|\(hint.selectedPath ?? "")|\(anchor)",
             loops: hint.step == "agent")
         }
       }
@@ -85,13 +111,17 @@ private struct TutorialHighlights: ViewModifier {
   @State private var windowKey = false
   var showFallback: Bool
   var agentGlowDismissed: Bool
+  var includesViewerTargets: Bool
 
   func body(content: Content) -> some View {
     content.overlayPreferenceValue(TutorialAnchorPreference.self) { anchors in
       GeometryReader { geometry in
         if windowKey, let hint {
           let bounds = CGRect(origin: .zero, size: geometry.size)
-          let found = hint.targets.lazy.compactMap { target -> (TutorialAnchorID, String, CGRect)? in
+          let targets = hint.targets.filter {
+            includesViewerTargets || ![TutorialAnchorID.viewerScreen, .agentActions, .replay].contains($0.anchor)
+          }
+          let found = targets.lazy.compactMap { target -> (TutorialAnchorID, String, CGRect)? in
             let workspaces = target.anchor == .workspaceNoticeShow ? [hint.path].compactMap { $0 } : hint.paths
             let keys =
               workspaces.map { TutorialAnchorKey(id: target.anchor, workspace: $0) }
@@ -129,14 +159,12 @@ private struct TutorialGlow: View {
   var bounds: CGSize
   var callout: String?
   var restartKey: String
-  var overflowsWindow = true
   var loops = false
 
   private var highlight: Color {
-    loops ? Color(red: 1, green: 215.0 / 255.0, blue: 0) : Palette.accent
+    Color(red: 1, green: 215.0 / 255.0, blue: 0)
   }
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @Environment(\.colorScheme) private var colorScheme
   @State private var faded = false
   @State private var gone = false
   @State private var windowKey = false
@@ -145,24 +173,12 @@ private struct TutorialGlow: View {
     ZStack {
       WindowStateReader { windowKey = $0 == .key }
       if windowKey, !gone {
-        if overflowsWindow {
-          TutorialGlowSurface(
-            content: AnyView(
-              animatedGlow
-                .padding(TutorialGlowSurface.margin)
-                .environment(\.colorScheme, colorScheme)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-            )
-          )
-          .frame(width: bounds.width, height: bounds.height)
-        } else {
-          animatedGlow
-        }
+        animatedGlow
       }
     }
     .allowsHitTesting(false)
     .accessibilityHidden(true)
+    .onDisappear { gone = true }
     .task(id: restartKey) {
       gone = false
       faded = false
@@ -202,7 +218,7 @@ private struct TutorialGlow: View {
         .position(x: rect.midX, y: rect.midY)
       if let callout {
         Text(callout).font(.stim(.footnote, weight: .semibold))
-          .foregroundStyle(loops ? Color.black : Palette.onPrimary)
+          .foregroundStyle(Color.black)
           .padding(.horizontal, Space.md).padding(.vertical, Space.xs)
           .background(Capsule().fill(highlight))
           .shadow(color: highlight.opacity(0.4), radius: 6)
@@ -213,107 +229,5 @@ private struct TutorialGlow: View {
           )
       }
     }
-  }
-}
-
-private struct TutorialGlowSurface: NSViewRepresentable {
-  static let margin: CGFloat = 32
-  var content: AnyView
-
-  func makeNSView(context: Context) -> TutorialGlowHost { TutorialGlowHost() }
-
-  func updateNSView(_ view: TutorialGlowHost, context: Context) {
-    view.content = content
-    view.position()
-  }
-
-  static func dismantleNSView(_ view: TutorialGlowHost, coordinator: ()) { view.close() }
-}
-
-private final class TutorialGlowPanel: NSPanel {
-  override var canBecomeKey: Bool { false }
-  override var canBecomeMain: Bool { false }
-}
-
-private final class TutorialGlowHost: NSView {
-  var content = AnyView(EmptyView()) {
-    didSet { hosting?.rootView = content }
-  }
-  private weak var owner: NSWindow?
-  private var panel: TutorialGlowPanel?
-  private var hosting: NSHostingView<AnyView>?
-  private var observers: [NSObjectProtocol] = []
-
-  override func viewDidMoveToWindow() {
-    super.viewDidMoveToWindow()
-    close()
-    guard let window else { return }
-    owner = window
-    let names: [Notification.Name] = [
-      NSWindow.didMoveNotification, NSWindow.didResizeNotification,
-      NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
-    ]
-    observers = names.map { name in
-      NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
-        self?.position()
-      }
-    }
-    observers.append(
-      NotificationCenter.default.addObserver(
-        forName: NSWindow.willCloseNotification, object: window, queue: .main
-      ) { [weak self] _ in self?.close() })
-    position()
-  }
-
-  override func layout() {
-    super.layout()
-    position()
-  }
-
-  func position() {
-    guard let owner, owner.isKeyWindow, owner.isVisible, !owner.isMiniaturized, owner.occlusionState.contains(.visible),
-      bounds.width > 0, bounds.height > 0
-    else {
-      panel?.orderOut(nil)
-      return
-    }
-    let frame = owner.convertToScreen(convert(bounds, to: nil))
-      .insetBy(dx: -TutorialGlowSurface.margin, dy: -TutorialGlowSurface.margin)
-    if panel == nil {
-      let hosting = NSHostingView(rootView: content)
-      hosting.sizingOptions = []
-      let panel = TutorialGlowPanel(
-        contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-      panel.isOpaque = false
-      panel.backgroundColor = .clear
-      panel.hasShadow = false
-      panel.ignoresMouseEvents = true
-      panel.hidesOnDeactivate = true
-      panel.isReleasedWhenClosed = false
-      panel.isExcludedFromWindowsMenu = true
-      panel.setAccessibilityElement(false)
-      panel.collectionBehavior = [.fullScreenAuxiliary, .ignoresCycle]
-      panel.contentView = hosting
-      self.hosting = hosting
-      self.panel = panel
-      owner.addChildWindow(panel, ordered: .above)
-    }
-    panel?.appearance = owner.effectiveAppearance
-    panel?.level = NSWindow.Level(rawValue: owner.level.rawValue + 1)
-    panel?.setFrame(frame, display: true)
-    if panel?.isVisible == false { panel?.orderFront(nil) }
-  }
-
-  func close() {
-    for observer in observers { NotificationCenter.default.removeObserver(observer) }
-    observers = []
-    if let panel {
-      owner?.removeChildWindow(panel)
-      panel.orderOut(nil)
-      panel.contentView = nil
-    }
-    panel = nil
-    hosting = nil
-    owner = nil
   }
 }

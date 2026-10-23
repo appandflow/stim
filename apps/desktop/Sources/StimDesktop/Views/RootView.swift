@@ -60,6 +60,9 @@ struct RootView: View {
   @State private var focusedDeviceID: String?
   @State private var logQuery = LogQuery()
   @State private var archivedLogQuery = LogQuery()
+  @State private var tutorialDestinationHighlight: UUID?
+  @State private var tutorialHighlightDestination: SidebarItem?
+
   @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
   @AppStorage(AppPreferences.Key.showsInspector) private var showsInspector = true
   @State private var showsInspectorOverlay = false
@@ -251,6 +254,14 @@ struct RootView: View {
     }
     .tutorialHighlights(showFallback: columnVisibility == .detailOnly)
     .environment(\.tutorialHint, tutorialHint)
+    .environment(
+      \.tutorialLogsHighlight,
+      tutorialLogsHighlight
+    )
+    .onChange(of: showsLogs) {
+      if !showsLogs, case .environment = tutorialHighlightDestination { tutorialDestinationHighlight = nil }
+    }
+
     .focusedSceneValue(
       \.inspectorToggle,
       showsWorkspace ? InspectorToggle(isShown: inspector != .hidden, toggle: toggleInspector) : nil
@@ -406,6 +417,8 @@ struct RootView: View {
       }
     }
     .onChange(of: selection) { old, item in
+      if item != tutorialHighlightDestination { tutorialDestinationHighlight = nil }
+
       if case .archived = item {
         archivedLogQuery = LogQuery()
         if case .archived = old {} else { previousSelection = old }
@@ -429,6 +442,11 @@ struct RootView: View {
       default: break
       }
     }
+  }
+
+  private var tutorialLogsHighlight: UUID? {
+    guard case .environment = selection, selection == tutorialHighlightDestination, showsLogs else { return nil }
+    return tutorialDestinationHighlight
   }
 
   private var tutorialHint: TutorialHint? {
@@ -540,7 +558,11 @@ struct RootView: View {
       restart: tutorial.restart,
       close: tutorial.close,
       openArchived: archive.map { archive in
-        { navigate(.archived(archive.id), .click("tutorial Open Archived")) }
+        {
+          navigate(.archived(archive.id), .click("tutorial Open Archived"))
+          tutorialHighlightDestination = .archived(archive.id)
+          tutorialDestinationHighlight = UUID()
+        }
       },
       archiveUnavailableReason: tutorialArchiveUnavailableReason,
       openBuild: tutorial.tourPath.map { path in
@@ -553,6 +575,8 @@ struct RootView: View {
       openLogs: tutorialShortcut.map { path in
         {
           showLogs(path)
+          tutorialHighlightDestination = .environment(path)
+          tutorialDestinationHighlight = UUID()
           logQuery.errorsOnly = false
           TutorialViewerEvents.shared.logsOpened(path)
         }
@@ -1004,6 +1028,9 @@ struct RootView: View {
           archive, cli: cli, statsReader: statsReader, environments: store.payload?.environments ?? [],
           inspector: inspector, inspectorWidth: $inspectorWidth, logQuery: $archivedLogQuery,
           openReplacement: { navigate(.environment($0), .click("archived workspace replacement")) }
+        )
+        .tutorialDestinationGlow(
+          trigger: tutorialHighlightDestination == .archived(id) ? tutorialDestinationHighlight : nil
         )
         .id(id)
       }
