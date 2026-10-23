@@ -354,9 +354,12 @@ setting:
   remote       on the first approved Mac in remote.machines order that has room
                and a load per core under its own server.maxLoadPerCore, here only
                when none does
-  remote-only  the same, never here: with no such Mac the command refuses with
-               STIM_HOSTING_REFUSED and the reason each Mac was skipped, so a
-               macOS app never takes focus on this Mac
+  remote-only  the same, never here, so a macOS app never takes focus on this Mac:
+               when every Mac that answered is only full or loaded it waits up to
+               600 seconds for one with room and then refuses with STIM_AT_CAPACITY;
+               with no Mac that could ever take it (none configured, unreachable,
+               declined for another reason) it refuses at once with
+               STIM_HOSTING_REFUSED and the reason each Mac was skipped
   <machine>    exactly that Mac, with no fallback
 
 A placement word picks the Mac on a new launch and keeps the recorded one while an

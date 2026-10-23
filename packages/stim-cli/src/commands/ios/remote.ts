@@ -142,6 +142,7 @@ export async function selectIosPlacement(
     deviceType: string | null;
     runtime: string | null;
     noWait: boolean;
+    waitMs?: number;
     env?: NodeJS.ProcessEnv;
     operation?: StimContext;
     note: (line: string) => void;
@@ -159,7 +160,7 @@ export async function selectIosPlacement(
 > {
   const selection = selectIosTarget(args);
   if ('failure' in selection || selection.machine !== 'auto') return selection;
-  const { root, slot, d, opts, deviceType, runtime, noWait, phase, log, release, appMode, metroCheck } = args;
+  const { root, slot, d, opts, deviceType, runtime, noWait, waitMs, phase, log, release, appMode, metroCheck } = args;
   const viewer = resolveSimulatorAppFlag(opts.simulatorApp, args.physical, null);
   if ('refusal' in viewer) return { failure: viewer.refusal };
   const refusal = await args.validateSelectors();
@@ -185,6 +186,8 @@ export async function selectIosPlacement(
       appMode,
       buildMachine: opts.remoteBuild,
       noWait,
+      ...(waitMs === undefined ? {} : { waitMs }),
+      onWait: (line) => phase('placement:', line),
       ...(easFallback
         ? {
             eas: () =>

@@ -660,7 +660,7 @@ no flag or setting runs here. eas and proxy keep their remote backend meanings.
 there is a free concurrency.maxDevices slot (0 means unlimited), no device
 waiter ahead, normal host memory pressure, no budget shortfall,
 and 5-minute load per core below server.maxLoadPerCore. Without remote.machines,
-auto and remote are local and remote-only refuses. An unknown local device count also stays local; boot admission
+auto and remote are local and remote-only refuses with STIM_HOSTING_REFUSED. An unknown local device count also stays local; boot admission
 still decides. The default without a flag or setting stays local. remote.devicePoolDisabled excludes
 members from new automatic placement only; an excluded local member is never a
 fallback. Existing sessions keep their owner and named placement bypasses the pool.
@@ -669,8 +669,13 @@ See stim guide settings for separate build/device membership controls.
 --remote remote (or ios.remote = remote) skips that local check and asks the hosts
 first, in remote.machines order; the simulator runs here only when none admits
 it, with the same wait and EAS fallback as auto. --remote remote-only never runs
-here: when no host admits the run it refuses with STIM_HOSTING_REFUSED, naming each
-skipped host and its reason, and neither waits in the local queue nor uses EAS.
+here and never joins the local queue or uses EAS. When every host that answered is
+only full, loaded or short of memory, it waits for one to have room, polling every
+5 seconds for --wait seconds (default 600) and printing one placement line; --no-wait,
+--wait 0 or the end of the wait refuse with STIM_AT_CAPACITY. When no host can ever take
+the run (none configured, unreachable, declined for another reason such as paused),
+it refuses at once with STIM_HOSTING_REFUSED, naming each skipped host and its reason.
+--plan never waits.
 Excluding local in remote.devicePoolDisabled has the same effect on auto and remote.
 
 Otherwise Stim asks every approved remote.machines host in parallel, skipping
@@ -701,7 +706,7 @@ metro.tunnel off; on an Expo tunnel, run stim start --remote first). A recorded
 EAS session is not sticky: once this machine has room, auto runs here and the
 session bills until stim stop or remote.easMaxDurationMinutes. If any check fails, or the
 setting is off, auto runs here and may wait in the existing FIFO device
-slot queue; --no-wait and --wait 0 refuse with STIM_AT_CAPACITY (remote-only has no local queue and refuses with STIM_HOSTING_REFUSED). The placement
+slot queue; --no-wait and --wait 0 refuse with STIM_AT_CAPACITY (remote-only has no local queue and waits for a remote host instead, as described above). The placement
 line explains the decision, the skipped hosts and why EAS was not used
 (machine "eas"). JSON progress goes to stderr.
 The same decision, with a reason code per host, is a src: placement record in

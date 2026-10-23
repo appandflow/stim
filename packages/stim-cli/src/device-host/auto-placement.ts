@@ -19,7 +19,8 @@ import {
 import { peekBudget } from '../budget.ts';
 import { namedBuildMachine, resolveBuildMachine } from '../offload/selection.ts';
 import { readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
-import { peekDeviceSlots } from '../engine/device-capacity.ts';
+import { DEFAULT_DEVICE_SLOT_WAIT_MS, peekDeviceSlots } from '../engine/device-capacity.ts';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
 import { hostingMachines } from './machines.ts';
@@ -33,6 +34,16 @@ import {
   type PlacementProbe,
   type PlacementSkip,
 } from './placement.ts';
+
+const HOST_WAIT_POLL_MS = 5000;
+
+function refusalText(decision: { reason: string; skipped: PlacementSkip[] }, waitedMs: number | null): string {
+  return [
+    decision.reason,
+    ...decision.skipped.map((each) => `${each.machine}: ${each.reason}`),
+    ...(waitedMs === null ? [] : [`waited ${Math.round(waitedMs / 1000)}s for a remote machine with room`]),
+  ].join('; ');
+}
 
 export async function probeHost(
   machine: string,
@@ -149,6 +160,8 @@ export async function automaticDevicePlacement(
     appMode,
     buildMachine,
     noWait,
+    waitMs = DEFAULT_DEVICE_SLOT_WAIT_MS,
+    onWait = () => {},
     eas,
     signal,
     localSims,
@@ -161,6 +174,9 @@ export async function automaticDevicePlacement(
     appMode?: HostedAppOffer['mode'];
     buildMachine?: string;
     noWait: boolean;
+    /** How long remote-only waits for a full or loaded host before it refuses with STIM_AT_CAPACITY. */
+    waitMs?: number;
+    onWait?: (line: string) => void;
     signal?: AbortSignal;
     eas?: () => Promise<EasFallbackCheck>;
     /** Available simulators already listed by this run, so the local device count does not list again. */
@@ -182,6 +198,8 @@ export async function automaticDevicePlacement(
     memory = () => readHostMemoryPressureAsync(undefined, undefined, signal),
     probe = probeHost,
     budget = (projectRoot) => peekBudget(projectRoot, {}, ambientEnv(), signal),
+    now = Date.now,
+    sleep = (ms) => delay(ms, undefined, { signal }),
   }: {
     machines?: () => string[] | null | Promise<string[] | null>;
     read?: typeof readHostedNative;
@@ -192,6 +210,8 @@ export async function automaticDevicePlacement(
     memory?: () => HostMemoryPressure | null | Promise<HostMemoryPressure | null>;
     probe?: typeof probeHost;
     budget?: typeof peekBudget;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<unknown>;
   } = {},
 ): Promise<{
   target: HostedNativeTarget | null;
@@ -250,13 +270,37 @@ export async function automaticDevicePlacement(
   signal?.throwIfAborted();
   const inputs = (offers: PlacementProbe[]) => ({ platform, placement, here, offers, buildMachine, noWait });
   const notProbed = entries.map((machine) => ({ machine, failure: 'not probed' }));
-  const early = decideDevicePlacement(inputs(notProbed));
-  const probes =
-    early.kind === 'local' && early.skipped.length === 0
-      ? []
-      : await Promise.all(entries.map((machine) => probe(machine, platform, selectors, appMode, signal)));
-  const offers = probes.length ? probes.map((each) => each.probe) : notProbed;
-  let decision = decideDevicePlacement(inputs(offers));
+  const waitStarted = now();
+  let announced = false;
+  let probes: Awaited<ReturnType<typeof probe>>[] = [];
+  let offers: PlacementProbe[] = notProbed;
+  let decision: ReturnType<typeof decideDevicePlacement>;
+  for (;;) {
+    const early = decideDevicePlacement(inputs(notProbed));
+    probes =
+      early.kind === 'local' && early.skipped.length === 0
+        ? []
+        : await Promise.all(entries.map((machine) => probe(machine, platform, selectors, appMode, signal)));
+    offers = probes.length ? probes.map((each) => each.probe) : notProbed;
+    decision = decideDevicePlacement(inputs(offers));
+    if (decision.kind !== 'refused' || !decision.hostsFull) break;
+    const waited = now() - waitStarted;
+    const immediate = noWait || waitMs <= 0;
+    if (immediate || waited >= waitMs)
+      throw Object.assign(new Error(refusalText(decision, immediate ? null : waited)), {
+        code: 'STIM_AT_CAPACITY',
+        remedy:
+          'Wait for a remote machine in remote.machines to have room, retry with a longer --wait <seconds>, or select a placement that may run here.',
+      });
+    if (!announced) {
+      announced = true;
+      onWait(
+        `remote-only waits up to ${Math.round(waitMs / 1000)}s for a remote machine with room (${decision.skipped.map((each) => `${each.machine}: ${each.reason}`).join('; ')})`,
+      );
+    }
+    await sleep(Math.min(HOST_WAIT_POLL_MS, waitMs - waited));
+    signal?.throwIfAborted();
+  }
   if (
     (decision.kind === 'local' || decision.kind === 'refused') &&
     decision.atCapacity &&
@@ -265,16 +309,13 @@ export async function automaticDevicePlacement(
   )
     decision = decideDevicePlacement({ ...inputs(offers), eas: await eas() });
   if (decision.kind === 'refused')
-    throw Object.assign(
-      new Error([decision.reason, ...decision.skipped.map((each) => `${each.machine}: ${each.reason}`)].join('; ')),
-      {
-        code: 'STIM_HOSTING_REFUSED',
-        remedy:
-          placement === 'remote-only'
-            ? 'Wait for a remote machine in remote.machines to have room, check stim doctor for the ones that are unreachable or unapproved, or select a placement that may run here.'
-            : 'Enable an available member in remote.devicePoolDisabled or select a machine explicitly.',
-      },
-    );
+    throw Object.assign(new Error(refusalText(decision, null)), {
+      code: 'STIM_HOSTING_REFUSED',
+      remedy:
+        placement === 'remote-only'
+          ? 'Wait for a remote machine in remote.machines to have room, check stim doctor for the ones that are unreachable or unapproved, or select a placement that may run here.'
+          : 'Enable an available member in remote.devicePoolDisabled or select a machine explicitly.',
+    });
   if (decision.kind === 'eas') return viaEas(decision.code, decision.reason, decision.skipped);
   if (decision.kind === 'local') return local(decision.code, decision.reason, decision.skipped);
   const machine = decision.machines[0]!.machine;

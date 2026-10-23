@@ -42,7 +42,7 @@ export type DevicePlacementDecision = (
   | { kind: 'local'; reason: string; atCapacity?: true }
   | { kind: 'host'; machines: { machine: string; reason: string }[]; reason: string }
   | { kind: 'eas'; reason: string }
-  | { kind: 'refused'; reason: string; atCapacity?: true }
+  | { kind: 'refused'; reason: string; atCapacity?: true; hostsFull?: true }
 ) & { code: string; skipped: PlacementSkip[] };
 
 function local(
@@ -100,12 +100,21 @@ export function decideDevicePlacement(
             (here.memoryPressure !== 'normal'
               ? `host memory pressure ${here.memoryPressure ?? 'unknown'} here`
               : `load ${here.loadPerCore.toFixed(1)}/core here, ${usage}`));
+  let hostsFull = false;
   const nowhere = (
     code: string,
     reason: string,
     skipped: PlacementSkip[] = [],
     waiting = '',
   ): DevicePlacementDecision => {
+    if (!mayRunHere(placement))
+      return {
+        kind: 'refused',
+        code: 'pool-unavailable',
+        reason,
+        skipped,
+        ...(hostsFull ? { hostsFull: true as const } : {}),
+      };
     if (!localEnabled && !atCapacity) return { kind: 'refused', code: 'pool-unavailable', reason, skipped };
     if (!cannotTake || count === null) return local(code, reason + waiting, skipped);
     if (eas?.usable)
@@ -150,6 +159,14 @@ export function decideDevicePlacement(
       else admitted.push({ machine: probe.machine, offer, index });
     }
     if (reason) skipped.push({ machine: probe.machine, code, reason });
+    if (
+      reason &&
+      ('offer' in probe
+        ? ['no-capacity', 'load', 'memory'].includes(code) ||
+          (code === 'declined' && probe.offer.capacity.available === 0)
+        : false)
+    )
+      hostsFull = true;
   });
   admitted.sort((a, b) => Number(b.machine === buildMachine) - Number(a.machine === buildMachine) || a.index - b.index);
   if (!admitted.length)

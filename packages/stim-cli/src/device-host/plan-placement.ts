@@ -79,7 +79,17 @@ export async function planHostedDevice({
     const recorded = readHostedNative(root, platform, slot)[slot];
     if (recorded) return await named(recorded.machine);
     const placed = await automatic(
-      { root, slot, platform, placement, selectors, noWait: false, signal: operation?.signal, ...(eas ? { eas } : {}) },
+      {
+        root,
+        slot,
+        platform,
+        placement,
+        selectors,
+        noWait: false,
+        waitMs: 0,
+        signal: operation?.signal,
+        ...(eas ? { eas } : {}),
+      },
       { read: () => ({}), write: () => {} },
     );
     if (placed.placement.decision === 'eas')

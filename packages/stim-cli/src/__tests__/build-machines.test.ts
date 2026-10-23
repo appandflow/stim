@@ -519,6 +519,28 @@ describe('inspectBuildMachines', () => {
     expect(findings[0]!.fix).toContain('run `stim-server service update --release <version>`');
   });
 
+  it('says what remote-only does with a machine that cannot take the build, where other placements fall back to this machine', async () => {
+    await approvedCredential();
+    const detail = async () => {
+      const { findings } = await inspectBuildMachines(
+        {
+          fix: false,
+          check: () =>
+            Promise.resolve({ capacity: null, problems: [{ code: 'stim-build', reason: 'Stim build 6bbe there' }] }),
+        },
+        fakeIo([approved()]).io,
+        ['mini'],
+      );
+      return findings[0]?.detail;
+    };
+    expect(await detail()).toContain('Builds fall back to this machine');
+    writeFileSync(getConfigPath(), JSON.stringify({ remote: { build: 'remote-only', machines: ['mini'] } }));
+    const remoteOnly = await detail();
+    expect(remoteOnly).toContain('remote-only');
+    expect(remoteOnly).toContain('refuse');
+    expect(remoteOnly).not.toContain('fall back');
+  });
+
   it('reports a package Gradle downloads as a note that does not stop the build, and a blocker with commands otherwise', async () => {
     await approvedCredential();
     const note = {

@@ -386,7 +386,7 @@ build can compile on a paired remote machine instead: see `remote.build` in
 - `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no local fallback.
   `auto` places on an approved Mac when this machine is full or busy, falling back
   to the local device queue when no host admits. `remote` tries the approved Macs first, in
-  `remote.machines` order, and runs here only when none admits; `remote-only` never runs here. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
+  `remote.machines` order, and runs here only when none admits; `remote-only` never runs here and waits for a host with room. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
   With `hosting.agentDriver=agent-device` on the host and agent-device 0.21.20 or later on both machines,
   `ios.host.agent` returns a per-slot 0600 remote config. Use `agent-device <command> --remote-config <file>`
   from status, starting with `open <bundleId>`. It reaches only that hosted simulator; inventory, installs,
@@ -669,7 +669,7 @@ can compile on a paired remote machine instead: see `remote.build` in
   the same app terminates that workspace's running app. Without `--device`, it
   refuses a full device cap or existing slot queue immediately. It cannot be
   combined with `--wait`.
-- `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no fallback. `--remote auto` places on an approved host when this machine is full or busy, or joins the local device queue when no host admits. `--remote remote` tries the approved hosts first, in `remote.machines` order, and runs here only when none admits; `--remote remote-only` never runs here and refuses when none admits. `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
+- `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no fallback. `--remote auto` places on an approved host when this machine is full or busy, or joins the local device queue when no host admits. `--remote remote` tries the approved hosts first, in `remote.machines` order, and runs here only when none admits; `--remote remote-only` never runs here and waits for a host with room (`--no-wait`, `--wait 0` or the end of `--wait` refuse with `STIM_AT_CAPACITY`). `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
@@ -786,7 +786,7 @@ runs; the flag wins. A remote machine name from
 over the tailnet and never falls back to a local launch. `auto` launches here
 unless this machine is busy, `remote` on the first approved Mac in order that has
 room and runs here only when none does, `remote-only` never launches here
-(macOS apps take focus) and refuses when no Mac has room, and `local` launches
+(macOS apps take focus) and waits for a Mac with room, and `local` launches
 here. `stop` or `worktree remove` stop a hosted app there. macOS refuses `eas` and
 `proxy` because it has neither backend. These reserved names are case-insensitive
 and trimmed; `eas` and `proxy` refuse with `STIM_BAD_ARG` before state access or a

@@ -100,6 +100,7 @@ export async function selectAndroidPlacement({
   log,
   fromFlag,
   noWait,
+  waitMs,
   buildMachine,
   localSelectors,
   eas,
@@ -113,6 +114,7 @@ export async function selectAndroidPlacement({
   log?: (record: PlacementRecord) => void;
   fromFlag: boolean;
   noWait: boolean;
+  waitMs?: number;
   buildMachine?: string;
   eas?: () => Promise<EasFallbackCheck>;
   localSelectors: (target: {
@@ -166,6 +168,8 @@ export async function selectAndroidPlacement({
       selectors,
       buildMachine,
       noWait,
+      ...(waitMs === undefined ? {} : { waitMs }),
+      onWait: (line) => phase('placement:', line),
       ...(eas ? { eas } : {}),
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));

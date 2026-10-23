@@ -23,13 +23,13 @@ const offered = (
   machine: string,
   load: number | null = 0.5,
   memory = 100,
-  host: { maxLoadPerCore?: number; available?: number } = {},
+  host: { maxLoadPerCore?: number; available?: number; declined?: string } = {},
 ): PlacementProbe => ({
   machine,
   offer: {
     platform: 'ios',
     choice,
-    declined: null,
+    declined: host.declined ?? null,
     capacity: { available: host.available ?? 1 },
     resources: {
       loadPerCore: load,
@@ -311,6 +311,24 @@ describe('remote and remote-only placement', () => {
     });
     expect(place('remote-only', here, [])).toMatchObject({ kind: 'refused' });
     expect(place('remote-only', here, [offered('mini', 3)])).toMatchObject({ kind: 'refused' });
+  });
+
+  it('remote-only tells a host that is only full or loaded, which is worth waiting for, from one that is out', () => {
+    const occupied = offered('occupied', 0.5, 100, { available: 0, declined: 'reservations are occupied' });
+    const paused = offered('paused', 0.5, 100, { declined: 'Hosted sessions are paused' });
+    const down: PlacementProbe = { machine: 'down', failure: 'down' };
+    for (const waitable of [
+      [offered('mini', 3)],
+      [offered('mini', 0.1, 100, { available: 0 })],
+      [occupied],
+      [down, occupied],
+    ])
+      expect(place('remote-only', here, waitable)).toMatchObject({ kind: 'refused', hostsFull: true });
+    for (const hopeless of [[], [down], [paused], [down, paused]]) {
+      expect(place('remote-only', here, hopeless)).toMatchObject({ kind: 'refused' });
+      expect(place('remote-only', here, hopeless)).not.toHaveProperty('hostsFull');
+    }
+    expect(place('remote', here, [offered('mini', 3)])).toMatchObject({ kind: 'local' });
   });
 
   it('remote-only ignores whether this machine is full, empty or cannot count its devices', () => {

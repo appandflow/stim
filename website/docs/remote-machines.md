@@ -64,13 +64,13 @@ and moves a machine up or down.
 
 Every workload takes the same placement words:
 
-| Word           | Meaning                                                                           |
-| -------------- | --------------------------------------------------------------------------------- |
-| `local`        | This machine only.                                                                |
-| `auto`         | This machine first, a remote machine when this one is full or busy.               |
-| `remote`       | Remote machines first, in order; this machine only when none takes the run.       |
-| `remote-only`  | Remote machines in order, never this machine; it refuses when none takes the run. |
-| a machine name | Exactly that machine, with no fallback.                                           |
+| Word           | Meaning                                                                                                                             |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `local`        | This machine only.                                                                                                                  |
+| `auto`         | This machine first, a remote machine when this one is full or busy.                                                                 |
+| `remote`       | Remote machines first, in order; this machine only when none takes the run.                                                         |
+| `remote-only`  | Remote machines in order, never this machine; a build refuses when none takes it, a device or macOS app waits for a host with room. |
+| a machine name | Exactly that machine, with no fallback.                                                                                             |
 
 `remote.build` (builds), `ios.remote` and `android.remote` (simulators and
 emulators, which also take `eas` and `proxy`) and `macos.remote` (macOS apps) hold
@@ -956,13 +956,17 @@ com.appandflow.trailhead · ready · errors clean`}
 
 Use `stim ios --remote auto` or `stim android --remote auto`, or set `ios.remote`
 or `android.remote` to `auto`. Without a flag or setting, runs stay on this machine.
-With no `remote.machines`, `auto` and `remote` are local and `remote-only` refuses.
+With no `remote.machines`, `auto` and `remote` are local and `remote-only` refuses with `STIM_HOSTING_REFUSED`.
 
 `remote` skips the check below and asks the hosts first, in `remote.machines` order;
 the device runs here only when none admits it, with the same wait and EAS fallback as
-`auto`. `remote-only` never runs here: when no host admits the run it refuses with
-`STIM_HOSTING_REFUSED`, naming each skipped host and its reason, and neither waits in
-the local queue nor uses EAS.
+`auto`. `remote-only` never runs here, never joins the local queue and never uses EAS.
+When every host that answered is only full, loaded or short of memory, it waits for
+one to have room, checking every 5 seconds for `--wait` seconds (600 by default) and
+printing one `placement:` line. `--no-wait`, `--wait 0` or the end of the wait refuse
+with `STIM_AT_CAPACITY`. When no host could ever take the run (none configured,
+unreachable, or declined for another reason such as paused), it refuses at once with
+`STIM_HOSTING_REFUSED`, naming each skipped host and its reason. `--plan` never waits.
 
 Auto stays local when the device cap has room (0 means unlimited), no run is
 queued ahead, host memory pressure is normal, the budget has no

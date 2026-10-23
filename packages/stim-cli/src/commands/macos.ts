@@ -227,6 +227,7 @@ async function macosHost({
     selectors: {},
     buildMachine,
     noWait: false,
+    onWait: (line) => note(phaseLine('placement:', line)),
     signal,
   });
   note(phaseLine('placement:', devicePlacementLine(placed.placement, placed.skipped)));

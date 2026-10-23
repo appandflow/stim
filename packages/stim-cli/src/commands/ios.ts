@@ -663,6 +663,7 @@ async function runIos(
       }),
     simSnapshot,
     noWait: deviceSlotWaitMs === 0,
+    waitMs: deviceSlotWaitMs,
     note,
     phase,
     log: (entry) => logWriter().write(entry),
