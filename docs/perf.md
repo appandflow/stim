@@ -50,7 +50,9 @@ Versions older than `STIM_TRACE` report wall time and the stats.json phases only
 branch README.
 
 It runs the real commands against your real Stim home, on real simulators and emulators, and uses the same machine
-caps as any other run. It refuses to start while the 1-minute load average is above `--max-load` (80); with
+caps as any other run. It sets `STIM_MAINTENANCE=off` for them, so automatic maintenance cannot touch other
+worktrees or devices during a measurement, and it removes only the worktrees it added, through `stim worktree
+remove`; it does so on interrupt too, and keeps the scratch directory and says so when a removal fails. It refuses to start while the 1-minute load average is above `--max-load` (80); with
 `--wait-minutes` it waits for the load to fall instead. Use `--sha <commit>` to pin the app source when you want
 two runs to be comparable across days.
 
@@ -67,8 +69,10 @@ node scripts/perf/compare.mjs
 clones `perf-data` and prints, per machine, the latest run against the run before it: median wall time per
 scenario, the change, the spread between the fastest and slowest repetition, and how many repetitions failed. A
 scenario is flagged `REGRESSION` when its median grew by more than 10% and by at least 250 ms
-(`--threshold`, `--min-delta-ms`). Medians ignore one slow repetition, and failed repetitions are left out.
+(`--threshold`, `--min-delta-ms`). Medians ignore one slow repetition, and failed repetitions are left out; a flagged change whose repetitions spread by
+more than 50% is marked `(noisy)`.
 
-Runs taken under very different load are not compared: when the median load before the commands differs by more than
-20 and by more than a factor of two, the rows say `not compared`. A run taken above load 80 is reported with a note.
+Load is judged per scenario. A scenario is not compared when the median load before its commands differs by more
+than 20 and by more than a factor of two between the two runs. A primed run and an `--no-prime` run are never
+compared. Changes of model, macOS, Xcode or Node between the runs are noted. A run taken above load 80 is reported with a note.
 A different app commit between the two runs is noted too.

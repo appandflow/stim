@@ -54,15 +54,22 @@ export function summarizeRuns(runs) {
   };
 }
 
+const loadOf = (scenarios) =>
+  median(scenarios.flatMap((scenario) => scenario.runs.map((each) => each.loadBefore).filter(Number.isFinite)));
+
 /** The load a run was taken under: the median 1-minute load average before its commands started. */
 function runLoad(run) {
-  const loads = Object.values(run.scenarios ?? {}).flatMap((scenario) =>
-    scenario.runs.map((each) => each.loadBefore).filter(Number.isFinite),
-  );
-  return median(loads);
+  return loadOf(Object.values(run.scenarios ?? {}));
 }
 
-export const DEFAULTS = { threshold: 0.1, minDeltaMs: 250, maxLoadDiff: 20, loadRatio: 2, highLoad: 80 };
+export const DEFAULTS = {
+  threshold: 0.1,
+  minDeltaMs: 250,
+  maxLoadDiff: 20,
+  loadRatio: 2,
+  highLoad: 80,
+  noisySpread: 0.5,
+};
 
 /**
  * Why two runs cannot be compared, or null. They are refused when their loads differ by more than `maxLoadDiff` and
@@ -77,14 +84,17 @@ export function loadRefusal(a, b, { maxLoadDiff, loadRatio } = DEFAULTS) {
     : null;
 }
 
+const COMPARED_ENVIRONMENT = ['model', 'os', 'xcode', 'node'];
+
 /** One row per scenario of `latest`, against the same scenario of `previous`. Deltas are medians. */
 export function compareRuns(latest, previous, options = {}) {
   const config = { ...DEFAULTS, ...options };
   const loadLatest = runLoad(latest);
   const loadPrevious = runLoad(previous);
-  const refusal = loadRefusal(loadLatest, loadPrevious, config);
   const notes = [];
-  if (refusal) notes.push(`not compared: ${refusal}`);
+  const unlike =
+    latest.config?.primed !== previous.config?.primed ? 'one run primed the build caches and the other did not' : null;
+  if (unlike) notes.push(`not compared: ${unlike}`);
   for (const [which, load] of [
     ['latest', loadLatest],
     ['previous', loadPrevious],
@@ -94,23 +104,36 @@ export function compareRuns(latest, previous, options = {}) {
   if (latest.repo?.sha && previous.repo?.sha && latest.repo.sha !== previous.repo.sha) {
     notes.push(`app source differs (${latest.repo.sha.slice(0, 9)} against ${previous.repo.sha.slice(0, 9)})`);
   }
+  const changed = COMPARED_ENVIRONMENT.filter((key) => latest.machine?.[key] !== previous.machine?.[key]);
+  if (changed.length) notes.push(`machine differs: ${changed.join(', ')}`);
   const rows = [];
+  let refused = Boolean(unlike);
   for (const [name, scenario] of Object.entries(latest.scenarios ?? {})) {
     const after = summarizeRuns(scenario.runs);
     const before = previous.scenarios?.[name] ? summarizeRuns(previous.scenarios[name].runs) : null;
     const row = { scenario: name, before, after, deltaPct: null, status: 'ok' };
     rows.push(row);
+    const refusal =
+      unlike ?? loadRefusal(loadOf([scenario]), loadOf([previous.scenarios?.[name] ?? { runs: [] }]), config);
     if (!before || before.medianMs === null) row.status = 'no previous';
     else if (after.medianMs === null) row.status = 'failed';
-    else if (refusal) row.status = 'not compared';
-    else {
+    else if (refusal) {
+      row.status = 'not compared';
+      if (!unlike) {
+        refused = true;
+        notes.push(`${name} not compared: ${refusal}`);
+      }
+    } else {
       const delta = after.medianMs - before.medianMs;
       row.deltaPct = delta / before.medianMs;
       if (row.deltaPct > config.threshold && delta >= config.minDeltaMs) row.status = 'REGRESSION';
       else if (row.deltaPct < -config.threshold && -delta >= config.minDeltaMs) row.status = 'faster';
+      if (row.status !== 'ok' && Math.max(after.spread ?? 0, before.spread ?? 0) > config.noisySpread) {
+        row.status += ' (noisy)';
+      }
     }
   }
-  return { loadLatest, loadPrevious, rows, notes, refused: Boolean(refusal) };
+  return { loadLatest, loadPrevious, rows, notes, refused };
 }
 
 /** Runs grouped by machine, oldest first. */

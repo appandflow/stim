@@ -16,6 +16,7 @@ const run = (wallTimes, load = 5, extra = {}) => ({
   startedAt: '2026-10-23T04:00:00Z',
   machine: { id: 'mac-1' },
   repo: { sha: 'a'.repeat(40) },
+  config: { primed: true },
   scenarios: {
     'ios-rerun': {
       runs: wallTimes.map((wallMs, index) => ({ rep: index + 1, wallMs, exit: 0, loadBefore: load, loadAfter: load })),
@@ -64,11 +65,11 @@ describe('run summary', () => {
 });
 
 describe('comparison', () => {
-  it('flags a median that grew by more than ten percent and ignores one outlier repetition', () => {
+  it('flags a median that grew by more than ten percent, by median and not by the outlier repetition', () => {
     const previous = run([10_000, 10_100, 10_200]);
     const latest = run([11_500, 11_600, 30_000]);
     const { rows } = compareRuns(latest, previous);
-    expect(rows[0]).toMatchObject({ scenario: 'ios-rerun', status: 'REGRESSION' });
+    expect(rows[0]).toMatchObject({ scenario: 'ios-rerun', status: 'REGRESSION (noisy)' });
     expect(rows[0].deltaPct).toBeCloseTo(0.1485, 3);
     expect(compareRuns(run([10_900, 11_000, 11_050]), previous).rows[0].status).toBe('ok');
     expect(compareRuns(run([8_000, 8_100, 8_200]), previous).rows[0].status).toBe('faster');
@@ -82,12 +83,39 @@ describe('comparison', () => {
     const refused = compareRuns(run([20_000], 120), run([10_000], 5));
     expect(refused.refused).toBe(true);
     expect(refused.rows[0].status).toBe('not compared');
-    expect(refused.notes[0]).toMatch(/load differs too much/);
+    expect(refused.notes.join()).toMatch(/ios-rerun not compared: load differs too much/);
     const similar = compareRuns(run([12_000], 110), run([10_000], 100));
     expect(similar.refused).toBe(false);
     expect(similar.notes.join()).toMatch(/load 110.0/);
     expect(loadRefusal(8, 3)).toBeNull();
     expect(loadRefusal(null, 3)).toBeNull();
+  });
+
+  it('judges load per scenario, so a busy scenario cannot hide behind quiet ones', () => {
+    const mixed = (iosLoad) => {
+      const base = run([10_000, 10_000, 10_000], 5);
+      base.scenarios.start = base.scenarios['ios-rerun'];
+      base.scenarios['ios-rerun'] = run([10_000, 10_000, 10_000], iosLoad).scenarios['ios-rerun'];
+      return base;
+    };
+    const result = compareRuns(mixed(120), mixed(5));
+    expect(result.rows.map((row) => [row.scenario, row.status])).toEqual([
+      ['ios-rerun', 'not compared'],
+      ['start', 'ok'],
+    ]);
+  });
+
+  it('does not compare a primed run with one that had cold caches', () => {
+    const cold = run([10_000, 10_000, 10_000], 5, { config: { primed: false } });
+    const result = compareRuns(run([30_000, 30_000, 30_000]), cold);
+    expect(result.refused).toBe(true);
+    expect(result.rows[0].status).toBe('not compared');
+    expect(result.notes.join()).toMatch(/primed/);
+  });
+
+  it('marks a flagged change as noisy when repetitions spread widely', () => {
+    const result = compareRuns(run([10_000, 20_000, 30_000]), run([5_000, 5_100, 5_200]));
+    expect(result.rows[0].status).toBe('REGRESSION (noisy)');
   });
 
   it('notes a different app commit and reports a scenario that no longer succeeds', () => {

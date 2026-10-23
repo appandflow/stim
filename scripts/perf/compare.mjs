@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -44,17 +44,18 @@ function jsonFiles(dir) {
   });
 }
 
-let data = values.data;
 let clone = null;
-if (!data) {
-  const url = git(['remote', 'get-url', 'origin']);
-  clone = mkdtempSync(join(tmpdir(), 'stim-perf-data-'));
-  git(['clone', '--quiet', '--depth', '1', '--branch', 'perf-data', url, clone]);
-  data = clone;
-}
-
 try {
-  const runs = jsonFiles(join(data, 'runs')).map((file) => JSON.parse(readFileSync(file, 'utf8')));
+  let data = values.data;
+  if (!data) {
+    const url = git(['remote', 'get-url', 'origin']);
+    clone = mkdtempSync(join(tmpdir(), 'stim-perf-data-'));
+    git(['clone', '--quiet', '--depth', '1', '--branch', 'perf-data', url, clone]);
+    data = clone;
+  }
+  const runs = existsSync(join(data, 'runs'))
+    ? jsonFiles(join(data, 'runs')).map((file) => JSON.parse(readFileSync(file, 'utf8')))
+    : [];
   const options = {
     threshold: Number(values.threshold),
     minDeltaMs: Number(values['min-delta-ms']),

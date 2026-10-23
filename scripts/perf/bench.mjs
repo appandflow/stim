@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, hostname, loadavg, tmpdir, totalmem, cpus } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -15,7 +15,8 @@ const USAGE = `usage: node scripts/perf/bench.mjs (--version <x.y.z> | --cli <pa
   --reps <n>              measured repetitions (default 3)
   --sha <ref>             commit of this repository whose apps/mobile the scenarios run (default HEAD)
   --scenarios <list>      comma list of warm,start,ios,android,stop (default all)
-  --no-prime              skip the unmeasured first pass that fills the build caches
+  --no-prime              skip the unmeasured first pass that fills the build caches (results are then not
+                          comparable with primed runs)
   --max-load <n>          refuse to start while the 1-minute load average is above n (default 80)
   --wait-minutes <n>      wait up to n minutes for the load to drop instead of refusing (default 0)
   --machine <id>          machine id (default: the model plus a short hash of the host name)
@@ -48,12 +49,50 @@ if (values.help || Boolean(values.version) === Boolean(values.cli)) {
 const reps = Number(values.reps);
 const maxLoad = Number(values['max-load']);
 const wanted = new Set(values.scenarios.split(',').map((name) => name.trim()));
+const GROUPS = ['warm', 'start', 'ios', 'android', 'stop'];
+if (!Number.isInteger(reps) || reps < 1 || [...wanted].some((name) => !GROUPS.includes(name))) {
+  process.stderr.write(`--reps must be a positive integer and --scenarios a list of ${GROUPS.join(',')}\n`);
+  process.exit(2);
+}
 const scratch = mkdtempSync(join(tmpdir(), 'stim-perf-'));
 const log = (line) => process.stderr.write(`${line}\n`);
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, ...options });
-  return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '', error: result.error };
+  return {
+    status: result.status,
+    signal: result.signal,
+    stdout: result.stdout ?? '',
+    stderr: result.stderr ?? '',
+    error: result.error,
+  };
+}
+
+let activeChild = null;
+
+function runAsync(command, args, { timeout, ...options }) {
+  return new Promise((done) => {
+    const child = spawn(command, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] });
+    activeChild = child;
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    const timer = setTimeout(() => child.kill('SIGTERM'), timeout);
+    const finish = (status, signal, error) => {
+      clearTimeout(timer);
+      activeChild = null;
+      done({
+        status,
+        signal,
+        error,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+      });
+    };
+    child.on('error', (error) => finish(null, null, error));
+    child.on('close', (status, signal) => finish(status, signal, undefined));
+  });
 }
 
 function out(command, args, options) {
@@ -112,9 +151,7 @@ function statsSample(platform, startedMs, endedMs, wallMs) {
       const at = Date.parse(sample.at);
       return at >= startedMs - 1000 && at <= endedMs + 1000 && sample.durationMs <= wallMs + 1000;
     });
-    return (
-      mine.toSorted((a, b) => Math.abs(a.durationMs - wallMs) - Math.abs(b.durationMs - wallMs))[0]?.phases ?? null
-    );
+    return mine.length === 1 ? mine[0].phases : null;
   } catch {
     return null;
   }
@@ -130,14 +167,14 @@ const STEPS = [
   { scenario: 'stop', group: 'stop', args: ['stop'] },
 ].filter((step) => wanted.has(step.group));
 
-function measure(cli, cwd, step, label) {
+async function measure(cli, cwd, step, label) {
   const traceFile = join(scratch, `trace-${label}-${step.scenario}.json`);
   const loadBefore = loadavg()[0];
   const startedMs = Date.now();
   const began = performance.now();
-  const result = run(process.execPath, [cli, ...step.args], {
+  const result = await runAsync(process.execPath, [cli, ...step.args], {
     cwd,
-    env: { ...process.env, STIM_TRACE: traceFile, STIM_NO_UPDATE_CHECK: '1' },
+    env: { ...process.env, STIM_TRACE: traceFile, STIM_NO_UPDATE_CHECK: '1', STIM_MAINTENANCE: 'off' },
     timeout: COMMAND_TIMEOUT_MS,
   });
   const wallMs = Math.round(performance.now() - began);
@@ -155,40 +192,69 @@ function measure(cli, cwd, step, label) {
       entry.traceError = String(error.message).slice(0, 120);
     }
   }
-  if (step.platform) {
+  if (step.platform && !entry.trace && entry.exit === 0) {
     const phases = statsSample(step.platform, startedMs, endedMs, wallMs);
     if (phases) entry.statsPhases = phases;
   }
   if (entry.exit !== 0) {
-    const detail = result.error ? String(result.error.message) : result.stderr || result.stdout;
-    entry.error = scrubOutput(detail, { home: homedir(), tmp: tmpdir() });
+    entry.failure = result.error ? 'spawn' : result.signal ? 'signal' : 'exit';
+    log(
+      scrubOutput(result.error ? result.error.message : result.stderr || result.stdout, {
+        home: homedir(),
+        tmp: tmpdir(),
+      }),
+    );
   }
   return entry;
 }
 
-function pass(cli, sha, label) {
+const leftBehind = [];
+let active = null;
+
+/** Removes one bench worktree through stim, which also releases its device, Metro port and registration. */
+function removeTree({ cli, tree, app }) {
+  if (!existsSync(tree)) return;
+  let removed = run(process.execPath, [cli, 'worktree', 'remove'], { cwd: app });
+  if (removed.status !== 0) {
+    log(
+      `stim worktree remove failed (${removed.stderr.trim().split('\n').at(-1)}); retrying with --force on the bench worktree`,
+    );
+    removed = run(process.execPath, [cli, 'worktree', 'remove', '--force'], { cwd: app });
+  }
+  if (removed.status !== 0 || existsSync(tree)) {
+    leftBehind.push(tree);
+    log(`could not remove ${tree}; remove it with: cd ${app} && stim worktree remove --force`);
+  }
+}
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    activeChild?.kill('SIGKILL');
+    if (active) removeTree(active);
+    active = null;
+    if (leftBehind.length === 0) rmSync(scratch, { recursive: true, force: true });
+    process.exit(signal === 'SIGINT' ? 130 : 143);
+  });
+}
+
+async function pass(cli, sha, label) {
   const results = {};
   const tree = join(scratch, `wt-${label}`);
   const added = run('git', ['worktree', 'add', '--detach', tree, sha], { cwd: REPO });
   if (added.status !== 0) throw new Error(`git worktree add failed: ${added.stderr.trim()}`);
   const app = join(tree, 'apps', 'mobile');
+  active = { cli, tree, app };
   try {
     for (const step of STEPS) {
       log(`[${label}] ${step.scenario}`);
-      results[step.scenario] = measure(cli, app, step, label);
+      results[step.scenario] = await measure(cli, app, step, label);
       log(
         `[${label}] ${step.scenario}: ${(results[step.scenario].wallMs / 1000).toFixed(1)}s exit ${results[step.scenario].exit}`,
       );
     }
   } finally {
-    const removed = run(process.execPath, [cli, 'worktree', 'remove'], { cwd: app });
-    if (removed.status !== 0) {
-      log(
-        `stim worktree remove failed (${removed.stderr.trim().split('\n').at(-1)}); retrying with --force on the bench worktree`,
-      );
-      run(process.execPath, [cli, 'worktree', 'remove', '--force'], { cwd: app });
-    }
-    run('git', ['worktree', 'prune'], { cwd: REPO });
+    removeTree(active);
+    active = null;
   }
   return results;
 }
@@ -202,7 +268,7 @@ function publish(file, relative, url) {
   };
   git(['init', '--quiet', '-b', 'perf-data']);
   git(['remote', 'add', 'origin', url]);
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     const exists =
       run('git', ['ls-remote', '--exit-code', '--heads', 'origin', 'perf-data'], { cwd: clone }).status === 0;
     if (exists) {
@@ -214,11 +280,10 @@ function publish(file, relative, url) {
     writeFileSync(target, readFileSync(file));
     git(['add', relative]);
     git(['commit', '--quiet', '-m', `perf: ${relative}`]);
-    const pushed = run('git', ['push', '--quiet', 'origin', 'perf-data'], { cwd: clone });
-    if (pushed.status === 0) return;
-    git(['reset', '--quiet', '--hard', 'HEAD~1']);
+    if (run('git', ['push', '--quiet', 'origin', 'perf-data'], { cwd: clone }).status === 0) return;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500 + Math.random() * 2000);
   }
-  throw new Error('could not push the result to perf-data after three attempts');
+  throw new Error('could not push the result to perf-data after five attempts');
 }
 
 async function main() {
@@ -237,19 +302,22 @@ async function main() {
   await quietLoad();
   if (!values['no-prime']) {
     log('priming the caches with an unmeasured pass');
-    pass(cli, sha, 'prime');
+    await pass(cli, sha, 'prime');
   }
   const scenarios = Object.fromEntries(STEPS.map((step) => [step.scenario, { runs: [] }]));
   for (let rep = 1; rep <= reps; rep += 1) {
     await quietLoad();
-    for (const [name, entry] of Object.entries(pass(cli, sha, `rep${rep}`)))
+    for (const [name, entry] of Object.entries(await pass(cli, sha, `rep${rep}`)))
       scenarios[name].runs.push({ rep, ...entry });
   }
   for (const scenario of Object.values(scenarios)) scenario.summary = summarizeRuns(scenario.runs);
-  const dirty = Boolean(out('git', ['status', '--porcelain', '--', 'apps/mobile'], { cwd: REPO }));
-  const label = values.version ?? `local-${sha.slice(0, 9)}`;
+  const inRepo = values.cli && resolve(values.cli).startsWith(`${REPO}/`);
+  const label = values.version ? version : `local-${version}-${inRepo ? sha.slice(0, 9) : 'external'}`;
+  const everySelectedFailed = Object.values(scenarios).every((scenario) => scenario.summary.medianMs === null);
+  if (everySelectedFailed) throw new Error('every selected scenario failed in every repetition; nothing was written');
   const result = {
     schema: SCHEMA,
+    id: `${startedAt.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z')}-${slug(label)}`,
     startedAt,
     finishedAt: new Date().toISOString(),
     stim: {
@@ -258,11 +326,7 @@ async function main() {
       version,
       traceSupport: Object.values(scenarios).some((scenario) => scenario.runs.some((each) => each.trace)),
     },
-    repo: {
-      sha,
-      branch: out('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: REPO }),
-      appDirty: dirty,
-    },
+    repo: { sha },
     machine: environment(),
     config: { reps, primed: !values['no-prime'], app: 'apps/mobile', maxLoad },
     load: { start: startLoad, end: loadavg().map((load) => Number(load.toFixed(2))) },
@@ -281,8 +345,7 @@ async function main() {
         .map((group) => ({ scenario: group, reason: 'not selected' })),
     ],
   };
-  const stamp = startedAt.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-  const relative = join('runs', result.machine.id, `${stamp}-${slug(label)}.json`);
+  const relative = join('runs', result.machine.id, `${result.id}.json`);
   const file = join(resolve(values.out), relative);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, `${JSON.stringify(result, null, 2)}\n`);
@@ -300,5 +363,6 @@ try {
   process.stderr.write(`${error.message}\n`);
   process.exitCode = error.code === 'LOAD' ? 3 : 1;
 } finally {
-  rmSync(scratch, { recursive: true, force: true });
+  if (leftBehind.length === 0) rmSync(scratch, { recursive: true, force: true });
+  else process.stderr.write(`kept ${scratch} because ${leftBehind.length} bench worktree(s) could not be removed\n`);
 }
