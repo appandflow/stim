@@ -1355,11 +1355,11 @@ generating the setup command. Failed preparation shows **Retry Sample** without
 a setup command. The test requires a build on the selected machine and a verified
 launch. It builds for iOS, or for Android on a Linux or Windows machine, bypasses
 the build cache and runs no local build. It shows the phase times (Upload / sync,
-Build, Download / fetch, Total) and notes that the first build on a new machine is
-cold, so later builds are faster. When the wizard closes, it stops the sample, removes its Stim
-workspace and sample folder, and releases its owned simulator or emulator (parked for reuse
-within the parked-simulator limit, deleted otherwise), quietly and on a best-effort
-basis.
+Build, Download / fetch, Total) and notes that the first build on a new machine
+is cold, so later builds are faster. When the wizard closes, it stops the sample,
+removes its Stim workspace and sample folder, and releases its owned simulator or
+emulator (parked for reuse within the parked-simulator limit, deleted otherwise),
+quietly and on a best-effort basis.
 
 Cancel removes entries added by the wizard, restores `remote.buildMode` only if the
 wizard changed it, and runs doctor to forget the pairing. A failed undo shows

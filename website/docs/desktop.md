@@ -715,8 +715,8 @@ The last step offers a **Try it** agent prompt and `stim ios --remote-build
 first remote machine). With Hosted simulators chosen, it also sets **Simulators**
 (`ios.remote` and `android.remote` for this Mac). **Run a
 test build with a sample app** builds Desktop's own pinned Expo SDK 58 sample
-on the new Mac, as an optional test. Desktop also uses that sample for setup requests if
-you have no listed workspace. The wizard removes it when it closes.
+on the new Mac, as an optional test. Desktop also uses that sample for setup
+requests if you have no listed workspace. The wizard removes it when it closes.
 Cancel removes only settings the wizard added and shows revoke commands for the
 worker Mac. **Remove** in Remote Machines shows the optional cleanup to run on that
 Mac.
