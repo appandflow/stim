@@ -332,18 +332,22 @@ export async function pruneCacheAsync(
     return { removed: 0, bytes: 0, skipped: `${cache.dir} is not a directory this cache owns` };
   const cutoff = now - olderThanDays * 24 * 60 * 60 * 1000;
   let entries = cache.files ?? [cache.dir];
+  let unlisted = 0;
   for (let depth = 0; !cache.files && depth < (cache.entriesDepth ?? 1); depth++) {
     const next: string[] = [];
     for (const parent of entries) {
       signal?.throwIfAborted();
-      const names = await readdir(parent).catch(() => []);
+      const names = await readdir(parent).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') unlisted++;
+        return [];
+      });
       next.push(...names.map((name) => join(parent, name)));
     }
     entries = next;
   }
   let removed = 0;
   let bytes = 0;
-  let failed = 0;
+  let failed = unlisted;
   for (const entry of entries) {
     signal?.throwIfAborted();
     try {

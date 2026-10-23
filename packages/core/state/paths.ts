@@ -158,6 +158,14 @@ export function deviceViewersDir(): string {
   return join(configDir(), 'viewers');
 }
 
+export function budgetSweepFile(): string {
+  return join(configDir(), 'budget-sweep.json');
+}
+
+export function budgetSweepLock(): string {
+  return join(configDir(), 'budget-sweep.lock');
+}
+
 export function statsFile(): string {
   return join(configDir(), 'stats.json');
 }

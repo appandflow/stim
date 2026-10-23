@@ -655,7 +655,10 @@ workspaces, clears the build outputs of workspaces idle for 10 minutes (least
 recently used first), and
 trims shared cache entries unused for 14 days. The last two steps run only for
 disk. Each step prints a `budget` line on stderr, and `--json` output lists them
-under `reclaimed`. The current workspace, a device someone is driving or has
+under `reclaimed`. A cache trim that removed nothing is not repeated for 5
+minutes while the same caches exist and free disk has not fallen by more than
+1 GB; the skipped run prints one `budget` line saying so. `stim gc` and
+automatic maintenance never skip. The current workspace, a device someone is driving or has
 locked, and a workspace with a build in progress are never reclaimed. A memory
 or workspace limit never refuses a command. `0` turns a check off. When
 `STIM_HOME` is set, the budget is off unless its environment variable is set.

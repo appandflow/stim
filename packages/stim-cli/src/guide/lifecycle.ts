@@ -2128,7 +2128,14 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
        (\`gc --delete\` semantics; the next build installs from the shared
        cache). A workspace whose last use is unknown is kept
     4. trim shared cache entries nothing has used for 14 days
-       (\`gc --delete --older-than 14\` for the caches)
+       (\`gc --delete --older-than 14\` for the caches). Caches with nothing
+       to trim print one line, not one each. A trim that removed nothing is
+       recorded in $STIM_HOME/budget-sweep.json and not repeated for 5
+       minutes while the set of caches is the same and free disk has not
+       fallen by more than 1 GB since; the run prints one budget line saying
+       it skipped. \`gc\` and automatic maintenance never skip, and a dry
+       run (\`doctor\`) still plans the step. The STIM_LOW_DISK message
+       measures the largest uses of disk at the same time.
 
   IDLE SHUTDOWN (30 MINUTES BY DEFAULT): with devices.idleShutdownMinutes above
   0, a workspace's supervisor shuts down that workspace's owned simulators and

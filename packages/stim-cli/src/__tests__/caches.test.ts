@@ -13,7 +13,7 @@ import { cacheUser } from '../cache/cache-claim.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
-import { discoverCaches, pruneCache, sizeCaches } from '../cache/caches.ts';
+import { discoverCaches, pruneCache, pruneCacheAsync, sizeCaches } from '../cache/caches.ts';
 import { emptyCaches, trimCaches } from '../commands/gc/caches.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { makeCacheDescriptor } from './_factories.ts';
@@ -129,6 +129,33 @@ test('cache trimming preserves an entry modified while its directory size is mea
   });
   expect(result).toEqual({ trimmed: [], failures: 0 });
   expect(existsSync(join(entry, 'new-artifact'))).toBe(true);
+});
+
+test('caches with nothing to trim are reported in one line, while a trimmed or kept cache keeps its own', async () => {
+  const named = (name: string) => {
+    const dir = join(tmpHome, name);
+    mkdirSync(join(dir, 'entry'), { recursive: true });
+    return makeCacheDescriptor({ name, dir, prune: 'entries' });
+  };
+  const emptyA = named('cache a');
+  const emptyB = named('cache b');
+  const stale = named('stale cache');
+  age(join(stale.dir, 'entry'));
+  const lines: string[] = [];
+  const log = (line: string) => lines.push(line);
+  await trimCaches([emptyA, emptyB, stale], 30, { log, error: log, record: () => {}, fail: () => {} });
+  const unchanged = lines.filter((line) => line.includes('nothing older than'));
+  expect(unchanged).toHaveLength(1);
+  expect(unchanged[0]).toContain('2 caches: nothing older than 30d');
+  expect(lines.some((line) => line.includes('Trimmed stale cache'))).toBe(true);
+});
+
+test('a stray file beside the entries of a two-level cache is not a listing failure', async () => {
+  const dir = join(tmpHome, 'two-level');
+  mkdirSync(join(dir, 'ios', 'key1'), { recursive: true });
+  writeFileSync(join(dir, '.DS_Store'), 'x');
+  const cache = makeCacheDescriptor({ dir, prune: 'entries', entriesDepth: 2 });
+  expect(await pruneCacheAsync(cache, { olderThanDays: 30 })).toMatchObject({ removed: 0, failed: 0, skipped: null });
 });
 
 test('metro file maps are reported as an explicit file list, never as a directory to remove', () => {

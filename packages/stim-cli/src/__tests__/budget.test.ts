@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, chmodSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import fsPromises from 'node:fs/promises';
@@ -13,6 +13,7 @@ import {
   type BudgetDeps,
   type ReclaimStepName,
 } from '../budget.ts';
+import { register } from '../cache/cache-manifest.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -468,4 +469,132 @@ test('placement budget peek reports shortfalls without running reclaim steps', a
   process.env.STIM_BUDGET_MAX_COMMITTED_MEMORY_GB = '3';
   expect(await peekBudget(apps, deps)).toBeNull();
   expect(steps).toEqual([]);
+});
+
+describe('repeat runs below the disk floor', () => {
+  const T0 = Date.UTC(2026, 9, 23, 12, 0, 0);
+  const MINUTE = 60_000;
+
+  function cacheWithEntry(name: string, ageDays: number): { dir: string; entry: string } {
+    const dir = join(apps, name);
+    const entry = join(dir, 'entry');
+    mkdirSync(entry, { recursive: true });
+    const when = new Date(T0 - ageDays * 24 * 60 * MINUTE);
+    utimesSync(entry, when, when);
+    register({ dir, name, prune: 'entries' });
+    return { dir, entry };
+  }
+
+  async function run(at: number, freeMb = 10 * GB, dryRun = false) {
+    const notes: string[] = [];
+    const outcome = await enforceBudget(
+      { root: apps, note: (line) => notes.push(line), budget: limits(), dryRun },
+      { volumes: () => [{ volume: '/', freeMb }], now: () => at, usage: () => [] },
+    );
+    return { notes: notes.join('\n'), outcome };
+  }
+
+  test('a trim that found nothing is not repeated inside five minutes, and says why it was skipped', async () => {
+    cacheWithEntry('cache-a', 1);
+    const first = await run(T0);
+    expect(first.notes).toMatch(/1 cache: nothing older than 14d/);
+
+    const second = await run(T0 + MINUTE);
+    expect(second.notes).toMatch(/cache trim skipped/);
+    expect(second.notes).not.toMatch(/1 cache: nothing older/);
+
+    const later = await run(T0 + 6 * MINUTE);
+    expect(later.notes).toMatch(/1 cache: nothing older than 14d/);
+    expect(later.notes).not.toMatch(/cache trim skipped/);
+  });
+
+  test('a cache registered after the empty trim is walked on the next run, so its stale entry is removed', async () => {
+    cacheWithEntry('cache-a', 1);
+    await run(T0);
+    const added = cacheWithEntry('cache-b', 30);
+    await run(T0 + MINUTE);
+    expect(existsSync(added.entry)).toBe(false);
+  });
+
+  test('free disk that fell by more than 1 GB since the empty trim ends the skip', async () => {
+    cacheWithEntry('cache-a', 1);
+    await run(T0, 10 * GB);
+    expect((await run(T0 + MINUTE, 10 * GB - 512)).notes).toMatch(/cache trim skipped/);
+    expect((await run(T0 + MINUTE, 8 * GB)).notes).toMatch(/1 cache: nothing older than 14d/);
+  });
+
+  test('a trim that removed something leaves no empty record, so the next run walks again', async () => {
+    const stale = cacheWithEntry('cache-a', 30);
+    const first = await run(T0);
+    expect(existsSync(stale.entry)).toBe(false);
+    expect(first.notes).toMatch(/Trimmed cache-a/);
+    const second = await run(T0 + MINUTE);
+    expect(second.notes).not.toMatch(/cache trim skipped/);
+  });
+
+  test('a cache that could not be listed is not recorded as empty, so the next run walks it again', async () => {
+    const { dir } = cacheWithEntry('cache-a', 30);
+    chmodSync(dir, 0o000);
+    try {
+      const first = await run(T0);
+      expect(first.notes).not.toMatch(/1 cache: nothing older/);
+    } finally {
+      chmodSync(dir, 0o700);
+    }
+    const second = await run(T0 + MINUTE);
+    expect(second.notes).not.toMatch(/cache trim skipped/);
+    expect(existsSync(join(dir, 'entry'))).toBe(false);
+  });
+
+  test('a dry run still plans the trim after an empty one was recorded', async () => {
+    cacheWithEntry('cache-a', 1);
+    await run(T0);
+    const dry = await run(T0 + MINUTE, 10 * GB, true);
+    if (dry.outcome.status !== 'ok') throw new Error('expected ok');
+    expect(dry.outcome.reclaimed.find((entry) => entry.step === 'stale-cache-entries')?.targets).toHaveLength(1);
+  });
+});
+
+describe('the STIM_LOW_DISK largest-uses scans', () => {
+  test('run at the same time, so the refusal waits for the slowest scan and not for the sum', async () => {
+    const fakeHome = join(apps, 'home');
+    const dirs = [join(fakeHome, '.android', 'avd')];
+    if (process.platform === 'darwin')
+      dirs.push(
+        join(fakeHome, 'Library', 'Developer', 'CoreSimulator', 'Devices'),
+        join(fakeHome, 'Library', 'Developer', 'Xcode', 'DerivedData'),
+      );
+    for (const dir of dirs) mkdirSync(dir, { recursive: true });
+    const expected = dirs.length + 1;
+
+    let started = 0;
+    let inFlight = 0;
+    let peak = 0;
+    let everyScanStarted = () => {};
+    const barrier = new Promise<void>((resolve) => {
+      everyScanStarted = resolve;
+    });
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFileAsync: async (file, args, options) => {
+        if (file !== 'du') return real.runFileAsync(file, args, options);
+        started++;
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        if (started === expected) everyScanStarted();
+        await Promise.race([barrier, new Promise((resolve) => setTimeout(resolve, 3000))]);
+        inFlight--;
+        return `${1024 * 1024}\t${args?.[1]}`;
+      },
+    });
+    const outcome = await enforceBudget(
+      { root: apps, note: () => {}, budget: limits(), env: { ...process.env, HOME: fakeHome } },
+      { volumes: () => [{ volume: '/', freeMb: GB }] },
+    );
+    expect(peak).toBe(expected);
+    expect(outcome.status).toBe('refused');
+    if (outcome.status !== 'refused') return;
+    expect(outcome.refusal.message).toMatch(/Largest uses: .*Stim state.*Android emulators/);
+  });
 });
