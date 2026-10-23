@@ -439,12 +439,13 @@ final class BuildMachinesModel {
     if let status {
       input.install = install(for: status)
       input.update = updates[entry]
-      if status.state == .approved, let android = checkout.flatMap({ androidChecks[$0] }) {
-        if let failure = android.failure {
+      if status.state == .approved, let checkout {
+        let android = androidChecks[checkout]
+        if let failure = android?.failure {
           input.android = .failed(failure)
-        } else if android.readAt == nil {
+        } else if android?.readAt == nil {
           input.android = .loading
-        } else {
+        } else if let android {
           input.android = .loaded(android.statuses.first { $0.machine == entry }, android.findings)
         }
       }

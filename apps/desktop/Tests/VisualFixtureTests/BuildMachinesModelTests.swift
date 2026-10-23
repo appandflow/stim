@@ -93,7 +93,7 @@ final class BuildMachinesModelTests: XCTestCase {
     await model.refreshStatuses(checkout: "/w", ask: false)
     await model.refreshStatuses(checkout: "/w", ask: false)
     XCTAssertEqual(harness.androidCalls, [])
-    XCTAssertEqual(model.detail(for: "mini", checkout: "/w").androidMessage, nil)
+    XCTAssertEqual(model.detail(for: "mini", checkout: "/w").androidMessage, "Checking the Android tools\u{2026}")
 
     await model.loadDetails("mini", checkout: "/w")
     XCTAssertEqual(harness.androidCalls, ["/w"])
