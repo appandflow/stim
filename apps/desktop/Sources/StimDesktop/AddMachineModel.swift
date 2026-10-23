@@ -748,7 +748,7 @@ final class AddMachineModel {
               .init(text: "offer accepted; syncing checkout", kind: .output),
               .init(text: "built on mini in 2:52: offer 0:01, sync 0:03, build 2:41, fetch 0:04", kind: .ok),
             ] : [])
-        mode = fixture == .summaryNever || fixture == .summarySkippedAfterFailure ? .off : .auto
+        mode = fixture == .summaryNever || fixture == .summarySkippedAfterFailure ? .local : .auto
       }
     }
 
