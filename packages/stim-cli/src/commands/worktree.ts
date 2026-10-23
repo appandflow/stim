@@ -194,8 +194,8 @@ function mainCheckoutAppDir(root: string, target: string, cwd: string): string {
 
 /**
  * The app workspace a warm prepares: the nearest app below the worktree root, or else the one app registered in
- * the source checkout, at the same place in this worktree, or else the worktree root when it is the app. A monorepo
- * root can declare react-native without being the app.
+ * the source checkout or in this worktree, at the same place in this worktree, or else the worktree root when it
+ * is the app. A monorepo root can declare react-native without being the app.
  */
 export function warmedWorkspace(root: string, target: string, cwd: string): string | null {
   const nearest = findProjectRoot(cwd);
@@ -203,10 +203,12 @@ export function warmedWorkspace(root: string, target: string, cwd: string): stri
   if (app && app !== target) return app;
   const apps = new Set<string>();
   for (const path of Object.keys(loadConfig()?.projects ?? {})) {
-    const rel = relative(root, path);
-    if (rel.startsWith('..') || isAbsolute(rel)) continue;
-    const mapped = resolve(target, rel);
-    if (isMobileProject(mapped)) apps.add(mapped);
+    for (const checkout of [root, target]) {
+      const rel = relative(checkout, path);
+      if (rel.startsWith('..') || isAbsolute(rel)) continue;
+      const mapped = resolve(target, rel);
+      if (apps.has(mapped) || isMobileProject(mapped)) apps.add(mapped);
+    }
   }
   return apps.size === 1 ? [...apps][0]! : app;
 }
@@ -275,7 +277,9 @@ export async function warmWorktreeTarget(opts: {
         chalk.dim(
           phaseLine(
             'project',
-            'no single app to register here; run warm from the app directory to list it in status while it warms',
+            opts.refresh
+              ? 'no single app to register here; --refresh updates only the repository root. Run warm --refresh from the app directory to refresh that app and list it in status'
+              : 'no single app to register here; run warm from the app directory to list it in status while it warms',
           ),
         ),
       );

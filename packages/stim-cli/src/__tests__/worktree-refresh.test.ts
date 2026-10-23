@@ -1364,6 +1364,62 @@ test.each([
   30_000,
 );
 
+describe('a refresh from the worktree root with a nested app that has its own lockfile', () => {
+  let app: string;
+  const spawned: string[] = [];
+
+  beforeEach(() => {
+    app = join(root, 'app');
+    spawned.length = 0;
+    write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
+    write(app, 'package.json', '{"name":"app","dependencies":{"react-native":"0.80.0"}}\n');
+    write(app, 'package-lock.json', '{"lockfileVersion":3}\n');
+    commit(root, 'monorepo with a nested app');
+    git(root, 'push', '-q', 'origin', 'main');
+    git(target, 'merge', '-q', '--ff-only', 'main');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    mkdirSync(join(app, 'node_modules'), { recursive: true });
+    fallBehind({ 'app/package-lock.json': '{"lockfileVersion":3,"name":"app"}\n' }, 'bump the app lockfile');
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      spawn(cmd: string, args: string[], opts: { cwd?: unknown }) {
+        spawned.push(`${[cmd, ...args].join(' ')} in ${String(opts?.cwd)}`);
+        return makeExitingChild(0);
+      },
+      runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
+        if (file === 'npm' && args[0] === 'ls') return '{}';
+        if (file === 'npm' && args.join(' ') === 'config get ignore-scripts') return 'false';
+        return real.runFile(file, args, opts);
+      },
+    });
+  });
+
+  test('refreshes the source checkout app when only the worktree copy of the app is registered', async () => {
+    upsertProject(join(target, 'app'), {});
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(0);
+    expect(result.stdout).toEqual([]);
+    expect(spawned).toEqual([`npm ci in ${app}`]);
+    expect(result.stderr).not.toContain('no single app');
+  });
+
+  test('says that only the repository root is refreshed when no app is registered, and where to run the refresh', async () => {
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(0);
+    expect(result.stdout).toEqual([]);
+    expect(spawned).toEqual([]);
+    expect(result.stderr).toContain('--refresh updates only the repository root');
+    expect(result.stderr).toContain('from the app directory');
+  });
+
+  test('the refresh the hint names, from the app directory, installs the source checkout app', async () => {
+    const result = await runWarm(join(target, 'app'), '--refresh');
+    expect(result.code).toBe(0);
+    expect(spawned).toEqual([`npm ci in ${app}`]);
+  });
+});
+
 test('a patches-only change reinstalls nothing outside npm, where a reinstall would not reapply them', async () => {
   write(root, 'yarn.lock', '# yarn lockfile v1\n');
   commit(root, 'yarn project');
