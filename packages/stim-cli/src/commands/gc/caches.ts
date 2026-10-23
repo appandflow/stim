@@ -232,9 +232,10 @@ export async function emptyCaches(
   output: GcOutput = GC_OUTPUT,
   signal?: AbortSignal,
   operation?: StimContext,
-): Promise<void> {
+): Promise<number> {
   const { log, record } = output;
   let cacheBytes = 0;
+  let failures = 0;
   for (const c of caches) {
     signal?.throwIfAborted();
     if (!c.willEmpty) {
@@ -255,7 +256,7 @@ export async function emptyCaches(
     } else if (!r.failed) {
       log(chalk.dim(`${c.name}: already empty`));
     }
-    reportFailures(c, r.failed, output);
+    if (reportFailures(c, r.failed, output)) failures++;
   }
   if (cacheBytes) {
     log(
@@ -264,4 +265,5 @@ export async function emptyCaches(
       ),
     );
   }
+  return failures;
 }
