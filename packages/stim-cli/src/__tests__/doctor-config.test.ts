@@ -228,7 +228,7 @@ test('an invalid remote.build in the machine config is flagged as a wrong type',
       title: 'A setting has the wrong type',
       detail:
         'Invalid remote.build setting "bad word". Expected local, auto, remote, remote-only, or a tailnet machine name.',
-      fix: 'Run `stim guide settings` for the shape each setting takes.',
+      fix: 'Replace it with `stim settings set remote.build <value>`; `stim guide settings` lists the values it takes.',
     },
   ]);
   for (const remoteBuild of [undefined, 'auto', 'remote-only', 'mini:7444'])

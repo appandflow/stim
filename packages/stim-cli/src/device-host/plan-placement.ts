@@ -1,4 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
+import { processContext } from '../cli-operation.ts';
 import {
   automaticMachineEnabled,
   type AutomaticPlacement,
@@ -10,6 +11,10 @@ import type { EasFallbackCheck, PlacementOffer } from './placement.ts';
 import { automaticDevicePlacement, probeHost } from './auto-placement.ts';
 import { readHostedNative } from './ios-state.ts';
 import { hostingMachines } from './machines.ts';
+import { loadConfig } from '../workspace/config.ts';
+import { buildPreferenceRefusal } from '../workspace/settings-payload.ts';
+
+const DOCTOR_REMEDY = 'Run `stim doctor` to check the hosts and settings placement uses.';
 
 type Choice = HostedIosChoice | HostedAndroidChoice;
 
@@ -20,6 +25,7 @@ function planChoice(choice: PlacementOffer['choice']): Choice | null {
 export type PlannedDevice =
   | { kind: 'local'; placement: string }
   | { kind: 'hosted'; choice: Choice; placement: string }
+  | { kind: 'refused'; code: string; message: string; remedy: string }
   | { kind: 'unknown'; reason: string };
 
 /**
@@ -78,6 +84,9 @@ export async function planHostedDevice({
   try {
     const recorded = readHostedNative(root, platform, slot)[slot];
     if (recorded) return await named(recorded.machine);
+    const invalid = buildPreferenceRefusal((operation ?? processContext(root)).env, loadConfig()?.remote?.build);
+    if (invalid)
+      return { kind: 'refused', code: invalid.code, message: invalid.message, remedy: invalid.remedy ?? DOCTOR_REMEDY };
     const placed = await automatic(
       {
         root,
@@ -126,6 +135,13 @@ export async function planHostedDevice({
     };
   } catch (error) {
     operation?.signal.throwIfAborted();
+    if (error instanceof Error && 'code' in error && error.code === 'STIM_HOSTING_REFUSED')
+      return {
+        kind: 'refused',
+        code: error.code,
+        message: error.message,
+        remedy: 'remedy' in error && typeof error.remedy === 'string' ? error.remedy : DOCTOR_REMEDY,
+      };
     return { kind: 'unknown', reason: (error as Error).message };
   }
 }

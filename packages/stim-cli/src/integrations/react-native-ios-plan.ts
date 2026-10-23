@@ -207,6 +207,12 @@ export async function planReactNativeIos(
           }
         : {}),
     });
+    if (planned.kind === 'refused')
+      return refuse({
+        code: planned.code,
+        message: planned.message,
+        remedy: planned.remedy,
+      });
     if (planned.kind === 'unknown') {
       return refuse({
         code: 'STIM_BAD_ARG',

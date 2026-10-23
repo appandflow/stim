@@ -173,6 +173,25 @@ export function envSettingRefusal(key: string, env: NodeJS.ProcessEnv): Settings
   }
 }
 
+/** The refusal for an invalid configured value of a machine setting, or null when it is unset or valid. */
+export function configSettingRefusal(key: string, value: unknown): SettingsRefusal | null {
+  const setting = settingDefinition(key);
+  const error = setting && value !== undefined ? settingValueError(setting, value) : null;
+  if (!error) return null;
+  return new SettingsRefusal(
+    'STIM_BAD_ARG',
+    `Invalid ${key} setting ${JSON.stringify(value)}. Expected ${error}.`,
+    `Replace it with \`stim settings set ${key} <value>\`; \`stim guide settings\` lists the values it takes.`,
+  );
+}
+
+/** The refusal for an invalid `remote.build` that placement would read: the environment override first, else the configured value. */
+export function buildPreferenceRefusal(env: NodeJS.ProcessEnv, configured: unknown): SettingsRefusal | null {
+  const fromEnvironment = envSettingRefusal('remote.build', env);
+  if (fromEnvironment) return fromEnvironment;
+  return env.STIM_REMOTE_BUILD?.trim() ? null : configSettingRefusal('remote.build', configured);
+}
+
 export function settingEntry(context: SettingsContext, setting: SettingDefinition): SettingEntry {
   const layers: Partial<Record<SettingScope, unknown>> = {};
   for (const scope of PRECEDENCE) {

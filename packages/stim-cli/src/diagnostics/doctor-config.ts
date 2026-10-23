@@ -2,26 +2,19 @@ import { existsSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { configCorruptRepair } from '../workspace/config.ts';
 import type { Finding } from './doctor.ts';
-import { envSettingRefusal } from '../workspace/settings-payload.ts';
+import { configSettingRefusal, envSettingRefusal } from '../workspace/settings-payload.ts';
 import { compilerCacheFallbackMessage, type CompilerCacheFallback, type Optimizations } from '../optimizations.ts';
 import {
   mergeSettingsLayers,
   PATH_SETTINGS,
   SETTINGS_WITH_RESOLVE_TIME_FALLBACK,
   settingOrigin,
-  SETTING_SHAPE_REMEDY,
   settingsLayers,
   settingValueAt,
   unknownSettingKeys,
   type SettingsLayer,
 } from '../workspace/settings.ts';
-import {
-  REPLACED_SETTINGS,
-  replacementAdvice,
-  settingDefinition,
-  settingValueError,
-  type SettingsObject,
-} from '@stim-cli/core/state';
+import { REPLACED_SETTINGS, replacementAdvice, settingDefinition, type SettingsObject } from '@stim-cli/core/state';
 
 export interface MachineSettings {
   settings: SettingsObject;
@@ -136,15 +129,13 @@ export function checkMachineSettings({
     }
   }
 
-  const buildSetting = settingDefinition('remote.build');
-  const buildValueError =
-    buildSetting && remoteBuild !== undefined ? settingValueError(buildSetting, remoteBuild) : null;
-  if (buildValueError)
+  const buildValueRefusal = configSettingRefusal('remote.build', remoteBuild);
+  if (buildValueRefusal)
     findings.push({
       level: 'cost',
       title: 'A setting has the wrong type',
-      detail: `Invalid remote.build setting ${JSON.stringify(remoteBuild)}. Expected ${buildValueError}.`,
-      fix: SETTING_SHAPE_REMEDY,
+      detail: buildValueRefusal.message,
+      fix: buildValueRefusal.remedy,
     });
   const buildEnvRefusal = envSettingRefusal('remote.build', env);
   if (buildEnvRefusal)
