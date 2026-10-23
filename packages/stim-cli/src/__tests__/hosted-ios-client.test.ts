@@ -1336,6 +1336,44 @@ test('auto reports a declined offer and falls to the local path without reservin
   expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
 });
 
+test('remote-only refuses a live local device and probes no host, where remote keeps it', async () => {
+  const place = (placement: 'remote' | 'remote-only') =>
+    automaticDevicePlacement(
+      { root, slot: 'default', platform: 'ios', placement, selectors: {}, noWait: true },
+      {
+        peek: () => ({ count: 1, max: 3, queued: 0, localLive: true }),
+        capacity: () => ({ cpus: 4, loadPerCore: 1, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
+        memory: () => 'normal',
+        budget: async () => null,
+      },
+    );
+  await expect(place('remote-only')).rejects.toMatchObject({
+    code: 'STIM_HOSTING_REFUSED',
+    remedy: 'Run stim stop, then retry.',
+  });
+  expect(methods.map((each) => each.method)).not.toContain('device-host.offer');
+  expect(await place('remote')).toMatchObject({ placement: { decision: 'local' }, sticky: true });
+});
+
+test('remote-only never asks EAS and refuses when no host admits, where remote asks it', async () => {
+  declined = 'All configured hosted device reservations are occupied';
+  const eas = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
+  const place = (placement: 'remote' | 'remote-only') =>
+    automaticDevicePlacement(
+      { root, slot: 'default', platform: 'ios', placement, selectors: {}, noWait: true, eas },
+      {
+        peek: () => ({ count: 3, max: 3, queued: 0, localLive: false }),
+        capacity: () => ({ cpus: 4, loadPerCore: 1, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
+        memory: () => 'normal',
+        budget: async () => null,
+      },
+    );
+  await expect(place('remote-only')).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
+  expect(eas).not.toHaveBeenCalled();
+  expect((await place('remote')).placement).toMatchObject({ decision: 'eas' });
+  expect(eas).toHaveBeenCalledOnce();
+});
+
 test('remote.easFallback asks EAS only when this machine is full and no host admits', async () => {
   const eas = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
   const place = (count: number) =>

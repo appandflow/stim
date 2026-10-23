@@ -220,6 +220,13 @@ export async function automaticDevicePlacement(
     await write(root, slot, null, platform);
   }
   const devices = platform === 'macos' ? { count: 0, max: 0, queued: 0, localLive: false } : peek();
+  if (devices.localLive && placement === 'remote-only')
+    throw Object.assign(
+      new Error(
+        `This workspace's ${platform} device for slot ${slot} runs on this machine, and remote-only never runs here.`,
+      ),
+      { code: 'STIM_HOSTING_REFUSED', remedy: 'Run stim stop, then retry.' },
+    );
   if (devices.localLive)
     return { ...local('sticky', decideDevicePlacement({ sticky: { local: true } }).reason), sticky: true };
   const configured = await machines();
