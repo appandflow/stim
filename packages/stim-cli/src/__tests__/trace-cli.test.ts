@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,5 +48,7 @@ test('STIM_TRACE makes a real command write a trace with its command span and a 
 test('without STIM_TRACE a command writes no trace file', () => {
   stop({});
   expect(readdirSync(dir).filter((entry) => !['home', '.git', 'package.json'].includes(entry))).toEqual([]);
-  expect(existsSync(join(dir, 'home', 'trace.json'))).toBe(false);
+  expect(
+    readdirSync(dir, { recursive: true }).filter((entry) => /(?:^|\/)[^/]*trace[^/]*\.json$/i.test(String(entry))),
+  ).toEqual([]);
 });

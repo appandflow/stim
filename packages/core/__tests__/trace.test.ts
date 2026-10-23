@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
@@ -30,13 +30,21 @@ const events = (file: string): TraceEvent[] => {
   return parsed;
 };
 
-test('with STIM_TRACE unset every call runs its function and nothing is written', async () => {
-  expect(trace.enabled()).toBe(false);
-  expect(trace.span('a', () => 1)).toBe(1);
-  expect(await trace.spanAsync('b', async () => 2)).toBe(2);
-  trace.phases('p').enter('x');
-  trace.mark('m');
-  expect(existsSync(join(dir, 'trace.json'))).toBe(false);
+test('with STIM_TRACE unset every call runs its function and nothing is written or exported', async () => {
+  const cwd = process.cwd();
+  process.chdir(dir);
+  try {
+    expect(trace.enabled()).toBe(false);
+    expect(trace.span('a', () => 1)).toBe(1);
+    expect(await trace.spanAsync('b', async () => 2)).toBe(2);
+    trace.phases('p').enter('x');
+    trace.mark('m');
+    trace.command('stim x');
+  } finally {
+    process.chdir(cwd);
+  }
+  expect(readdirSync(dir)).toEqual([]);
+  expect(process.env.STIM_TRACE_OWNER).toBeUndefined();
 });
 
 test('STIM_TRACE writes a Chrome trace that parses once closed, with spans, phases and marks', async () => {
@@ -77,22 +85,30 @@ test('STIM_TRACE writes a Chrome trace that parses once closed, with spans, phas
   expect(named('inner').tid).not.toBe(named('outer').tid);
 });
 
-test('a process that inherits the variable appends to the file instead of truncating it', () => {
+test('a process that is not a command appends to an existing trace and starts a missing one with its bracket', () => {
   const file = join(dir, 'trace.json');
   writeFileSync(file, '[\n{"name":"parent","ph":"X","ts":1,"dur":1,"pid":1,"tid":1},\n');
   process.env.STIM_TRACE = file;
-  process.env.STIM_TRACE_OWNER = file;
   trace.span('child', () => {});
-  expect(events(file).map((event) => event.name)).toContain('parent');
-  expect(events(file).map((event) => event.name)).toContain('child');
+  expect(events(file).map((event) => event.name)).toEqual(expect.arrayContaining(['parent', 'child']));
+  rmSync(file);
+  process.env.STIM_TRACE = join(dir, 'other.json');
+  trace.span('alone', () => {});
+  expect(events(join(dir, 'other.json')).map((event) => event.name)).toContain('alone');
 });
 
-test('a new outermost process truncates a trace left by an earlier run', () => {
+test('a command truncates a trace left by an earlier run, but not one its parent command owns', () => {
   const file = join(dir, 'trace.json');
-  writeFileSync(file, '[\n{"name":"stale","ph":"X","ts":1,"dur":1,"pid":1,"tid":1},\n');
+  const stale = '[\n{"name":"stale","ph":"X","ts":1,"dur":1,"pid":1,"tid":1},\n';
+  writeFileSync(file, stale);
   process.env.STIM_TRACE = file;
-  trace.span('fresh', () => {});
-  expect(events(file).map((event) => event.name)).not.toContain('stale');
+  trace.command('stim ios');
+  const names = () => events(file).map((event) => event.name);
+  expect(names()).not.toContain('stale');
+  expect(process.env.STIM_TRACE_OWNER).toBe(file);
+  writeFileSync(file, stale);
+  trace.command('stim nested');
+  expect(names()).toContain('stale');
 });
 
 test('an unwritable STIM_TRACE path never throws into the command', () => {
@@ -119,6 +135,11 @@ test('redactArgv hides secret flag values, credentials in URLs and exact values,
         'Bearer abcdefghijkl',
         'ghp_abcdefghijklmnop',
         'literal-secret-value',
+        '--env=EXPO_TOKEN=abc',
+        'https://host/p?mode=1&token=abc&x=2',
+        'https://opaquetoken@host/p',
+        'eas build --token abc --platform ios',
+        'X-Api-Key: k123',
       ],
       ['literal-secret-value'],
     ),
@@ -136,6 +157,11 @@ test('redactArgv hides secret flag values, credentials in URLs and exact values,
     'Bearer [redacted]',
     '[redacted]',
     '***',
+    '--env=EXPO_TOKEN=[redacted]',
+    'https://host/p?mode=1&token=[redacted]&x=2',
+    'https://[redacted]@host/p',
+    'eas build --token [redacted] --platform ios',
+    'X-Api-Key: [redacted]',
   ]);
 });
 

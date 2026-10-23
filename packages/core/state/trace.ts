@@ -8,14 +8,16 @@ const PHASE_TID_BASE = 1000;
 const MAX_ARGS = 60;
 const MAX_ARG_CHARS = 240;
 const MAX_LINE_CHARS = 500;
-const SECRET_NAME = /token|secret|ticket|pass|credential|cookie|api[-_]?key|private[-_]?key|authorization/i;
-const SECRET_FLAG = String.raw`--?[A-Za-z0-9_.-]*(?:token|secret|ticket|pass|credential|cookie|api[-_]?key|private[-_]?key|authorization)[A-Za-z0-9_.-]*`;
+const SECRET_WORDS = 'token|secret|ticket|pass|credential|cookie|api[-_]?key|access[-_]?key|private[-_]?key|auth';
+const SECRET_NAME = new RegExp(SECRET_WORDS, 'i');
+const SECRET_FLAG = String.raw`--?[A-Za-z0-9_.-]*(?:${SECRET_WORDS})[A-Za-z0-9_.-]*`;
 const SECRET_FLAG_VALUE = new RegExp(String.raw`(${SECRET_FLAG})(=|\s+)(?:'[^']*'|"[^"]*"|\S+)`, 'gi');
 const SECRET_ASSIGNMENT = new RegExp(
-  String.raw`\b([A-Za-z0-9_]*(?:token|secret|ticket|pass|credential|cookie|api[-_]?key|authorization)[A-Za-z0-9_]*)=(?:'[^']*'|"[^"]*"|\S+)`,
+  String.raw`([A-Za-z0-9_]*(?:${SECRET_WORDS})[A-Za-z0-9_]*)=(?:'[^']*'|"[^"]*"|[^\s&]+)`,
   'gi',
 );
-const URL_USERINFO = /(\/\/)[^/\s:@]+:[^/\s@]*@/g;
+const URL_USERINFO = /(\/\/)[^/\s@]+@/g;
+const SECRET_HEADER = new RegExp(String.raw`(\b[A-Za-z-]*(?:${SECRET_WORDS})[A-Za-z-]*:\s*)\S+`, 'gi');
 const AUTH_SCHEME = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 const TOKEN_SHAPE = /\b(?:gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA)[A-Za-z0-9_-]{10,}/g;
 
@@ -24,6 +26,8 @@ function scrubText(text: string, exact: readonly string[]): string {
     .filter(Boolean)
     .reduce((acc, value) => acc.split(value).join('***'), text)
     .replace(URL_USERINFO, '$1[redacted]@')
+    .replace(SECRET_ASSIGNMENT, '$1=[redacted]')
+    .replace(SECRET_HEADER, '$1[redacted]')
     .replace(AUTH_SCHEME, '$1 [redacted]')
     .replace(TOKEN_SHAPE, '[redacted]');
 }
@@ -48,6 +52,8 @@ export function redactArgv(args: readonly string[], exact: readonly string[] = [
       redactNext = true;
     } else if (assignment && SECRET_NAME.test(assignment)) {
       out.push(`${assignment}=[redacted]`);
+    } else if (/\s/.test(arg)) {
+      out.push(redactCommandLine(arg, exact));
     } else {
       out.push(clip(scrubText(arg, exact)));
     }
@@ -62,10 +68,7 @@ function clip(text: string, max = MAX_ARG_CHARS): string {
 
 /** A shell command line with the same redactions as `redactArgv`, clipped to a fixed length. */
 export function redactCommandLine(command: string, exact: readonly string[] = []): string {
-  const flagsRedacted = command
-    .replace(SECRET_FLAG_VALUE, '$1$2[redacted]')
-    .replace(SECRET_ASSIGNMENT, '$1=[redacted]');
-  return clip(scrubText(flagsRedacted, exact), MAX_LINE_CHARS);
+  return clip(scrubText(command.replace(SECRET_FLAG_VALUE, '$1$2[redacted]'), exact), MAX_LINE_CHARS);
 }
 
 export type TraceArgs = Record<string, unknown>;
@@ -97,7 +100,8 @@ let attempted: string | null = null;
 
 function emit(sink: Sink, event: Record<string, unknown>): void {
   try {
-    writeSync(sink.fd, `${JSON.stringify({ ...event, pid: process.pid })},\n`);
+    const line = Buffer.from(`${JSON.stringify({ ...event, pid: process.pid })},\n`);
+    for (let written = 0; written < line.length;) written += writeSync(sink.fd, line, written);
   } catch {
     sink.fd = -1;
   }
@@ -125,14 +129,26 @@ function finish(sink: Sink, span: OpenSpan, args: Args | undefined): void {
   });
 }
 
+function claimRoot(): void {
+  const path = process.env[TRACE_ENV];
+  if (!path) return;
+  try {
+    const absolute = resolve(path);
+    if (process.env[OWNER_ENV] === absolute) return;
+    mkdirSync(dirname(absolute), { recursive: true });
+    writeFileSync(absolute, '[\n');
+    process.env[OWNER_ENV] = absolute;
+  } catch {}
+}
+
 function openSink(path: string): Sink | null {
   try {
     const absolute = resolve(path);
-    const continuing = process.env[OWNER_ENV] === absolute;
-    if (!continuing) {
-      mkdirSync(dirname(absolute), { recursive: true });
-      writeFileSync(absolute, '[\n');
-      process.env[OWNER_ENV] = absolute;
+    mkdirSync(dirname(absolute), { recursive: true });
+    try {
+      writeFileSync(absolute, '[\n', { flag: 'wx' });
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
     }
     process.env[TRACE_ENV] = absolute;
     const sink: Sink = {
@@ -149,8 +165,7 @@ function openSink(path: string): Sink | null {
       args: { name: `${basename(process.argv[1] ?? 'node').replace(/\.[cm]?[jt]s$/, '')} ${process.pid}` },
     });
     process.on('exit', (code) => {
-      for (const span of sink.open)
-        finish(sink, span, span.cat === 'command' ? { exit: code } : { unfinished: true, exit: code });
+      for (const span of sink.open) finish(sink, span, span.cat === 'command' ? { exit: code } : { unfinished: true });
     });
     return sink;
   } catch {
@@ -167,7 +182,7 @@ function active(): Sink | null {
   return current;
 }
 
-function begin(name: string, args: Args = {}, cat = 'span'): EndSpan {
+function begin(name: string, args: Args | undefined, cat = 'span'): EndSpan {
   const sink = active();
   if (!sink) return NO_END;
   let lane = sink.lanes.indexOf(false);
@@ -175,7 +190,7 @@ function begin(name: string, args: Args = {}, cat = 'span'): EndSpan {
   sink.lanes[lane] = true;
   const tid = lane + 1;
   nameThread(sink, tid, `spans ${tid}`);
-  const span: OpenSpan = { name, cat, tid, lane, ts: microseconds(), args };
+  const span: OpenSpan = { name, cat, tid, lane, ts: microseconds(), args: args ?? {} };
   sink.open.add(span);
   return (endArgs) => finish(sink, span, endArgs);
 }
@@ -202,10 +217,10 @@ function phases(track: string): TracePhases {
     open = null;
   };
   return {
-    enter(name, args = {}) {
+    enter(name, args) {
       if (open?.name === name) return;
       close();
-      open = { name, cat: 'phase', tid, lane: null, ts: microseconds(), args };
+      open = { name, cat: 'phase', tid, lane: null, ts: microseconds(), args: args ?? {} };
       sink.open.add(open);
     },
     end: close,
@@ -231,14 +246,17 @@ export interface Trace {
 
 /**
  * Timing spans for one stim process tree, written as Chrome trace events (open the file in Perfetto or
- * chrome://tracing) when `STIM_TRACE=<path>` is set. Unset, every call is one environment check. The outermost
- * process truncates the file and writes `[`; processes it starts inherit the variable and append one event per line,
- * so the file has no closing bracket. Child process arguments are written through `redactArgv`.
+ * chrome://tracing) when `STIM_TRACE=<path>` is set. Unset, every call is one environment check. A stim command
+ * (`trace.command`) truncates the file and writes `[`; every other process that inherits the variable appends one
+ * event per line, creating the file if it is missing, so the file has no closing bracket. Child process arguments are written through `redactArgv`.
  */
 export const trace: Trace = {
   enabled: () => active() !== null,
   begin: (name, args) => begin(name, args),
-  command: (name, args) => void begin(name, args, 'command'),
+  command(name, args) {
+    claimRoot();
+    begin(name, args, 'command');
+  },
   beginExec: (name, args) => begin(name, args, 'exec'),
   span<T>(name: string, fn: () => T, args?: Args): T {
     const end = begin(name, args);

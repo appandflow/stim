@@ -692,7 +692,7 @@ function fileSpan(file: string, args: readonly string[] | undefined, opts: ExecO
 
 function commandSpan(cmd: string, opts: ExecOptions): ChildSpan {
   return {
-    name: programOf(cmd).replace(/["']/g, ''),
+    name: programOf(cmd.replace(/^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, '')).replace(/["']/g, ''),
     args: { command: redactCommandLine(cmd, opts.redact), ...(opts.cwd ? { cwd: opts.cwd } : {}) },
   };
 }
@@ -771,12 +771,14 @@ const debugExecutor: Executor = {
   spawn(cmd, args, opts) {
     const child = defaultExecutor.spawn(cmd, args, opts);
     if (!trace.enabled()) return child;
-    const { name, args: spanArgs } = fileSpan(cmd, args, { timeoutMs: 'unbounded' });
+    const { name, args: spanArgs } = fileSpan(cmd, args, {
+      timeoutMs: 'unbounded',
+      ...(typeof opts?.cwd === 'string' ? { cwd: opts.cwd } : {}),
+    });
     const end = trace.beginExec(name, { ...spanArgs, spawned: true });
     child.once('close', (exit, signal) =>
       end({ ok: exit === 0, ...(exit !== null ? { exit } : {}), ...(signal ? { signal } : {}) }),
     );
-    child.once('error', (error) => end({ ok: false, ...('code' in error ? { code: error.code } : {}) }));
     return child;
   },
 };

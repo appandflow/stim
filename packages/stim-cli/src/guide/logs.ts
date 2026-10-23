@@ -358,7 +358,8 @@ has pid; spans have ts and dur in microseconds since the epoch. Events:
   span     fingerprint, wait for metro and carry ignored entries
   mark     instant events such as a fingerprint memo hit
 Children running at the same time are drawn on separate tracks. A span still
-open when its process exits is written with unfinished: true. A trace holds
+open when its process exits is written with unfinished: true; a process ended
+by a signal writes none. A trace holds
 full paths and arguments, so treat it like a log.
 
 Placement records use src: placement and sit in the run's build log
