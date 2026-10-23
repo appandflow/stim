@@ -33,8 +33,8 @@ agents hit these failures:
 - agents saw `STIM_CLAIM_UNAVAILABLE`, no device, and simulators reclaimed from
   other agents.
 
-PR #4093 traced one of the `STIM_CLAIM_UNAVAILABLE` causes to slow child
-processes at load 600 to 900. Earlier runs on the same Mac recorded 0% CPU idle
+Issue #4093 reported `STIM_CLAIM_UNAVAILABLE` at load 600 to 800, likely
+from slow child processes outliving a cleanup budget. Earlier runs on the same Mac recorded 0% CPU idle
 and about 170 MB free memory at load 900. The Mac routinely sits at load 100 to 300.
 
 The review ranked admission control and capacity visibility second, after a
@@ -209,7 +209,8 @@ Order of preference: a remote Mac, then a bounded wait, then a refusal.
 2. **Wait.** The invocation takes a shared ticket in a new claim set,
    `$STIM_HOME/load-waits`, through the same ticket code as `device-waits`.
    - **Order.** Tickets are ordered by sequence, strictly FIFO, with one kind.
-   - **Decision.** Under a short core `withDirLock` transaction, the head
+   - **Decision.** Under a short core `withDirLockAsync` transaction, so a
+     waiter does not block its process's event loop, the head
      ticket is admitted when the load is under the limit and the spacing below
      allows it. Admission releases the ticket.
    - **Reads.** The decision reads only `os.loadavg()`, the ticket set and the
@@ -223,16 +224,18 @@ Order of preference: a remote Mac, then a bounded wait, then a refusal.
      Status reports the wait (below).
 3. **Herd control.** The 5-minute average lags. When the load dips under the
    limit, admitting every waiter at once would spike it again. While any
-   ticket waits, admissions are spaced apart; with no queue there is no
-   spacing. The interval is a constant that the synthetic-load test calibrates
+   ticket waits, and for one interval after an admission that followed a
+   hold, admissions are spaced apart; otherwise there is no spacing. The interval is a constant that the synthetic-load test calibrates
    by measuring how long one admitted build or boot takes to show in the
    5-minute value. It starts at 60 s; 30 s would admit up to ten runs inside
    one averaging window. The time of the last admission is a small file written
    atomically in the same transaction.
 4. **Refuse.** A wait that reaches its bound refuses. The bound is a fixed
-   600 s, the device-slot default, for every invocation. The refusal uses
-   `STIM_AT_CAPACITY` (open decision 4), with the load, the limit, the queue
-   path and position, and this remedy:
+   600 s, the device-slot default, for every invocation, counted from when
+   the ticket was taken. The refusal uses `STIM_AT_CAPACITY` (open decision
+   4). It says which condition held at the bound, the load or the spacing of
+   a deep queue, and gives the load, the limit, the queue path and position,
+   and this remedy:
    - wait and retry;
    - place the work on a remote Mac (`remote.build`, `ios.remote`,
      `android.remote`);
@@ -240,7 +243,14 @@ Order of preference: a remote Mac, then a bounded wait, then a refusal.
    - or raise `concurrency.maxLoadPerCore`.
 
    `--wait` and `--no-wait` keep their current meanings, which cover device
-   slots and leases only (open decision 3).
+   slots and leases only (open decision 3). So `--no-wait` and `--wait 0` still
+   wait up to 600 s for load, and `stim macos` cannot shorten the wait. The
+   guide says so.
+
+The shared admission and its ticket live on the invocation's signal, not on
+either step's. When one step is cancelled, for example the iOS boot wait that
+ends when the build finishes, the other keeps the admission. The ticket goes
+when the invocation is admitted, ends or is cancelled.
 
 After admission the invocation takes its caps exactly as today. While it
 waits for load it holds no build slot, device slot, boot marker or `device-waits`
@@ -268,6 +278,9 @@ today. Reclaiming under load was one of the reported harms.
 - **Status reads.** `status` and `capacity.load.waiting` read the set with the
   non-reaping `readClaimSet` and report an unresolved ticket instead of
   failing, as `peekDeviceSlots` does for `device-waits`.
+- **Housekeeping.** `doctor` reports an unresolved `load-waits` ticket with
+  its `rm` command. `gc` clears a free `load-waits` set through
+  `clearFreeClaimSet`, as it does for the other claim sets.
 - **The transaction.** It reads `os.loadavg()`, the set and the spacing file,
   all in process, and starts no subprocess.
 - **Spacing file.** An admitted invocation holds no load claim. The spacing
@@ -335,9 +348,9 @@ present because the busy threshold always applies:
   when off.
 - **`waitingFor`.** A waiting run's `waitingFor` gets `kind: "load"`. It keeps
   the integer `inUse` and `max` fields that Desktop's `WaitingFor` decoder
-  requires: the load and the limit, each rounded to an integer. It adds
-  `limit`, not a live load value, so the workspace payload does not change
-  while the wait goes on. Older Desktop and phone builds return no text for an
+  requires. Both are the limit, rounded to an integer, the way a full slot
+  reads, and it adds the exact `limit`. It carries no live load value, so the
+  workspace payload does not change while the wait goes on. Older Desktop and phone builds return no text for an
   unknown kind and show their generic waiting state. That is accepted.
 - **Watch.** `status --watch --json` already never repeats an identical payload
   (`watchChangeKey`). So that `capacity.load` does not change on every tick,
@@ -371,7 +384,7 @@ No new commands or flags, and no change to an existing flag.
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Opt-in or on by default                                                                                                                                                                                                                                             | Opt-in. Set it on this MacBook only after the synthetic-load test places the limit, then decide a default from two weeks of `kind: "load"` stats.                                                                                                                                                                                                                                                                       |
 | 2   | Reuse `server.maxLoadPerCore` or add a setting; its name                                                                                                                                                                                                            | Add `concurrency.maxLoadPerCore`, next to `maxBuilds` and `maxDevices`. `server.maxLoadPerCore` means "prefer another Mac" at 2 per core; as a gate it would have held every local build on this Mac all night. With `maintenance.maxLoadPerCore` there are three similar names, so the guide lists them together. A distinct name such as `concurrency.admitLoadPerCore` is the alternative.                           |
-| 3   | Should `ios`/`android` `--wait <seconds>` and `--no-wait` also bound load waits? Today they cover device slots and leases. With `--device`, `--no-wait` means "install on a leased phone without a lease", and `--wait` defaults to 60 s. `stim macos` has neither. | No, not in the first version: a fixed 600 s bound for every invocation, and no flag changes meaning. Widening them would couple lease bypass and load refusal in one flag. It would also change runs with `--device` and leave `macos` unbounded, so it needs a product decision of its own.                                                                                                                            |
+| 3   | Should `ios`/`android` `--wait <seconds>` and `--no-wait` also bound load waits? Today they cover device slots and leases. With `--device`, `--no-wait` means "install on a leased phone without a lease", and `--wait` defaults to 60 s. `stim macos` has neither. | No, not in the first version: a fixed 600 s bound for every invocation, and no flag changes meaning. Widening them would couple lease bypass and load refusal in one flag. It would also change runs with `--device` and leave `macos` unbounded, so it needs a product decision of its own. The cost: `--no-wait` and `--wait 0` still wait up to 600 s for load, and an agent cannot opt out of that wait.            |
 | 4   | Refusal code: reuse `STIM_AT_CAPACITY` or add one                                                                                                                                                                                                                   | Reuse it, with the load named in the message and a `reason: "load"` field in JSON. Agents already handle it as "wait, place elsewhere, or stop something".                                                                                                                                                                                                                                                              |
 | 5   | Should a waiting run re-ask remote Macs? The issue text expects over-limit work to go to a remote Mac; this design asks once, before waiting.                                                                                                                       | Not in the first version. Revisit with #4321's placement order.                                                                                                                                                                                                                                                                                                                                                         |
 | 6   | Gate `start` and Metro                                                                                                                                                                                                                                              | No. Metro serves running apps and reload, and its bundling is bounded.                                                                                                                                                                                                                                                                                                                                                  |
