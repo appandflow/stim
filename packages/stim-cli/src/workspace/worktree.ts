@@ -450,9 +450,11 @@ export async function cloneIgnoredEntries({
         failed.push({ file: rel, error: String((cause as Error)?.message || cause) });
       }
     }
-  } finally {
-    await trash.dispose(operation);
+  } catch (error) {
+    await trash.dispose(operation).catch(() => {});
+    throw error;
   }
+  await trash.dispose(operation);
   return { copied, skipped, failed, cloned };
 }
 

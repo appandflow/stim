@@ -2379,8 +2379,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   reports above those names (for example an app directory with no tracked
   files) is copied as is. Warm renames those deleted paths into
   $STIM_HOME/trash and a detached, low-priority rm deletes them after warm
-  returns; when the rename is not possible (Windows, $STIM_HOME on another
-  volume), warm deletes them before it returns. Warm also skips paths
+  returns (through the programmatic API, before the call resolves); when the
+  rename is not possible (Windows, $STIM_HOME on another volume), warm deletes
+  them before it returns. Warm also skips paths
   overlapping a nested destination worktree or below a symlink ancestor.
   Tracked .idea settings come from Git and stay untouched by warm.
 

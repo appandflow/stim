@@ -153,7 +153,7 @@ export function warmTrash(worktree: string, options: TrashOptions = {}) {
   let trash: WorktreeTrash | null | undefined;
   return {
     async take(path: string): Promise<boolean> {
-      trash ??= await openTrash(worktree, options, 'warm');
+      if (trash === undefined) trash = await openTrash(worktree, options, 'warm');
       if (!trash) return false;
       const to = String(trash.moved.length);
       try {
