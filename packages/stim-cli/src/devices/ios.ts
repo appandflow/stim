@@ -262,7 +262,10 @@ const BOOT_STATE_LIST_TIMEOUT_MS = 30000;
 const SPRINGBOARD_QUERY_TIMEOUT_MS = 10000;
 const SPRINGBOARD_POLL_MS = 250;
 
-type SpringBoardStartup = { state: 'started' } | { state: 'timed-out' } | { state: 'unreadable'; reason: string };
+type SpringBoardStartup =
+  | { state: 'started'; pid: number }
+  | { state: 'timed-out' }
+  | { state: 'unreadable'; reason: string };
 
 // SpringBoard's pid changes on every simulator reboot. Null when it is not running or unreadable.
 export async function readSpringBoardPid(udid: string): Promise<number | null> {
@@ -311,7 +314,7 @@ export async function waitForSpringBoard(udid: string, deadline: number): Promis
           reason: `Could not read SpringBoard's startup state: ${output.trim() || 'no output'}.`,
         };
       }
-      if (Number(state[1]) > 0) return { state: 'started' };
+      if (Number(state[1]) > 0) return { state: 'started', pid: Number(state[1]) };
     }
     if (Date.now() >= deadline) return { state: 'timed-out' };
     await cancellableSleep(SPRINGBOARD_POLL_MS);
@@ -382,6 +385,10 @@ async function awaitBootCommand(args: string[], attemptMs: number, onLine: (line
   throw new Error(`${command} failed with exit code ${result.code ?? 'unknown'}${detail}`);
 }
 
+export type IosBootEvent =
+  | { phase: 'boot_requested' | 'bootstatus_done' | 'viewer_opened' }
+  | { phase: 'springboard_started'; pid: number };
+
 export async function bootIosSim(
   udid: string,
   {
@@ -392,6 +399,7 @@ export async function bootIosSim(
     openViewer = true,
     label = udid,
     out = () => {},
+    onPhase,
   }: {
     timeoutMs?: number;
     attemptMs?: number;
@@ -400,6 +408,7 @@ export async function bootIosSim(
     openViewer?: boolean;
     label?: string;
     out?: (message: string) => void;
+    onPhase?: (event: IosBootEvent) => void;
   } = {},
 ): Promise<void> {
   const exec = getExecutor();
@@ -444,6 +453,7 @@ export async function bootIosSim(
   monitor.unref();
   try {
     try {
+      onPhase?.({ phase: 'boot_requested' });
       await awaitBootCommand(['simctl', 'boot', udid], Math.max(1, deadline - Date.now()), onLine);
       phase = 'waiting for boot completion';
     } catch (e) {
@@ -482,11 +492,13 @@ export async function bootIosSim(
         throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
       }
     }
+    onPhase?.({ phase: 'bootstatus_done' });
     phase = 'waiting for SpringBoard';
     const springBoard = await waitForSpringBoard(udid, deadline);
     if (springBoard.state === 'timed-out') {
       throw new Error(`Simulator ${udid} did not finish booting within ${Math.round(timeoutMs / 1000)}s.`);
     }
+    if (springBoard.state === 'started') onPhase?.({ phase: 'springboard_started', pid: springBoard.pid });
   } catch (error) {
     const named = memoryCulpritAdvice(await memoryCulpritsUnderAsync(sample(), exec));
     throw new Error(
@@ -496,7 +508,10 @@ export async function bootIosSim(
   } finally {
     clearInterval(monitor);
   }
-  if (openViewer) await viewer.open(udid);
+  if (openViewer) {
+    await viewer.open(udid);
+    onPhase?.({ phase: 'viewer_opened' });
+  }
 }
 
 export async function shutdownIosSim(udid: string, operation?: StimContext): Promise<void> {

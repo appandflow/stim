@@ -31,7 +31,7 @@ import type { DeviceRecord } from '@stim-cli/core/state';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
-import { workspaceId } from '../workspace/paths.ts';
+import { workspaceId, workspaceLogsDir } from '../workspace/paths.ts';
 import { decodeStats, statsFile } from '@stim-cli/core/state';
 import { createIosSimSnapshot, ownedSimName } from '../devices/ios.ts';
 import { makeAdbDevices, makeChildProcess, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
@@ -93,6 +93,16 @@ afterEach(() => {
 });
 
 const SPRINGBOARD_ROW = '4242\t0\tcom.apple.SpringBoard\n';
+
+function deviceLog(root = tmpHome): Record<string, unknown>[] {
+  const file = join(workspaceLogsDir(root), 'device.ndjson');
+  return existsSync(file)
+    ? readFileSync(file, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line): Record<string, unknown> => JSON.parse(line))
+    : [];
+}
 
 function simctlSpawnStub(file: string, args: readonly string[]): string {
   return file === 'xcrun' && args[1] === 'spawn' && args[3] === 'launchctl' ? SPRINGBOARD_ROW : '';
@@ -227,6 +237,21 @@ describe('ensureBooted: ios', () => {
       });
       return commands;
     }
+    let savedHome: string | undefined;
+    let savedProfile: string | undefined;
+    beforeEach(() => {
+      savedHome = process.env.HOME;
+      savedProfile = process.env.USERPROFILE;
+      process.env.HOME = tmpHome;
+      process.env.USERPROFILE = tmpHome;
+      mkdirSync(join(tmpHome, 'Library/Logs/DiagnosticReports'), { recursive: true });
+    });
+    afterEach(() => {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+      if (savedProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = savedProfile;
+    });
     const ensure = (out: string[] = []) =>
       ensureBooted({
         projectPath: tmpHome,
@@ -247,6 +272,57 @@ describe('ensureBooted: ios', () => {
       expect(notes.some((line) => line.includes('SpringBoard is not running on U1'))).toBe(true);
     });
 
+    test('copies the simulator SpringBoard crash reports into the workspace logs before the restart', async () => {
+      const name = 'SpringBoard-2026-10-23-000000.ips';
+      const text = `{}\n${JSON.stringify({ captureTime: new Date().toISOString(), coalitionName: 'com.apple.CoreSimulator.SimDevice.u1' })}`;
+      writeFileSync(join(tmpHome, 'Library/Logs/DiagnosticReports', name), text);
+      writeFileSync(
+        join(tmpHome, 'Library/Logs/DiagnosticReports', 'SpringBoard-2026-10-23-000001.ips'),
+        `{}\n${JSON.stringify({ captureTime: new Date().toISOString(), coalitionName: 'com.apple.CoreSimulator.SimDevice.OTHER' })}`,
+      );
+      deadShellExecutor({ rows: [''], recoversOnBoot: true });
+      expect(await ensure()).toEqual({ ok: true, udid: 'U1' });
+      const records = deviceLog();
+      const copy = records.findIndex((record) => record.event === 'springboard_crash_reports');
+      expect(records[copy]).toMatchObject({ deviceId: 'U1', files: [name], level: 'warn' });
+      expect(copy).toBeGreaterThanOrEqual(0);
+      expect(copy).toBeLessThan(records.findIndex((record) => record.phase === 'restart'));
+      expect(readFileSync(join(workspaceLogsDir(tmpHome), name), 'utf8')).toBe(text);
+      expect(existsSync(join(workspaceLogsDir(tmpHome), 'SpringBoard-2026-10-23-000001.ips'))).toBe(false);
+    });
+
+    test('records a restart, a boot marked as a restart and an empty copy when no report exists', async () => {
+      deadShellExecutor({ rows: [''], recoversOnBoot: true });
+      await ensure();
+      const records = deviceLog().filter((record) => record.event !== undefined);
+      expect(records.map((record) => record.phase ?? record.event)).toEqual([
+        'springboard_crash_reports',
+        'restart',
+        'boot_requested',
+        'bootstatus_done',
+        'springboard_started',
+        'viewer_opened',
+      ]);
+      expect(records[0]).toMatchObject({ files: [], level: 'info' });
+      expect(records[1]).toMatchObject({ level: 'warn', deviceId: 'U1' });
+      expect(records[2]).toMatchObject({ boot: 'restart' });
+    });
+
+    test('attributes the boot, copy and restart records of a named slot to it', async () => {
+      deadShellExecutor({ rows: [''], recoversOnBoot: true });
+      await ensureBooted({
+        projectPath: tmpHome,
+        platform: 'ios',
+        slot: 'tablet',
+        device: { deviceUdid: 'U1', owned: true, booted: 'U1' },
+        timeoutMs: 5000,
+        pollMs: 1,
+      });
+      const records = deviceLog();
+      expect(records.length).toBeGreaterThan(4);
+      expect(records.every((record) => record.slot === 'tablet')).toBe(true);
+    });
+
     test('waits out a respawn without restarting the simulator', async () => {
       const commands = deadShellExecutor({ rows: ['', '', SPRINGBOARD_ROW], recoversOnBoot: false });
       expect(await ensure()).toEqual({ ok: true, udid: 'U1' });
@@ -260,6 +336,9 @@ describe('ensureBooted: ios', () => {
       expect(result.reason).toMatch(/U1.*SpringBoard.*not running.*`stim stop`.*`stim ios`/);
       expect(commands.filter((c) => c === 'xcrun simctl shutdown U1')).toHaveLength(1);
       expect(commands.filter((c) => c === 'xcrun simctl boot U1')).toHaveLength(1);
+      const records = deviceLog();
+      expect(records.filter((record) => record.phase === 'restart')).toHaveLength(1);
+      expect(records.filter((record) => record.event === 'springboard_crash_reports')).toHaveLength(2);
     });
   });
 
@@ -337,6 +416,21 @@ describe('ensureBooted: ios', () => {
       expect(commands.indexOf(mute) > commands.lastIndexOf(springBoardQuery)).toBe(started);
       expect(notes.some((line) => line.includes('Could not mute this simulator'))).toBe(warns);
       expect(notes.some((line) => line.includes('simulator muted'))).toBe(!warns);
+      const phases = deviceLog();
+      expect(phases.map((record) => record.phase)).toEqual([
+        'boot_requested',
+        'bootstatus_done',
+        ...(started ? ['springboard_started'] : []),
+        'viewer_opened',
+      ]);
+      expect(phases.find((record) => record.phase === 'springboard_started')?.pid).toBe(started ? 4242 : undefined);
+      expect(phases[0]).toMatchObject({
+        src: 'device',
+        platform: 'ios',
+        event: 'ios_boot',
+        deviceId: 'U1',
+        boot: 'existing',
+      });
     },
   );
 
@@ -2255,6 +2349,18 @@ describe('ensureOwnedDevice: ios', () => {
         await run({ ios: { simslim: 'on' } });
         expect(events).toEqual(['reconcile default']);
         expect(getProject(root)?.platforms?.ios?.simslimApplied).toEqual({ profile: 'default', springBoardPid: 4242 });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('records the SpringBoard pids when SimSlim reboots the simulator', async () => {
+      const { root, run } = prepareRunning([1111, 4242]);
+      try {
+        await run({ ios: { simslim: 'on' } });
+        expect(deviceLog(root).filter((record) => record.phase === 'simslim_reboot')).toMatchObject([
+          { event: 'ios_boot', deviceId: 'U1', pidBefore: 1111, pidAfter: 4242 },
+        ]);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

@@ -355,6 +355,7 @@ function iosSlotDeps(d: IosDeps, slot: string): IosDeps {
     d = {
       ...base,
       ensureOwnedDevice: (args) => base.ensureOwnedDevice({ ...args, slot }),
+      ensureBooted: (args) => base.ensureBooted({ ...args, slot }),
       checkDeviceCapacity: (args) => base.checkDeviceCapacity({ ...args, slot }),
       selectFromPool: (args) => base.selectFromPool({ ...args, slot }),
       acquireRunLease: (args) => base.acquireRunLease({ ...args, slot }),

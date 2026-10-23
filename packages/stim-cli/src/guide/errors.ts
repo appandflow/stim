@@ -808,7 +808,10 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   down through teardown and booted once more; if SpringBoard is still not
   running, the refusal names the udid and the remedy: \`stim stop\`, then
   \`stim ios\` again. Repeated SpringBoard crashes leave reports in
-  ~/Library/Logs/DiagnosticReports.
+  ~/Library/Logs/DiagnosticReports, and macOS deletes them after about two
+  days; before the restart Stim copies the simulator's recent ones into the
+  workspace logs directory and records the boot steps by udid
+  (\`stim logs --source device\`, \`stim guide logs\`, IOS BOOT RECORDS).
   On Android the emulator's own stdio is captured to
   the global workspace logs/emulator.log (truncated per boot), and when it printed a
   \`FATAL |\` / \`ERROR |\` / \`PANIC:\` line THAT is the message and the remedy

@@ -344,6 +344,15 @@ it again after that reboot. A parked simulator is slimmed when Stim adopts it.
 Hosted simulators on a named Mac are never changed. If `simslim` is not
 installed, `doctor` reports it and `stim ios` boots without it.
 
+Each boot of an owned iOS simulator writes `ios_boot` records to the workspace's
+device log: boot requested (adopted, created, existing or restart), bootstatus
+done, SpringBoard started with its pid, viewer opened and SimSlim reboots. When
+SpringBoard is missing after boot, Stim also copies the simulator's recent
+`SpringBoard-*.ips` crash reports from `~/Library/Logs/DiagnosticReports` into
+the workspace logs directory before it restarts the simulator once, because macOS
+deletes them after about two days. Read the records with
+`stim logs --source device --grep "ios boot"` and `--grep "SpringBoard crash report"`.
+
 A simulator can report Booted and show SpringBoard while process startup is
 stalled. Stim checks a bounded process spawn before installation and bounds
 local launch calls. When macOS reports elevated memory pressure, diagnostics

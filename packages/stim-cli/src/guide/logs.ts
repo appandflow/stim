@@ -241,6 +241,35 @@ THE RECORD
              there are none. Stim adds it at query time; it is not in the
              log files.
 
+IOS BOOT RECORDS
+Booting an owned iOS simulator writes records to the workspace's device.ndjson:
+src device, platform ios, deviceId the simulator udid, slot when it is not
+default, level info unless noted. They show in a plain \`logs\` and in
+\`--source device\`, and never in \`--errors\`.
+  event ios_boot, with phase:
+    boot_requested      just before simctl boot; boot is adopted (a parked
+                        simulator), created, existing (an owned simulator
+                        that was shut down) or restart
+    bootstatus_done     simctl bootstatus -b returned
+    springboard_started SpringBoard finished starting; pid is its pid
+    viewer_opened       the simulator viewer was asked to open it
+    simslim_reboot      SimSlim changed the simulator and SpringBoard's pid
+                        changed; pidBefore and pidAfter are null when the pid
+                        could not be read
+    restart             warn: SpringBoard is not running after boot and the
+                        simulator was shut down; Stim boots it once more
+  event springboard_crash_reports, written before that restart and again if
+    SpringBoard is still missing after it. files lists the SpringBoard-*.ips
+    reports that name this simulator and were captured in the last ten minutes,
+    copied from ~/Library/Logs/DiagnosticReports and its Retired folder into
+    the workspace logs directory; level is warn, or info with an empty files
+    when none matched. dropped counts matching reports that exceeded the limits
+    below and were not copied; failure is the message of a write that failed,
+    with the reports copied before it in files. macOS deletes the originals
+    after about two days; Stim only reads that folder. It looks at the newest
+    100 reports of at most 1 MiB each, copies at most 8 MiB per run, and keeps
+    at most 40 in the directory.
+
 Maintenance records use src: maintenance and appear in the plain timeline.
   stim logs --source maintenance
 Add --errors to --source maintenance to show only maintenance_failure events;
