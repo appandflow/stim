@@ -348,7 +348,7 @@ function pendingInstallEvidence(dependencies: DependencyState): InstallEvidence 
   return {
     lock: dependencies.lock,
     hash: lockfileHash(dependencies.root, dependencies.lock) ?? '',
-    patches: hashPatches(dependencies.root),
+    patches: dependencies.lock === 'package-lock.json' ? hashPatches(dependencies.root) : '',
     completed: false,
     treeProblems: null,
   };
@@ -634,7 +634,9 @@ export async function refreshMainCheckout({
     const deps = depsPlan({
       lockfile: dependencies.lock,
       lockfileChanged: pathChangedBetween(root, before, head, gitPath(depsDir, dependencies.lock)),
-      patchesChanged: pathChangedBetween(root, before, head, gitPath(depsDir, 'patches/*.patch')),
+      patchesChanged:
+        dependencies.lock === 'package-lock.json' &&
+        pathChangedBetween(root, before, head, gitPath(depsDir, 'patches/*.patch')),
       installed,
       treeProblems:
         dependencies.lock === 'package-lock.json' && installed ? installedNpmTreeProblems(dependencies.root) : null,

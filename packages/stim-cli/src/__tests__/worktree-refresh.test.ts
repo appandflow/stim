@@ -1364,6 +1364,29 @@ test.each([
   30_000,
 );
 
+test('a patches-only change reinstalls nothing outside npm, where a reinstall would not reapply them', async () => {
+  write(root, 'yarn.lock', '# yarn lockfile v1\n');
+  commit(root, 'yarn project');
+  git(root, 'push', '-q', 'origin', 'main');
+  fallBehind({ 'patches/dep+1.0.0.patch': 'patch v1\n' }, 'add a patch');
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+
+  const real = getExecutor();
+  const spawned: string[] = [];
+  setExecutor({
+    ...real,
+    spawn(cmd: string, args: string[]) {
+      spawned.push([cmd, ...args].join(' '));
+      return makeExitingChild(0);
+    },
+  });
+
+  const result = await runWarm(target, '--refresh');
+  expect(result.code).toBe(0);
+  expect(spawned).toEqual([]);
+  expect(result.stderr).toContain(`deps        source ${root}: yarn.lock unchanged -> skipped`);
+}, 30_000);
+
 test('a refresh from a nested app leaves a repository root that was never installed alone', async () => {
   const app = join(root, 'app');
   write(root, 'package-lock.json', '{"lockfileVersion":3}\n');

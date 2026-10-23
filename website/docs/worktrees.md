@@ -133,9 +133,9 @@ It checks the branch's upstream, fetches changes when needed, and fast-forwards
 **whatever branch the source checkout has** to its `@{upstream}`, and then installs only what the new commits
 moved: the lockfile's own install command where the lockfile lives (the
 repository root in a monorepo, and the app too when it has a lockfile of its
-own), and `pod install` for the app. The app is the one you ran the command
+own; a root that was never installed is left alone), and `pod install` for the app. The app is the one you ran the command
 from or, from the monorepo root, the one app registered in the source checkout.
-A change to `patches/` counts as a dependency change. When npm's config sets
+In an npm project a change to `patches/` counts as a dependency change. When npm's config sets
 `ignore-scripts` and the project's `package.json` defines `postinstall`
 (patch-package, usually), the refresh runs `npm run postinstall` after `npm ci`;
 dependencies' own install scripts stay blocked. Each dependency and Pods step

@@ -2311,7 +2311,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   from a monorepo root, the one app registered in the source checkout.
   Dependencies install where the repository root's lockfile is and, when the
   app has its own lockfile (a nested package outside the root workspaces),
-  there too. Each installs when its lockfile or its patches/ directory moved,
+  there too; a root that has neither installed dependencies nor an install
+  record is left alone when the app has its own lockfile. Each installs when
+  its lockfile moved, when its patches/ directory moved (npm projects only),
   when nothing is installed, or when npm reports a tree that differs from the
   one it reported after the last completed install. An npm project whose
   npm config sets ignore-scripts gets no postinstall from \`npm ci\`, so when its

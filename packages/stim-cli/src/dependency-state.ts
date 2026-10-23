@@ -4,10 +4,6 @@ import { dirname, join, relative } from 'node:path';
 import { getExecutor } from './exec.ts';
 import { repoRoot } from './workspace/worktree.ts';
 
-/**
- * `''` for a tree `npm ls` accepts, else a digest of the problems it reports. A failure that reports no
- * problem list (a timeout, a crash) returns a value no other probe returns, so it is never evidence.
- */
 export function installedNpmTreeProblems(projectRoot: string): string {
   try {
     getExecutor().runFile('npm', ['ls', '--all', '--json', '--silent'], { cwd: projectRoot, timeoutMs: 30_000 });
