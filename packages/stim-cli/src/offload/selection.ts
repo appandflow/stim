@@ -5,6 +5,7 @@ import { OFFLOAD_MODES, parseMachine, automaticMachineEnabled } from '@stim-cli/
 import type { PlacementSetting, SettingSource } from '../placement-log.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines } from './build-machines.ts';
+import { POD_MISSING_REASON } from '../engine/deps.ts';
 import { cocoapodsInstall } from './toolchain.ts';
 
 const FINGERPRINT_MISMATCH_REMEDY =
@@ -15,11 +16,13 @@ export function fingerprintMismatchRemedy(reason: string): string | undefined {
   return reason.startsWith('fingerprint-mismatch: the checkout there ') ? FINGERPRINT_MISMATCH_REMEDY : undefined;
 }
 
+export const PODS_FAILED_PREFIX = 'pod install failed: ';
+
 /** The remedy for a worker whose `pod install` failed, naming the install when it has no CocoaPods; undefined for any other reason. */
 export function podsFailedRemedy(machine: string, reason: string, localCocoapods: string | null): string | undefined {
-  if (!reason.startsWith('pod install failed: ')) return undefined;
+  if (!reason.startsWith(PODS_FAILED_PREFIX)) return undefined;
   const retry = 'run the same command again, or rerun with --remote-build auto or --remote-build local';
-  if (!reason.includes('no `pod` executable')) {
+  if (!reason.includes(POD_MISSING_REASON)) {
     return `Fix the pod install error on ${machine} (run pod install in its checkout under server.workerRoot there to see all of it), then ${retry}.`;
   }
   const { lead, commands } = cocoapodsInstall(localCocoapods);

@@ -14,6 +14,8 @@ import type { HostedNativeTarget } from '../device-host/hosted-native.ts';
 import { withDeviceBootAdmission } from '../engine/device-capacity.ts';
 import { workspaceId } from '@stim-cli/core';
 import { approvableSchemes } from '../engine/app-schemes.ts';
+import { PODS_FAILED_PREFIX } from '../offload/selection.ts';
+import { POD_MISSING_REASON } from '../engine/deps.ts';
 import * as offloadClient from '../offload/client.ts';
 import * as tailnet from '../offload/tailnet.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
@@ -8970,6 +8972,29 @@ describe('strict remote machine selection', () => {
     expect(result.calls.order).not.toContain('runPrebuild');
     expect(result.calls.order).not.toContain('runPodInstall');
     expect(choose).not.toHaveBeenCalled();
+  });
+
+  test('a pod install that fails on the worker builds here in auto and stops a named machine with the install command', async () => {
+    reserve();
+    configureMini();
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
+    const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
+    vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
+      ok: false,
+      machine: 'mini',
+      reason: `${PODS_FAILED_PREFIX}${POD_MISSING_REASON}`,
+    });
+    const fallback = await run({ remoteBuild: 'auto', json: true });
+    expect(fallback.exitCode).toBeNull();
+    expect(fallback.stderr).toContain('building here');
+    expect(fallback.calls.order).toContain('buildIos');
+
+    const named = await run({ remoteBuild: 'mini', json: true });
+    const failure = parseFirst(named.logs);
+    expect(failure.code).toBe('STIM_OFFLOAD_REFUSED');
+    expect(failure.remedy).toContain('On mini, install CocoaPods');
+    expect(failure.remedy).toContain('brew install cocoapods');
   });
 
   test('a non-Debug cache miss refuses strict placement before xcodebuild', async () => {

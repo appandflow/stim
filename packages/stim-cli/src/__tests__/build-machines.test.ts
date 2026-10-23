@@ -587,19 +587,18 @@ describe('inspectBuildMachines', () => {
     );
   });
 
-  it('shows the install command of a CocoaPods note and still takes the build', async () => {
+  it('gives the install command of a missing CocoaPods as the fix', async () => {
     await approvedCredential();
-    const { findings, machines } = await inspectBuildMachines(
+    const { findings } = await inspectBuildMachines(
       {
         fix: false,
         check: () =>
           Promise.resolve({
             capacity: null,
-            problems: [],
-            notes: [
+            problems: [
               {
                 code: 'cocoapods',
-                reason: 'no CocoaPods there, so a build whose pods are not installed there fails at pod install',
+                reason: 'no CocoaPods there, CocoaPods 1.16.2 here',
                 commands: ['brew install cocoapods'],
                 lead: 'install CocoaPods',
               },
@@ -609,11 +608,9 @@ describe('inspectBuildMachines', () => {
       fakeIo([approved()]).io,
       ['mini'],
     );
-    expect(machines).toEqual([expect.objectContaining({ offloadable: true })]);
     expect(findings).toEqual([
       expect.objectContaining({
         code: 'build-machine-cocoapods',
-        level: 'note',
         fix: 'On mini, install CocoaPods:\nbrew install cocoapods',
       }),
     ]);

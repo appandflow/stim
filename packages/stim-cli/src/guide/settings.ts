@@ -1042,10 +1042,11 @@ xcodebuild -downloadPlatform iOS -buildVersion <version>, or a pointer to the
 Xcode problem when xcode-select is the cause. A stim-server that reports no
 developerDir keeps the prose fix. It also needs an
 iPhone simulator on the target runtime. A missing or different global CocoaPods
-never stops a build: the machine runs pod install only when its Pods are not
-installed or stale, doctor and the placement line show a note with the install
-command, and a pod install that fails there reports "pod install failed" with
-the fix on that machine. When the app's Gemfile.lock, in ios/ or the project
+keeps automatic placement from choosing the machine for a project that does not
+pin it, unless the machine already holds the exact artifact; the placement line
+says why and doctor shows the install command. A named --remote-build still
+sends the build, and a pod install that fails there reports "pod install failed"
+with the fix on that machine. When the app's Gemfile.lock, in ios/ or the project
 root, pins CocoaPods, both machines run that version through
 bundler, so the machine needs Bundler on its stim-server PATH and
 installs the pinned gems itself on the first build. This Mac's side of the

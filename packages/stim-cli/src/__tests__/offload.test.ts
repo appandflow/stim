@@ -304,18 +304,63 @@ describe('pickOffer', () => {
     expect(offerProblems(offered, IOS).map((problem) => problem.code)).toEqual(['stim-build', 'runtime', 'busy']);
   });
 
-  it('needs Bundler there when the Gemfile.lock pins CocoaPods, and never refuses over the global CocoaPods', () => {
+  it('needs Bundler there when the Gemfile.lock pins CocoaPods, and compares the global CocoaPods otherwise', () => {
     const PINNED: BuildTarget = { ...IOS, cocoapodsPinned: true };
-    const codes = (offered: BuildOffer, target: BuildTarget) =>
-      offerProblems(offered, target).map((problem) => problem.code);
+    const codes = (offered: BuildOffer, target: BuildTarget, named = false) =>
+      offerProblems(offered, target, named).map((problem) => problem.code);
     expect(codes(offer({ toolchain: { cocoapods: '1.17.0' } }), PINNED)).toEqual([]);
     expect(codes(offer({ toolchain: { cocoapods: '1.17.0', bundler: null } }), PINNED)).toEqual(['bundler']);
     expect(codes(offer({ toolchain: { bundler: null } }), IOS)).toEqual([]);
-    expect(codes(offer({ toolchain: { cocoapods: '1.17.0' } }), IOS)).toEqual([]);
-    expect(codes(offer({ toolchain: { cocoapods: null } }), IOS)).toEqual([]);
+    expect(codes(offer({ toolchain: { cocoapods: '1.17.0' } }), IOS)).toEqual(['cocoapods']);
+    expect(codes(offer({ toolchain: { cocoapods: null } }), IOS)).toEqual(['cocoapods']);
+    expect(codes(offer({ toolchain: { cocoapods: null } }), { ...IOS, native: 'xcode' })).toEqual([]);
+    expect(
+      codes(offer({ toolchain: { cocoapods: '1.17.0' } }), { ...IOS, local: { ...LOCAL, cocoapods: null } }),
+    ).toEqual([]);
+    expect(codes(offer({ toolchain: { cocoapods: '1.17.0' } }), IOS, true)).toEqual([]);
+    expect(codes(offer({ toolchain: { cocoapods: null } }), IOS, true)).toEqual([]);
   });
 
-  it('notes the CocoaPods a pod install there runs when it differs, with the install when there is none', () => {
+  it('skips a worker with another CocoaPods in auto and shows why, sends a named build there, and takes a held artifact', () => {
+    for (const cocoapods of [null, '1.17.0']) {
+      const toolchain = { cocoapods };
+      const auto = pick([offer({ toolchain })]);
+      expect(auto.order).toEqual([]);
+      expect(auto.reasons[0]).toContain('CocoaPods');
+      expect(auto.candidates[0]).toMatchObject({ code: 'version-mismatch', detail: ['cocoapods'] });
+      const named = pickOffer({
+        mode: 'auto',
+        here: { ...IDLE, builds: 3 },
+        target: IOS,
+        selected: 'mac0',
+        offers: [{ machine: 'mac0', offer: offer({ toolchain }) }],
+      });
+      expect(named.order).toEqual([0]);
+      expect(named.candidates[0]!.msg).toContain('CocoaPods');
+    }
+    const fingerprint = 'a'.repeat(64);
+    const held = offer({
+      toolchain: { cocoapods: null },
+      artifact: {
+        name: 'App.app',
+        size: 10,
+        sha256: 'b'.repeat(64),
+        fingerprint,
+        cacheKey: `react-native-ios-${fingerprint}`,
+      } as BuildOffer['artifact'],
+    });
+    expect(
+      pickOffer({
+        mode: 'auto',
+        here: { ...IDLE, builds: 3 },
+        target: IOS,
+        artifact: 'react-native-ios',
+        offers: [{ machine: 'mac0', offer: held }],
+      }).order,
+    ).toEqual([0]);
+  });
+
+  it('notes the CocoaPods a named machine is sent the build despite, with the install when there is none', () => {
     const notes = (toolchain: Partial<WorkerToolchain>, target: BuildTarget = IOS) =>
       toolchainNotes(target, offer({ toolchain }).toolchain);
     expect(notes({ cocoapods: '1.16.2' })).toEqual([]);
@@ -327,7 +372,6 @@ describe('pickOffer', () => {
     ]);
     expect(notes({ cocoapods: null }, { ...IOS, cocoapodsPinned: true })).toEqual([]);
     expect(notes({ cocoapods: null }, { ...IOS, native: 'xcode' })).toEqual([]);
-    expect(notes({ cocoapods: '1.17.0' }, { ...IOS, local: { ...LOCAL, cocoapods: null } })).toEqual([]);
   });
 
   it('names a missing tool instead of printing null, on either side', () => {
@@ -336,6 +380,7 @@ describe('pickOffer', () => {
     expect(reasons(offer({ toolchain: { xcode: null, simulatorSdk: null, cocoapods: null } }), IOS)).toEqual([
       'no Xcode there, Xcode 27.0 / Build version 27A266a here',
       'no simulator SDK there, simulator SDK 27.0 here',
+      'no CocoaPods there, CocoaPods 1.16.2 here',
     ]);
     const macos: BuildTarget = {
       platform: 'macos',

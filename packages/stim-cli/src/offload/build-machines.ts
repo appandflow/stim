@@ -132,7 +132,7 @@ const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   xcode: 'has another Xcode',
   'macos-sdk': 'has another macOS SDK',
   'simulator-sdk': 'has another simulator SDK',
-  cocoapods: 'has another CocoaPods',
+  cocoapods: 'has no CocoaPods, or another version',
   bundler: 'has no Bundler',
   runtime: "has no simulator for this project's iOS runtime",
   jdk: 'runs another JDK major version',
@@ -149,7 +149,6 @@ const NOTE_TITLES: Partial<Record<OffloadProblem['code'], string>> = {
   ndk: "downloads this project's NDK on its first Android build",
   'build-tools': "downloads this project's Android build-tools on its first Android build",
   'compile-sdk': "downloads this project's Android compile platform on its first Android build",
-  cocoapods: 'runs another CocoaPods, or none',
 };
 
 function commandFix(problem: OffloadProblem, entry: string): string | null {
@@ -178,7 +177,10 @@ function problemFix(problem: OffloadProblem, entry: string): string {
         `Install and select the same Xcode on ${entry} and this Mac (\`xcode-select -p\` on each).`
       );
     case 'cocoapods':
-      return `Install the same CocoaPods version on ${entry}, on the PATH its stim-server's login shell sets.`;
+      return (
+        commandFix(problem, entry) ??
+        `Install the same CocoaPods version on ${entry}, on the PATH its stim-server sets. A build sent there with --remote-build ${entry} still runs; a version that differs rewrites the COCOAPODS line of a committed Podfile.lock.`
+      );
     case 'bundler':
       return `Install Bundler (\`gem install bundler\`) on ${entry}, on the PATH its stim-server's login shell sets.`;
     case 'runtime':
@@ -210,12 +212,19 @@ function problemFix(problem: OffloadProblem, entry: string): string {
 
 const TRANSIENT: ReadonlySet<OffloadProblem['code']> = new Set(['unreachable', 'busy']);
 
-const UNPREDICTABLE: ReadonlySet<OffloadProblem['code']> = new Set(['unreachable', 'busy', 'disk', 'checkout']);
+const UNPREDICTABLE: ReadonlySet<OffloadProblem['code']> = new Set([
+  'unreachable',
+  'busy',
+  'disk',
+  'checkout',
+  'cocoapods',
+]);
 
 /**
  * Why a build on the machine named for it cannot work, from problems found before this machine changes the checkout:
  * the toolchain differences, whose fix is on that machine. A machine that did not answer, is busy, is low on disk
- * or holds no checkout is left to the build itself, which the cause may clear by then.
+ * or holds no checkout is left to the build itself, which the cause may clear by then. A CocoaPods difference never
+ * refuses a named machine; only `auto` placement skips it.
  */
 export function predictedRefusal(entry: string, problems: OffloadProblem[]): { reason: string; remedy: string } | null {
   const known = problems.filter((problem) => !UNPREDICTABLE.has(problem.code));
@@ -240,7 +249,7 @@ function offloadFindings(entry: string, problems: OffloadProblem[], notes: Offlo
       level: 'note' as const,
       title: `Remote machine ${entry} ${NOTE_TITLES[each.code] ?? 'needs a first-build download'}`,
       detail: `The build goes there anyway: ${each.reason}.`,
-      fix: commandFix(each, entry),
+      fix: null,
     })),
   ];
 }

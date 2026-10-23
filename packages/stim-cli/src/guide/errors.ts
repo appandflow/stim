@@ -399,8 +399,8 @@ No local xcodebuild, Gradle or SwiftPM compile or alternate machine follows a
 refusal. For stim ios, a toolchain difference on the named machine, such as Xcode,
 the simulator runtime or the CPU, refuses before this machine runs prebuild or pod
 install, even when prebuild would have produced an app the local cache already holds. A
-missing or different global CocoaPods never refuses; a pod install that fails on
-the machine reports "pod install failed" with the command to run there.
+missing or different global CocoaPods never refuses a named machine; a pod install
+that fails on it reports "pod install failed" with the command to run there.
 Unlisted or unpaired names refuse at setup before consulting the cache, without
 a build record or failed-run stats. A listed paired name with a cache hit needs
 no build and does not contact the selected machine.

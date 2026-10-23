@@ -631,35 +631,30 @@ export function cocoapodsInstall(here: string | null): Required<Pick<OffloadProb
   };
 }
 
-function cocoapodsNotes(target: Extract<BuildTarget, { platform: 'ios' }>, worker: WorkerToolchain): OffloadProblem[] {
-  if (target.native || target.cocoapodsPinned) return [];
+export function cocoapodsDifference(
+  target: Extract<BuildTarget, { platform: 'ios' }>,
+  worker: WorkerToolchain,
+): OffloadProblem | null {
+  if (target.native || target.cocoapodsPinned) return null;
+  const here = target.local.cocoapods;
   if (!worker.cocoapods) {
-    return [
-      {
-        code: 'cocoapods',
-        reason: 'no CocoaPods there, so a build whose pods are not installed there fails at pod install',
-        ...cocoapodsInstall(target.local.cocoapods),
-      },
-    ];
+    return { code: 'cocoapods', reason: versionMismatch('CocoaPods', null, here), ...cocoapodsInstall(here) };
   }
-  if (target.local.cocoapods && worker.cocoapods !== target.local.cocoapods) {
-    return [
-      {
-        code: 'cocoapods',
-        reason: `${versionMismatch('CocoaPods', worker.cocoapods, target.local.cocoapods)}; a pod install there rewrites the COCOAPODS line of a committed Podfile.lock`,
-      },
-    ];
-  }
-  return [];
+  return here && worker.cocoapods !== here
+    ? { code: 'cocoapods', reason: versionMismatch('CocoaPods', worker.cocoapods, here) }
+    : null;
 }
 
 /**
  * What a build on the worker does beyond the match: the SDK packages it lacks and Gradle downloads on the first build,
- * because its SDK licenses are accepted and the project allows the download, and the CocoaPods its `pod install` runs
- * when that differs from this Mac's. None of them stops the build; a `pod install` that fails there is reported when it runs.
+ * because its SDK licenses are accepted and the project allows the download. None of them stops the build. For iOS, the
+ * CocoaPods difference a named machine is sent the build despite.
  */
 export function toolchainNotes(target: BuildTarget, worker: WorkerToolchain): OffloadProblem[] {
-  if (target.platform === 'ios') return cocoapodsNotes(target, worker);
+  if (target.platform === 'ios') {
+    const pods = cocoapodsDifference(target, worker);
+    return pods ? [{ ...pods, reason: `${pods.reason}; its pod install runs anyway and a failure is reported` }] : [];
+  }
   if (target.platform !== 'android' || !worker.androidSdk || !gradleDownloads(target.requires, worker)) return [];
   return sdkGaps(target.requires, worker.androidSdk).map((gap) => ({
     code: gap.code,

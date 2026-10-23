@@ -56,11 +56,12 @@ import { nativeGradleTransfer, type GradleTransfer } from '../integrations/nativ
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
-import { namedBuildMachine, OffloadRefusal } from './selection.ts';
+import { namedBuildMachine, OffloadRefusal, PODS_FAILED_PREFIX } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import {
   toolchainMismatches,
   toolchainNotes,
+  cocoapodsDifference,
   type BuildTarget,
   type OffloadProblem,
   type WorkerToolchain,
@@ -252,8 +253,13 @@ function matchingArtifact(offer: BuildOffer, identity?: ArtifactLookup): CachedB
 const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
 
 /** Every reason a machine's offer cannot take this build, in either mode; empty when it can. */
-export function offerProblems(offer: BuildOffer, target: BuildTarget): OffloadProblem[] {
+export function offerProblems(offer: BuildOffer, target: BuildTarget, named = false): OffloadProblem[] {
   const problems = toolchainMismatches(target, offer.toolchain);
+  const pods =
+    !named && target.platform === 'ios' && !problems.some(({ code }) => code === 'platform')
+      ? cocoapodsDifference(target, offer.toolchain)
+      : null;
+  if (pods) problems.push(pods);
   const capacity = offer.capacity;
   const { running, max, diskFreeBytes, minDiskFreeBytes, declined } = capacity;
   if (diskFreeBytes !== null && diskFreeBytes < minDiskFreeBytes) {
@@ -316,7 +322,7 @@ export function pickOffer({
       return;
     }
     if (cacheOnly) return skip(machine, 'artifact-miss', 'no matching completed artifact');
-    const problems = offerProblems(offer, target);
+    const problems = offerProblems(offer, target, namedBuildMachine(selected));
     if (problems.length) {
       return skip(
         machine,
@@ -1802,7 +1808,7 @@ function offloadCacheActivity(
 function workerFailure(result: Record<string, unknown>): string {
   const message = String(result.message ?? '');
   return result.code === 'pods-failed'
-    ? `pod install failed: ${message}`
+    ? `${PODS_FAILED_PREFIX}${message}`
     : `${String(result.code ?? 'failed')}: ${message}`;
 }
 
