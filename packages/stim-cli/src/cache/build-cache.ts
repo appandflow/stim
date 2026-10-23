@@ -8,6 +8,7 @@ import { normalizeOptionsAsync } from '@expo/fingerprint/build/Options.js';
 import { isIgnoredPathWithMatchObjects } from '@expo/fingerprint/build/utils/Path.js';
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
 import { resolveArtifact, storeArtifactAsync, type StimContext } from '@stim-cli/core';
+import { trace } from '@stim-cli/core/state';
 import { readdir, writeFile } from 'node:fs/promises';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { throwIfCancelled } from '../cancellation.ts';
@@ -308,12 +309,18 @@ export async function fingerprintProject(
     debug?: boolean;
   } = {},
 ): Promise<ProjectFingerprint | null> {
-  const options = await fingerprintOptions(projectRoot, target);
-  const result = await createFingerprint(projectRoot, debug ? { ...options, debug } : options);
-  const hash = result?.hash ?? null;
-  if (!hash) return null;
-  const sources = Array.isArray(result?.sources) ? (result.sources as FingerprintSource[]) : [];
-  return { hash, sources };
+  return trace.spanAsync(
+    'fingerprint',
+    async () => {
+      const options = await fingerprintOptions(projectRoot, target);
+      const result = await createFingerprint(projectRoot, debug ? { ...options, debug } : options);
+      const hash = result?.hash ?? null;
+      if (!hash) return null;
+      const sources = Array.isArray(result?.sources) ? (result.sources as FingerprintSource[]) : [];
+      return { hash, sources };
+    },
+    { platform: target.platform },
+  );
 }
 
 /** The env files @expo/env loads for the config: @expo/fingerprint 0.21 evaluates it in development mode. */

@@ -8,6 +8,7 @@ export * from './client-identity.ts';
 export * from './automatic-pools.ts';
 export * from './config.ts';
 export * from './debug-log.ts';
+export * from './trace.ts';
 export * from './config-types.ts';
 export * from './home-identity.ts';
 export * from './json-file.ts';

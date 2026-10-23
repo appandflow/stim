@@ -64,6 +64,8 @@ function allBodies(): string[] {
 
 const NOT_A_REFUSAL_CODE = new Set([
   'STIM_HOME',
+  'STIM_TRACE',
+  'STIM_TRACE_OWNER',
   'STIM_ANDROID_CAS_TOOLCHAIN',
   'STIM_BACKGROUND_LAUNCH',
   'STIM_ACCESS_TICKET',
