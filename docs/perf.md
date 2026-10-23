@@ -1,0 +1,74 @@
+# Performance tracking
+
+Examples use `stim`; replace it with `npx stim` when it is not installed globally.
+
+Stim records where a command spends its time (`STIM_TRACE`) and keeps benchmark results across releases on the
+`perf-data` branch. Neither is part of the release gate: nothing here blocks or slows a release. The benchmark runs
+once in a while, from the weekly performance audit routine and on demand.
+
+## Traces
+
+`STIM_TRACE=<path>` makes one `stim` command write Chrome trace events to `<path>`. Open the file in
+[Perfetto](https://ui.perfetto.dev) or `chrome://tracing`. The format and the span names are in `stim guide logs`
+(TIMING TRACES) and on the website settings page.
+
+```sh
+STIM_TRACE=/tmp/ios.json stim ios
+```
+
+## Benchmark
+
+`scripts/perf/bench.mjs` runs a fixed scenario set against one Stim build and writes one JSON file.
+
+```sh
+# a published release, installed into a scratch prefix with npm
+node scripts/perf/bench.mjs --version 1.25.0 --reps 3 --publish
+
+# a local build (pnpm run build first)
+node scripts/perf/bench.mjs --cli packages/stim-cli/dist/cli.mjs --reps 3 --publish
+```
+
+Each repetition adds a detached git worktree of this repository at `--sha` (default `HEAD`) and runs, from its
+`apps/mobile`:
+
+| Scenario                     | Command                                               |
+| ---------------------------- | ----------------------------------------------------- |
+| `warm`                       | `stim worktree warm`                                  |
+| `start`                      | `stim start`                                          |
+| `ios-first`, `android-first` | `stim ios`, `stim android`: new device, cache restore |
+| `ios-rerun`, `android-rerun` | the same command again with the app installed         |
+| `stop`                       | `stim stop`                                           |
+
+It then removes the worktree. Before the measured repetitions it runs one unmeasured pass, so the build caches are
+full and `*-first` measures a restore, not a cold compile (`--no-prime` skips it). A bare React Native scenario is
+recorded as skipped: the repository checks in no bare fixture, and `test/e2e` generates one from the network.
+
+For each command it records the wall time, the 1-minute load average before and after, the phases and spans from
+`STIM_TRACE` when the Stim version writes one, and the phases stats.json recorded for the run. Per result it records
+the machine (model, CPU, memory, macOS, Xcode, Node), the Stim version, and the git sha of the app source.
+Versions older than `STIM_TRACE` report wall time and the stats.json phases only. The format is in the `perf-data`
+branch README.
+
+It runs the real commands against your real Stim home, on real simulators and emulators, and uses the same machine
+caps as any other run. It refuses to start while the 1-minute load average is above `--max-load` (80); with
+`--wait-minutes` it waits for the load to fall instead. Use `--sha <commit>` to pin the app source when you want
+two runs to be comparable across days.
+
+`--publish` commits the file to the `perf-data` branch of `origin` through a scratch clone and pushes it. The
+branch is an orphan that holds only `runs/<machine id>/<time>-<version>.json` and its README. The machine id is the
+hardware model and a short hash of the host name; no host name, user name or path is stored.
+
+## Comparing
+
+```sh
+node scripts/perf/compare.mjs
+```
+
+clones `perf-data` and prints, per machine, the latest run against the run before it: median wall time per
+scenario, the change, the spread between the fastest and slowest repetition, and how many repetitions failed. A
+scenario is flagged `REGRESSION` when its median grew by more than 10% and by at least 250 ms
+(`--threshold`, `--min-delta-ms`). Medians ignore one slow repetition, and failed repetitions are left out.
+
+Runs taken under very different load are not compared: when the median load before the commands differs by more than
+20 and by more than a factor of two, the rows say `not compared`. A run taken above load 80 is reported with a note.
+A different app commit between the two runs is noted too.
