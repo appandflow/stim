@@ -220,7 +220,16 @@ function deleteInBackground(trash: WorktreeTrash): 'background' | 'deleted' | 'l
     markClaimChildPending(trash.claim);
     const child = getExecutor().spawn(
       'nice',
-      ['-n', DELETE_NICENESS, 'rm', '-rf', '--', join(trash.dir, TRASH_ENTRIES), trash.dir],
+      [
+        '-n',
+        DELETE_NICENESS,
+        'sh',
+        '-c',
+        'rm -rf -- "$1" && rm -rf -- "$2"',
+        '--',
+        join(trash.dir, TRASH_ENTRIES),
+        trash.dir,
+      ],
       { cwd: dirname(trash.dir), detached: true, stdio: 'ignore' },
     );
     child.on?.('error', () => {});
