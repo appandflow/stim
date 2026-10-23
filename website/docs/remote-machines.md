@@ -170,8 +170,9 @@ stim settings unset remote.buildPoolDisabled`} />
 Use `local` for this machine. Remote entries match `remote.machines` exactly, including
 case and port; whitespace is not normalized. An unmatched entry excludes nothing,
 so copy the configured entry or use Desktop's switches. Both lists default to `[]`.
-Excluding `local` has the same effect as `remote-only` for every automatic workload
-of that role at once.
+Excluding `local` keeps this machine out of every automatic workload of that role at
+once, like `remote-only`, except that a device or macOS app refuses at once when no
+host admits it, where `remote-only` waits for a host that is only full.
 Each pool must retain local or at least one configured remote already approved for
 that role. An offline approved member still counts as configured, but must be
 reachable and compatible to take a run. A remote that Tailscale reports as running

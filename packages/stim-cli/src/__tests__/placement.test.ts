@@ -23,7 +23,7 @@ const offered = (
   machine: string,
   load: number | null = 0.5,
   memory = 100,
-  host: { maxLoadPerCore?: number; available?: number; declined?: string } = {},
+  host: { maxLoadPerCore?: number; available?: number; declined?: string; memoryPressure?: string } = {},
 ): PlacementProbe => ({
   machine,
   offer: {
@@ -35,7 +35,7 @@ const offered = (
       loadPerCore: load,
       ...(host.maxLoadPerCore ? { maxLoadPerCore: host.maxLoadPerCore } : {}),
       memoryFreeBytes: memory,
-      memoryPressure: 'normal',
+      memoryPressure: host.memoryPressure ?? 'normal',
     },
   },
 });
@@ -315,12 +315,17 @@ describe('remote and remote-only placement', () => {
 
   it('remote-only tells a host that is only full or loaded, which is worth waiting for, from one that is out', () => {
     const occupied = offered('occupied', 0.5, 100, { available: 0, declined: 'reservations are occupied' });
+    const strained = offered('strained', 0.5, 100, {
+      declined: 'Host memory pressure is unknown or elevated.',
+      memoryPressure: 'warning',
+    });
     const paused = offered('paused', 0.5, 100, { declined: 'Hosted sessions are paused' });
     const down: PlacementProbe = { machine: 'down', failure: 'down' };
     for (const waitable of [
       [offered('mini', 3)],
       [offered('mini', 0.1, 100, { available: 0 })],
       [occupied],
+      [strained],
       [down, occupied],
     ])
       expect(place('remote-only', here, waitable)).toMatchObject({ kind: 'refused', hostsFull: true });

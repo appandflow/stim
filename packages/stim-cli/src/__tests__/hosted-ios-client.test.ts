@@ -1355,7 +1355,7 @@ test('remote-only refuses a live local device and probes no host, where remote k
   expect(await place('remote')).toMatchObject({ placement: { decision: 'local' }, sticky: true });
 });
 
-test('remote-only never asks EAS and refuses when no host admits, where remote asks it', async () => {
+test('remote-only never asks EAS and refuses a host that declined with room left, where remote asks it', async () => {
   declined = 'All configured hosted device reservations are occupied';
   const eas = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
   const place = (word: 'remote' | 'remote-only') =>

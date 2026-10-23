@@ -163,7 +163,8 @@ export function decideDevicePlacement(
       reason &&
       ('offer' in probe
         ? ['no-capacity', 'load', 'memory'].includes(code) ||
-          (code === 'declined' && probe.offer.capacity.available === 0)
+          (code === 'declined' &&
+            (probe.offer.capacity.available === 0 || probe.offer.resources.memoryPressure !== 'normal'))
         : false)
     )
       hostsFull = true;
