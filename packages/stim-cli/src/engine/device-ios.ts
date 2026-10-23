@@ -548,7 +548,7 @@ async function configureOwnedIosSim({
   const identity = simslimProfileIdentity(profile, slimByDefault);
   const slimConfigured = identity !== null || Boolean(record.simslimManaged);
   const applied = record.simslimApplied;
-  const springBoardBefore = slimConfigured && !freshBoot ? await readSpringBoardPid(record.deviceUdid) : null;
+  const springBoardBefore = slimConfigured ? await readSpringBoardPid(record.deviceUdid) : null;
   if (
     identity !== null &&
     record.simslimManaged &&
