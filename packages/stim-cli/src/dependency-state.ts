@@ -1,10 +1,13 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { getExecutor } from './exec.ts';
 import { repoRoot } from './workspace/worktree.ts';
 
-/** `''` for a tree `npm ls` accepts, else a digest of the problems it reports. */
+/**
+ * `''` for a tree `npm ls` accepts, else a digest of the problems it reports. A failure that reports no
+ * problem list (a timeout, a crash) returns a value no other probe returns, so it is never evidence.
+ */
 export function installedNpmTreeProblems(projectRoot: string): string {
   try {
     getExecutor().runFile('npm', ['ls', '--all', '--json', '--silent'], { cwd: projectRoot, timeoutMs: 30_000 });
@@ -15,8 +18,8 @@ export function installedNpmTreeProblems(projectRoot: string): string {
     try {
       problems = JSON.parse(String(stdout ?? ''))?.problems;
     } catch {}
-    const list = Array.isArray(problems) ? problems.map(String).toSorted() : ['npm ls failed'];
-    return createHash('sha256').update(list.join('\n')).digest('hex');
+    if (!Array.isArray(problems)) return randomUUID();
+    return createHash('sha256').update(problems.map(String).toSorted().join('\n')).digest('hex');
   }
 }
 

@@ -201,11 +201,13 @@ export function incompleteInstallRefusal(root: string, appDir: string): RefreshF
 }
 
 function dependencyStates(root: string, appDir: string): DependencyState[] {
-  const states = [dependencyState(root, root), dependencyState(existsSync(appDir) ? appDir : root)];
-  return states.filter(
-    (state, index): state is DependencyState =>
-      state !== null && states.findIndex((other) => other?.root === state.root) === index,
-  );
+  const app = dependencyState(existsSync(appDir) ? appDir : root);
+  const top = dependencyState(root, root);
+  const carried =
+    top &&
+    top.root !== app?.root &&
+    (hasInstalledDependencies(top.root, top.installed) || readInstallEvidence(top.root));
+  return [app, carried ? top : null].filter((state): state is DependencyState => state !== null);
 }
 
 /**
@@ -622,7 +624,7 @@ export async function refreshMainCheckout({
   for (const entry of marked)
     if (!dependencyRoots.some((other) => other.root === entry.root)) restoreMarked(entry.root);
   if (!dependencyRoots.length) emit(stepLine('deps', `source ${root}: no lockfile in this repository`, 'skipped'));
-  const owed: { dependencies: DependencyState; consumed: InstallEvidence; subject: string }[] = [];
+  const owed: { dependencies: DependencyState; subject: string }[] = [];
   for (const dependencies of dependencyRoots) {
     const installed = hasInstalledDependencies(dependencies.root, dependencies.installed);
     const depsDir = relative(root, dependencies.root);
@@ -645,13 +647,14 @@ export async function refreshMainCheckout({
     const depsSubject = `source ${dependencies.root}: ${deps.reason}`;
     if (deps.run) {
       if (inspectOnly) return { mutation: deps.reason };
-      owed.push({ dependencies, consumed, subject: depsSubject });
+      owed.push({ dependencies, subject: depsSubject });
       continue;
     }
     restoreMarked(dependencies.root);
     emit(stepLine('deps', depsSubject, 'skipped'));
   }
-  for (const { dependencies, consumed, subject: depsSubject } of owed) {
+  for (const { dependencies, subject: depsSubject } of owed) {
+    const consumed = pendingInstallEvidence(dependencies);
     writeInstallEvidence(dependencies.root, consumed);
     const runStep = async (command: string, subject: string, remedy: string): Promise<RefreshFailure | null> => {
       const install = await runInstallCommand({

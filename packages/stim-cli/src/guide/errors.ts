@@ -1559,8 +1559,9 @@ not on any remote"  (worktree remove)
   lockfile says nothing about the one on disk now, whose dependencies may well
   have been installed since; and a repository with no record at all -- every
   repository before its first \`--refresh\` -- copies as it always has.
-  In a monorepo the record is keyed on the directory that owns the lockfile,
-  which is usually the repository root, so every app of it reads the same one.`,
+  Each directory that owns a lockfile the refresh installs has its own record:
+  the repository root and, when the app has a lockfile of its own, the app. A
+  plain warm reads both.`,
     },
     warm: {
       summary: 'worktree warm claim storage refusals and recovery',

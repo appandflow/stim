@@ -132,9 +132,14 @@ code={`stim worktree warm --refresh`}
 It checks the branch's upstream, fetches changes when needed, and fast-forwards
 **whatever branch the source checkout has** to its `@{upstream}`, and then installs only what the new commits
 moved: the lockfile's own install command where the lockfile lives (the
-repository root in a monorepo), and `pod install` for the app you ran the
-command from. Each dependency and Pods step names its source directory and
-prints what it did or why it skipped.
+repository root in a monorepo, and the app too when it has a lockfile of its
+own), and `pod install` for the app. The app is the one you ran the command
+from or, from the monorepo root, the one app registered in the source checkout.
+A change to `patches/` counts as a dependency change. When npm's config sets
+`ignore-scripts` and the project's `package.json` defines `postinstall`
+(patch-package, usually), the refresh runs `npm run postinstall` after `npm ci`;
+dependencies' own install scripts stay blocked. Each dependency and Pods step
+names its source directory and prints what it did or why it skipped.
 
 The flag is opt-in because it writes to a checkout you are not standing in. It
 refuses one it cannot move -- uncommitted changes to tracked files or a rebase
@@ -149,8 +154,8 @@ branch's dependencies; set `worktree.defaultBranch` in the repository-root
 `.stim.json` when `origin/HEAD` is missing or wrong.
 
 An install that fails is remembered, and a plain warm reads that before it
-copies. The refresh records the install it completed for the lockfile it read;
-when the last install of the lockfile as it stands now did not finish, a plain
+copies. The refresh records the install it completed for each lockfile it read,
+the repository root's and the app's own; when the last install of a lockfile as it stands now did not finish, a plain
 warm refuses with `STIM_DEPS_INCOMPLETE` and copies nothing, because the
 dependencies in the source checkout are partial and only the refresh's own
 terminal ever said so. Run `stim worktree warm --refresh`, which reinstalls for

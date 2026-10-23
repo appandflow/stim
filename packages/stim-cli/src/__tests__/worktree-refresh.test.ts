@@ -1364,6 +1364,69 @@ test.each([
   30_000,
 );
 
+test('a refresh from a nested app leaves a repository root that was never installed alone', async () => {
+  const app = join(root, 'app');
+  write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
+  write(app, 'package.json', '{"name":"app","dependencies":{"react-native":"0.80.0"}}\n');
+  write(app, 'package-lock.json', '{"lockfileVersion":3}\n');
+  commit(root, 'monorepo with a nested app');
+  git(root, 'push', '-q', 'origin', 'main');
+  git(target, 'merge', '-q', '--ff-only', 'main');
+  mkdirSync(join(app, 'node_modules'), { recursive: true });
+  upsertProject(app, {});
+  fallBehind({ 'app/package-lock.json': '{"lockfileVersion":3,"name":"app"}\n' }, 'bump the app lockfile');
+
+  const real = getExecutor();
+  const spawned: string[] = [];
+  setExecutor({
+    ...real,
+    spawn(cmd: string, args: string[], opts: { cwd?: unknown }) {
+      spawned.push(`${[cmd, ...args].join(' ')} in ${String(opts?.cwd)}`);
+      return makeExitingChild(0);
+    },
+    runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
+      if (file === 'npm' && args[0] === 'ls') return '{}';
+      if (file === 'npm' && args.join(' ') === 'config get ignore-scripts') return 'false';
+      return real.runFile(file, args, opts);
+    },
+  });
+
+  const result = await runWarm(join(target, 'app'), '--refresh');
+  expect(result.code).toBe(0);
+  expect(spawned).toEqual([`npm ci in ${app}`]);
+  expect(result.stderr).not.toContain(`deps        source ${root}:`);
+}, 30_000);
+
+test('an npm ls failure that reports no problem list never stands in for evidence of an unchanged tree', async () => {
+  write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
+  commit(root, 'npm project');
+  git(root, 'push', '-q', 'origin', 'main');
+  fallBehind({ 'README.md': 'docs\n' }, 'unrelated change');
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+
+  const real = getExecutor();
+  const spawned: string[] = [];
+  setExecutor({
+    ...real,
+    spawn(cmd: string, args: string[]) {
+      spawned.push([cmd, ...args].join(' '));
+      return makeExitingChild(0);
+    },
+    runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
+      if (file === 'npm' && args[0] === 'ls') throw new Error('Command failed: npm ls (timed out)');
+      return real.runFile(file, args, opts);
+    },
+  });
+
+  expect((await runWarm(target, '--refresh')).code).toBe(0);
+  expect(spawned).toEqual(['npm ci']);
+
+  process.exitCode = 0;
+  fallBehind({ 'README.md': 'more docs\n' }, 'another unrelated change');
+  expect((await runWarm(target, '--refresh')).code).toBe(0);
+  expect(spawned).toEqual(['npm ci', 'npm ci']);
+}, 30_000);
+
 test('a tree npm ls rejected right after a completed install is reinstalled only when its problems change', async () => {
   write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
   commit(root, 'npm project');
