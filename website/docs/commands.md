@@ -1801,7 +1801,10 @@ only when it is a `remove-*` directory with a valid `trash.json` written by
 `worktree remove`, its ownership claim is free and the worktree it came from is
 gone. It keeps one a removal or its background `rm` still holds, one whose
 worktree still exists (a removal killed before git ran; run `stim worktree
-remove` on it to finish), and any other directory under `trash`. See [remove a worktree](./worktrees.md#remove-a-worktree).
+remove` on it to finish), and any other directory under `trash`. A trash entry
+that `worktree warm` wrote (its `trash.json` has `"kind": "warm"`) holds paths
+removed from a copy of a live worktree, so `--delete` deletes it once its claim
+is free, whether or not the worktree exists. See [remove a worktree](./worktrees.md#remove-a-worktree).
 
 `--delete` also clears the build outputs (`derived-data/`, `gradle-build/`,
 `android-cas/`, `cache-provider/`, `macos/build`, staged `macos/<Product>.app`

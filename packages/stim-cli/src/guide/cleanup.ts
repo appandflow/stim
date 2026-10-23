@@ -460,7 +460,10 @@ LINKED WORKTREES
   still exists, as after a removal killed between the rename and git, stays
   with the reason; if that worktree is the one the entry came from, run
   \`stim worktree remove\` on it to finish the removal.
-  gc never moves the directories back.
+  gc never moves the directories back. Warm uses the same trash for the
+  known paths it deletes from a copy (such as a copied .pnpm-store); gc
+  --delete deletes such an entry (trash.json kind warm) once its claim is free,
+  whatever the state of the worktree.
   When git still refuses the removal, the kept ownership record no longer
   names the devices that were parked or deleted. A workspace that is in use
   (see IN USE below) keeps its directory, devices and registry entry, and the

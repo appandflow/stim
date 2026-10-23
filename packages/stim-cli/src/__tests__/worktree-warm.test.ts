@@ -29,6 +29,19 @@ import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-s
 import { READY_PHASE_MS, readWarmRecord } from '@stim-cli/core/state';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 
+const renameIo: { fail: boolean } = vi.hoisted(() => ({ fail: false }));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    rename: async (...args: Parameters<typeof fs.rename>) => {
+      if (renameIo.fail) throw Object.assign(new Error('EXDEV: cross-device link not permitted'), { code: 'EXDEV' });
+      return fs.rename(...args);
+    },
+  };
+});
+
 let base: string;
 let root: string;
 let target: string;
@@ -62,6 +75,7 @@ beforeEach(() => {
 }, 30_000);
 
 afterEach(() => {
+  renameIo.fail = false;
   vi.restoreAllMocks();
   resetExecutor();
   process.exitCode = 0;
@@ -456,6 +470,88 @@ test('warm removes a project-local pnpm store from a copied node_modules and ski
   expect(readFileSync(join(target, 'apps/mobile/node_modules/dep/index.js'), 'utf-8')).toBe('workspace package');
   expect(existsSync(join(root, 'node_modules/.pnpm-store/v11/files/00/blob'))).toBe(true);
 }, 30_000);
+
+function seedPnpmStore(): void {
+  write(root, 'node_modules/.pnpm-store/v11/files/00/blob', 'store blob');
+  write(root, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg/index.js', 'package');
+}
+
+function trashEntries(): string[] {
+  return readdirSync(join(base, 'home', 'trash')).map((name) => join(base, 'home', 'trash', name));
+}
+
+test.skipIf(process.platform === 'win32')(
+  'warm hands the copied pnpm store to the background trash delete instead of deleting it before it returns',
+  async () => {
+    seedPnpmStore();
+    const real = getExecutor();
+    const exitedPid = await new Promise<number>((resolvePid) => {
+      const child = real.spawn('true', [], { stdio: 'ignore' });
+      child.on('exit', () => resolvePid(child.pid ?? 0));
+    });
+    const seen: { removed: string[]; expected: string[]; store: boolean; blob: string; manifest: unknown }[] = [];
+    setExecutor({
+      ...real,
+      spawn(...params: Parameters<typeof real.spawn>) {
+        const [, args = []] = params;
+        const entry = trashEntries()[0] ?? '';
+        seen.push({
+          removed: args.slice(args.indexOf('--') + 1),
+          expected: [join(entry, 'entries'), entry],
+          store: existsSync(join(target, 'node_modules/.pnpm-store')),
+          blob: readFileSync(join(entry, 'entries/0/v11/files/00/blob'), 'utf-8'),
+          manifest: JSON.parse(readFileSync(join(entry, 'trash.json'), 'utf-8')),
+        });
+        for (const path of args.slice(args.indexOf('--') + 1)) rmSync(path, { recursive: true, force: true });
+        const child = real.spawn('true', [], { stdio: 'ignore' });
+        Object.defineProperty(child, 'pid', { value: exitedPid });
+        return child;
+      },
+    });
+
+    const result = await warm();
+
+    expect(result.failed).toEqual([]);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      store: false,
+      blob: 'store blob',
+      manifest: { worktree: target, kind: 'warm' },
+    });
+    expect(seen[0]?.removed).toEqual(seen[0]?.expected);
+    expect(trashEntries()).toEqual([]);
+    expect(existsSync(join(target, 'node_modules/.pnpm-store'))).toBe(false);
+    expect(readFileSync(join(target, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg/index.js'), 'utf-8')).toBe(
+      'package',
+    );
+  },
+  30_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'warm deletes the copied pnpm store in place when it cannot be renamed into the trash or the trash cannot be opened',
+  async () => {
+    seedPnpmStore();
+    renameIo.fail = true;
+    expect((await warm()).failed).toEqual([]);
+    expect(existsSync(join(target, 'node_modules/.pnpm-store'))).toBe(false);
+    expect(readFileSync(join(target, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg/index.js'), 'utf-8')).toBe(
+      'package',
+    );
+    expect(trashEntries()).toEqual([]);
+
+    renameIo.fail = false;
+    rmSync(join(target, 'node_modules'), { recursive: true });
+    rmSync(join(base, 'home', 'trash'), { recursive: true, force: true });
+    write(base, 'home/trash', 'a file where the trash directory belongs');
+    expect((await warm()).failed).toEqual([]);
+    expect(existsSync(join(target, 'node_modules/.pnpm-store'))).toBe(false);
+    expect(readFileSync(join(target, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg/index.js'), 'utf-8')).toBe(
+      'package',
+    );
+  },
+  30_000,
+);
 
 test('warm removes the Xcode derived data an Expo package left in node_modules, hoisted or in the pnpm store', async () => {
   const hoisted = 'node_modules/expo-modules-jsi/apple';

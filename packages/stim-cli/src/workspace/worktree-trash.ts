@@ -29,6 +29,7 @@ const DELETE_NICENESS = '10';
 export interface TrashManifest {
   worktree: string;
   createdAt: string;
+  kind?: 'warm';
 }
 
 export interface WorktreeTrash {
@@ -82,6 +83,34 @@ async function ignoredDirectories(worktree: string, options: TrashOptions): Prom
   return found;
 }
 
+async function openTrash(
+  worktree: string,
+  options: TrashOptions,
+  kind?: TrashManifest['kind'],
+): Promise<WorktreeTrash | null> {
+  if ((options.platform ?? process.platform) === 'win32') return null;
+  const root = trashRoot();
+  let dir: string | null = null;
+  let claim: ClaimHandle | null = null;
+  try {
+    await mkdir(root, { recursive: true });
+    if (filesystemDevice(root) !== filesystemDevice(worktree)) return null;
+    dir = await mkdtemp(join(root, TRASH_ENTRY_PREFIX));
+    claim =
+      tryAcquireClaim({ root: join(dir, TRASH_CLAIMS), mode: 'exclusive', label: 'worktree trash' }).acquired ?? null;
+    if (!claim) throw new Error('the trash entry claim was not acquired');
+    const manifest: TrashManifest = { worktree, createdAt: new Date().toISOString(), ...(kind ? { kind } : {}) };
+    await writeFile(join(dir, TRASH_MANIFEST), `${JSON.stringify(manifest)}\n`);
+    await mkdir(join(dir, TRASH_ENTRIES));
+  } catch (error) {
+    if (claim) releaseClaim(claim);
+    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+    rethrowCancellation(error, options.signal);
+    return null;
+  }
+  return { dir, worktree, moved: [], claim };
+}
+
 /**
  * Moves the worktree's ignored directories, which `git worktree remove` would delete, into a new entry under
  * `$STIM_HOME/trash` held by an exclusive ownership claim. Null, with nothing moved, when the trash is on another
@@ -101,37 +130,46 @@ export async function moveIgnoredTreesToTrash(
     return null;
   }
   if (!listed.length) return null;
-  const root = trashRoot();
-  let dir: string | null = null;
-  let claim: ClaimHandle | null = null;
-  const entries = listed.map((from, index) => ({ from, to: String(index) }));
-  try {
-    await mkdir(root, { recursive: true });
-    if (filesystemDevice(root) !== filesystemDevice(worktree)) return null;
-    dir = await mkdtemp(join(root, TRASH_ENTRY_PREFIX));
-    claim =
-      tryAcquireClaim({ root: join(dir, TRASH_CLAIMS), mode: 'exclusive', label: 'worktree trash' }).acquired ?? null;
-    if (!claim) throw new Error('the trash entry claim was not acquired');
-    const manifest: TrashManifest = { worktree, createdAt: new Date().toISOString() };
-    await writeFile(join(dir, TRASH_MANIFEST), `${JSON.stringify(manifest)}\n`);
-    await mkdir(join(dir, TRASH_ENTRIES));
-  } catch (error) {
-    if (claim) releaseClaim(claim);
-    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
-    rethrowCancellation(error, options.signal);
-    return null;
-  }
-  const moved: WorktreeTrash['moved'] = [];
-  for (const entry of entries) {
+  const trash = await openTrash(worktree, options);
+  if (!trash) return null;
+  for (const from of listed) {
+    const to = String(trash.moved.length);
     try {
-      await rename(join(worktree, entry.from), join(dir, TRASH_ENTRIES, entry.to));
-      moved.push(entry);
+      await rename(join(worktree, from), join(trash.dir, TRASH_ENTRIES, to));
+      trash.moved.push({ from, to });
     } catch {}
   }
-  const trash = { dir, worktree, moved, claim };
-  if (moved.length) return trash;
+  if (trash.moved.length) return trash;
   await discardTrash(trash);
   return null;
+}
+
+/**
+ * A trash entry that takes directories out of a live worktree while it warms, so the delete runs in the background.
+ * `take` is false, with the directory untouched, when the entry cannot be opened or the rename fails; the caller
+ * deletes it in place. gc deletes a crashed entry whatever the state of the worktree.
+ */
+export function warmTrash(worktree: string, options: TrashOptions = {}) {
+  let trash: WorktreeTrash | null | undefined;
+  return {
+    async take(path: string): Promise<boolean> {
+      trash ??= await openTrash(worktree, options, 'warm');
+      if (!trash) return false;
+      const to = String(trash.moved.length);
+      try {
+        await rename(path, join(trash.dir, TRASH_ENTRIES, to));
+      } catch {
+        return false;
+      }
+      trash.moved.push({ from: path, to });
+      return true;
+    },
+    async dispose(operation?: StimContext): Promise<void> {
+      if (!trash) return;
+      if (trash.moved.length) await disposeTrash(trash, operation);
+      else await discardTrash(trash);
+    },
+  };
 }
 
 async function discardTrash(trash: WorktreeTrash): Promise<void> {
@@ -206,7 +244,7 @@ function deleteInBackground(trash: WorktreeTrash): 'background' | 'deleted' | 'l
 }
 
 /**
- * Deletes the trash entry once git removed the worktree. A CLI command starts a detached, low-priority `rm` recorded
+ * Deletes the trash entry once its trees are out of the way. A CLI command starts a detached, low-priority `rm` recorded
  * as the claim's child, so gc reports the entry as in use until `rm` exits. Inside a bounded report, such as the
  * programmatic API, every child is stopped when the report settles, so the entry is deleted before returning.
  * `left` means the entry waits for gc with its claim released.
