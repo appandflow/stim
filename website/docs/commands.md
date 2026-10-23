@@ -1931,7 +1931,11 @@ there.
 - `--older-than <days>` also selects devices and workspace build outputs of
   workspaces no Stim command has used for that many days, and unused cache
   entries. It limits the parked simulators and emulators `--delete` clears to
-  those parked at least that many days.
+  those parked at least that many days. A cache directory it cannot list
+  (EACCES, EPERM or ELOOP, for example) counts as a failed trim, not an empty
+  one: gc prints how many entries could not be read or removed, records the
+  cache as failed and exits 1. A directory that is missing or is not a
+  directory is not a failure.
 - `--cache <name|all|workspaces|recordings|parked>` with `--delete` empties the caches whose name
   or directory carries `<name>` whole, or every cache and the workspace build
   outputs with `all`. `workspaces` clears only the workspace build outputs,

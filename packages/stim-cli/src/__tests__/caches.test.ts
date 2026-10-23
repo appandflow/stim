@@ -555,7 +555,7 @@ describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
         if (action === 'emptying') await emptyCaches([{ ...cache, willEmpty: true }]);
         else await trimCaches([cache], 30);
         const output = log.mock.calls.flat().join('\n');
-        expect(output).toContain(`1 entry in ${dir} could not be removed`);
+        expect(output).toContain(`1 entry in ${dir} could not be read or removed`);
         expect(output).not.toMatch(/already empty|nothing older/);
         expect(process.exitCode).toBe(1);
       } finally {
@@ -580,7 +580,7 @@ describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
           fail: () => {},
         });
         expect(result.failures).toBe(1);
-        expect(lines.join('\n')).toContain(`1 entry in ${dir} could not be removed`);
+        expect(lines.join('\n')).toContain(`1 entry in ${dir} could not be read or removed`);
         expect(log).not.toHaveBeenCalled();
         expect(process.exitCode).toBeUndefined();
       } finally {

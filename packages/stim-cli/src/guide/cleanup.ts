@@ -1137,6 +1137,12 @@ SHARED BUILD CACHES
   report-only because every Gradle build shares it. Stim reports its size
   but never prunes or empties it, including with --older-than or --cache all.
 
+  A cache directory that \`gc --delete --older-than\` cannot list (EACCES,
+  EPERM or ELOOP, for example) is a failed trim, not an empty one: the run
+  prints "N entries in <dir> could not be read or removed", records the cache
+  as failed and exits 1. Fix the directory's permissions and run it again. A
+  directory that is missing or is not a directory is not a failure.
+
   Trim rather than empty. Emptying costs the next build in every project the
   time the cache was saving.`,
     },
