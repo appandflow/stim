@@ -1337,9 +1337,9 @@ test('auto reports a declined offer and falls to the local path without reservin
 });
 
 test('remote-only refuses a live local device and probes no host, where remote keeps it', async () => {
-  const place = (placement: 'remote' | 'remote-only') =>
+  const place = (word: 'remote' | 'remote-only') =>
     automaticDevicePlacement(
-      { root, slot: 'default', platform: 'ios', placement, selectors: {}, noWait: true },
+      { root, slot: 'default', platform: 'ios', placement: word, selectors: {}, noWait: true },
       {
         peek: () => ({ count: 1, max: 3, queued: 0, localLive: true }),
         capacity: () => ({ cpus: 4, loadPerCore: 1, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
@@ -1358,9 +1358,9 @@ test('remote-only refuses a live local device and probes no host, where remote k
 test('remote-only never asks EAS and refuses when no host admits, where remote asks it', async () => {
   declined = 'All configured hosted device reservations are occupied';
   const eas = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
-  const place = (placement: 'remote' | 'remote-only') =>
+  const place = (word: 'remote' | 'remote-only') =>
     automaticDevicePlacement(
-      { root, slot: 'default', platform: 'ios', placement, selectors: {}, noWait: true, eas },
+      { root, slot: 'default', platform: 'ios', placement: word, selectors: {}, noWait: true, eas },
       {
         peek: () => ({ count: 3, max: 3, queued: 0, localLive: false }),
         capacity: () => ({ cpus: 4, loadPerCore: 1, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
