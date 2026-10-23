@@ -606,13 +606,23 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       expect(readMacosRecord(root)).toBeNull();
     });
 
-    test('macos.remote remote-only skips a Mac past its own load limit', async () => {
+    test('macos.remote remote-only waits for a Mac past its own load limit, and refuses at once for one that is paused', async () => {
       configure({ remote: 'remote-only' });
       host.offer = macosOffer({ loadPerCore: 2.5 });
-      await expect(runMacos(testContext(), root, () => {})).rejects.toMatchObject({
-        code: 'STIM_HOSTING_REFUSED',
-        message: expect.stringContaining('saturated'),
-      });
+      const controller = new AbortController();
+      const lines: string[] = [];
+      await expect(
+        runMacos(testContext({ signal: controller.signal }), root, (line) => {
+          lines.push(line);
+          if (line.includes('waits')) controller.abort();
+        }),
+      ).rejects.toMatchObject({ name: 'AbortError' });
+      expect(lines.join('\n')).toContain('saturated');
+      expect(host.methods).not.toContain('device-host.reserve');
+      expect(spawned).toEqual([]);
+
+      host.offer = macosOffer({ declined: 'Hosted sessions are paused' });
+      await expect(runMacos(testContext(), root, () => {})).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
       expect(spawned).toEqual([]);
     });
 
