@@ -708,6 +708,8 @@ describe('pickOffer for Android', () => {
         {
           code: 'ndk',
           reason: 'NDK 27.1.12297006 is not installed there; Gradle downloads it on the first build (about 1-2 GB)',
+          lead: 'install the package now so the first build does not download it',
+          commands: ['sdkmanager "ndk;27.1.12297006"'],
         },
       ]);
       const everything = offer({

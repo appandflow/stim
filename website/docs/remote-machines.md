@@ -503,8 +503,8 @@ so there is no Check again button:
 4. **Tools.** Compare the worker's tools with this machine, including the Android
    tools when **Builds** is chosen. A problem that stops the chosen
    capability is shown in red and never disables **Next**; the machine stays added,
-   builds that cannot run there stay on this machine, and Settings > Remote Machines
-   lists the iOS tool problems on its row (Android-only ones are shown only here). Red problems are an incompatible Stim build
+   builds that cannot run there stay on this machine, and the machine's page in
+   Settings > Remote Machines lists every problem and note by platform. Red problems are an incompatible Stim build
    or no Xcode for Builds, and no iOS simulator runtime for Hosted simulators. **Install This Mac's Build**
    fixes an incompatible Stim build. A Linux or Windows machine shows only the Stim build and
    Android rows, and a missing Android SDK or any JDK difference is red
@@ -514,11 +514,12 @@ so there is no Check again button:
    - Missing Android tools (NDK, build-tools or compile SDK): a note when the
      worker's SDK licenses are accepted, since Gradle downloads the package on
      the first build there. Otherwise Android builds stay on this machine, and
-     the row shows the `sdkmanager` commands to run on the worker, each with a
-     **Copy** button; `sdkmanager --licenses` accepts the licenses.
+     the machine's page shows the `sdkmanager` commands to run on the worker, each with a
+     **Copy** button; `sdkmanager --licenses` accepts the licenses. A note shows the
+     command that installs the package ahead of the first build.
    - A missing or different global CocoaPods: `auto` builds skip the machine,
      and the Test Build, which names it, still goes there. With no CocoaPods the
-     row shows `brew install cocoapods` to run on the worker. Projects whose `Gemfile.lock` pins CocoaPods run that
+     machine's page shows `brew install cocoapods` to run on the worker. Projects whose `Gemfile.lock` pins CocoaPods run that
      version through Bundler on both machines and need Bundler there.
 5. **Done.** Copy the **Try it** agent prompt, or run
    `stim ios --remote-build <machine>` yourself (`stim android` for a Linux or Windows machine).

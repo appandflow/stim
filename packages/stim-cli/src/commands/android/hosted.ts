@@ -7,6 +7,7 @@ import type { writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
 import { LAUNCH_BUNDLING, LAUNCH_FATAL, type verifyLaunch } from '../../engine/launch-verify.ts';
 import type { followHostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
 import { verifyAndroidMetroRun } from './launch.ts';
+import { launchOutcomeRecord } from '../native-runtime.ts';
 import type { PreparedAndroidArtifact } from './artifact.ts';
 import { persistLastBuild, reportAndroidResult, finishAndroidUpload, type ReportAndroidResultArgs } from './result.ts';
 import { androidDevClientScheme } from './support.ts';
@@ -89,6 +90,7 @@ export async function finishHostedAndroidRun({
       ? ((await resolveDevClientScheme(root, artifact.apkPath)) ?? undefined)
       : undefined;
   const launchedAt = now();
+  let marked = false;
   try {
     const run = await place(target, {
       root,
@@ -101,7 +103,25 @@ export async function finishHostedAndroidRun({
       metroPort,
       selectors,
       ...(appMode === 'development' && isExpo ? { devClientScheme } : {}),
-      reserved: (placement) => writePlacement(root, slot, placement),
+      reserved: (placement) => {
+        if (placement.device && !marked) {
+          marked = true;
+          report.writer.write({
+            src: 'build',
+            level: 'info',
+            marker: true,
+            event: 'launch_attempt',
+            ts: now(),
+            platform: 'android',
+            appId: packageName,
+            deviceId: placement.session,
+            remote: true,
+            host: target.host.machine,
+            msg: `launching ${packageName} on ${target.host.machine}`,
+          });
+        }
+        return writePlacement(root, slot, placement);
+      },
       note: out,
       enterPhase,
     });
@@ -121,6 +141,7 @@ export async function finishHostedAndroidRun({
     );
     let launched: true | 'bundling' | 'unverified' = run.launched;
     let launchWarning: string | undefined;
+    let unattributed = false;
     if (appMode === 'development') {
       const hostedLogs = followLogs(root, slot, 'android', launchedAt);
       let verification;
@@ -158,7 +179,19 @@ export async function finishHostedAndroidRun({
       launched =
         verification.state === true ? true : verification.state === LAUNCH_BUNDLING ? 'bundling' : 'unverified';
       launchWarning = verification.warning;
+      unattributed = verification.unattributed ?? false;
     }
+    report.writer.write(
+      launchOutcomeRecord({
+        launchState: launched,
+        release,
+        process: appMode === 'process',
+        bundleId: packageName,
+        configuration: report.variant,
+        metroPort,
+        unattributed,
+      }),
+    );
     if (launched === 'unverified')
       out(
         `Launch on ${target.host.machine} is unverified; check the hosted app, then retry stim android --remote ${target.host.machine}.`,

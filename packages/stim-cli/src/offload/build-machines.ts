@@ -255,7 +255,7 @@ function offloadFindings(
       level: 'note' as const,
       title: `Remote machine ${entry} ${NOTE_TITLES[each.code] ?? 'needs a first-build download'}`,
       detail: `The build goes there anyway: ${each.reason}.`,
-      fix: null,
+      fix: commandFix(each, entry),
     })),
   ];
 }

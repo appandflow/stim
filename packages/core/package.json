@@ -1,6 +1,6 @@
 {
   "name": "@stim-cli/core",
-  "version": "1.25.0",
+  "version": "1.26.0",
   "description": "Shared internal cache and runtime primitives for Stim packages.",
   "license": "MIT",
   "repository": {

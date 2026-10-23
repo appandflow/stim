@@ -120,18 +120,9 @@ export type AndroidRuntimeKind = 'metro' | 'embedded-js' | 'process';
 
 function androidLaunchOutcomeRecord(
   kind: AndroidRuntimeKind,
-  args: Omit<Parameters<typeof launchOutcomeRecord>[0], 'release'>,
+  args: Omit<Parameters<typeof launchOutcomeRecord>[0], 'release' | 'process'>,
 ): Record<string, unknown> {
-  if (kind !== 'process') return launchOutcomeRecord({ ...args, release: kind === 'embedded-js' });
-  const unverified = args.launchState === LAUNCH_UNVERIFIED;
-  return {
-    src: 'build',
-    level: unverified ? 'warn' : 'info',
-    event: unverified ? 'launch_unverified' : 'launch_verified',
-    msg: unverified
-      ? `${args.bundleId} could not be verified as running`
-      : `${args.bundleId} is running its native process`,
-  };
+  return launchOutcomeRecord({ ...args, release: kind === 'embedded-js', process: kind === 'process' });
 }
 
 export interface AndroidRuntimePlan extends RuntimePlan<

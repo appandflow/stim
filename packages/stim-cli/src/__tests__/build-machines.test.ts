@@ -546,6 +546,8 @@ describe('inspectBuildMachines', () => {
     const note = {
       code: 'ndk' as const,
       reason: 'NDK 27.1.12297006 is not installed there; Gradle downloads it on the first build (about 1-2 GB)',
+      lead: 'install the package now so the first build does not download it',
+      commands: ['/sdk/cmdline-tools/latest/bin/sdkmanager "ndk;27.1.12297006"'],
     };
     const blocker = {
       code: 'build-tools' as const,
@@ -569,7 +571,7 @@ describe('inspectBuildMachines', () => {
         code: 'build-machine-ndk',
         level: 'note',
         detail: `The build goes there anyway: ${note.reason}.`,
-        fix: null,
+        fix: ['On mini, install the package now so the first build does not download it:', ...note.commands].join('\n'),
       }),
     ]);
     const blocked = await run([blocker], []);

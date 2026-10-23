@@ -1312,8 +1312,8 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    budget of up to 150 seconds. When Builds is chosen, Android tools are always compared
    and are amber. Next is never disabled by a tool row: approval is finished, a
    failed offload falls back to a local build, and the machine stays added.
-   Settings > Remote Machines lists doctor's iOS-platform problems on the
-   machine's row; Android-only tool problems appear only here.
+   A machine's page in Settings > Remote Machines shows every problem and note,
+   including the Android ones, grouped by platform.
    A problem that stops the chosen capability is red: a Stim build mismatch, no Xcode, a different CPU or an
    unreachable or unapproved Mac for Builds, and no iOS simulator runtime for
    Hosted simulators when doctor reports it. With only Hosted simulators, setup
@@ -1389,7 +1389,9 @@ each row shows its place, and the up and down buttons write the new order to
 `remote.machines` at machine scope. The list's footer says the same. Each row
 shows its place in the list, the Mac's name, one status pill, its MagicDNS name with its cores and
 offloaded builds, a detail line, what it does (**Builds**, plus **Simulators**
-when its device-host access is approved), up and down buttons that move the Mac, and **Remove...**. The pill reads **Approved**, **Waiting for
+when its device-host access is approved), up and down buttons that move the Mac, **Details** and **Remove...**. The pill
+shows only a state that stops this Mac using the machine; the machine's page holds
+the rest. It reads **Approved**, **Waiting for
 approval** (someone on that machine approves it by running the setup command
 there; the row says when the request lapses, such as "Waiting for approval
 until 21:05", in local time),
@@ -1416,13 +1418,46 @@ For an approved machine the detail line gives the builds it runs and how many
 it takes (`builds` and `maxBuilds`, such as "0/2 builds"; the offloaded
 `running` and `max` for a stim-server that reports no `builds`) and its free
 disk. Doctor reports no Xcode or Stim version per machine, so the line has
-neither. When the machine is not offloadable, each of doctor's `problems`
-appears under the line in amber, in doctor's order, with its fix: a command to
-copy for CocoaPods (`gem install cocoapods -v <this Mac's version>`, or `brew
-install cocoapods` when there is none), the remedy sentence for the other known
-reasons. While a check runs, the row keeps the last state and shows a small
-spinner next to the pill; **Checking...** appears only for a row with no state
-yet.
+neither. A row prints no per-problem lines: the pill carries the first problem's short
+title, and **Details** opens the machine's page. While a check runs, the row keeps
+the last state and shows a small spinner next to the pill; **Checking...** appears
+only for a row with no state yet.
+
+**Details** (or **Remote Machines** at the top of the page, to go back) swaps the
+list for the page of one machine. It shows, from the list's doctor report and one
+`--platform android` report:
+
+- the state that stops the machine, with doctor's diagnosis title, message and remedy,
+  and a Copy button for each command the remedy names in backticks;
+- **Stim version**: **Install This Mac's Build** and the update's progress, as on the
+  row;
+- one section for each of **Machine** (Stim build, free disk, load, an unreachable
+  offer), **iOS**, **Android** and **macOS** that has anything to say, listing every
+  `problems` entry (amber **Problem**) and every `notes` entry (**Note**: a build there
+  does something without stopping, such as Gradle downloading an SDK package on its
+  first build). Each shows doctor's reason and its fix: the command lines of doctor's
+  finding, each with a Copy button that copies only the command, or the remedy sentence
+  for a reason with no command. A note's command installs the package ahead of the first
+  build. The **Update this Mac** pill replaces the pill text only; every other problem
+  stays listed here. A newer remote Stim drops the "update the remote machine" advice
+  from the Stim build problem, since only updating Stim Desktop fixes it;
+- **Capacity**: load per core, RAM and free disk as on the row, cores, the builds it
+  runs and takes, and its offloaded builds;
+- **Versions**: this Mac's Stim, the machine's stim-server version (its `/health`),
+  and whether its Stim build matches this Mac's;
+- **Approvals**: the build approval and, for a machine that can host simulators, the
+  device-host approval;
+- **Use This Machine For**: the **Builds enabled** and **Simulators enabled**
+  switches, as on the row; and **Remove...**, **Ask** and **Ask Again**.
+
+The Android report is read when the page opens and every 60 seconds while it stays
+open, never on the list's poll: it is a second doctor run through the matching local
+server (`desktop-report-platform`, no CLI fallback), reused for 30 seconds. Until it
+answers the Android section says "Checking the Android tools...", and when it fails, why,
+while the Android problems of the list's own report stay listed. When it answers, its
+Android problems and notes replace the list's, since a checkout without an Android
+project has none in the list's report. The **Machines** page lists the same problems and
+notes under a selected machine.
 
 **Add Remote Machine...** opens the wizard, which owns tailnet discovery and the
 setup; the tab has no separate list of tailnet Macs. With no machines, the tab
@@ -1508,6 +1543,7 @@ here after trying one, and lists the latest placements with the reason Stim
 gave, such as `load 0.6/core, 1 of 3 build slots busy here`. Selecting an
 `remote.machines` entry shows its state and first reason from
 doctor (the same check as Settings, each minute while the page is open), its
+problems and notes by platform (as on the machine's page in Settings), its
 load per core, cores, offloaded builds running and free disk from its offer,
 and the builds it ran for this Mac today and in total, their average time, the
 time they saved against this project's last build here (an estimate), and the

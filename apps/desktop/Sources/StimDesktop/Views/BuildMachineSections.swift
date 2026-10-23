@@ -21,7 +21,12 @@ struct ThisMacPlacements: View {
   }
 }
 
-/// The selected remote Mac's readiness, capacity and build history from the page's minute refresh.
+private struct MachinePageKey: Hashable {
+  var machine: String
+  var checkout: String?
+}
+
+/// The selected remote Mac's readiness, problems and notes, capacity and build history from the page's minute refresh.
 struct MachineBuildMachines: View {
   var model: BuildMachinesModel
   var checkout: String?
@@ -57,6 +62,12 @@ struct MachineBuildMachines: View {
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
+    .task(id: MachinePageKey(machine: selectedMachine, checkout: checkout)) {
+      while !Task.isCancelled {
+        let loaded = await model.loadDetails(selectedMachine, checkout: checkout)
+        try? await Task.sleep(for: .seconds(loaded ? 60 : 3))
+      }
+    }
   }
 
   private func section(_ machine: BuildMachineStatus) -> some View {
@@ -80,6 +91,16 @@ struct MachineBuildMachines: View {
       }
       MachineUpdateLine(machine: machine.machine, phase: model.updates[machine.machine], install: install) {
         Task { await model.update(machine.machine, checkout: checkout) }
+      }
+      let detail = model.detail(for: machine.machine, checkout: checkout)
+      ForEach(detail.groups) { group in
+        VStack(alignment: .leading, spacing: Space.md) {
+          Text(group.platform.title).font(.stim(.headline))
+          ForEach(group.issues) { MachineIssueRow(issue: $0, machine: machine.machine) }
+        }
+      }
+      if let message = detail.androidMessage {
+        Text(verbatim: message).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
       }
       if let counts {
         HStack(alignment: .top, spacing: Space.md) {

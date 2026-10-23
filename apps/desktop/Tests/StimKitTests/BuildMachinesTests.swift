@@ -308,7 +308,6 @@ import Testing
                    "memoryUsedBytes":9663676416,"memoryTotalBytes":17179869184}}
       """#)
     #expect(busy.listStatus == MachineListStatus(title: "Busy (1/2 builds)", tone: .warning))
-    #expect(busy.problemLines.isEmpty)
     #expect(busy.rowDetail.isEmpty)
     #expect(
       busy.capacity?.resources == [
@@ -328,10 +327,6 @@ import Testing
     #expect(
       try status(#"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"r"}]}"#).listStatus
         .title == "Busy")
-    let both = try status(
-      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"b"},{"code":"stim-build","reason":"s"}]}"#
-    )
-    #expect(both.problemLines.map(\.reason) == ["s"])
   }
 
   @Test func describesAMachineRowFromDoctorsReport() throws {
@@ -350,26 +345,26 @@ import Testing
         MachineResource(kind: .cpu, label: "Load", value: "0.6/core", tone: .normal),
         MachineResource(kind: .disk, label: "Disk", value: "825.2 GB free", tone: .normal),
       ])
-    #expect(
-      mini.problemLines == [
-        .init(code: "cocoapods", reason: "CocoaPods 1.17.0 there, 1.16.2 here", fix: .command("gem install cocoapods -v 1.16.2"))
-      ])
+    func issues(_ status: BuildMachineStatus) -> [MachineIssue] {
+      MachineDetail(MachineDetail.Input(entry: status.machine, status: status)).groups.flatMap(\.issues)
+    }
+    #expect(issues(mini).map(\.fix?.commands) == [["gem install cocoapods -v 1.16.2"]])
 
     let missingPods = try status(
       #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"cocoapods","reason":"CocoaPods null there, 1.16.2 here"}]}"#
     )
-    #expect(missingPods.problemLines.first?.fix == .command("brew install cocoapods"))
+    #expect(issues(missingPods).first?.fix?.commands == ["brew install cocoapods"])
     let build = try status(
       #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"Stim build 5773060690f40277 there, d9b8bdb39828c9a0 here"},{"code":"other","reason":"odd"}]}"#
     )
-    #expect(build.problemLines.map(\.fix) == [.advice("Update the remote machine."), nil])
-    #expect(build.problemLines.map(\.reason) == ["Stim build 5773060 there, d9b8bdb here", "odd"])
+    #expect(issues(build).map(\.fix?.text) == [["Update the remote machine."], nil])
+    #expect(issues(build).map(\.reason) == ["Stim build 5773060 there, d9b8bdb here", "odd"])
     #expect(build.rowDetail.isEmpty)
 
     let ready = try status(
       #"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2,"builds":3,"maxBuilds":0}}"#)
     #expect(ready.rowDetail == "Builds can run there.")
-    #expect(ready.problemLines.isEmpty)
+    #expect(issues(ready).isEmpty)
     let older = try status(#"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2}}"#)
     #expect(older.rowDetail == "Builds can run there.")
     #expect(try status(#"{"machine":"m","state":"approved"}"#).rowDetail == "Builds can run there.")

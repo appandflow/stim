@@ -14,6 +14,15 @@ final class BuildMachinesModel {
     var statuses: [BuildMachineStatus]
     var hosts: [BuildMachineStatus]?
     var problem: Problem?
+    var findings: [DoctorReport.Finding] = []
+  }
+
+  /// The Android doctor report of one checkout, read when a machine's page opens.
+  struct AndroidCheck {
+    var statuses: [BuildMachineStatus] = []
+    var findings: [DoctorReport.Finding] = []
+    var readAt: Date?
+    var failure: String?
   }
 
   /// Whether Tailscale is running, once checked.
@@ -32,6 +41,9 @@ final class BuildMachinesModel {
   private var refreshedEntries: [String: [String]] = [:]
   private var hostingCheckedAt: [String: Date] = [:]
   private var checks: [String: Check] = [:]
+  private(set) var androidChecks: [String: AndroidCheck] = [:]
+  private var serverVersions: [String: String] = [:]
+  @ObservationIgnored private var androidLoads: [String: Task<Void, Never>] = [:]
   @ObservationIgnored private var lastMachineCheck: BuildMachineCheck?
   @ObservationIgnored private var localMissing = false
   @ObservationIgnored private var settingsReadAt: Date?
@@ -45,6 +57,8 @@ final class BuildMachinesModel {
   private let readLocalStim: @MainActor () async -> LocalStim?
   private let now: () -> Date
   private let machineAccess: @MainActor (String, Bool) async throws -> DoctorReport
+  private let androidDoctor: @MainActor (String) async throws -> DoctorReport
+  private let serverVersion: @MainActor (String, Int) async -> String?
   private let pollInterval: Duration
   private let unreachableLimit: Duration
 
@@ -53,6 +67,8 @@ final class BuildMachinesModel {
     pollInterval: Duration = .seconds(2), unreachableLimit: Duration = .seconds(300),
     now: @escaping () -> Date = Date.init,
     machineAccess: (@MainActor (String, Bool) async throws -> DoctorReport)? = nil,
+    androidDoctor: (@MainActor (String) async throws -> DoctorReport)? = nil,
+    serverVersion: @escaping @MainActor (String, Int) async -> String? = { await Tailnet.health(dnsName: $0, port: $1)?.version },
     localStim: @escaping @MainActor () async -> LocalStim? = BuildMachinesModel.currentLocalStim,
     request: @escaping @MainActor (String, [String: JSONValue]) async throws -> JSONValue = BuildMachinesModel.localRequest
   ) {
@@ -66,6 +82,12 @@ final class BuildMachinesModel {
     self.now = now
     let reader = MachineAccessReader(cli: cli) { ServerSession.shared.statsConnection }
     self.machineAccess = machineAccess ?? { try await reader.report(cwd: $0, ask: $1) }
+    self.serverVersion = serverVersion
+    self.androidDoctor =
+      androidDoctor ?? { cwd in
+        try await readPlatformDoctor(
+          cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: cwd, platform: "android")
+      }
   }
 
   static func localRequest(_ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
@@ -354,15 +376,83 @@ final class BuildMachinesModel {
     case .success(let report):
       checks[checkout] = Check(
         statuses: report.remoteMachines ?? [], hosts: report.deviceHosts,
-        problem: report.remoteMachines == nil ? .unsupported : nil)
+        problem: report.remoteMachines == nil ? .unsupported : nil, findings: report.findings)
       await readRemoteServers(report.remoteMachines ?? [])
       guard !Task.isCancelled else { return }
       updateAutomatically(report.remoteMachines ?? [], checkout: checkout)
     case .failure(let error):
       checks[checkout] = Check(
         statuses: check(in: checkout)?.statuses ?? [], hosts: check(in: checkout)?.hosts,
-        problem: .failed(error.localizedDescription))
+        problem: .failed(error.localizedDescription), findings: check(in: checkout)?.findings ?? [])
     }
+  }
+
+  /// Reads what only the machine's page shows: the Android doctor report, which is slower than the list's, and the
+  /// version its stim-server reports. The list's poll never calls it.
+  /// Returns false while the list's report has no approved status for the machine yet, so a caller tries again soon.
+  @discardableResult
+  func loadDetails(_ entry: String, checkout: String?) async -> Bool {
+    guard let checkout, let status = check(in: checkout)?.statuses.first(where: { $0.machine == entry }),
+      status.state == .approved
+    else { return false }
+    async let android: Void = loadAndroid(checkout: checkout)
+    async let version: Void = loadServerVersion(entry, status: status)
+    _ = await (android, version)
+    return true
+  }
+
+  private func loadAndroid(checkout: String) async {
+    if let running = androidLoads[checkout] { return await running.value }
+    if let readAt = androidChecks[checkout]?.readAt, now().timeIntervalSince(readAt) < 30 { return }
+    let task = Task {
+      let result = await Result.awaiting { try await androidDoctor(checkout) }
+      androidLoads[checkout] = nil
+      var next = androidChecks[checkout] ?? AndroidCheck()
+      switch result {
+      case .success(let report):
+        next.statuses = report.remoteMachines ?? []
+        next.findings = report.findings
+        next.failure = report.remoteMachines == nil ? "This stim does not report remote machines; update it." : nil
+        next.readAt = now()
+      case .failure(let error): next.failure = error.localizedDescription
+      }
+      androidChecks[checkout] = next
+    }
+    androidLoads[checkout] = task
+    await task.value
+  }
+
+  private func loadServerVersion(_ entry: String, status: BuildMachineStatus) async {
+    guard let dnsName = status.dnsName else { return }
+    let port = entry.split(separator: ":").dropFirst().first.flatMap { Int($0) } ?? Tailnet.servePort
+    if let version = await serverVersion(dnsName, port) { serverVersions[entry] = version }
+  }
+
+  func detail(for entry: String, checkout: String?) -> MachineDetail {
+    let check = checkout.flatMap { checks[$0] }
+    let status = check?.statuses.first { $0.machine == entry }
+    var input = MachineDetail.Input(entry: entry, status: status)
+    input.findings = check?.findings ?? []
+    input.host = check?.hosts?.first { OffloadMachines.name($0.machine) == OffloadMachines.name(entry) }
+    input.hostsSimulators = !androidOnlyNames.contains(OffloadMachines.name(entry))
+    input.hostsKnown = check?.hosts != nil
+    if let status {
+      input.install = install(for: status)
+      input.update = updates[entry]
+      if status.state == .approved, let checkout {
+        let android = androidChecks[checkout]
+        if let failure = android?.failure {
+          input.android = .failed(failure)
+        } else if android?.readAt == nil {
+          input.android = .loading
+        } else if let android {
+          input.android = .loaded(android.statuses.first { $0.machine == entry }, android.findings)
+        }
+      }
+    }
+    input.thisMacVersion = localStim?.version
+    input.serverVersion = serverVersions[entry] ?? remoteServers[entry]?.remote?.server?.version
+    return MachineDetail(input)
   }
 
   func ask(_ entry: String, checkout: String?) async {
