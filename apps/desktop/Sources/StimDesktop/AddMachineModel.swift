@@ -20,7 +20,7 @@ final class AddMachineModel {
 
   typealias Page = SetupPage
   var page: Page = .setup
-  var mode: WizardMode = .off
+  var mode: WizardMode? = .local
   private(set) var toolsStatus: BuildMachineStatus?
   private(set) var androidStatus: BuildMachineStatus?
   private(set) var toolFindings: [DoctorReport.Finding] = []
@@ -265,7 +265,7 @@ final class AddMachineModel {
   }
 
   private func restoreMode() async {
-    do { try await dependencies.writeSetting("remote.buildMode", nil) } catch { modeWritten = true }
+    do { try await dependencies.writeSetting("remote.build", nil) } catch { modeWritten = true }
   }
 
   func preselect(machineID: String?, hostedSimulators: Bool) {
@@ -346,7 +346,7 @@ final class AddMachineModel {
       wizard.settings = SetupWizard.Settings(
         builds: payload.entry("remote.machines")?.value.strings ?? [],
         hosts: payload.entry("remote.machines")?.value.strings ?? [],
-        mode: payload.entry("remote.buildMode")?.value.string, modeOrigin: payload.entry("remote.buildMode")?.origin)
+        mode: payload.entry("remote.build")?.value.string, modeOrigin: payload.entry("remote.build")?.origin)
       commandKnown = known
       let current = dependencies.now()
       if let draft = draftTicket, current < draft.expiresAt {
@@ -419,7 +419,7 @@ final class AddMachineModel {
           wizard.settings = SetupWizard.Settings(
             builds: payload.entry("remote.machines")?.value.strings ?? [],
             hosts: payload.entry("remote.machines")?.value.strings ?? [],
-            mode: payload.entry("remote.buildMode")?.value.string, modeOrigin: payload.entry("remote.buildMode")?.origin)
+            mode: payload.entry("remote.build")?.value.string, modeOrigin: payload.entry("remote.build")?.origin)
         } catch {
           self.error = error.localizedDescription
           return
@@ -567,7 +567,7 @@ final class AddMachineModel {
     do {
       let payload = try await dependencies.readSettings()
       mode = WizardMode.defaultChoice(
-        changedMode: wizard.modeChanged, current: payload.entry("remote.buildMode")?.value.string)
+        changedMode: wizard.modeChanged, current: payload.entry("remote.build")?.value.string)
       if choosesSimulators, let entry = machineEntry {
         let ios = payload.entry("ios.remote")?.value.string
         let android = payload.entry("android.remote")?.value.string
@@ -585,8 +585,8 @@ final class AddMachineModel {
     defer { busy = false }
     do {
       let payload = try await dependencies.readSettings()
-      if payload.entry("remote.buildMode")?.value.string != mode.rawValue {
-        try await dependencies.writeSetting("remote.buildMode", mode.rawValue)
+      if let mode, payload.entry("remote.build")?.value.string != mode.rawValue {
+        try await dependencies.writeSetting("remote.build", mode.rawValue)
       }
       modeWritten = false
       if choosesSimulators, let entry = machineEntry, let simulators {
@@ -612,7 +612,7 @@ final class AddMachineModel {
         let payload = try await dependencies.readSettings()
         let entry = SetupPortProbe.entry(machine: mac.machine, port: port)
         if wizard.modeChanged, !modeWritten {
-          try await dependencies.writeSetting("remote.buildMode", "off")
+          try await dependencies.writeSetting("remote.build", "local")
           modeWritten = true
         }
         let entries = payload.entry("remote.machines")?.value.strings ?? []
@@ -632,7 +632,7 @@ final class AddMachineModel {
         }
         addedEntries = [:]
         if modeWritten {
-          try await dependencies.writeSetting("remote.buildMode", nil)
+          try await dependencies.writeSetting("remote.build", nil)
           modeWritten = false
         }
       case .forgetPairing: try await runDoctor(ask: true)
@@ -744,7 +744,7 @@ final class AddMachineModel {
               .init(text: "offer accepted; syncing checkout", kind: .output),
               .init(text: "built on mini in 2:52: offer 0:01, sync 0:03, build 2:41, fetch 0:04", kind: .ok),
             ] : [])
-        mode = fixture == .summaryNever || fixture == .summarySkippedAfterFailure ? .off : .auto
+        mode = fixture == .summaryNever || fixture == .summarySkippedAfterFailure ? .local : .auto
       }
     }
 

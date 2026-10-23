@@ -13,6 +13,7 @@ import {
   iosProjectDirSettingError,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
+  inertSettingWarning,
   unknownSettingKeys,
   type SettingsObject,
 } from '../../workspace/settings.ts';
@@ -66,7 +67,7 @@ export function resolveIosBuildSetup(
     };
   }
   for (const key of unknownSettingKeys(settings)) {
-    warn('setting', `Warning: setting "${key}" is not read by Stim and will be ignored.`);
+    warn('setting', inertSettingWarning(settings, key));
   }
   const cacheProviderError = cacheProviderSettingError(settings);
   if (cacheProviderError) warn('cache', `${cacheProviderError} Using the local cache.`);

@@ -40,7 +40,7 @@ import {
 } from '../../engine/remote-cache.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
 import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
-import { machineCapacity, type BuildMissReason, type MachineCapacity, type OffloadMode } from '@stim-cli/core/state';
+import { machineCapacity, type BuildMissReason, type MachineCapacity } from '@stim-cli/core/state';
 import { claimFailure } from '../../ownership-claim.ts';
 import type { pairedMachines } from '../../offload/build-machines.ts';
 import {
@@ -56,6 +56,7 @@ import {
 } from '../../offload/client.ts';
 import {
   fingerprintMismatchRemedy,
+  automaticBuild,
   namedBuildMachine,
   OffloadRefusal,
   requireLocalBuild,
@@ -202,7 +203,7 @@ export async function acquireAndroidArtifact(
       }),
     );
     if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason, info.remedy);
-    requireLocalBuild(buildMachine);
+    requireLocalBuild(buildMachine, reason);
     record.offloadFallback = reason;
     phase('build', `${line} -> building here`);
   };
@@ -465,7 +466,7 @@ export async function acquireAndroidArtifact(
     try {
       const buildSlot = await run.takeBuildSlot({
         signal,
-        automatic: buildMachine === 'auto',
+        automatic: automaticBuild(buildMachine),
         max: maxBuilds,
         out,
         waitingFor: (info) => waitingFor?.(info, 'build-slot'),
@@ -486,7 +487,6 @@ export async function acquireAndroidArtifact(
 
   interface Candidate {
     cacheOnly: boolean;
-    mode: OffloadMode;
     here: MachineCapacity;
     code: string;
     reason: string;
@@ -500,7 +500,7 @@ export async function acquireAndroidArtifact(
       hereReason = cacheIneligible;
       return null;
     }
-    const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
+    const { machines, localEnabled } = buildPlacementCandidates(buildMachine);
     if (localEnabled && machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local')
       return null;
     const unsupported =
@@ -508,7 +508,6 @@ export async function acquireAndroidArtifact(
       (recipe.offload ? recipe.offload.unsupported : 'this project integration does not support offloaded builds');
     const here = machineCapacity();
     const placement = offloadPlacement({
-      mode,
       localEnabled,
       machines: machines.length,
       here,
@@ -523,7 +522,7 @@ export async function acquireAndroidArtifact(
         cachePolicy.remote &&
         (recipe.offload?.uncachedArtifacts || (recipe.offload && !recipe.offload.request.native))
       )
-        return { cacheOnly: true, mode, here, code: placement.code, reason: placement.reason, machines };
+        return { cacheOnly: true, here, code: placement.code, reason: placement.reason, machines };
       writer.write(
         buildPlacementRecord({
           platform: PLATFORM,
@@ -531,10 +530,10 @@ export async function acquireAndroidArtifact(
           stays: { code: placement.code, reason: placement.reason },
         }),
       );
-      if (mode !== 'off') phase('build', `placement: here (${placement.reason})`);
+      if (buildMachine !== 'local') phase('build', `placement: here (${placement.reason})`);
       return null;
     }
-    return { cacheOnly: false, mode, here, code: placement.code, reason: placement.reason, machines };
+    return { cacheOnly: false, here, code: placement.code, reason: placement.reason, machines };
   }
 
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
@@ -553,7 +552,6 @@ export async function acquireAndroidArtifact(
     const choice = await chooseBuildMachine({
       projectRoot: root,
       target,
-      mode: candidate.mode,
       here: candidate.here,
       note: (line) => phase('build', chalk.dim(`offload: ${line}`)),
       machines: candidate.machines,

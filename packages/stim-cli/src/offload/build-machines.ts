@@ -9,6 +9,7 @@ import {
   cannotHost,
   isJsonObject,
   MACHINE_CREDENTIALS_VERSION,
+  placementWord,
   readBuildMachines,
   readDeviceHostMachines,
   type BuildMachineCredential,
@@ -16,7 +17,7 @@ import {
 import type { Finding } from '../diagnostics/doctor.ts';
 import type { OffloadProblem } from './toolchain.ts';
 import { withDirLock } from '../dir-lock.ts';
-import { getConfigDir } from '../workspace/config.ts';
+import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import { configuredMachines } from '../device-host/machines.ts';
 import { readHostPermissions } from './access-ticket.ts';
 import { diagnosisFinding, notOnTailnetDiagnosis } from './diagnosis.ts';
@@ -230,13 +231,23 @@ export function predictedRefusal(entry: string, problems: OffloadProblem[]): { r
   };
 }
 
-function offloadFindings(entry: string, problems: OffloadProblem[], notes: OffloadProblem[]): Finding[] {
+function offloadFindings(
+  entry: string,
+  problems: OffloadProblem[],
+  notes: OffloadProblem[],
+  operation?: StimContext,
+): Finding[] {
+  const selected = operation?.env.STIM_REMOTE_BUILD?.trim() || loadConfig()?.remote?.build;
+  const consequence =
+    typeof selected === 'string' && placementWord(selected) === 'remote-only'
+      ? 'remote.build is remote-only, so automatic builds skip this machine and refuse rather than build on this Mac:'
+      : 'Builds fall back to this machine:';
   return [
     ...problems.map((problem) => ({
       code: `build-machine-${problem.code}`,
       level: TRANSIENT.has(problem.code) ? ('note' as const) : ('cost' as const),
       title: `Remote machine ${entry} ${PROBLEM_TITLES[problem.code]}`,
-      detail: `Builds fall back to this machine: ${problem.reason}.${problem.code === 'cocoapods' ? ` A build sent there with --remote-build ${entry} still runs.` : ''}`,
+      detail: `${consequence} ${problem.reason}.${problem.code === 'cocoapods' ? ` A build sent there with --remote-build ${entry} still runs.` : ''}`,
       fix: problemFix(problem, entry),
     })),
     ...notes.map((each) => ({
@@ -411,7 +422,7 @@ async function inspectMachine(
       ...(capacity ? { capacity } : {}),
     },
     finding: null,
-    extra: offloadFindings(entry, problems, notes),
+    extra: offloadFindings(entry, problems, notes, operation),
   };
 }
 

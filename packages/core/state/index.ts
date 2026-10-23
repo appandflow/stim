@@ -19,6 +19,7 @@ export * from './log-reader.ts';
 export * from './logs-query.ts';
 export * from './ndjson.ts';
 export * from './paths.ts';
+export * from './placement.ts';
 export * from './recordings.ts';
 export * from './run-id.ts';
 export * from './settings-registry.ts';

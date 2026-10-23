@@ -56,6 +56,7 @@ import {
 import { predictedRefusal, type pairedMachines } from '../../offload/build-machines.ts';
 import {
   fingerprintMismatchRemedy,
+  automaticBuild,
   podsFailedRemedy,
   namedBuildMachine,
   OffloadRefusal,
@@ -63,7 +64,7 @@ import {
 } from '../../offload/selection.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
-import { machineCapacity, type BuildMissReason, type MachineCapacity, type OffloadMode } from '@stim-cli/core/state';
+import { machineCapacity, type BuildMissReason, type MachineCapacity } from '@stim-cli/core/state';
 import type { IosDeps } from './dependencies.ts';
 import { finishIosUpload } from './result.ts';
 import { PLATFORM, printDiagnostics, xcodeFailureReport } from './support.ts';
@@ -214,7 +215,7 @@ export async function acquireIosArtifact(
       }),
     );
     if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason, info.remedy);
-    requireLocalBuild(buildMachine);
+    requireLocalBuild(buildMachine, reason);
     offloadFallback = reason;
     buildFailure = { ...buildFailure, offloadFallback: reason };
     phase('build', `${line} -> building here`);
@@ -457,7 +458,7 @@ export async function acquireIosArtifact(
     try {
       const buildSlot = await run.takeBuildSlot({
         signal,
-        automatic: buildMachine === 'auto',
+        automatic: automaticBuild(buildMachine),
         max: maxBuilds,
         out: note,
         waitingFor: (info) => waitingFor?.(info, 'build-slot'),
@@ -478,7 +479,6 @@ export async function acquireIosArtifact(
 
   interface Candidate {
     cacheOnly: boolean;
-    mode: OffloadMode;
     here: MachineCapacity;
     code: string;
     reason: string;
@@ -493,11 +493,11 @@ export async function acquireIosArtifact(
       hereReason = cacheIneligible;
       return null;
     }
-    const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
+    const { machines, localEnabled } = buildPlacementCandidates(buildMachine);
     if (localEnabled && machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local')
       return null;
     const { runtime, unsupported } =
-      mode === 'off' && !namedBuildMachine(buildMachine)
+      buildMachine === 'local'
         ? { runtime: null, unsupported: null }
         : ((await recipe.offload?.context()) ?? {
             runtime: null,
@@ -505,7 +505,6 @@ export async function acquireIosArtifact(
           });
     const here = machineCapacity();
     const placement = offloadPlacement({
-      mode,
       localEnabled,
       machines: machines.length,
       here,
@@ -521,7 +520,7 @@ export async function acquireIosArtifact(
         cachePolicy.remote &&
         recipe.offload !== undefined
       ) {
-        return { cacheOnly: true, mode, here, code: placement.code, reason: placement.reason, runtime, machines };
+        return { cacheOnly: true, here, code: placement.code, reason: placement.reason, runtime, machines };
       }
       logWriter().write(
         buildPlacementRecord({
@@ -530,7 +529,7 @@ export async function acquireIosArtifact(
           stays: { code: placement.code, reason: placement.reason },
         }),
       );
-      if (mode !== 'off') phase('build', `placement: here (${placement.reason})`);
+      if (buildMachine !== 'local') phase('build', `placement: here (${placement.reason})`);
       return null;
     }
     const named = machines.find((each) => each.machine === buildMachine);
@@ -542,7 +541,6 @@ export async function acquireIosArtifact(
     }
     return {
       cacheOnly: false,
-      mode,
       here,
       code: placement.code,
       reason: placement.reason,
@@ -563,7 +561,6 @@ export async function acquireIosArtifact(
     const choice = await chooseBuildMachine({
       projectRoot: root,
       target,
-      mode: candidate.mode,
       here: candidate.here,
       note: (line) => note(chalk.dim(phaseLine('build', `offload: ${line}`))),
       machines: candidate.machines,

@@ -249,7 +249,6 @@ async function run(names: string[], note: (line: string) => void) {
   const choice = await chooseBuildMachine({
     projectRoot: repo,
     target: TARGET,
-    mode: 'auto',
     here: HERE,
     note: () => {},
     machines: names.map(credential),
@@ -357,10 +356,9 @@ describe('offloadBuild', () => {
     const choice = await chooseBuildMachine({
       projectRoot: repo,
       target: TARGET,
-      mode: 'auto',
       here: HERE,
       note: () => {},
-      machines: [credential('next'), credential('busy')],
+      machines: [credential('busy'), credential('next')],
     });
     if (typeof choice === 'string') throw new Error(choice);
     expect(choice.machine).toBe('busy');
@@ -418,7 +416,6 @@ describe('offloadBuild', () => {
       const choice = await chooseBuildMachine({
         projectRoot: repo,
         target: TARGET,
-        mode: 'auto',
         here: HERE,
         note: () => {},
         machines: [credential('mini')],
@@ -462,7 +459,6 @@ describe('offloadBuild', () => {
     const choice = await chooseBuildMachine({
       projectRoot: repo,
       target: TARGET,
-      mode: 'auto',
       here: HERE,
       note: () => {},
       machines: [credential('first'), credential('second')],
@@ -497,7 +493,6 @@ describe('offloadBuild', () => {
     const choice = await chooseBuildMachine({
       projectRoot: repo,
       target: TARGET,
-      mode: 'auto',
       here: HERE,
       note: () => {},
       machines: [credential('busy'), credential('dead'), credential('next')],
@@ -679,7 +674,7 @@ describe('macOS artifact transfer', () => {
           platform: 'macos',
           local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
         },
-        mode: 'force',
+        selected: 'remote',
         here: HERE,
         machines: [credential('mini')],
         note: () => {},
@@ -776,7 +771,6 @@ describe('native Xcode worker selection', () => {
     const choice = await chooseBuildMachine({
       projectRoot: repo,
       target: native ? { ...TARGET, native: 'xcode' } : TARGET,
-      mode: 'auto',
       here: HERE,
       note: () => {},
       machines: [credential('worker')],
@@ -798,7 +792,6 @@ describe('native Xcode worker selection', () => {
     const result = await chooseBuildMachine({
       projectRoot: repo,
       target: { ...TARGET, native: 'xcode' },
-      mode: 'auto',
       here: HERE,
       note: () => {},
       machines: [credential('old')],
@@ -827,7 +820,6 @@ describe('native Xcode worker selection', () => {
     const choice = await chooseBuildMachine({
       projectRoot: repo,
       target: { ...TARGET, native: 'xcode' },
-      mode: 'auto',
       here: HERE,
       note: () => {},
       machines: [credential('native')],
@@ -879,7 +871,6 @@ test('native results with a different transfer digest are refused before artifac
   const choice = await chooseBuildMachine({
     projectRoot: repo,
     target: { ...TARGET, native: 'xcode' },
-    mode: 'auto',
     here: HERE,
     note: () => {},
     machines: [credential('native')],
@@ -945,7 +936,6 @@ describe('native Gradle worker transfer', () => {
     const choice = await chooseBuildMachine({
       projectRoot: repo,
       target,
-      mode: 'auto',
       here: HERE,
       note: () => {},
       machines: [credential('gradle')],
@@ -1010,7 +1000,7 @@ describe('exact peer artifacts', () => {
     },
     { name: 'native Xcode', target: { ...TARGET, native: 'xcode' } satisfies BuildTarget, dependencies: false },
   ])(
-    '$name only ranks dependency hints relevant to its build and supported by its worker',
+    '$name only asks for dependency hints relevant to its build and supported by its worker, and keeps the configured order',
     async ({ target, dependencies }) => {
       const projectRoot = join(repo, 'apps', 'mobile');
       mkdirSync(projectRoot, { recursive: true });
@@ -1043,14 +1033,14 @@ describe('exact peer artifacts', () => {
       const choice = await chooseBuildMachine({
         projectRoot,
         target,
-        mode: 'force',
+        selected: 'remote',
         here: HERE,
         machines: [credential('legacy'), credential('modern')],
         note: () => {},
       });
       if (typeof choice === 'string') throw new Error(choice);
       try {
-        expect(choice.machine).toBe(dependencies ? 'modern' : 'legacy');
+        expect(choice.machine).toBe('legacy');
         expect(legacy.requests.find((request) => request.method === 'build.offer')?.params).not.toHaveProperty(
           'dependencies',
         );
@@ -1095,7 +1085,6 @@ describe('exact peer artifacts', () => {
           platform: 'macos',
           local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
         },
-        mode: 'auto',
         here: { ...HERE, builds: 0 },
         machines: [credential('swiftpm')],
         swiftpmArtifact: request,
@@ -1220,7 +1209,6 @@ describe('exact peer artifacts', () => {
       const choice = await chooseBuildMachine({
         projectRoot: repo,
         target,
-        mode: 'auto',
         here: { ...HERE, builds: 0 },
         machines: [credential('swiftpm')],
         swiftpmArtifact: request,
@@ -1343,7 +1331,6 @@ describe('exact peer artifacts', () => {
     const choice = await chooseBuildMachine({
       projectRoot: repo,
       target,
-      mode: 'auto',
       here: { ...HERE, builds: 0 },
       machines: [credential('rn')],
       reactNativeArtifact: { request, fingerprint: 'native-fingerprint' },
@@ -1476,7 +1463,6 @@ describe('exact peer artifacts', () => {
       const choice = await chooseBuildMachine({
         projectRoot: repo,
         target: gradleTarget,
-        mode: 'auto',
         here: { ...HERE, builds: 0 },
         machines: [credential('gradle')],
         gradleArtifact: query,
@@ -1547,8 +1533,8 @@ describe('exact peer artifacts', () => {
     },
   );
 
-  test.each(['auto', 'force', 'named'] as const)(
-    'a vanished Gradle APK reapplies %s placement before compiling',
+  test.each(['auto', 'remote', 'named'] as const)(
+    'a vanished Gradle APK reapplies %s placement before compiling, so only a named machine compiles while saturated',
     async (selection) => {
       writeFileSync(join(repo, '.gitignore'), 'staging/\n');
       const transfer = await nativeGradleTransfer(repo, { complete: true, ignored: [], outputs: [] });
@@ -1578,8 +1564,7 @@ describe('exact peer artifacts', () => {
       const choice = await chooseBuildMachine({
         projectRoot: repo,
         target: gradleTarget,
-        mode: selection === 'force' ? 'force' : 'auto',
-        selected: selection === 'named' ? 'gradle' : 'auto',
+        selected: selection === 'named' ? 'gradle' : selection,
         here: { ...HERE, builds: 0, loadPerCore: 3 },
         machines: [credential('gradle')],
         gradleArtifact: { sourceDigest: transfer.digest, inputs: transfer.declaration, android },
@@ -1602,7 +1587,7 @@ describe('exact peer artifacts', () => {
         note: () => {},
       });
       expect(result.ok).toBe(false);
-      expect(machine.methods.includes('build.start')).toBe(selection !== 'auto');
+      expect(machine.methods.includes('build.start')).toBe(selection === 'named');
       expect(
         machine.requests
           .filter((entry) => entry.method === 'build.offer')
@@ -1656,7 +1641,6 @@ describe('exact peer artifacts', () => {
       const choice = await chooseBuildMachine({
         projectRoot: repo,
         target: { ...TARGET, native: 'xcode' },
-        mode: 'auto',
         here: { ...HERE, builds: 0 },
         machines: [credential('cached')],
         artifact: identity,
@@ -1724,7 +1708,6 @@ describe('exact peer artifacts', () => {
     const choice = await chooseBuildMachine({
       projectRoot: repo,
       target: { ...TARGET, native: 'xcode' },
-      mode: 'auto',
       here: HERE,
       machines: [credential('old')],
       artifact: { fingerprint: 'native', cacheKey: 'other-sdk' },
@@ -1762,8 +1745,8 @@ test('exact completed artifacts rank ahead of warm idle builders, but another ta
   expect(pickOffer({ ...base, artifact: identity, selected: 'idle' }).order).toEqual([0]);
 });
 
-test.each(['auto', 'force', 'named'] as const)(
-  'a vanished artifact reapplies %s placement before compiling on the same peer',
+test.each(['auto', 'remote', 'named'] as const)(
+  'a vanished artifact reapplies %s placement before compiling on the same peer, so only a named machine compiles while saturated',
   async (selection) => {
     const archive = Buffer.from('cached bytes');
     const identity = { fingerprint: 'native', cacheKey: 'native-sdk27-arm64-target' };
@@ -1794,8 +1777,7 @@ test.each(['auto', 'force', 'named'] as const)(
     const choice = await chooseBuildMachine({
       projectRoot: repo,
       target: { ...TARGET, native: 'xcode' },
-      mode: selection === 'force' ? 'force' : 'auto',
-      selected: selection === 'named' ? 'mini' : 'auto',
+      selected: selection === 'named' ? 'mini' : selection,
       here: { ...HERE, builds: 0, loadPerCore: 3 },
       machines: [credential('mini')],
       artifact: identity,
@@ -1826,7 +1808,7 @@ test.each(['auto', 'force', 'named'] as const)(
       note: () => {},
     });
     expect(result.ok).toBe(false);
-    expect(machine.methods.includes('build.start')).toBe(selection !== 'auto');
+    expect(machine.methods.includes('build.start')).toBe(selection === 'named');
     expect(machine.methods.filter((method) => method === 'build.offer')).toHaveLength(2);
   },
 );

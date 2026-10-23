@@ -587,6 +587,16 @@ public enum OffloadMachines {
     return rest.isEmpty ? nil : encode(rest)
   }
 
+  public static func moving(_ entry: String, by offset: Int, in entries: [String]) -> String? {
+    guard let from = entries.firstIndex(of: entry) else { return nil }
+    let to = min(max(from + offset, 0), entries.count - 1)
+    guard to != from else { return nil }
+    var moved = entries
+    moved.remove(at: from)
+    moved.insert(entry, at: to)
+    return encode(moved)
+  }
+
   private static func encode(_ entries: [String]) -> String {
     String(decoding: (try? JSONEncoder().encode(entries)) ?? Data("[]".utf8), as: UTF8.self)
   }

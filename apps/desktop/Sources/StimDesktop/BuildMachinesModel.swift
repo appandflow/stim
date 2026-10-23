@@ -468,6 +468,18 @@ final class BuildMachinesModel {
     await write(entry, value: OffloadMachines.removing(entry, from: entries ?? []), ask: repins, checkout: checkout)
   }
 
+  func move(_ entry: String, by offset: Int) async {
+    guard !isBusy, let value = OffloadMachines.moving(entry, by: offset, in: entries ?? []) else { return }
+    working = entry
+    defer { working = nil }
+    switch await settings.write("remote.machines", value: value, scope: .machine, cwd: NSHomeDirectory()) {
+    case .success(.written): writeFailure = nil
+    case .success(.refused(let refusal)):
+      writeFailure = [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
+    case .failure(let error): writeFailure = error.localizedDescription
+    }
+  }
+
   private func write(_ entry: String, value: String?, ask: Bool, checkout: String?) async {
     working = entry
     progress = "Removing \(entry)\u{2026}"

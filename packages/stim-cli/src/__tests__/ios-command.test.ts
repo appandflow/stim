@@ -7320,15 +7320,15 @@ describe('run statistics', () => {
       requestedAt: '2026-09-01T00:00:00.000Z',
     };
     writeFileSync(buildMachinesFile(), JSON.stringify({ version: 2, machines: [credential] }));
-    process.env.STIM_REMOTE_BUILD_MODE = 'off';
+    process.env.STIM_REMOTE_BUILD = 'local';
     const { runs, recordStats } = recorder();
     try {
       await run({}, { recordStats });
     } finally {
-      delete process.env.STIM_REMOTE_BUILD_MODE;
+      delete process.env.STIM_REMOTE_BUILD;
     }
 
-    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'remote.buildMode is off' });
+    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: '--remote-build local' });
   });
 
   test('a failed iOS build cancels its parallel queued device and records the wait before returning', async () => {
@@ -8183,6 +8183,55 @@ describe('iOS placement on a hosting Mac', () => {
     },
   );
 
+  test.each(['auto', 'remote', 'remote-only'] as const)(
+    '--remote %s asks automatic placement with that word instead of naming a machine',
+    async (word) => {
+      const automatic = vi
+        .fn<typeof automaticDevicePlacement>()
+        .mockRejectedValue(Object.assign(new Error('no host'), { code: 'STIM_HOSTING_REFUSED' }));
+      const prepare = vi.fn<() => never>();
+      const result = await run(
+        { remote: word, json: true },
+        { automaticDevicePlacement: automatic, prepareHostedIos: prepare },
+      );
+      expect(parseFirst(result.logs).code).toBe('STIM_HOSTING_REFUSED');
+      expect(automatic).toHaveBeenCalledWith(expect.objectContaining({ platform: 'ios', placement: word }));
+      expect(prepare).not.toHaveBeenCalled();
+    },
+  );
+
+  test('stop cancels a remote-only placement wait, which got the run signal and its --wait', async () => {
+    let aborted: boolean | undefined;
+    const automatic = vi.fn<typeof automaticDevicePlacement>(async ({ signal }) => {
+      const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
+      assert(claim);
+      requestNativeRunCancel(root, claim.claimId);
+      process.emit('SIGINT');
+      aborted = signal?.aborted;
+      throw Object.assign(new Error('no host'), { code: 'STIM_HOSTING_REFUSED' });
+    });
+    const prepare = vi.fn<() => never>();
+    const result = await run(
+      { remote: 'remote-only', wait: '90', json: true },
+      { automaticDevicePlacement: automatic, prepareHostedIos: prepare },
+    );
+    expect(automatic).toHaveBeenCalledWith(
+      expect.objectContaining({ placement: 'remote-only', waitMs: 90_000, signal: expect.any(AbortSignal) }),
+    );
+    expect(aborted).toBe(true);
+    expect(parseFirst(result.logs).code).toBe('STIM_CANCELLED');
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  test('ios.remote remote-only places automatically when no flag is passed', async () => {
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'ios', { remote: 'remote-only' });
+    const automatic = vi
+      .fn<typeof automaticDevicePlacement>()
+      .mockRejectedValue(Object.assign(new Error('no host'), { code: 'STIM_HOSTING_REFUSED' }));
+    await run({ json: true }, { automaticDevicePlacement: automatic });
+    expect(automatic).toHaveBeenCalledWith(expect.objectContaining({ placement: 'remote-only' }));
+  });
+
   test('an auto budget refusal keeps the build baseline and creates no failed history', async () => {
     const baseline = lastBuildRecord({
       startedAt: '2026-10-06T12:00:00Z',
@@ -8949,12 +8998,12 @@ describe('strict remote machine selection', () => {
     },
   );
 
-  test.each(['auto', 'off'])(
-    'a named worker refusal preserves provider context when configured mode is %s',
+  test.each(['auto', 'local'])(
+    'a named worker refusal preserves provider context when the configured build placement is %s',
     async (mode) => {
       reserve();
       configureMini();
-      writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', mode);
+      writeConfigSetting({ scope: 'machine' }, 'remote.build', mode);
       const choose = vi
         .spyOn(offloadClient, 'chooseBuildMachine')
         .mockResolvedValue('mini: it turned this machine away');
@@ -9060,10 +9109,9 @@ describe('strict remote machine selection', () => {
     expect(choose).not.toHaveBeenCalled();
   });
 
-  test('a pod install that fails on the worker builds here in auto and stops a named machine with the install command', async () => {
+  test('a pod install that fails on the worker builds here in remote and stops a named machine with the install command', async () => {
     reserve();
     configureMini();
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
     vi.spyOn(offloadClient, 'offloadCheck').mockReturnValue(async () => ({ capacity: null, problems: [] }));
     const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
     vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
@@ -9072,7 +9120,7 @@ describe('strict remote machine selection', () => {
       machine: 'mini',
       reason: workerFailureReason('pods-failed', POD_MISSING_REASON),
     });
-    const fallback = await run({ remoteBuild: 'auto', json: true });
+    const fallback = await run({ remoteBuild: 'remote', json: true });
     expect(fallback.exitCode).toBeNull();
     expect(fallback.stderr).toContain('building here');
     expect(fallback.calls.order).toContain('buildIos');
@@ -9124,7 +9172,7 @@ describe('strict remote machine selection', () => {
     async (configuration) => {
       reserve();
       configureMini();
-      writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
+      writeConfigSetting({ scope: 'machine' }, 'remote.build', 'remote');
       const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
       const result = await run({ remoteBuild: 'local', configuration });
       expect(result.exitCode).toBeNull();
@@ -9137,7 +9185,7 @@ describe('strict remote machine selection', () => {
   test('auto still builds a Release cache miss here without contacting a paired worker', async () => {
     reserve();
     configureMini();
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
+    writeConfigSetting({ scope: 'machine' }, 'remote.build', 'remote');
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
     const result = await run({ remoteBuild: 'auto', configuration: 'Release' });
     expect(result.exitCode).toBeNull();

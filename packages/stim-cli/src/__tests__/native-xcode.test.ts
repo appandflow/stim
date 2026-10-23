@@ -1148,7 +1148,6 @@ test('an idle native iOS build checks peers before taking a compile slot, then s
     maxLoadPerCore: 2,
   });
   vi.spyOn(offload, 'buildPlacementCandidates').mockReturnValue({
-    mode: 'auto',
     localEnabled: true,
     machines: [
       {

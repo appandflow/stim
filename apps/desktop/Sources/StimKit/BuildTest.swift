@@ -167,17 +167,16 @@ public func sampleDuration(_ ms: Double) -> String {
 }
 
 public enum WizardMode: String, CaseIterable, Sendable {
-  case auto, force, off
+  case auto, remote, local
   public var title: String {
     switch self {
     case .auto: return "Auto"
-    case .force: return "Always"
-    case .off: return "Never"
+    case .remote: return "Remote first"
+    case .local: return "This Mac"
     }
   }
-  /// Auto once the wizard sets up the first build machine; otherwise the mode this Mac already had.
-  public static func defaultChoice(changedMode: Bool, current: String?) -> Self {
-    changedMode ? .auto : Self(rawValue: current ?? "auto") ?? .auto
+  public static func defaultChoice(changedMode: Bool, current: String?) -> Self? {
+    changedMode ? .auto : Self(rawValue: current ?? "auto")
   }
 }
 

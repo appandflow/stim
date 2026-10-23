@@ -183,6 +183,37 @@ test('a key Stim no longer reads is named as inert', () => {
   );
 });
 
+test.each([
+  ['auto', 'auto'],
+  ['force', 'remote'],
+  ['off', 'local'],
+])('remote.buildMode %s is reported with the stim settings set remote.build %s that replaces it', (old, value) => {
+  const findings = check({ remote: { buildMode: old } });
+  expect(findings).toHaveLength(1);
+  expect(findings[0]).toMatchObject({
+    level: 'note',
+    title: 'remote.buildMode was replaced by remote.build',
+    fix: `Run \`stim settings set remote.build ${value}\`, then remove remote.buildMode from ${MACHINE}.`,
+  });
+  expect(findings[0]?.detail).toContain(`remote.buildMode in ${MACHINE} is not read by Stim`);
+});
+
+test('an unreadable remote.buildMode still names the setting that replaced it', () => {
+  const [finding] = check({ remote: { buildMode: 'sometimes' } });
+  expect(finding?.fix).toBe(`Set remote.build, then remove remote.buildMode from ${MACHINE}.`);
+});
+
+test('STIM_REMOTE_BUILD_MODE in the environment is reported with its replacement', () => {
+  const findings = check({}, [], { STIM_REMOTE_BUILD_MODE: 'force' });
+  expect(findings).toEqual([
+    expect.objectContaining({
+      title: 'STIM_REMOTE_BUILD_MODE was replaced by remote.build',
+      fix: 'Run `stim settings set remote.build remote`, then unset STIM_REMOTE_BUILD_MODE.',
+    }),
+  ]);
+  expect(check({}, [], { STIM_REMOTE_BUILD_MODE: '  ' })).toEqual([]);
+});
+
 test('a config with nothing wrong reports nothing', () => {
   expect(check({ optimizations: { buildCache: true, android: { compilerCache: 'ccache' } } })).toEqual([]);
 });
@@ -218,6 +249,18 @@ describe('against a config file on disk', () => {
     const layers = settingsLayers({ projectPath: project, gitCommonDir: null, repoRoot: project });
     return { layers, settings: mergeSettingsLayers(layers.map((layer) => layer.settings)) };
   }
+
+  test('a remote.buildMode left in the machine config reaches doctor with its replacement', () => {
+    writeConfig({ version: 2, repos: {}, projects: {}, remote: { machines: ['mini'], buildMode: 'force' } });
+    const { layers, settings } = machineSettings();
+    const findings = checkMachineSettings({ settings, layers, projectRoot: project, env: {} });
+    expect(findings).toEqual([
+      expect.objectContaining({
+        title: 'remote.buildMode was replaced by remote.build',
+        fix: `Run \`stim settings set remote.build remote\`, then remove remote.buildMode from ${join(home, 'config.json')}.`,
+      }),
+    ]);
+  });
 
   test('a projects entry for a checkout that is gone is left to gc while its settings are swept', () => {
     const dead = join(home, 'deleted-checkout');

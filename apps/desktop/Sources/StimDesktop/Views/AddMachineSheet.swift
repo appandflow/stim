@@ -78,7 +78,7 @@ struct AddMachineSheet: View {
       Button("Keep Setting Up", role: .cancel) {}
     } message: {
       Text(
-        "Removes the entry added to remote.machines, restores remote.buildMode only if this wizard changed it, and runs stim doctor --json --platform ios --fix to forget the pairing. That also asks other listed machines with no credential. Grants on the remote machine must be revoked there with the commands shown next."
+        "Removes the entry added to remote.machines, restores remote.build only if this wizard changed it, and runs stim doctor --json --platform ios --fix to forget the pairing. That also asks other listed machines with no credential. Grants on the remote machine must be revoked there with the commands shown next."
       )
     }
     .interactiveDismissDisabled(wizard.phase != .pick && wizard.phase != .choose)

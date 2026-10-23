@@ -46,7 +46,7 @@ final class AddMachineModelTests: XCTestCase {
         "files": [:], "unknown": [],
         "settings": [
           ["key": "remote.machines", "value": builds, "layers": [:]],
-          ["key": "remote.buildMode", "value": mode ?? "auto", "origin": modeOrigin ?? "default", "layers": [:]],
+          ["key": "remote.build", "value": mode ?? "auto", "origin": modeOrigin ?? "default", "layers": [:]],
         ] + remotes.map { ["key": $0.key, "value": $0.value, "layers": [:]] },
       ]
       return try JSONDecoder().decode(SettingsPayload.self, from: JSONSerialization.data(withJSONObject: object))
@@ -118,7 +118,7 @@ final class AddMachineModelTests: XCTestCase {
             self.writes.append((key, value))
             self.steps.append(key)
             switch key {
-            case "remote.buildMode": self.mode = value
+            case "remote.build": self.mode = value
             case "ios.remote", "android.remote": self.remotes[key] = value
             case "remote.machines":
               self.builds = try value.map { try JSONDecoder().decode([String].self, from: Data($0.utf8)) } ?? []
@@ -288,7 +288,7 @@ final class AddMachineModelTests: XCTestCase {
     await model.refresh()
     XCTAssertEqual(harness.builds, ["mini:7447"])
     XCTAssertEqual(harness.hosts, ["mini:7447"])
-    XCTAssertEqual(harness.mode, "off")
+    XCTAssertEqual(harness.mode, "local")
     let askIndex = try XCTUnwrap(harness.steps.firstIndex(of: "ask"))
     XCTAssertLessThan(try XCTUnwrap(harness.steps.firstIndex(of: "remote.machines")), askIndex)
     XCTAssertNotNil(harness.asks.first(where: { $0.0 })?.1)
@@ -533,7 +533,7 @@ final class AddMachineModelTests: XCTestCase {
     harness.grantReady = true
     await checkUntilApproved(model)
     await model.openTools()
-    XCTAssertEqual(harness.mode, "off")
+    XCTAssertEqual(harness.mode, "local")
     model.stop()
     await waitUntil { harness.mode == nil }
     XCTAssertNil(harness.mode)
@@ -550,11 +550,11 @@ final class AddMachineModelTests: XCTestCase {
     harness.grantReady = true
     await checkUntilApproved(model)
     await model.openSummary()
-    model.mode = .off
+    model.mode = .local
     await model.finish()
     model.stop()
     try? await Task.sleep(for: .milliseconds(100))
-    XCTAssertEqual(harness.mode, "off")
+    XCTAssertEqual(harness.mode, "local")
   }
 
   @MainActor func testSetupDefaultsToAutoWithoutATestAndOnlyDoneWritesTheChoices() async {
@@ -569,12 +569,12 @@ final class AddMachineModelTests: XCTestCase {
     harness.grantReady = true
     await checkUntilApproved(model)
     XCTAssertEqual(model.wizard.phase, .approved)
-    XCTAssertEqual(harness.mode, "off")
+    XCTAssertEqual(harness.mode, "local")
     await model.openSummary()
     XCTAssertEqual(model.mode, .auto)
     XCTAssertEqual(model.simulators, .auto)
     XCTAssertEqual(model.testOutcome, .notRun)
-    XCTAssertEqual(harness.mode, "off")
+    XCTAssertEqual(harness.mode, "local")
     XCTAssertTrue(harness.remotes.isEmpty)
     model.simulators = .always
     await model.finish()
@@ -650,7 +650,7 @@ final class AddMachineModelTests: XCTestCase {
     await model.send(.cancel)
     XCTAssertEqual(harness.builds, ["existing"])
     XCTAssertEqual(harness.mode, "auto")
-    XCTAssertFalse(harness.writes.contains { $0.0 == "remote.buildMode" })
+    XCTAssertFalse(harness.writes.contains { $0.0 == "remote.build" })
   }
   @MainActor func testReadySampleSuppliesCheckoutWhenNoWorkspaceIsListed() async {
     let harness = Harness()
@@ -809,7 +809,7 @@ final class AddMachineModelTests: XCTestCase {
       await waitUntil { sample.test.passed && !sample.running }
       XCTAssertTrue(sample.test.passed)
       XCTAssertEqual(model.page, .test)
-      XCTAssertEqual(harness.mode, "off")
+      XCTAssertEqual(harness.mode, "local")
       if summary { await model.openSummary() }
       let stopsBeforeCancel = stops
       await model.send(.cancel)

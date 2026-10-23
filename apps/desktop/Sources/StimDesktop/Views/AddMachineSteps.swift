@@ -141,9 +141,13 @@ struct AddMachineSteps: View {
         tryIt(machine)
         card("Builds", detail: buildsDetail) {
           Picker("Builds", selection: $model.mode) {
-            ForEach(WizardMode.allCases, id: \.self) { Text($0.title).tag($0) }
+            ForEach(WizardMode.allCases, id: \.self) { Text($0.title).tag(Optional($0)) }
           }
           .pickerStyle(.radioGroup).horizontalRadioGroupLayout().labelsHidden()
+          if model.mode == nil {
+            Text("Done keeps the current remote.build unless you choose.").font(.stim(.footnote))
+              .foregroundStyle(Palette.secondary)
+          }
         }
       }
       if model.choosesSimulators, let machine = model.machineEntry {
@@ -183,11 +187,13 @@ struct AddMachineSteps: View {
     .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
   }
 
-  private var buildsDetail: String {
+  private var buildsDetail: String? {
     switch model.mode {
-    case .auto: return "Builds run on \(name) when this Mac is busy."
-    case .force: return "Builds run on \(name) whenever it can take them, and on this Mac when it can't."
-    case .off: return "Builds run on this Mac."
+    case .auto?: return "Builds run on \(name) when this Mac is busy."
+    case .remote?:
+      return "Builds run on \(name), or on the next remote Mac in the list, and on this Mac only when none can take them."
+    case .local?: return "Builds run on this Mac."
+    case nil: return nil
     }
   }
 
@@ -195,7 +201,7 @@ struct AddMachineSteps: View {
     switch model.simulators {
     case .thisMac?: return "Simulators run on this Mac."
     case .auto?: return "Simulators run on \(name) when this Mac is full or busy."
-    case .always?: return "Simulators always run on \(name)."
+    case .always?: return "Simulators always run on \(name), never on this Mac."
     case nil: return nil
     }
   }

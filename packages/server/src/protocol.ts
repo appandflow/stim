@@ -578,6 +578,7 @@ export function protocolJsonSchema(): JsonSchema {
             properties: {
               cpus: { type: 'integer', minimum: 1 },
               loadPerCore: { type: 'number', minimum: 0 },
+              maxLoadPerCore: { type: 'number', exclusiveMinimum: 0 },
               memoryFreeBytes: { type: 'number', minimum: 0 },
               memoryPressure: { enum: ['normal', 'warning', 'critical', null] },
               workerDiskFreeBytes: { type: ['number', 'null'], minimum: 0 },

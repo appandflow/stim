@@ -179,6 +179,7 @@ struct BuildMachinesView: View {
       ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
       update: { entry in Task { await model.update(entry, checkout: checkout) } },
       remove: { entry in removing = entry },
+      move: { entry, offset in Task { await model.move(entry, by: offset) } },
       open: { opened = $0 },
       poolDisabled: model.poolDisabled,
       setPool: { role, machine, enabled in Task { await model.setPool(role, machine: machine, enabled: enabled) } },
@@ -253,6 +254,7 @@ struct BuildMachinesContent<ThisMac: View>: View {
   var ask: (String) -> Void
   var update: (String) -> Void
   var remove: (String) -> Void
+  var move: (String, Int) -> Void = { _, _ in }
   var open: (String) -> Void = { _ in }
   var poolDisabled: [String: [String]]? = nil
   var setPool: (String, String, Bool) -> Void = { _, _, _ in }
@@ -347,10 +349,11 @@ struct BuildMachinesContent<ThisMac: View>: View {
       localPool
       if failure != nil { Section { notices } }
       Section {
-        ForEach(entries, id: \.self) { entry in
+        ForEach(Array(entries.enumerated()), id: \.element) { position, entry in
           let status = statuses?.first { $0.machine == entry }
           BuildMachineRow(
-            entry: entry, status: status, checking: canAsk && (statuses == nil || (status == nil && refreshing)),
+            entry: entry, position: position + 1, count: entries.count, move: { move(entry, $0) }, status: status,
+            checking: canAsk && (statuses == nil || (status == nil && refreshing)),
             failed: canAsk && failure != nil && status == nil,
             refreshing: canAsk && refreshing && status != nil && working != entry,
             capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
@@ -366,8 +369,16 @@ struct BuildMachinesContent<ThisMac: View>: View {
           Button("Add Remote Machine\u{2026}", action: add).buttonStyle(.stim(.primary)).disabled(addDisabled)
         }
       } footer: {
-        if !canAsk {
-          Text("Start a workspace with Stim to check these machines.").foregroundStyle(Palette.tertiary)
+        VStack(alignment: .leading, spacing: Space.xs) {
+          if entries.count > 1 {
+            Text(
+              "Builds, simulators and macOS apps go to the first machine here that has room and a load under its own limit, and to the next only when it has none."
+            )
+            .foregroundStyle(Palette.secondary)
+          }
+          if !canAsk {
+            Text("Start a workspace with Stim to check these machines.").foregroundStyle(Palette.tertiary)
+          }
         }
       }
       Section {
@@ -420,6 +431,9 @@ struct BuildMachinePoolToggles: View {
 
 private struct BuildMachineRow<Toggles: View>: View {
   var entry: String
+  var position: Int
+  var count: Int
+  var move: (Int) -> Void
   var status: BuildMachineStatus?
   var checking: Bool
   var failed: Bool
@@ -444,6 +458,11 @@ private struct BuildMachineRow<Toggles: View>: View {
         .frame(width: 24).accessibilityHidden(true)
       VStack(alignment: .leading, spacing: Space.lg) {
         HStack(spacing: Space.sm) {
+          if count > 1 {
+            Pill("\(position)", tone: .neutral, size: .small)
+              .help("Placement order: Stim tries the machine at 1 first and uses the next only when it has no room.")
+              .accessibilityLabel("Priority \(position) of \(count)")
+          }
           Text(verbatim: entry).font(.stim(.body, weight: .semibold)).lineLimit(1)
           if let status {
             let pill = status.pill(install: install, update: update)
@@ -491,6 +510,27 @@ private struct BuildMachineRow<Toggles: View>: View {
       }
       if let status, status.state.canAsk(requested: status.requestedAt != nil) {
         Button(status.state == .notAsked ? "Ask" : "Ask Again", action: ask).disabled(working || !canAsk)
+      }
+      if count > 1 {
+        VStack(spacing: 0) {
+          Button {
+            move(-1)
+          } label: {
+            Image(systemName: "chevron.up")
+          }
+          .disabled(working || position == 1)
+          .accessibilityLabel("Move \(entry) up")
+          .help("Try \(entry) earlier")
+          Button {
+            move(1)
+          } label: {
+            Image(systemName: "chevron.down")
+          }
+          .disabled(working || position == count)
+          .accessibilityLabel("Move \(entry) down")
+          .help("Try \(entry) later")
+        }
+        .buttonStyle(.borderless)
       }
       Button("Details", action: open)
         .buttonStyle(.stim(.secondary))

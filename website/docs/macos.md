@@ -163,7 +163,7 @@ Swift, `xcrun` or `xcodebuild` launchers need the checkout and otherwise miss.
 `SWIFT_EXEC` and `SWIFT_EXEC_MANIFEST` overrides are resolved and versioned
 separately and also require the checkout. The SDK selected by `SDKROOT`, then
 `SWIFTPM_SDKROOT_macosx`, is checked by real path and build version.
-Explicit local placement, remote build mode `off`, disabled pool members and
+Explicit local placement, disabled pool members and
 `remoteBuildCache: false` skip peer lookup. Older workers compile normally.
 
 Desktop's macOS Build card has the same **Details**, **Run**, **Last Build** and
@@ -183,17 +183,16 @@ building, unverified and hosted macOS apps keep their workspace untouched.
 Runtime locks, state, logs and the project's own `.build` stay; the next
 `stim macos` performs a full Swift build and restages the app.
 
-`--remote-build <auto|local|name>` overrides `STIM_REMOTE_BUILD` and the
+`--remote-build <local|auto|remote|remote-only|name>` overrides `STIM_REMOTE_BUILD` and the
 machine setting `remote.build` (default `auto`). `local` builds here. A name
-requires the matching configured and paired worker, ignoring `remote.buildMode` and
-this Mac's capacity. Any failure is `STIM_OFFLOAD_REFUSED` with the worker and
+requires the matching configured and paired worker, ignoring this Mac's capacity. Any failure is `STIM_OFFLOAD_REFUSED` with the worker and
 reason; no local xcodebuild, Gradle or SwiftPM compile or another machine follows. Check
 `stim settings get remote.machines`. Run `stim doctor --fix` to ask for build
 access if not paired; a person on the worker approves it by running the
 `stim-server setup` command doctor printed.
 Invalid, unlisted or unpaired selections refuse before stopping the running app
-or changing its build record. To change placement, rerun with `--remote-build auto`
-or `--remote-build local`.
+or changing its build record. To change placement, rerun with `--remote-build auto`,
+`remote` or `local`.
 
 When `--remote <machine>` and `--remote-build <name>` name the same Mac (the same
 paired node), the worker builds the app and runs it, so this Mac's Xcode, macOS SDK
@@ -202,9 +201,9 @@ compatibility version must still match, and the worker needs Xcode and a macOS S
 the worker's completed-app cache is keyed on its own toolchain. In every other
 combination, including `--remote-build auto`, the Xcode and macOS SDK match applies.
 
-With `auto`, `remote.buildMode` also places these SwiftPM Debug builds: `auto` builds here while
-this Mac has capacity, `force` uses an approved remote Mac when one accepts,
-and `off` builds here when local remains in the automatic build pool.
+`remote.build` also places these SwiftPM Debug builds: `auto` builds here while
+this Mac has capacity, `remote` uses the first approved remote Mac in `remote.machines` order that accepts and
+otherwise builds here, `remote-only` never builds here and refuses when none accepts, and `local` builds here.
 [`remote.buildPoolDisabled`](./remote-machines.md#automatic-machine-pools) excludes
 members from automatic placement and its local fallback; explicit local or named
 placement bypasses membership. Configure `remote.machines` and approve build
@@ -223,8 +222,7 @@ them before signing.
 Stim validates the development plist and resource entries before asking a machine
 and verifies the returned archive digest, bundle ID, executable, declared
 resources and ad hoc signature before
-replacing the bundle. With `auto`, every offload failure falls back locally, including in
-`force` mode; failed staging preserves the previous bundle. The app launches
+replacing the bundle. With `auto` or `remote`, every offload failure falls back locally; failed staging preserves the previous bundle. The app launches
 locally with the same supervisor and ownership checks. The build record carries
 `buildMachine` for the selection and `builtOn` for the actual worker or `here`
 (absent before a build runs), plus `errorCode` for typed failures. It retains
@@ -375,18 +373,32 @@ available.
 
 ## Run it on another Mac
 
-`stim macos --remote <machine>` builds the Debug app on this Mac and runs it on
+`stim macos --remote <placement>` (or `macos.remote`) builds the Debug app on this Mac and runs it on
 another Mac over your tailnet, without SSH. List that Mac in
 [`remote.machines`](./settings.md#machine-settings) and run `stim doctor --fix`;
 a person on that Mac runs the `stim-server setup` command it printed, then run
 `stim doctor` once more. Stim connects only to the stim-server that proves it
 holds the key pinned at approval. If the host refuses or is
-unreachable, the command fails; it never launches the app locally instead.
+unreachable, the command fails; with a named Mac it never launches the app locally instead.
 
-The `--remote` value is a remote Mac name from `remote.machines`. macOS
-refuses `eas` and `proxy` because it has neither backend. It also refuses `auto`
-until automatic placement ships. These reserved names are case-insensitive and
-trimmed; they refuse with `STIM_BAD_ARG` before state access or a connection.
+The `--remote` flag and the `macos.remote` setting take a placement word or a
+remote Mac name from `remote.machines`; the flag overrides the setting:
+
+| Value         | Where the app launches                                                                                                                                                                                                                                                                                                                 |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `local`       | Here. This is the default when neither is set.                                                                                                                                                                                                                                                                                         |
+| `auto`        | Here, unless this Mac is busy (host memory pressure, or load per core at or above `server.maxLoadPerCore`); then the first approved Mac in `remote.machines` order that has room.                                                                                                                                                      |
+| `remote`      | The first approved Mac in `remote.machines` order that has room and a load under its own `server.maxLoadPerCore`; here only when none does.                                                                                                                                                                                            |
+| `remote-only` | The same, never here, so a macOS app does not take focus on this Mac. When every Mac that answered is only full or loaded it waits up to 600 seconds for one with room, then refuses with `STIM_AT_CAPACITY`; with no Mac that could ever take it, it refuses at once with `STIM_HOSTING_REFUSED` and the reason each Mac was skipped. |
+| a Mac name    | Exactly that Mac, with no fallback.                                                                                                                                                                                                                                                                                                    |
+
+A placement word picks the Mac on a new launch and keeps the recorded one while an
+app runs there, until `stim stop`. The command prints a `placement:` line with the
+choice and the skipped Macs. [Automatic machine pools](./remote-machines.md#automatic-machine-pools)
+(`remote.devicePoolDisabled`) also apply to automatic macOS placement. macOS
+refuses `eas` and `proxy` because it has neither backend. These reserved names are
+case-insensitive and trimmed; they refuse with `STIM_BAD_ARG` before state access or
+a connection.
 
 The host records the hosted app's stdout, stderr and exit like a local run.
 `stim logs`, including `--errors`, `--json` and `--follow`, asks the host over the
@@ -412,7 +424,7 @@ stim stop`}
 />
 
 Hosted delivery carries the staged bundle, including declared resources and
-compiled assets. When `remote.buildMode` built the app on the hosting Mac itself
+compiled assets. When `remote.build` built the app on the hosting Mac itself
 (the same stim-server, approved for the same client key), the host copies the files from the build it kept for
 this Mac instead of receiving them again over the tailnet. It admits only bytes
 that match the digests of the bundle Stim verified here, and it needs both the

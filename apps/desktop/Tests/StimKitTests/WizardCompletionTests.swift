@@ -312,8 +312,11 @@ final class WizardCompletionTests: XCTestCase {
   }
 
   func testModeDefaults() {
-    XCTAssertEqual(WizardMode.defaultChoice(changedMode: true, current: "off"), .auto)
-    XCTAssertEqual(WizardMode.defaultChoice(changedMode: false, current: "force"), .force)
+    XCTAssertEqual(WizardMode.defaultChoice(changedMode: true, current: "local"), .auto)
+    XCTAssertEqual(WizardMode.defaultChoice(changedMode: false, current: "remote"), .remote)
+    XCTAssertEqual(WizardMode.defaultChoice(changedMode: false, current: nil), .auto)
+    XCTAssertNil(WizardMode.defaultChoice(changedMode: false, current: "remote-only"))
+    XCTAssertNil(WizardMode.defaultChoice(changedMode: false, current: "janics-mac-mini"))
   }
 
   func testSampleRemovalRejectsOtherFoldersAndSymlinkEscapes() throws {

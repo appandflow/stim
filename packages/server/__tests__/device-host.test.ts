@@ -1610,6 +1610,7 @@ test('offers schema-compatible SDK choices without creating a journal, claim, or
     if ('error' in answer) throw new Error(answer.error.message);
     expect(answer.result.capacity).toEqual({ running: 0, max: 1, available: 1, local: 0 });
     expect(answer.result.declined).toBeNull();
+    expect(answer.result.resources.maxLoadPerCore).toBe(2);
     expect(acceptsOffer(answer.result)).toBe(true);
     expect(answer.result.choice).not.toHaveProperty('udid');
     expect(acceptsOffer({ ...answer.result, platform: platform === 'ios' ? 'android' : 'ios' })).toBe(false);

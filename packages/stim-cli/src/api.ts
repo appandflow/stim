@@ -49,6 +49,7 @@ import {
   resolveProjectSettingsAsync,
   settingShapeErrors,
   SETTING_SHAPE_REMEDY,
+  inertSettingWarning,
   unknownSettingKeys,
 } from './workspace/settings.ts';
 import type {
@@ -683,8 +684,7 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
     if (shapeErrors.length) {
       throw new StimError({ code: 'STIM_BAD_ARG', message: shapeErrors.join('\n'), remedy: SETTING_SHAPE_REMEDY });
     }
-    for (const key of unknownSettingKeys(settings))
-      note(context)(`Warning: setting "${key}" is not read by Stim and will be ignored.`);
+    for (const key of unknownSettingKeys(settings)) note(context)(inertSettingWarning(settings, key));
     const cacheError = cacheProviderSettingError(settings);
     if (cacheError) note(context)(`Warning: ${cacheError} No cache provider is used.`);
     await ensureWorkspaceStorageAsync(root, context.signal);

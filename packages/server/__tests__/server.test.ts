@@ -10589,7 +10589,7 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
 
   it.each(
     kind === 'run'
-      ? [{ platform: 'ios' }, { platform: 'macos', remote: 'auto' }]
+      ? [{ platform: 'ios' }, { platform: 'macos', remote: 'eas' }]
       : [{ platform: 'ios' }, { platform: 'android' }],
   )('streams the real API refusal for %j without a CLI and releases the workspace', async (options) => {
     await start();

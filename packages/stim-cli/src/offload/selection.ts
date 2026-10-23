@@ -1,7 +1,7 @@
 import { ambientContext, ambientEnv } from '@stim-cli/core';
 import { operationState } from '../engine/operation-state.ts';
 import { InvalidArgumentError } from 'commander';
-import { OFFLOAD_MODES, parseMachine, automaticMachineEnabled } from '@stim-cli/core/state';
+import { parseMachine, automaticMachineEnabled, placementWord } from '@stim-cli/core/state';
 import type { PlacementSetting, SettingSource } from '../placement-log.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines } from './build-machines.ts';
@@ -43,7 +43,7 @@ export class OffloadRefusal extends Error {
   constructor(
     machine: string,
     reason: string,
-    remedy = 'Run stim doctor --fix to ask for build access if not paired; it prints the stim-server setup command a person runs on the worker to approve this machine. Check stim settings get remote.machines, or rerun with --remote-build auto or --remote-build local.',
+    remedy = 'Run stim doctor --fix to ask for build access if not paired; it prints the stim-server setup command a person runs on the worker to approve this machine. Check stim settings get remote.machines, or rerun with --remote-build auto, remote or local.',
   ) {
     super(reason.startsWith(`${machine}: `) ? reason : `${machine}: ${reason}`);
     this.remedy = remedy;
@@ -53,13 +53,12 @@ export class OffloadRefusal extends Error {
 export function resolveBuildMachine(flag?: string, env?: string, setting?: unknown): string {
   const selected = flag ?? (env?.trim() || undefined) ?? setting ?? 'auto';
   if (typeof selected !== 'string' || !selected.trim() || !parseMachine(selected)) {
-    throw Object.assign(new Error('--remote-build / remote.build must be auto, local, or a tailnet machine name.'), {
-      code: 'STIM_BAD_ARG',
-    });
+    throw Object.assign(
+      new Error('--remote-build / remote.build must be local, auto, remote, remote-only, or a tailnet machine name.'),
+      { code: 'STIM_BAD_ARG' },
+    );
   }
-  const trimmed = selected.trim();
-  const reserved = trimmed.toLowerCase();
-  return reserved === 'auto' || reserved === 'local' ? reserved : trimmed;
+  return placementWord(selected) ?? selected.trim();
 }
 
 export function parseBuildMachineOption(value: string): string {
@@ -70,16 +69,24 @@ export function parseBuildMachineOption(value: string): string {
   }
 }
 
-export function requireLocalBuild(selected: string): void {
-  if (selected === 'auto' && !automaticMachineEnabled('build', 'local'))
+export function automaticBuild(selected: string): boolean {
+  const word = placementWord(selected);
+  return word !== null && word !== 'local';
+}
+
+export function requireLocalBuild(selected: string, reason?: string): void {
+  const word = placementWord(selected);
+  const lead = reason ? `${reason}; ` : '';
+  if (word === 'remote-only') throw new OffloadRefusal(selected, `${lead}remote-only never builds on this machine`);
+  if ((word === 'auto' || word === 'remote') && !automaticMachineEnabled('build', 'local'))
     throw new OffloadRefusal(
-      'auto',
-      'local is disabled in remote.buildPoolDisabled; enable it or select a machine explicitly',
+      selected,
+      `${lead}local is disabled in remote.buildPoolDisabled; enable it or select a machine explicitly`,
     );
 }
 
 export function namedBuildMachine(selected: string): boolean {
-  return selected !== 'auto' && selected !== 'local';
+  return placementWord(selected) === null;
 }
 
 export function requireConfiguredMachine(selected: string, machines: unknown): string {
@@ -101,18 +108,11 @@ const settingSource = (flag: string | undefined, env: string | undefined, settin
 /** The settings that decide where a build runs, with the layer each value came from, for this run's `--remote-build`. */
 export function buildPlacementSettings(selected: string): PlacementSetting[] {
   const flag = operationState(ambientContext()).buildMachineFlag;
-  const remote = loadConfig()?.remote;
-  const rawMode = ambientEnv().STIM_REMOTE_BUILD_MODE || remote?.buildMode;
   return [
     {
       key: 'remote.build',
       value: selected,
-      from: settingSource(flag, ambientEnv().STIM_REMOTE_BUILD, remote?.build),
-    },
-    {
-      key: 'remote.buildMode',
-      value: selected === 'local' ? 'off' : OFFLOAD_MODES.includes(rawMode as never) ? (rawMode as string) : 'auto',
-      from: settingSource(undefined, ambientEnv().STIM_REMOTE_BUILD_MODE, remote?.buildMode),
+      from: settingSource(flag, ambientEnv().STIM_REMOTE_BUILD, loadConfig()?.remote?.build),
     },
   ];
 }
@@ -139,7 +139,7 @@ export function resolveBuildPlacement(flag?: string): {
         remedy:
           error instanceof OffloadRefusal
             ? error.remedy
-            : 'Pass --remote-build auto, local, or an entry from stim settings get remote.machines.',
+            : 'Pass --remote-build local, auto, remote, remote-only, or an entry from stim settings get remote.machines.',
       },
     };
   }

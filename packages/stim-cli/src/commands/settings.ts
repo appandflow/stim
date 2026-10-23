@@ -80,7 +80,11 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
           io.out(`${entry.key.padEnd(width)}  ${shown}${shown ? '  ' : ''}${chalk.dim(`(${formatOrigin(entry)})`)}`);
         }
         for (const entry of payload.unknown) {
-          io.note(chalk.yellow(`Warning: ${entry.key} in ${entry.file} is not read by Stim.`));
+          io.note(
+            chalk.yellow(
+              `Warning: ${entry.key} in ${entry.file} is not read by Stim.${entry.replacement ? ` Run \`${entry.replacement}\` instead.` : ''}`,
+            ),
+          );
         }
       }),
     );

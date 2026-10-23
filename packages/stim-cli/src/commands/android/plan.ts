@@ -27,7 +27,7 @@ import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import { getProject } from '../../workspace/config.ts';
 import { parkedMaxSetting } from '../../devices/sim-pool.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
-import type { SettingsObject } from '@stim-cli/core/state';
+import type { AutomaticPlacement, SettingsObject } from '@stim-cli/core/state';
 import {
   androidLayoutSetting,
   androidLayoutSettingError,
@@ -44,6 +44,7 @@ import {
   settingOriginScope,
   settingShapeErrors,
   settingsLayers,
+  inertSettingWarning,
   unknownSettingKeys,
 } from '../../workspace/settings.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
@@ -92,6 +93,7 @@ type AndroidTargetPlan =
   | {
       readonly kind: 'hosted';
       readonly machine: string;
+      readonly placement?: AutomaticPlacement;
       readonly systemImage: string | null;
       readonly deviceProfile: string | null;
     }
@@ -263,7 +265,7 @@ export function resolveAndroidBuildPlan(
   if (layoutError) return fail('STIM_BAD_ARG', layoutError, SETTING_SHAPE_REMEDY);
   const layout = resolveAndroidLayout(settings, root, bound);
   for (const key of unknownSettingKeys(settings)) {
-    warn('setting', `Warning: setting "${key}" is not read by Stim and will be ignored.`);
+    warn('setting', inertSettingWarning(settings, key));
   }
   let optimizations: Optimizations;
   try {
@@ -447,7 +449,13 @@ export async function resolveAndroidRunPlan(
   const target: AndroidTargetPlan = physical
     ? { kind: 'physical', serial: typeof deviceFlag === 'string' ? deviceFlag : null, lease: { waitSeconds, noWait } }
     : machine
-      ? { kind: 'hosted', machine, systemImage, deviceProfile }
+      ? {
+          kind: 'hosted',
+          machine,
+          ...(remoteTarget?.kind === 'machine' && remoteTarget.placement ? { placement: remoteTarget.placement } : {}),
+          systemImage,
+          deviceProfile,
+        }
       : remoteBackend
         ? { kind: 'remote', backend: remoteBackend, systemImage, deviceProfile }
         : { kind: 'emulator', systemImage, deviceProfile };

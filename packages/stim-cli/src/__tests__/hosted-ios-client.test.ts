@@ -1336,6 +1336,130 @@ test('auto reports a declined offer and falls to the local path without reservin
   expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
 });
 
+test('remote-only refuses a live local device and probes no host, where remote keeps it', async () => {
+  const place = (word: 'remote' | 'remote-only') =>
+    automaticDevicePlacement(
+      { root, slot: 'default', platform: 'ios', placement: word, selectors: {}, noWait: true },
+      {
+        peek: () => ({ count: 1, max: 3, queued: 0, localLive: true }),
+        capacity: () => ({ cpus: 4, loadPerCore: 1, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
+        memory: () => 'normal',
+        budget: async () => null,
+      },
+    );
+  await expect(place('remote-only')).rejects.toMatchObject({
+    code: 'STIM_HOSTING_REFUSED',
+    remedy: 'Run stim stop, then retry.',
+  });
+  expect(methods.map((each) => each.method)).not.toContain('device-host.offer');
+  expect(await place('remote')).toMatchObject({ placement: { decision: 'local' }, sticky: true });
+});
+
+test('remote-only never asks EAS and refuses a host that declined with room left, where remote asks it', async () => {
+  declined = 'All configured hosted device reservations are occupied';
+  const eas = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
+  const place = (word: 'remote' | 'remote-only') =>
+    automaticDevicePlacement(
+      { root, slot: 'default', platform: 'ios', placement: word, selectors: {}, noWait: true, eas },
+      {
+        peek: () => ({ count: 3, max: 3, queued: 0, localLive: false }),
+        capacity: () => ({ cpus: 4, loadPerCore: 1, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
+        memory: () => 'normal',
+        budget: async () => null,
+      },
+    );
+  await expect(place('remote-only')).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
+  expect(eas).not.toHaveBeenCalled();
+  expect((await place('remote')).placement).toMatchObject({ decision: 'eas' });
+  expect(eas).toHaveBeenCalledOnce();
+});
+
+test('remote-only waits for a full host and places once it has room, and refuses at once with no-wait or a host that is out', async () => {
+  const full = 'All configured hosted device reservations are occupied';
+  let clock = 0;
+  const sleeps: number[] = [];
+  const place = (noWait: boolean, waitMs: number, onSleep: () => void = () => {}, onWait?: (line: string) => void) =>
+    automaticDevicePlacement(
+      { root, slot: 'default', platform: 'ios', placement: 'remote-only', selectors: {}, noWait, waitMs, onWait },
+      {
+        peek: () => ({ count: 3, max: 3, queued: 1, localLive: false }),
+        capacity: () => ({ cpus: 4, loadPerCore: 1, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
+        memory: () => 'normal',
+        budget: async () => null,
+        now: () => clock,
+        sleep: async (ms) => {
+          sleeps.push(ms);
+          clock += ms;
+          onSleep();
+        },
+      },
+    );
+  declined = full;
+  capacity = 0;
+  const waiting = vi.fn<(line: string) => void>();
+  const placed = await place(
+    false,
+    60_000,
+    () => {
+      if (sleeps.length === 2) [declined, capacity] = [null, 1];
+    },
+    waiting,
+  );
+  expect(placed.placement).toMatchObject({ decision: 'hosted', machine: 'mini' });
+  expect(sleeps).toEqual([5000, 5000]);
+  expect(waiting).toHaveBeenCalledOnce();
+
+  [declined, capacity] = [full, 0];
+  sleeps.length = 0;
+  await expect(place(true, 60_000)).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+  await expect(place(false, 0)).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+  expect(sleeps).toEqual([]);
+  clock = 0;
+  await expect(place(false, 12_000)).rejects.toMatchObject({
+    code: 'STIM_AT_CAPACITY',
+    message: expect.stringContaining('waited 12s'),
+  });
+  expect(sleeps).toEqual([5000, 5000, 2000]);
+
+  [declined, capacity] = ['Hosted sessions are paused', 1];
+  sleeps.length = 0;
+  await expect(place(false, 60_000)).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
+  expect(sleeps).toEqual([]);
+});
+
+test('an aborted run ends the remote-only wait instead of polling to its deadline', async () => {
+  declined = 'All configured hosted device reservations are occupied';
+  capacity = 0;
+  const controller = new AbortController();
+  let sleeps = 0;
+  await expect(
+    automaticDevicePlacement(
+      {
+        root,
+        slot: 'default',
+        platform: 'ios',
+        placement: 'remote-only',
+        selectors: {},
+        noWait: false,
+        waitMs: 600_000,
+        signal: controller.signal,
+      },
+      {
+        peek: () => ({ count: 3, max: 3, queued: 0, localLive: false }),
+        capacity: () => ({ cpus: 4, loadPerCore: 1, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
+        memory: () => 'normal',
+        budget: async () => null,
+        now: () => 0,
+        sleep: async () => {
+          sleeps++;
+          controller.abort();
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ name: 'AbortError' });
+  expect(sleeps).toBe(1);
+});
+
 test('remote.easFallback asks EAS only when this machine is full and no host admits', async () => {
   const eas = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
   const place = (count: number) =>
@@ -1467,7 +1591,7 @@ test.each([undefined, 'mini', 'local'])(
             choice: device,
             declined: null,
             capacity: { available: 1 },
-            resources: { memoryPressure: 'normal', loadPerCore: machine === 'mini' ? 0.1 : 4, memoryFreeBytes: 100 },
+            resources: { memoryPressure: 'normal', loadPerCore: machine === 'mini' ? 0.1 : 1.5, memoryFreeBytes: 100 },
           },
         };
       };

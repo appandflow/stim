@@ -27,6 +27,9 @@ Branch on the code, never on the message.`,
   hosted session. Auto skips declined offers before building, then uses the
   local queue if none admits. A reserve refusal after an accepted offer fails
   with this code and asks to retry; it does not re-place the built architecture.
+  remote-only never runs here and never joins the local queue: it refuses
+  with this code when no host could ever take the run, and waits for a host that
+  is only full or loaded (see STIM_AT_CAPACITY).
   Check stim-server and Tailscale there,
   then run stim doctor. Correct --device-type / --runtime for iOS or
   --system-image / --device-profile for Android when the offer names
@@ -390,6 +393,11 @@ and no enabled remote can finish this build, or when the build requires a local
 compiler. Enable local or choose an explicit --remote-build placement. Existing
 builds are not interrupted and a cache hit needs no compiler.
 
+remote-only never builds here: it refuses when no remote machine in remote.machines
+can take the build, naming each machine and why it was skipped, and for a build that
+cannot leave this machine. Rerun with --remote-build remote to allow a local build
+when no remote machine can take it.
+
 A named --remote-build selection is strict. The message names the machine
 and why it cannot take or finish the build: not configured or paired, approval
 pending or denied, unreachable, changed pinned server key, a stim-server
@@ -418,7 +426,7 @@ Run stim doctor --fix to ask for build access if not paired. Check
 stim settings get remote.machines. A person on the worker approves this machine
 by running the stim-server setup command doctor --fix printed, with its ticket
 and expiry (guide settings). Agents never run setup or approve requests.
-Rerun with --remote-build auto for normal placement and local fallback, or
+Rerun with --remote-build auto or remote for placement with local fallback, or
 --remote-build local to keep the build here.
 `,
     },
@@ -903,6 +911,11 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   locks, builds, viewers and recent activity. Reclaim excludes this workspace,
   physical, hosted, remote, parked and other homes' devices and never deletes.
   A failed reclaim is logged and skipped; the run keeps waiting.
+  --remote remote-only (and macos.remote remote-only) has no local queue: when every
+  approved host is full, loaded or short of memory it polls the hosts every 5 seconds
+  for the same wait (--wait, default 600 seconds) and then refuses with this code;
+  --no-wait and --wait 0 refuse at once. Builds under remote-only refuse with
+  STIM_OFFLOAD_REFUSED instead.
   Stop an environment (\`stim stop\`), pass a longer \`--wait <seconds>\`,
   or raise concurrency.maxDevices. With --remote auto, remote.machines and
   the opt-in remote.easFallback (billed EAS Simulator) are tried before this

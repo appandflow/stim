@@ -44,7 +44,7 @@ import { budgetLine, inspectBudget, type BudgetReport } from '../budget.ts';
 import { inspectBuildMachines, type BuildMachinesInspection } from '../offload/build-machines.ts';
 import { doctorIo, type GeneratedTickets } from '../offload/tailnet.ts';
 import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
-import { inspectDeviceHostMachines } from '../device-host/machines.ts';
+import { configuredMachines, inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
 import { memoryCulpritFindings, readMemoryCulpritsAsync } from '../memory-culprits.ts';
 import {
@@ -301,10 +301,18 @@ export interface DoctorReport {
   stim: StimVersionReport;
   budget: BudgetReport | null;
   maintenance: ReturnType<typeof maintenanceStatus> & { logPath: string };
-  remoteMachines: BuildMachinesInspection['machines'];
-  deviceHosts: Awaited<ReturnType<typeof inspectDeviceHostMachines>>['machines'];
+  remoteMachines: Array<BuildMachinesInspection['machines'][number] & { priority?: number }>;
+  deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>['machines'][number] & { priority?: number }>;
   toolchain: ToolchainReport | null;
   findings: Finding[];
+}
+
+function withPriority<T extends { machine: string }>(machines: T[]): Array<T & { priority?: number }> {
+  const order = configuredMachines() ?? [];
+  return machines.map((each) => {
+    const at = order.indexOf(each.machine);
+    return at < 0 ? each : { ...each, priority: at + 1 };
+  });
 }
 
 export async function readDoctorReport(
@@ -440,8 +448,8 @@ async function assembleDoctorReport(
     stim,
     budget: budget.report,
     maintenance: { ...maintenance, logPath: maintenanceNdjsonFile() },
-    remoteMachines: remoteMachines.machines,
-    deviceHosts: deviceHostMachines.machines,
+    remoteMachines: withPriority(remoteMachines.machines),
+    deviceHosts: withPriority(deviceHostMachines.machines),
     toolchain,
     findings,
   };
@@ -528,7 +536,11 @@ export default function doctorCommand(
       const report = await assembleDoctorReport(root, opts, version, prepared, inspectVersions, host);
       const { findings, stim, toolchain, maintenance } = report;
       const budget = { report: report.budget };
+      const order = (configuredMachines() ?? []).map((machine, at) => `${at + 1} ${machine}`);
       const maintenanceLines = [
+        ...(order.length
+          ? [phaseLine('placement order', `${order.join(', ')} (first with room and load under its limit)`)]
+          : []),
         phaseLine('maintenance.mode', maintenance.mode),
         phaseLine('maintenance log', maintenanceNdjsonFile()),
         phaseLine('last pass', maintenanceLine(maintenance, false) ?? 'no pass has run yet'),

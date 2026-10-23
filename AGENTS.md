@@ -346,9 +346,13 @@ outside it moves to its own issue and pull request.
   `server/build-clients.json`, apart from `devices.json`. The client names its
   remote machines in `remote.machines` and pins each one's stim-server key in
   `build-machines.json`; a worker that cannot prove that key is refused.
-  `remote.buildMode` places iOS simulator Debug builds and Android emulator
-  debug builds and macOS SwiftPM Debug builds;
-  every offload failure falls back to a local build, and no failure path
+  `remote.build` places iOS simulator Debug builds and Android emulator
+  debug builds and macOS SwiftPM Debug builds with the placement words every
+  workload shares (`local`, `auto`, `remote`, `remote-only` or one machine),
+  trying the machines of `remote.machines` in that order, each only while it
+  has a free slot and a load under its own `server.maxLoadPerCore`;
+  every offload failure falls back to a local build unless the selection is
+  `remote-only` or one machine, and no failure path
   writes the cache. Two machines build for each other, and reuse each other's
   completed React Native and SwiftPM artifacts, when their bundled Stim
   reports the same `STIM_BUILD_COMPAT`

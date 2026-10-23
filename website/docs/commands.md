@@ -327,12 +327,12 @@ stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-ty
 Builds or restores the iOS app. Stim then boots an owned simulator, installs the
 app, opens it, and checks launch logs. Native builds run locally by default;
 `--eas-profile` downloads an existing EAS development build. A simulator Debug
-build can compile on a paired remote machine instead: see `remote.buildMode` in
+build can compile on a paired remote machine instead: see `remote.build` in
 [machine settings](./settings.md#machine-settings).
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
-- `--remote-build <auto|local|name>` overrides `STIM_REMOTE_BUILD` and
-  `remote.build`. A name requires that configured, paired worker and fails
+- `--remote-build <local|auto|remote|remote-only|name>` overrides `STIM_REMOTE_BUILD` and
+  `remote.build`. `remote` tries the remote machines first, in `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
   with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install run on this machine before
@@ -385,7 +385,8 @@ build can compile on a paired remote machine instead: see `remote.buildMode` in
   immediately. It cannot be combined with `--wait`.
 - `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no local fallback.
   `auto` places on an approved Mac when this machine is full or busy, falling back
-  to the local device queue when no host admits. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
+  to the local device queue when no host admits. `remote` tries the approved Macs first, in
+  `remote.machines` order, and runs here only when none admits; `remote-only` never runs here and waits for a host with room. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
   With `hosting.agentDriver=agent-device` on the host and agent-device 0.21.20 or later on both machines,
   `ios.host.agent` returns a per-slot 0600 remote config. Use `agent-device <command> --remote-config <file>`
   from status, starting with `open <bundleId>`. It reaches only that hosted simulator; inventory, installs,
@@ -536,7 +537,7 @@ inspect stim logs --errors, then stop only this workspace with stim stop.
 ```text
 stim android [--slot <name>] [--variant <name>] [--system-image <id>] [--device-profile <id>]
              [--device [serial]]
-             [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
+             [--wait <seconds> | --no-wait] [--remote <proxy|eas|local|auto|remote|remote-only|machine>]
              [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--plan] [--json]
 ```
 
@@ -607,11 +608,11 @@ scoped device cleanup and physical-device lease behavior.
 
 Builds or restores the Android app. Stim then boots an owned emulator, installs
 the app, opens it, and checks launch logs. A React Native emulator debug build
-can compile on a paired remote machine instead: see `remote.buildMode` in
+can compile on a paired remote machine instead: see `remote.build` in
 [machine settings](./settings.md#machine-settings).
 
-- `--remote-build <auto|local|name>` overrides `STIM_REMOTE_BUILD` and
-  `remote.build`. A name requires that configured, paired worker and fails
+- `--remote-build <local|auto|remote|remote-only|name>` overrides `STIM_REMOTE_BUILD` and
+  `remote.build`. `remote` tries the remote machines first, in `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
   with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install still run on this machine before
@@ -668,7 +669,7 @@ can compile on a paired remote machine instead: see `remote.buildMode` in
   the same app terminates that workspace's running app. Without `--device`, it
   refuses a full device cap or existing slot queue immediately. It cannot be
   combined with `--wait`.
-- `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no fallback. `--remote auto` places on an approved host when this machine is full or busy, or joins the local device queue when no host admits. `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
+- `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no fallback. `--remote auto` places on an approved host when this machine is full or busy, or joins the local device queue when no host admits. `--remote remote` tries the approved hosts first, in `remote.machines` order, and runs here only when none admits; `--remote remote-only` never runs here and waits for a host with room (`--no-wait`, `--wait 0` or the end of `--wait` refuse with `STIM_AT_CAPACITY`). `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
@@ -765,7 +766,7 @@ miss, which native change causes it.
 ## `macos`
 
 ```text
-stim macos [--remote-build <auto|local|name>] [--remote <machine>] [--json]
+stim macos [--remote-build <local|auto|remote|remote-only|name>] [--remote <placement>] [--json]
 ```
 
 Builds the explicitly configured Swift Package executable in Debug and launches
@@ -775,17 +776,21 @@ with no Metro or custom build scripts. Workspace logs include compiler output
 and runtime stdout/stderr. `status` reports the app and build, and `stop` signals
 only their verified owners. Stim Desktop can preview one owned window and open
 the verified app for native input on the same Mac using existing permissions.
-`--remote-build <auto|local|name>` selects build placement as described in
+`--remote-build <local|auto|remote|remote-only|name>` selects build placement as described in
 [machine settings](./settings.md#machine-settings). A name refuses with
 `STIM_OFFLOAD_REFUSED` without fallback; `local` compiles here.
 
-`--remote <machine>` takes a remote machine name from
-[`remote.machines`](./settings.md#machine-settings) and runs the built app on
-that approved Mac over the tailnet. It never falls back to a local launch, and
-`stop` or `worktree remove` stop it there. macOS refuses `eas` and `proxy` because
-it has neither backend, and refuses `auto` until automatic placement ships.
-These reserved names are case-insensitive and trimmed; they refuse with
-`STIM_BAD_ARG` before state access or a connection. See the
+`--remote <placement>` and the `macos.remote` setting say where the built app
+runs; the flag wins. A remote machine name from
+[`remote.machines`](./settings.md#machine-settings) runs it on that approved Mac
+over the tailnet and never falls back to a local launch. `auto` launches here
+unless this machine is busy, `remote` on the first approved Mac in order that has
+room and runs here only when none does, `remote-only` never launches here
+(macOS apps take focus) and waits for a Mac with room, and `local` launches
+here. `stop` or `worktree remove` stop a hosted app there. macOS refuses `eas` and
+`proxy` because it has neither backend. These reserved names are case-insensitive
+and trimmed; `eas` and `proxy` refuse with `STIM_BAD_ARG` before state access or a
+connection. See the
 [native macOS prototype](./macos.md) for metadata, arguments, hosting and current
 limitations.
 
