@@ -183,7 +183,7 @@ function reportRefreshFailure(failure: RefreshFailure, out: (line: string) => vo
 }
 
 function mainCheckoutAppDir(root: string, target: string, cwd: string): string {
-  const app = findProjectRoot(cwd);
+  const app = warmedWorkspace(root, target, cwd) ?? findProjectRoot(cwd);
   if (!app) return root;
   const rel = relative(target, app);
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return root;

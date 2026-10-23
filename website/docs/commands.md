@@ -1698,7 +1698,7 @@ checkout refuses.
 
 `--refresh` updates the source checkout before the copy: it checks the upstream, fetches changes when needed,
 fast-forwards whatever branch is checked out there, and installs dependencies or
-Pods when the new commits moved a lockfile, when nothing is installed, or when
+Pods when the new commits moved a lockfile (or `patches/` in an npm project), when nothing is installed, or when
 `ios/Pods` does not match `ios/Podfile.lock`. See
 [worktree isolation](./worktrees.md#refresh-the-source-checkout-first).
 
