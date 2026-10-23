@@ -71,7 +71,8 @@ export function buildLedgerRecord(run: BuildLedgerRun): BuildLedgerRecord {
   const startedAt = Date.parse(String(record.startedAt));
 
   const fallback = text(record.offloadFallback);
-  const machine = text(record.offloadedTo) ?? (fallback ? null : run.offload?.host) ?? null;
+  const ranHere = fallback !== null || record.builtOn === 'here';
+  const machine = text(record.offloadedTo) ?? (ranHere ? null : run.offload?.host) ?? null;
   const placement: BuildLedgerRecord['placement'] = machine
     ? { where: 'offloaded', machine }
     : fallback

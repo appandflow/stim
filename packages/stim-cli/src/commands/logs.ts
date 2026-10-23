@@ -396,7 +396,7 @@ const BUILD_LEDGER: MachineLog = {
   source: 'builds',
   dir: buildLedgerDir,
   read: readBuildLedger,
-  key: (record) => String(record.id),
+  key: (record) => `${record.id}:${record.ts}`,
 };
 
 function printMachineLog(

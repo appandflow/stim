@@ -146,6 +146,13 @@ describe('buildLedgerRecord', () => {
     expect(record.placement).toEqual({ where: 'local', fellBack: true, reason: 'mini lost its connection' });
   });
 
+  test('a remote lookup that ended in a build here is recorded as a local build', () => {
+    const record = buildLedgerRecord(
+      run({ record: { builtOn: 'here' }, offload: { host: 'mini', phaseMs: { fetch: 1_000 } } }),
+    );
+    expect(record.placement).toEqual({ where: 'local' });
+  });
+
   test('maps cache hits, bypasses and miss reasons', () => {
     expect(buildLedgerRecord(run({ record: { cacheHit: 'remote' } })).cache).toMatchObject({
       result: 'hit',
