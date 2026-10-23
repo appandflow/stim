@@ -84,10 +84,8 @@ struct AddMachineSteps: View {
             timeRow("Build", timings.workerMs)
             timeRow("Download / fetch", timings.fetchMs)
             timeRow("Total", timings.totalMs)
-            if let local = sample.test.localMs {
-              Text("This Mac can still build it: \(sampleDuration(local))").foregroundStyle(Palette.success)
-              Text(speedComparison(machine: name, offloadMs: timings.totalMs, localMs: local))
-            }
+            Text("The first build on a new machine is cold, so later builds are faster.").font(.stim(.footnote))
+              .foregroundStyle(Palette.secondary)
           }
         }
         if !sample.lines.isEmpty {
@@ -118,9 +116,7 @@ struct AddMachineSteps: View {
     case .preparingSample: Text("Preparing the sample app").foregroundStyle(Palette.secondary)
     case .ready: Text("The sample app is ready.")
     case .offloading(let phase): Text("Building on \(name): \(phase)").foregroundStyle(Palette.secondary)
-    case .offloaded: Text("The offloaded sample launched.").foregroundStyle(Palette.success)
-    case .localBuilding: Text("Building on this Mac to prove the fallback path.")
-    case .done: Label("Both test builds passed", systemImage: "checkmark.circle.fill").foregroundStyle(Palette.success)
+    case .done: Label("Test build passed on \(name)", systemImage: "checkmark.circle.fill").foregroundStyle(Palette.success)
     case .failed(let code, let message, let remedy):
       Text(code).font(.stim(.body, mono: true)).foregroundStyle(Palette.error)
       Text(message).foregroundStyle(Palette.error).textSelection(.enabled)
