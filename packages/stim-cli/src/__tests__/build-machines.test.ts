@@ -587,6 +587,38 @@ describe('inspectBuildMachines', () => {
     );
   });
 
+  it('shows the install command of a CocoaPods note and still takes the build', async () => {
+    await approvedCredential();
+    const { findings, machines } = await inspectBuildMachines(
+      {
+        fix: false,
+        check: () =>
+          Promise.resolve({
+            capacity: null,
+            problems: [],
+            notes: [
+              {
+                code: 'cocoapods',
+                reason: 'no CocoaPods there, so a build whose pods are not installed there fails at pod install',
+                commands: ['brew install cocoapods'],
+                lead: 'install CocoaPods',
+              },
+            ],
+          }),
+      },
+      fakeIo([approved()]).io,
+      ['mini'],
+    );
+    expect(machines).toEqual([expect.objectContaining({ offloadable: true })]);
+    expect(findings).toEqual([
+      expect.objectContaining({
+        code: 'build-machine-cocoapods',
+        level: 'note',
+        fix: 'On mini, install CocoaPods:\nbrew install cocoapods',
+      }),
+    ]);
+  });
+
   it('fixes a deselected Xcode with the exact command, and a runtime that follows from it with a pointer', async () => {
     await approvedCredential();
     const { findings } = await inspectBuildMachines(

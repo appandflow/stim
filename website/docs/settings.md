@@ -435,7 +435,7 @@ and unknown simulator runtime builds refuse a named worker on a cache miss.
 Invalid values, unlisted names and unpaired names refuse at setup before the
 cache is consulted, without a build record or failed-run stats. A listed paired
 name with a cache hit needs no build and contacts no worker. Prebuild and pod
-install run on this machine before a named offload, after a check of the worker's toolchain. `stim status` and its JSON
+install still run on this machine before a named offload; for `stim ios` the worker's toolchain is checked first. `stim status` and its JSON
 record `buildMachine` (the selected value) and `builtOn` (`here` or the worker
 name, absent when no build ran). Ctrl-C cancels the worker build and starts no
 local xcodebuild, Gradle or SwiftPM compile.

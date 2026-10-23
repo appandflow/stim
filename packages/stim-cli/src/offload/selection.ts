@@ -20,7 +20,7 @@ export function podsFailedRemedy(machine: string, reason: string, localCocoapods
   if (!reason.startsWith('pod install failed: ')) return undefined;
   const retry = 'run the same command again, or rerun with --remote-build auto or --remote-build local';
   if (!reason.includes('no `pod` executable')) {
-    return `Fix the pod install error above on ${machine} (run pod install in its checkout under server.workerRoot there to see all of it), then ${retry}.`;
+    return `Fix the pod install error on ${machine} (run pod install in its checkout under server.workerRoot there to see all of it), then ${retry}.`;
   }
   const { lead, commands } = cocoapodsInstall(localCocoapods);
   return [`On ${machine}, ${lead}:`, ...commands, `Then ${retry}.`].join('\n');

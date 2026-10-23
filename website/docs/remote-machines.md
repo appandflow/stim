@@ -361,7 +361,7 @@ none. If `pod install` then fails there, the build reports "pod install failed"
 and the command to run on that machine; a named `--remote-build` stops with it,
 and `auto` builds on this machine. A different version rewrites the `COCOAPODS:`
 line of a committed `Podfile.lock`, which the fingerprint check reports as
-`fingerprint-mismatch`. A named `--remote-build` is also checked against the
+`fingerprint-mismatch`. For `stim ios`, a named `--remote-build` is also checked against the
 machine's Xcode, runtime and CPU before this Mac runs prebuild and `pod install`.
 
 The CocoaPods version is read in the project's `.ruby-version` when that Ruby

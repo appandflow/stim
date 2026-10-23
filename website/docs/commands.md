@@ -614,8 +614,8 @@ can compile on a paired remote machine instead: see `remote.buildMode` in
   `remote.build`. A name requires that configured, paired worker and fails
   with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
   a build record or failed-run stats. A listed paired name with a cache hit
-  contacts no worker. Prebuild and pod install run on this machine before
-  a named offload, after a check of the worker's toolchain. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
+  contacts no worker. Prebuild and pod install still run on this machine before
+  a named offload. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
   Run `stim doctor --fix` to ask for build access if not paired; a person on
   the worker approves it by running the `stim-server setup` command doctor
   printed, with its ticket and expiry.

@@ -8947,6 +8947,31 @@ describe('strict remote machine selection', () => {
     expect(readLastBuilds(readWorkspaceState(root)).ios?.errorCode).toBe('STIM_COMPILATION_CACHE_CORRUPT');
   });
 
+  test('a named machine whose toolchain differs refuses before prebuild and pod install', async () => {
+    reserve();
+    configureMini();
+    vi.spyOn(offloadClient, 'offloadCheck').mockReturnValue(async () => ({
+      capacity: null,
+      problems: [
+        {
+          code: 'xcode',
+          reason: 'Xcode 26.4 there, Xcode 27.1 here',
+          commands: ['xcodes install 27.1'],
+          lead: 'install Xcode 27.1',
+        },
+        { code: 'busy', reason: 'busy (load)' },
+      ],
+    }));
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
+    const result = await run({ remoteBuild: 'mini', json: true });
+    const failure = parseFirst(result.logs);
+    expect(failure).toMatchObject({ code: 'STIM_OFFLOAD_REFUSED', message: 'mini: Xcode 26.4 there, Xcode 27.1 here' });
+    expect(failure.remedy).toContain('On mini, install Xcode 27.1:\nxcodes install 27.1');
+    expect(result.calls.order).not.toContain('runPrebuild');
+    expect(result.calls.order).not.toContain('runPodInstall');
+    expect(choose).not.toHaveBeenCalled();
+  });
+
   test('a non-Debug cache miss refuses strict placement before xcodebuild', async () => {
     reserve();
     configureMini();

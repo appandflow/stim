@@ -396,8 +396,9 @@ too old to speak protocol 2, incompatible
 toolchain/runtime/CPU, low disk, busy, sync/build failure, artifact failure,
 or a checkout that changed while it built. Unsupported build kinds also refuse.
 No local xcodebuild, Gradle or SwiftPM compile or alternate machine follows a
-refusal. A toolchain difference on the named machine, such as Xcode, the simulator
-runtime or the CPU, refuses before this machine runs prebuild or pod install. A
+refusal. For stim ios, a toolchain difference on the named machine, such as Xcode,
+the simulator runtime or the CPU, refuses before this machine runs prebuild or pod
+install, even when prebuild would have produced an app the local cache already holds. A
 missing or different global CocoaPods never refuses; a pod install that fails on
 the machine reports "pod install failed" with the command to run there.
 Unlisted or unpaired names refuse at setup before consulting the cache, without
