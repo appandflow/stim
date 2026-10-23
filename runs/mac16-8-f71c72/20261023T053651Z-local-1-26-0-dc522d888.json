@@ -1,0 +1,425 @@
+{
+  "schema": 1,
+  "id": "20261023T053651Z-local-1-26-0-dc522d888",
+  "startedAt": "2026-10-23T05:36:51.083Z",
+  "finishedAt": "2026-10-23T05:59:13.989Z",
+  "stim": {
+    "source": "path",
+    "label": "local-1.26.0-dc522d888",
+    "version": "1.26.0",
+    "traceSupport": true
+  },
+  "repo": {
+    "sha": "dc522d8889021afbd7bd0a39ba6e71755c9dd12e"
+  },
+  "machine": {
+    "id": "mac16-8-f71c72",
+    "model": "Mac16,8",
+    "cpu": "Apple M4 Pro",
+    "cores": 14,
+    "memoryGb": 48,
+    "os": "macOS 27.0 (26A428)",
+    "xcode": "Xcode 27.1 Build version 27A9275",
+    "node": "v22.22.2"
+  },
+  "config": {
+    "reps": 3,
+    "primed": true,
+    "app": "apps/mobile",
+    "maxLoad": 80
+  },
+  "load": {
+    "start": [
+      309.79,
+      231.03,
+      203.65
+    ],
+    "end": [
+      162.74,
+      141.56,
+      156.82
+    ]
+  },
+  "scenarios": {
+    "warm": {
+      "runs": [
+        {
+          "rep": 1,
+          "wallMs": 18376,
+          "exit": 0,
+          "loadBefore": 68.72,
+          "loadAfter": 111.05,
+          "trace": {
+            "commandMs": 18070,
+            "phases": {
+              "copy": 17663
+            },
+            "spans": {
+              "carry ignored entries": 17622
+            },
+            "exec": {
+              "count": 39,
+              "ms": 8284
+            }
+          }
+        },
+        {
+          "rep": 2,
+          "wallMs": 13246,
+          "exit": 0,
+          "loadBefore": 77.6,
+          "loadAfter": 78.93,
+          "trace": {
+            "commandMs": 13024,
+            "phases": {
+              "copy": 12791
+            },
+            "spans": {
+              "carry ignored entries": 12766
+            },
+            "exec": {
+              "count": 39,
+              "ms": 8139
+            }
+          }
+        },
+        {
+          "rep": 3,
+          "wallMs": 20411,
+          "exit": 0,
+          "loadBefore": 70.95,
+          "loadAfter": 86.91,
+          "trace": {
+            "commandMs": 20222,
+            "phases": {
+              "copy": 19951
+            },
+            "spans": {
+              "carry ignored entries": 19919
+            },
+            "exec": {
+              "count": 39,
+              "ms": 8835
+            }
+          }
+        }
+      ],
+      "summary": {
+        "n": 3,
+        "failures": 0,
+        "medianMs": 18376,
+        "minMs": 13246,
+        "maxMs": 20411,
+        "spread": 0.3899107531562908
+      }
+    },
+    "start": {
+      "runs": [
+        {
+          "rep": 1,
+          "wallMs": 3419,
+          "exit": 0,
+          "loadBefore": 168.71,
+          "loadAfter": 168.71,
+          "trace": {
+            "commandMs": 3254,
+            "phases": {},
+            "spans": {
+              "wait for metro": 2440
+            },
+            "exec": {
+              "count": 19,
+              "ms": 3856
+            }
+          }
+        },
+        {
+          "rep": 2,
+          "wallMs": 6815,
+          "exit": 0,
+          "loadBefore": 102.88,
+          "loadAfter": 131.87,
+          "trace": {
+            "commandMs": 6542,
+            "phases": {},
+            "spans": {
+              "wait for metro": 2565
+            },
+            "exec": {
+              "count": 19,
+              "ms": 7311
+            }
+          }
+        },
+        {
+          "rep": 3,
+          "wallMs": 3507,
+          "exit": 0,
+          "loadBefore": 137.96,
+          "loadAfter": 145.73,
+          "trace": {
+            "commandMs": 3255,
+            "phases": {},
+            "spans": {
+              "wait for metro": 2427
+            },
+            "exec": {
+              "count": 19,
+              "ms": 3827
+            }
+          }
+        }
+      ],
+      "summary": {
+        "n": 3,
+        "failures": 0,
+        "medianMs": 3507,
+        "minMs": 3419,
+        "maxMs": 6815,
+        "spread": 0.9683490162532079
+      }
+    },
+    "ios-first": {
+      "runs": [
+        {
+          "rep": 1,
+          "wallMs": 19030,
+          "exit": 0,
+          "loadBefore": 168.71,
+          "loadAfter": 189.14,
+          "trace": {
+            "commandMs": 18896,
+            "phases": {
+              "prepare": 1170,
+              "cache-lookup": 1054,
+              "device": 8011,
+              "install": 900,
+              "launch": 7742
+            },
+            "spans": {
+              "fingerprint": 1544
+            },
+            "exec": {
+              "count": 62,
+              "ms": 20889
+            }
+          }
+        },
+        {
+          "rep": 2,
+          "wallMs": 18196,
+          "exit": 0,
+          "loadBefore": 131.87,
+          "loadAfter": 156.09,
+          "trace": {
+            "commandMs": 18068,
+            "phases": {
+              "prepare": 1179,
+              "cache-lookup": 1688,
+              "device": 8079,
+              "install": 372,
+              "launch": 6734
+            },
+            "spans": {
+              "fingerprint": 848
+            },
+            "exec": {
+              "count": 63,
+              "ms": 19212
+            }
+          }
+        },
+        {
+          "rep": 3,
+          "wallMs": 18385,
+          "exit": 0,
+          "loadBefore": 145.73,
+          "loadAfter": 180.86,
+          "trace": {
+            "commandMs": 18241,
+            "phases": {
+              "prepare": 1369,
+              "cache-lookup": 948,
+              "device": 8711,
+              "install": 389,
+              "launch": 6805
+            },
+            "spans": {
+              "fingerprint": 1801
+            },
+            "exec": {
+              "count": 62,
+              "ms": 20014
+            }
+          }
+        }
+      ],
+      "summary": {
+        "n": 3,
+        "failures": 0,
+        "medianMs": 18385,
+        "minMs": 18196,
+        "maxMs": 19030,
+        "spread": 0.04536306771824857
+      }
+    },
+    "ios-rerun": {
+      "runs": [
+        {
+          "rep": 1,
+          "wallMs": 12676,
+          "exit": 0,
+          "loadBefore": 189.14,
+          "loadAfter": 223.22,
+          "trace": {
+            "commandMs": 12394,
+            "phases": {
+              "prepare": 1607,
+              "cache-lookup": 1347,
+              "device": 36,
+              "install": 917,
+              "launch": 8461
+            },
+            "spans": {
+              "fingerprint": 1903
+            },
+            "exec": {
+              "count": 34,
+              "ms": 16483
+            }
+          }
+        },
+        {
+          "rep": 2,
+          "wallMs": 9009,
+          "exit": 0,
+          "loadBefore": 156.09,
+          "loadAfter": 151.55,
+          "trace": {
+            "commandMs": 8858,
+            "phases": {
+              "prepare": 802,
+              "cache-lookup": 976,
+              "device": 12,
+              "install": 385,
+              "launch": 6665
+            },
+            "spans": {
+              "fingerprint": 770
+            },
+            "exec": {
+              "count": 34,
+              "ms": 11063
+            }
+          }
+        },
+        {
+          "rep": 3,
+          "wallMs": 8922,
+          "exit": 0,
+          "loadBefore": 180.86,
+          "loadAfter": 175.68,
+          "trace": {
+            "commandMs": 8759,
+            "phases": {
+              "prepare": 805,
+              "cache-lookup": 913,
+              "device": 13,
+              "install": 384,
+              "launch": 6627
+            },
+            "spans": {
+              "fingerprint": 799
+            },
+            "exec": {
+              "count": 34,
+              "ms": 10939
+            }
+          }
+        }
+      ],
+      "summary": {
+        "n": 3,
+        "failures": 0,
+        "medianMs": 9009,
+        "minMs": 8922,
+        "maxMs": 12676,
+        "spread": 0.4166944166944167
+      }
+    },
+    "stop": {
+      "runs": [
+        {
+          "rep": 1,
+          "wallMs": 4431,
+          "exit": 0,
+          "loadBefore": 223.22,
+          "loadAfter": 223.22,
+          "trace": {
+            "commandMs": 4266,
+            "phases": {},
+            "spans": {},
+            "exec": {
+              "count": 7,
+              "ms": 3926
+            }
+          }
+        },
+        {
+          "rep": 2,
+          "wallMs": 4196,
+          "exit": 0,
+          "loadBefore": 151.55,
+          "loadAfter": 147.02,
+          "trace": {
+            "commandMs": 4049,
+            "phases": {},
+            "spans": {},
+            "exec": {
+              "count": 7,
+              "ms": 3703
+            }
+          }
+        },
+        {
+          "rep": 3,
+          "wallMs": 4230,
+          "exit": 0,
+          "loadBefore": 175.68,
+          "loadAfter": 168.82,
+          "trace": {
+            "commandMs": 4122,
+            "phases": {},
+            "spans": {},
+            "exec": {
+              "count": 7,
+              "ms": 3776
+            }
+          }
+        }
+      ],
+      "summary": {
+        "n": 3,
+        "failures": 0,
+        "medianMs": 4230,
+        "minMs": 4196,
+        "maxMs": 4431,
+        "spread": 0.05555555555555555
+      }
+    }
+  },
+  "skipped": [
+    {
+      "scenario": "bare-ios-rerun",
+      "reason": "no bare React Native fixture is checked in; test/e2e generates one from the network"
+    },
+    {
+      "scenario": "bare-android-rerun",
+      "reason": "no bare React Native fixture is checked in; test/e2e generates one from the network"
+    },
+    {
+      "scenario": "android",
+      "reason": "not selected"
+    }
+  ]
+}
