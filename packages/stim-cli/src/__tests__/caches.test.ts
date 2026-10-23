@@ -131,6 +131,25 @@ test('cache trimming preserves an entry modified while its directory size is mea
   expect(existsSync(join(entry, 'new-artifact'))).toBe(true);
 });
 
+test('caches with nothing to trim are reported in one line, while a trimmed or kept cache keeps its own', async () => {
+  const named = (name: string) => {
+    const dir = join(tmpHome, name);
+    mkdirSync(join(dir, 'entry'), { recursive: true });
+    return makeCacheDescriptor({ name, dir, prune: 'entries' });
+  };
+  const emptyA = named('cache a');
+  const emptyB = named('cache b');
+  const stale = named('stale cache');
+  age(join(stale.dir, 'entry'));
+  const lines: string[] = [];
+  const log = (line: string) => lines.push(line);
+  await trimCaches([emptyA, emptyB, stale], 30, { log, error: log, record: () => {}, fail: () => {} });
+  const unchanged = lines.filter((line) => line.includes('nothing older than'));
+  expect(unchanged).toHaveLength(1);
+  expect(unchanged[0]).toContain('2 caches: nothing older than 30d');
+  expect(lines.some((line) => line.includes('Trimmed stale cache'))).toBe(true);
+});
+
 test('metro file maps are reported as an explicit file list, never as a directory to remove', () => {
   const stray = join(tmpdir(), `metro-file-map-stim-test-${process.pid}`);
   writeFileSync(stray, 'x'.repeat(1024));
