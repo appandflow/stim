@@ -69,6 +69,8 @@ struct RootView: View {
   @State private var inspectorWidth = WorkspaceDetail.inspectorWidth
   @State private var windowSize = CGSize.zero
   @State private var isFullScreen = false
+  @State private var tutorialPinned = false
+  @State private var tutorialWindowTransitioning = false
   @State private var tutorialPopupOpen = false
   @State private var sidebarWidth: CGFloat = 0
   @State private var settledInspectorFits: Bool?
@@ -146,6 +148,17 @@ struct RootView: View {
     } detail: {
       HStack(spacing: 0) {
         detail.frame(maxWidth: .infinity, maxHeight: .infinity)
+        if tutorialDocked, let snapshot = tutorial.snapshot {
+          TutorialDockHost(transitioning: tutorialWindowTransitioning) {
+            HStack(spacing: 0) {
+              Divider()
+              tutorialPanelContent(snapshot)
+                .disabled(tutorialPopupOpen)
+                .allowsHitTesting(!tutorialPopupOpen && !tutorialWindowTransitioning)
+            }
+          }
+          .frame(width: WorkspaceDetail.inspectorWidth + 1)
+        }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Palette.background)
@@ -168,17 +181,6 @@ struct RootView: View {
         max(0, $0.size.width - tutorialDockWidth)
       } action: {
         detailWidth = $0
-      }
-      .safeAreaInset(edge: .trailing, spacing: 0) {
-        if tutorialDocked, let snapshot = tutorial.snapshot {
-          HStack(spacing: 0) {
-            Divider()
-            tutorialPanelContent(snapshot)
-              .frame(width: WorkspaceDetail.inspectorWidth)
-              .disabled(tutorialPopupOpen)
-              .allowsHitTesting(!tutorialPopupOpen)
-          }
-        }
       }
       .navigationSplitViewColumnWidth(min: 440, ideal: 900)
       .toolbar {
@@ -310,7 +312,13 @@ struct RootView: View {
     }
     .modifier(TutorialRestartDialogs(tutorial: tutorial))
     .background(floatingTutorial)
-    .background(TutorialWindowObserver(isFullScreen: $isFullScreen, popupOpen: $tutorialPopupOpen))
+    .background(
+      TutorialWindowObserver(
+        isFullScreen: $isFullScreen, popupOpen: $tutorialPopupOpen, transitioning: $tutorialWindowTransitioning)
+    )
+    .onChange(of: isFullScreen) {
+      if !isFullScreen { tutorialPinned = false }
+    }
     .onAppear {
       navigation.resolves = resolves
       navigation.apply = show
@@ -535,13 +543,15 @@ struct RootView: View {
       })
   }
 
-  private var tutorialDocked: Bool { isFullScreen && tutorial.isOpen && tutorial.snapshot != nil }
+  private var tutorialDocked: Bool {
+    (isFullScreen || tutorialPinned) && tutorial.isOpen && tutorial.snapshot != nil
+  }
 
   private var tutorialDockWidth: CGFloat { tutorialDocked ? WorkspaceDetail.inspectorWidth + 1 : 0 }
 
   private var floatingTutorial: some View {
     ExperimentalTutorialFloat(
-      isPresented: tutorial.isOpen && tutorial.snapshot != nil && !isFullScreen
+      isPresented: tutorial.isOpen && tutorial.snapshot != nil && !tutorialDocked && !tutorialWindowTransitioning
     ) {
       if let snapshot = tutorial.snapshot { tutorialPanelContent(snapshot) }
     }
@@ -557,6 +567,8 @@ struct RootView: View {
       copied: { tutorial.copiedPrompt() }, next: tutorial.next,
       restart: tutorial.restart,
       close: tutorial.close,
+      isDocked: tutorialDocked, isFullScreen: isFullScreen,
+      togglePin: { if !isFullScreen { tutorialPinned.toggle() } },
       openArchived: archive.map { archive in
         {
           navigate(.archived(archive.id), .click("tutorial Open Archived"))

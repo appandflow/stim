@@ -17,6 +17,9 @@ struct TutorialPanel: View {
   var next: () -> Void = {}
   var restart: () -> Void = {}
   var close: () -> Void = {}
+  var isDocked = false
+  var isFullScreen = false
+  var togglePin: () -> Void = {}
   var openArchived: (() -> Void)? = nil
   var archiveUnavailableReason = "No saved archive is available for this tutorial run."
   var openBuild: (() -> Void)? = nil
@@ -327,6 +330,14 @@ struct TutorialPanel: View {
         .buttonStyle(.plain)
         .foregroundStyle(Palette.primary)
       Spacer()
+      Button(action: togglePin) {
+        Image(systemName: isDocked ? "pin.fill" : "pin")
+      }
+      .buttonStyle(.plain)
+      .foregroundStyle(isFullScreen ? Palette.secondary : Palette.primary)
+      .disabled(isFullScreen)
+      .help(isFullScreen ? "Tutorial stays docked in full screen" : isDocked ? "Float Tutorial" : "Pin Tutorial to Sidebar")
+      .accessibilityLabel(isDocked ? "Float Tutorial" : "Pin Tutorial to Sidebar")
     }
   }
 

@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 
 /// The window is a non-activating `NSPanel`, so clicking it never takes focus from the app the user works in.
@@ -24,6 +25,7 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
     private var observers: [NSObjectProtocol] = []
     private var content = AnyView(EmptyView())
     private var popupOpen = false
+    private var transitioning = false
 
     func update(isPresented: Bool, ownerWindow: NSWindow?, content: AnyView) {
       guard isPresented else { return close() }
@@ -52,8 +54,18 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
               }
             },
           ]
+          for name in [NSWindow.willEnterFullScreenNotification, NSWindow.willExitFullScreenNotification] {
+            observers.append(
+              NotificationCenter.default.addObserver(forName: name, object: ownerWindow, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                  self?.transitioning = true
+                  self?.panel?.orderOut(nil)
+                }
+              })
+          }
         }
       }
+      if transitioning { return }
       if hosting == nil {
         let hosting = NSHostingView(rootView: AnyView(EmptyView()))
         let panel = NSPanel(
@@ -94,7 +106,15 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
         panel.parent?.removeChildWindow(panel)
         ownerWindow.addChildWindow(panel, ordered: .above)
       }
-      if panel?.isVisible == false { panel?.orderFront(nil) }
+      if let panel, !panel.isVisible {
+        panel.alphaValue = 0
+        panel.orderFront(nil)
+        NSAnimationContext.runAnimationGroup { context in
+          context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.2
+          context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+          panel.animator().alphaValue = 1
+        }
+      }
     }
 
     private func refreshContent() {
@@ -106,6 +126,7 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
       observers = []
       owner = nil
       popupOpen = false
+      transitioning = false
       content = AnyView(EmptyView())
       if let panel {
         panel.parent?.removeChildWindow(panel)
