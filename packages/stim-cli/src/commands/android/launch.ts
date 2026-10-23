@@ -275,6 +275,7 @@ export async function verifyAndroidMetroRun({
   const readNativeCrashes = async () => {
     if (hostedLogs) return hostedLogs.readNativeCrashes();
     if (remoteDevice) return [];
+    // One verification keeps one clock offset; a guest clock step during it is not re-measured.
     const measured = clockOffsetMs ?? (await androidCrashClockOffset(serial, operation?.signal));
     if (measured !== null) clockOffsetMs = measured;
     return captureNativeCrashes(

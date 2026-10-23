@@ -903,6 +903,7 @@ describe('runCollector reattach seams', () => {
 
   test('finish aborts the adb reads the collector still has in flight', async () => {
     let readSignal: AbortSignal | undefined;
+    let watchSignal: AbortSignal | undefined;
     const result = await runCollector({
       platform: 'android',
       root,
@@ -913,14 +914,17 @@ describe('runCollector reattach seams', () => {
         readSignal = signal;
         return null;
       },
-      pidOf: () => 3132,
-      pidWatchMs: 60000,
+      watchPid: ({ signal }) => {
+        watchSignal = signal;
+        return { stop: () => {}, probe: async () => 3132, pid: 3132 };
+      },
       startStream: ({ pid: streamPid }) => fakeChild(streamPid),
       attachSignals: false,
       onExit: () => {},
     });
     assert(result);
     expect(readSignal?.aborted).toBe(false);
+    expect(watchSignal).toBe(readSignal);
     result.finish(0, 'info', 'done', 'collector_stopped');
     expect(readSignal?.aborted).toBe(true);
   });

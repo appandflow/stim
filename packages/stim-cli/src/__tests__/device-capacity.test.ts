@@ -1,6 +1,6 @@
 import { mkdtempSync, realpathSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { readStatsReport } from '@stim-cli/core/state';
 import { workspaceId } from '@stim-cli/core';
 import {
@@ -8,6 +8,7 @@ import {
   withDeviceBootAdmission,
   deviceSlotWaitingLine,
   countLiveOwnedDevices,
+  countLiveOwnedDevicesFrom,
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
@@ -151,7 +152,7 @@ test('admission lists simulators and emulators through the async executor', asyn
         throw new Error('a synchronous device listing blocks the event loop');
       },
       runFileAsync: async (file) => {
-        listed.push(file.split('/').at(-1) ?? file);
+        listed.push(basename(file));
         return file === 'xcrun' ? '{"devices":{}}' : 'List of devices attached\nemulator-5554\tdevice\n';
       },
     }),
@@ -176,6 +177,21 @@ test('admission lists simulators and emulators through the async executor', asyn
   } finally {
     resetExecutor();
   }
+});
+
+test('the async device count reads a missing simulator toolchain as no simulators and lists adb only for recorded emulators', async () => {
+  const missing = Object.assign(new Error('xcrun: not found'), { code: 'ENOENT' });
+  const adb = vi.fn<() => Promise<ReturnType<typeof makeAdbDevices>>>(async () => makeAdbDevices());
+  const sims = vi.fn<() => Promise<ReturnType<typeof makeIosSim>[]>>(async () => {
+    throw missing;
+  });
+  const sources = { sims, adb, config: makeConfig(), booting: [] };
+  await expect(countLiveOwnedDevicesFrom(sources)).resolves.toBe(0);
+  expect(adb).not.toHaveBeenCalled();
+  sims.mockRejectedValue(new Error('simctl timed out'));
+  await expect(countLiveOwnedDevicesFrom(sources)).resolves.toMatchObject({
+    unknown: expect.stringContaining('simctl'),
+  });
 });
 
 test.each([{ noWait: true }, { waitMs: 0 }])(

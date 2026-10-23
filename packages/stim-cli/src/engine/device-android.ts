@@ -48,7 +48,7 @@ import { AvdBootError, AvdRecoveryError, prepareOwnedAvd } from './android-avd-s
 import { claimFailure } from '../ownership-claim.ts';
 import {
   DeviceAdmissionRefusal,
-  countLiveOwnedDevices,
+  countLiveOwnedDevicesFrom,
   withDeviceBootAdmission,
   type DeviceSlotWaitPolicy,
 } from './device-capacity.ts';
@@ -516,11 +516,11 @@ function reportAndroidMemoryPressure(out: Notify): void {
 async function androidBootRemedy(pressure: HostMemoryPressure | null): Promise<string> {
   let count: number | null = null;
   try {
-    const [sims, adb] = await Promise.all([
-      process.platform === 'darwin' ? listAllIosSimsAsync({ timeoutMs: 2000 }) : [],
-      listAdbDevicesAsync({ timeoutMs: 2000 }),
-    ]);
-    const live = countLiveOwnedDevices({ sims, adb: { ...adb, unhealthy: [] }, booting: [] });
+    const live = await countLiveOwnedDevicesFrom({
+      sims: () => (process.platform === 'darwin' ? listAllIosSimsAsync({ timeoutMs: 2000 }) : []),
+      adb: async () => ({ ...(await listAdbDevicesAsync({ timeoutMs: 2000 })), unhealthy: [] }),
+      booting: [],
+    });
     count = typeof live === 'number' ? live : null;
   } catch {}
   const named = memoryCulpritAdvice(await memoryCulpritsUnderAsync(pressure));

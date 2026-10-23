@@ -230,12 +230,12 @@ function listed<T>(source: Listing<T>, empty: T, absent: (error: unknown) => boo
 }
 
 async function listedAwait<T>(
-  source: T | (() => T | Promise<T>),
+  read: () => T | Promise<T>,
   empty: T,
   absent: (error: unknown) => boolean = () => false,
 ): Promise<T> {
   try {
-    return (await (typeof source === 'function' ? (source as () => T | Promise<T>)() : source)) ?? empty;
+    return (await read()) ?? empty;
   } catch (error) {
     if (absent(error)) return empty;
     throw new DeviceCountUnavailable('', { cause: error });
@@ -258,11 +258,13 @@ async function readInventoryAsync({
   booting = readBootingDevices,
 }: AsyncInventorySources): Promise<DeviceInventory | CapacityRefusal> {
   try {
-    const recorded = await listedAwait(config, null);
+    const recorded = await listedAwait(() => (typeof config === 'function' ? config() : config), null);
     return {
-      booting: await listedAwait(booting, []),
-      sims: await listedAwait<SimRecord[]>(sims, [], toolAbsent),
-      adb: recordsOwnedEmulator(recorded) ? await listedAwait(adb, NO_ADB, toolAbsent) : NO_ADB,
+      booting: await listedAwait(() => (typeof booting === 'function' ? booting() : booting), []),
+      sims: await listedAwait(() => (typeof sims === 'function' ? sims() : sims), [], toolAbsent),
+      adb: recordsOwnedEmulator(recorded)
+        ? await listedAwait(() => (typeof adb === 'function' ? adb() : adb), NO_ADB, toolAbsent)
+        : NO_ADB,
       config: recorded,
     };
   } catch (error) {
@@ -320,6 +322,19 @@ async function listedAsync<T>(source: () => Promise<T>, empty: T): Promise<T> {
   } catch (error) {
     if (toolAbsent(error)) return empty;
     throw new DeviceCountUnavailable('', { cause: error });
+  }
+}
+
+export async function countLiveOwnedDevicesFrom(
+  sources: AsyncInventorySources,
+  { exclude = [] }: { exclude?: DeviceCountExclusion[] } = {},
+): Promise<number | { unknown: string }> {
+  try {
+    const inventory = await readInventoryAsync(sources);
+    return 'code' in inventory ? { unknown: inventory.message } : inventoryKeys(inventory, exclude).size;
+  } catch (error) {
+    if (isClaimRefusal(error)) return { unknown: error.message };
+    throw error;
   }
 }
 
