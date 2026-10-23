@@ -410,13 +410,14 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     return "Stim build \(match.1.prefix(7)) there, \(match.2.prefix(7)) here"
   }
 
-  /// The command that gives the remote Mac this Mac's CocoaPods, from "CocoaPods 1.17.0 there, 1.16.2 here".
+  /// The command that gives the remote Mac this Mac's CocoaPods, from "CocoaPods 1.17.0 there, CocoaPods 1.16.2 here" or
+  /// "no CocoaPods there, CocoaPods 1.16.2 here", with or without the "; its pod install runs anyway" a note adds.
   static func cocoapodsFix(_ reason: String) -> String? {
-    let words = reason.split(separator: " ").map(String.init)
-    guard words.count == 5, words[0] == "CocoaPods", words[2] == "there,", words[4] == "here" else { return nil }
-    let here = words[3]
-    guard !here.isEmpty, here.allSatisfy({ $0.isNumber || $0 == "." }) else { return nil }
-    return words[1] == "null" ? "brew install cocoapods" : "gem install cocoapods -v \(here)"
+    let head = reason.split(separator: ";", maxSplits: 1).first.map(String.init) ?? reason
+    guard let match = head.wholeMatch(of: /(no CocoaPods|CocoaPods (\S+)) there, (?:CocoaPods )?([0-9.]+) here/) else {
+      return nil
+    }
+    return match.2 == nil || match.2 == "null" ? "brew install cocoapods" : "gem install cocoapods -v \(match.3)"
   }
 
   /// The text line under the machine's name when it has no resources to show: `detail`, empty when the pill and the

@@ -33,6 +33,23 @@ import Testing
     #expect(blocked.pill(install: nil, update: nil) == MachineListStatus(title: "CocoaPods differs", tone: .warning))
   }
 
+  @Test func aCocoaPodsNoteIsTitledForItselfAndOffersTheInstallCommand() throws {
+    let differs = "CocoaPods 1.17.0 there, CocoaPods 1.16.2 here; its pod install runs anyway and a failure is reported"
+    let missing = "no CocoaPods there, CocoaPods 1.16.2 here; its pod install runs anyway and a failure is reported"
+    func note(_ reason: String) throws -> MachineIssue {
+      let list = try status(
+        #"{"machine":"mini-2","state":"approved","offloadable":true,"notes":[{"code":"cocoapods","reason":"iOS: \#(reason)"}]}"#
+      )
+      return try #require(MachineDetail(MachineDetail.Input(entry: "mini-2", status: list)).groups.first?.issues.first)
+    }
+    let differing = try note(differs)
+    #expect(differing.kind == .note)
+    #expect(differing.platform == .ios)
+    #expect(differing.title == "CocoaPods differs; pod install runs anyway")
+    #expect(differing.fix?.commands == ["gem install cocoapods -v 1.16.2"])
+    #expect(try note(missing).fix?.commands == ["brew install cocoapods"])
+  }
+
   @Test func theDetailGroupsProblemsAndNotesByPlatformWithTheirFixCommands() throws {
     let list = try status(
       #"""

@@ -238,6 +238,7 @@ public struct MachineDetail: Equatable, Sendable {
       case "ndk": return "NDK downloads on the first build"
       case "build-tools": return "Build-tools download on the first build"
       case "compile-sdk": return "Android platform downloads on the first build"
+      case "cocoapods": return "CocoaPods differs; pod install runs anyway"
       default: return "Downloads on the first build"
       }
     }
