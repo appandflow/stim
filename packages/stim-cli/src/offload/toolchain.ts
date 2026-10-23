@@ -622,11 +622,39 @@ function androidMismatches(
   return out;
 }
 
+export function cocoapodsInstall(here: string | null): Required<Pick<OffloadProblem, 'commands' | 'lead'>> {
+  return {
+    commands: ['brew install cocoapods'],
+    lead: here
+      ? `install CocoaPods (this Mac has ${here}; \`gem install cocoapods -v ${here}\` instead of Homebrew installs that version)`
+      : 'install CocoaPods',
+  };
+}
+
+export function cocoapodsDifference(
+  target: Extract<BuildTarget, { platform: 'ios' }>,
+  worker: WorkerToolchain,
+): OffloadProblem | null {
+  if (target.native || target.cocoapodsPinned) return null;
+  const here = target.local.cocoapods;
+  if (!worker.cocoapods) {
+    return { code: 'cocoapods', reason: versionMismatch('CocoaPods', null, here), ...cocoapodsInstall(here) };
+  }
+  return here && worker.cocoapods !== here
+    ? { code: 'cocoapods', reason: versionMismatch('CocoaPods', worker.cocoapods, here) }
+    : null;
+}
+
 /**
  * What a build on the worker does beyond the match: the SDK packages it lacks and Gradle downloads on the first build,
- * because its SDK licenses are accepted and the project allows the download. None of them stops the build.
+ * because its SDK licenses are accepted and the project allows the download. None of them stops the build. For iOS, the
+ * CocoaPods difference a named machine is sent the build despite.
  */
 export function toolchainNotes(target: BuildTarget, worker: WorkerToolchain): OffloadProblem[] {
+  if (target.platform === 'ios') {
+    const pods = cocoapodsDifference(target, worker);
+    return pods ? [{ ...pods, reason: `${pods.reason}; its pod install runs anyway and a failure is reported` }] : [];
+  }
   if (target.platform !== 'android' || !worker.androidSdk || !gradleDownloads(target.requires, worker)) return [];
   return sdkGaps(target.requires, worker.androidSdk).map((gap) => ({
     code: gap.code,
@@ -802,12 +830,8 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
       reason: versionMismatch('simulator SDK', worker.simulatorSdk, ios.simulatorSdk),
     });
   }
-  if (!target.native && target.cocoapodsPinned) {
-    if (!worker.bundler) {
-      out.push({ code: 'bundler', reason: "no Bundler there to run the CocoaPods this project's Gemfile.lock pins" });
-    }
-  } else if (!target.native && worker.cocoapods !== ios.cocoapods) {
-    out.push({ code: 'cocoapods', reason: versionMismatch('CocoaPods', worker.cocoapods, ios.cocoapods) });
+  if (!target.native && target.cocoapodsPinned && !worker.bundler) {
+    out.push({ code: 'bundler', reason: "no Bundler there to run the CocoaPods this project's Gemfile.lock pins" });
   }
   if (target.runtime && !worker.runtimes.includes(target.runtime)) {
     out.push(runtimeProblem(target.runtime, worker, selection || Boolean(xcode?.commands)));

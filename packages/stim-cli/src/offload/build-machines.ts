@@ -132,7 +132,7 @@ const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   xcode: 'has another Xcode',
   'macos-sdk': 'has another macOS SDK',
   'simulator-sdk': 'has another simulator SDK',
-  cocoapods: 'has another CocoaPods',
+  cocoapods: 'has no CocoaPods, or another version',
   bundler: 'has no Bundler',
   runtime: "has no simulator for this project's iOS runtime",
   jdk: 'runs another JDK major version',
@@ -177,7 +177,10 @@ function problemFix(problem: OffloadProblem, entry: string): string {
         `Install and select the same Xcode on ${entry} and this Mac (\`xcode-select -p\` on each).`
       );
     case 'cocoapods':
-      return `Install the same CocoaPods version on ${entry}, on the PATH its stim-server's login shell sets.`;
+      return (
+        commandFix(problem, entry) ??
+        `Install the same CocoaPods version on ${entry}, on the PATH its stim-server sets. A build sent there with --remote-build ${entry} still runs; a version that differs rewrites the COCOAPODS line of a committed Podfile.lock.`
+      );
     case 'bundler':
       return `Install Bundler (\`gem install bundler\`) on ${entry}, on the PATH its stim-server's login shell sets.`;
     case 'runtime':
@@ -209,13 +212,31 @@ function problemFix(problem: OffloadProblem, entry: string): string {
 
 const TRANSIENT: ReadonlySet<OffloadProblem['code']> = new Set(['unreachable', 'busy']);
 
+const UNPREDICTABLE: ReadonlySet<OffloadProblem['code']> = new Set([
+  'unreachable',
+  'busy',
+  'disk',
+  'checkout',
+  'cocoapods',
+]);
+
+/** Why a build on the machine named for it cannot work, from the toolchain differences found before this machine changes the checkout. */
+export function predictedRefusal(entry: string, problems: OffloadProblem[]): { reason: string; remedy: string } | null {
+  const known = problems.filter((problem) => !UNPREDICTABLE.has(problem.code));
+  if (known.length === 0) return null;
+  return {
+    reason: known.map((problem) => problem.reason).join('; '),
+    remedy: known.map((problem) => problemFix(problem, entry)).join('\n'),
+  };
+}
+
 function offloadFindings(entry: string, problems: OffloadProblem[], notes: OffloadProblem[]): Finding[] {
   return [
     ...problems.map((problem) => ({
       code: `build-machine-${problem.code}`,
       level: TRANSIENT.has(problem.code) ? ('note' as const) : ('cost' as const),
       title: `Remote machine ${entry} ${PROBLEM_TITLES[problem.code]}`,
-      detail: `Builds fall back to this machine: ${problem.reason}.`,
+      detail: `Builds fall back to this machine: ${problem.reason}.${problem.code === 'cocoapods' ? ` A build sent there with --remote-build ${entry} still runs.` : ''}`,
       fix: problemFix(problem, entry),
     })),
     ...notes.map((each) => ({

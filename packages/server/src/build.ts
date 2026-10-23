@@ -409,6 +409,8 @@ export interface BuildHostOptions {
   /** The `offload-worker.mjs` entry of the bundled Stim. */
   worker: string;
   env: NodeJS.ProcessEnv;
+  /** The environment now: the tools installed since `env` was built, such as Homebrew's directory. Absent means `env`. */
+  currentEnv?: () => NodeJS.ProcessEnv;
   limits?: Partial<BuildLimits>;
   /** Called once a job ends, for the action log. */
   finished?: (record: { client: string; repo: string; ok: boolean; error?: ProtocolError; durationMs: number }) => void;
@@ -501,6 +503,10 @@ export class BuildHost {
     }
   }
 
+  private environment(): NodeJS.ProcessEnv {
+    return this.options.currentEnv?.() ?? this.options.env;
+  }
+
   root(): string {
     return buildWorkerRoot();
   }
@@ -520,7 +526,7 @@ export class BuildHost {
     const value = new Promise<BuildToolchain | null>((resolve) => {
       const args = native ? [`offer-native-${native}`] : ['offer', ...(rubyVersion ? [rubyVersion] : [])];
       const child = spawn(process.execPath, [this.options.worker, ...args], {
-        env: this.options.env,
+        env: this.environment(),
         stdio: ['ignore', 'pipe', 'ignore'],
       });
       let out = '';
@@ -631,7 +637,7 @@ export class BuildHost {
           dependencies:
             typeof params.lockfile === 'string' &&
             dependencies !== undefined &&
-            reusableDependencies(area, dependencies.project, params.lockfile, this.options.env),
+            reusableDependencies(area, dependencies.project, params.lockfile, this.environment()),
           build: false,
         },
         ...(artifact !== undefined ? { artifact } : {}),
@@ -645,7 +651,7 @@ export class BuildHost {
 
   private workerEnvironment(clientDir: string, area: string): NodeJS.ProcessEnv {
     return {
-      ...this.options.env,
+      ...this.environment(),
       STIM_HOME: join(area, 'home'),
       CP_HOME_DIR: join(clientDir, 'cache', 'cocoapods-home'),
       CP_CACHE_DIR: join(clientDir, 'cache', 'cocoapods'),

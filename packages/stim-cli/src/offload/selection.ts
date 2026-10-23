@@ -5,6 +5,8 @@ import { parseMachine, automaticMachineEnabled, placementWord } from '@stim-cli/
 import type { PlacementSetting, SettingSource } from '../placement-log.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines } from './build-machines.ts';
+import { POD_MISSING_REASON } from '../engine/deps.ts';
+import { cocoapodsInstall } from './toolchain.ts';
 
 const FINGERPRINT_MISMATCH_REMEDY =
   "The build Mac fingerprints the synced checkout differently; the message names the sources that differ. Stim sends tracked and untracked files and the gitignored files the fingerprint reads, except under node_modules. A source still differs when the build Mac's dependency install or pod install writes it differently, or when the app config reads an environment variable or file that differs. Make that input agree on both Macs, for example by committing the lockfile pod install rewrote there, or rerun with --remote-build auto or --remote-build local.";
@@ -12,6 +14,26 @@ const FINGERPRINT_MISMATCH_REMEDY =
 /** The remedy for a React Native worker's fingerprint-mismatch reason, or undefined for any other reason. */
 export function fingerprintMismatchRemedy(reason: string): string | undefined {
   return reason.startsWith('fingerprint-mismatch: the checkout there ') ? FINGERPRINT_MISMATCH_REMEDY : undefined;
+}
+
+const PODS_FAILED_PREFIX = 'pod install failed: ';
+
+/** The reason a failed worker job is reported with: a `pods-failed` code reads as a failed pod install. */
+export function workerFailureReason(code: unknown, message: unknown): string {
+  return code === 'pods-failed'
+    ? `${PODS_FAILED_PREFIX}${String(message ?? '')}`
+    : `${String(code ?? 'failed')}: ${String(message ?? '')}`;
+}
+
+/** The remedy for a worker whose `pod install` failed, naming the install when it has no CocoaPods; undefined for any other reason. */
+export function podsFailedRemedy(machine: string, reason: string, localCocoapods: string | null): string | undefined {
+  if (!reason.startsWith(PODS_FAILED_PREFIX)) return undefined;
+  const retry = 'run the same command again, or rerun with --remote-build auto or --remote-build local';
+  if (!reason.includes(POD_MISSING_REASON)) {
+    return `Fix the pod install error on ${machine} (run pod install in its checkout under server.workerRoot there to see all of it), then ${retry}.`;
+  }
+  const { lead, commands } = cocoapodsInstall(localCocoapods);
+  return [`On ${machine}, ${lead}:`, ...commands, `Then ${retry}.`].join('\n');
 }
 
 export class OffloadRefusal extends Error {

@@ -47,15 +47,17 @@ import {
   offloadBuild,
   buildPlacementCandidates,
   offloadPlacement,
+  offloadCheck,
   placementLoad,
   remotePhaseText,
   type OffloadChoice,
   type BuildHandoff,
 } from '../../offload/client.ts';
-import type { pairedMachines } from '../../offload/build-machines.ts';
+import { predictedRefusal, type pairedMachines } from '../../offload/build-machines.ts';
 import {
   fingerprintMismatchRemedy,
   automaticBuild,
+  podsFailedRemedy,
   namedBuildMachine,
   OffloadRefusal,
   requireLocalBuild,
@@ -530,6 +532,13 @@ export async function acquireIosArtifact(
       if (buildMachine !== 'local') phase('build', `placement: here (${placement.reason})`);
       return null;
     }
+    const named = machines.find((each) => each.machine === buildMachine);
+    const offload = recipe.offload;
+    if (placement.code === 'named' && named && offload && runtime) {
+      const { problems } = await offloadCheck(root, async () => [await offload.target(runtime)])(named);
+      const predicted = predictedRefusal(buildMachine, problems);
+      if (predicted) throw new OffloadRefusal(buildMachine, predicted.reason, predicted.remedy);
+    }
     return {
       cacheOnly: false,
       here,
@@ -540,14 +549,18 @@ export async function acquireIosArtifact(
     };
   }
 
+  let localCocoapods: string | null = null;
+
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
   async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
     const offload = recipe.offload;
     if (!offload) return null;
     let asked: PlacementCandidate[] = [];
+    const target = await offload.target(candidate.runtime);
+    localCocoapods = target.platform === 'ios' ? target.local.cocoapods : null;
     const choice = await chooseBuildMachine({
       projectRoot: root,
-      target: await offload.target(candidate.runtime),
+      target,
       here: candidate.here,
       note: (line) => note(chalk.dim(phaseLine('build', `offload: ${line}`))),
       machines: candidate.machines,
@@ -656,7 +669,10 @@ export async function acquireIosArtifact(
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
         code: corrupt === undefined ? 'offload-failed' : COMPILATION_CACHE_CORRUPT,
         machine: choice.machine,
-        remedy: outcome.ok ? undefined : fingerprintMismatchRemedy(outcome.reason),
+        remedy: outcome.ok
+          ? undefined
+          : (fingerprintMismatchRemedy(outcome.reason) ??
+            podsFailedRemedy(choice.machine, outcome.reason, localCocoapods)),
       });
       logWriter().write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;

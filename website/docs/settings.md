@@ -448,7 +448,7 @@ and unknown simulator runtime builds refuse a named worker on a cache miss.
 Invalid values, unlisted names and unpaired names refuse at setup before the
 cache is consulted, without a build record or failed-run stats. A listed paired
 name with a cache hit needs no build and contacts no worker. Prebuild and pod
-install still run on this machine before a named offload. `stim status` and its JSON
+install still run on this machine before a named offload; for `stim ios` the worker's toolchain is checked first. `stim status` and its JSON
 record `buildMachine` (the selected value) and `builtOn` (`here` or the worker
 name, absent when no build ran). Ctrl-C cancels the worker build and starts no
 local xcodebuild, Gradle or SwiftPM compile.
@@ -497,9 +497,13 @@ the build, for example because it got busy meanwhile, Stim tries the next one
 in that order:
 
 - For iOS, its Xcode and simulator SDK must match, and it needs an iPhone
-  simulator on the target runtime. Its project-selected CocoaPods must match too, unless the
-  project's `Gemfile.lock`, in `ios/` or the project root, pins CocoaPods: both machines then run that version
-  through Bundler, so the machine needs only Bundler on its stim-server `PATH`
+  simulator on the target runtime. A missing or different global CocoaPods keeps `auto`
+  placement from choosing the machine for a project that does not pin it, unless the
+  machine already holds the exact artifact. The placement line says why and
+  `stim doctor` shows the install command. A named `--remote-build` still sends the build;
+  a `pod install` that fails there reports "pod install failed" with the fix on that
+  machine. When the project's `Gemfile.lock`, in `ios/` or the project root, pins CocoaPods, both machines run that version
+  through Bundler, so the machine needs Bundler on its stim-server `PATH`
   and installs the pinned gems itself on the first build. This machine's side of
   the comparison runs `pod --version` in the directory `pod install` runs in. The comparison uses
   `.ruby-version` when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.

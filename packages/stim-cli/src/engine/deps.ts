@@ -728,12 +728,14 @@ function missingBundle(err: unknown, pin: { gemfile: string; lockfile: string } 
   };
 }
 
+export const POD_MISSING_REASON = 'CocoaPods is not installed: no `pod` executable on PATH.';
+
 function missingPod(err: unknown) {
   if (!isMissingBinary(err)) return null;
   return {
     failed: true,
     code: DEPS_ERROR,
-    reason: 'CocoaPods is not installed: no `pod` executable on PATH.',
+    reason: POD_MISSING_REASON,
     remedy: 'Install CocoaPods (`brew install cocoapods`, or `gem install cocoapods`) and run again.',
     lastLines: [] as string[],
   };
