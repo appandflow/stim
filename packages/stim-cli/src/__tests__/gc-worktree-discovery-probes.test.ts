@@ -9,6 +9,7 @@ import { collectWorktreeSweep, type WorktreeSweep } from '../commands/gc/worktre
 import { measureWorktreeSweep } from '../commands/gc/worktree-sizes.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { holdDuUntilOverlapped } from './_du-barrier.ts';
 import { testContext } from './_context.ts';
 
 let home: string;
@@ -248,3 +249,49 @@ test('worktree reads overlap only while no claim records the children of the ope
   }
   expect(most).toBe(1);
 }, 30_000);
+
+function sourceCheckoutSweep(): WorktreeSweep {
+  const report = sweep();
+  report.worktrees = [
+    {
+      path: root,
+      keys: [root],
+      idleDays: null,
+      merge: null,
+      head: null,
+      pullRequest: null,
+      skipCode: 'source-checkout',
+      skipped: 'source checkout',
+      eligibleAt: null,
+      activity: null,
+    },
+  ];
+  return report;
+}
+
+test('the build-state directories of a worktree are measured at the same time, each keeping its own size', async () => {
+  mkdirSync(join(root, '.build'));
+  mkdirSync(join(root, '.pnpm-store'));
+  const sizes = new Map([
+    [join(root, '.build'), 5],
+    [join(root, '.pnpm-store'), 7],
+  ]);
+  const scans = holdDuUntilOverlapped(2, (dir) => sizes.get(dir) ?? 0);
+  const measured = await measureWorktreeSweep(sourceCheckoutSweep(), testContext({ home }));
+  expect(scans.peak()).toBe(2);
+  expect(measured.worktrees[0]?.buildState?.dirs).toEqual([
+    { path: '.pnpm-store', bytes: 7 * 1024 },
+    { path: '.build', bytes: 5 * 1024 },
+  ]);
+});
+
+test('unlisted worktree directories are measured at the same time, each keeping its own size', async () => {
+  const lost = ['lost1', 'lost2', 'lost3'].map((name) => join(root, '.worktrees', name));
+  for (const dir of lost) mkdirSync(dir, { recursive: true });
+  const scans = holdDuUntilOverlapped(3, (dir) => 100 * (lost.indexOf(dir) + 1));
+  const measured = await measureWorktreeSweep(sourceCheckoutSweep(), testContext({ home }));
+  expect(scans.peak()).toBe(3);
+  expect(measured.unlisted?.map(({ path, bytes }) => [path, bytes])).toEqual(
+    lost.map((dir, index) => [dir, 100 * (index + 1) * 1024]),
+  );
+});

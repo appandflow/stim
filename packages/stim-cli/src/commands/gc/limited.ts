@@ -31,3 +31,15 @@ export async function eachLimited<T>(
 export function readConcurrency(operation?: StimContext): number {
   return operationState(operation).declaring.size ? 1 : 6;
 }
+
+export function sizeConcurrency(operation?: StimContext): number {
+  return operationState(operation).declaring.size ? 1 : 4;
+}
+
+export async function mapLimited<T, R>(items: readonly T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
+  const done: [number, R][] = [];
+  await eachLimited([...items.entries()], limit, async ([index, item]) => {
+    done.push([index, await run(item)]);
+  });
+  return done.toSorted(([a], [b]) => a - b).map(([, result]) => result);
+}
