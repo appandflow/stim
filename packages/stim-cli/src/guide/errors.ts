@@ -793,6 +793,13 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   installation. If it fails, the refusal includes observed host memory pressure
   when available. Free memory before retrying under pressure; see
   \`stim guide lifecycle simslim\`. Booted alone does not prove readiness.
+  The same probe lists the simulator's launchd jobs and requires a running
+  SpringBoard. A simulator that reports Booted while SpringBoard has died
+  (\`simctl launch\` then says "The system shell probably crashed") is shut
+  down through teardown and booted once more; if SpringBoard is still not
+  running, the refusal names the udid and the remedy: \`stim stop\`, then
+  \`stim ios\` again. Repeated SpringBoard crashes leave reports in
+  ~/Library/Logs/DiagnosticReports.
   On Android the emulator's own stdio is captured to
   the global workspace logs/emulator.log (truncated per boot), and when it printed a
   \`FATAL |\` / \`ERROR |\` / \`PANIC:\` line THAT is the message and the remedy
