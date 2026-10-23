@@ -657,14 +657,18 @@ export async function ensureIosBooted(args: IosBootArgs): Promise<BootResult> {
 async function preserveSpringBoardReports(record: IosBootRecorder, udid: string, root: string): Promise<void> {
   const dir = workspaceLogsDir(root);
   try {
-    const files = await copySpringBoardCrashReports({ udid, destDir: dir });
+    const { files, dropped } = await copySpringBoardCrashReports({ udid, destDir: dir });
+    const limit = dropped ? `; ${dropped} more matched but exceeded the copy limits` : '';
     record('springboard_crash_reports', {
-      level: files.length ? 'warn' : 'info',
+      level: files.length || dropped ? 'warn' : 'info',
       files,
+      dropped,
       dir,
       msg: files.length
-        ? `copied ${files.length} SpringBoard crash report(s) for ${udid} to ${dir}: ${files.join(', ')}`
-        : `no SpringBoard crash report for ${udid} from the last 10 minutes`,
+        ? `copied ${files.length} SpringBoard crash report(s) for ${udid} to ${dir}: ${files.join(', ')}${limit}`
+        : dropped
+          ? `${dropped} SpringBoard crash report(s) for ${udid} matched but exceeded the copy limits`
+          : `no SpringBoard crash report for ${udid} from the last 10 minutes`,
     });
   } catch (error) {
     record('springboard_crash_reports', {

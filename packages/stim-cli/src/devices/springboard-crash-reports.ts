@@ -14,7 +14,6 @@ export interface SpringBoardReportText {
   text: string;
 }
 
-/** The names of the SpringBoard reports in `entries` that this simulator wrote at or after `sinceMs`. */
 export function selectSpringBoardReports(entries: SpringBoardReportText[], udid: string, sinceMs: number): string[] {
   const owner = `.${udid}`.toLowerCase();
   return entries.flatMap(({ name, text }) => {
@@ -36,7 +35,7 @@ export function selectSpringBoardReports(entries: SpringBoardReportText[], udid:
 /**
  * Copies this simulator's recent SpringBoard crash reports from DiagnosticReports and its Retired folder into
  * `destDir`, which keeps at most 40 of them. The source folders are only read; macOS deletes their reports after
- * about two days. Returns the names of the matching reports that are now in `destDir`.
+ * about two days. Returns the matching reports now in `destDir` and how many matched but did not fit its limits.
  */
 export async function copySpringBoardCrashReports({
   udid,
@@ -48,7 +47,7 @@ export async function copySpringBoardCrashReports({
   destDir: string;
   now?: number;
   home?: string;
-}): Promise<string[]> {
+}): Promise<{ files: string[]; dropped: number }> {
   const since = now - REPORT_WINDOW_MS;
   const reportsDir = join(home, 'Library/Logs/DiagnosticReports');
   const candidates = new Map<string, { path: string; mtimeMs: number }>();
@@ -56,8 +55,9 @@ export async function copySpringBoardCrashReports({
     let names: string[];
     try {
       names = await readdir(directory);
-    } catch {
-      continue;
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
+      throw error;
     }
     for (const name of names) {
       if (!/^SpringBoard-.+\.ips$/.test(name) || candidates.has(name)) continue;
@@ -76,7 +76,7 @@ export async function copySpringBoardCrashReports({
     } catch {}
   }
   const matching = selectSpringBoardReports(entries, udid, since);
-  if (matching.length === 0) return [];
+  if (matching.length === 0) return { files: [], dropped: 0 };
 
   await mkdir(destDir, { recursive: true, mode: 0o700 });
   let stored = (await readdir(destDir)).filter((name) => /^SpringBoard-.+\.ips$/.test(name)).length;
@@ -96,5 +96,5 @@ export async function copySpringBoardCrashReports({
     copiedBytes += bytes;
     files.push(name);
   }
-  return files;
+  return { files, dropped: matching.length - files.length };
 }

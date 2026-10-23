@@ -8,7 +8,6 @@ export type IosBootRecorder = (
   fields: Record<string, unknown> & { msg: string; level?: 'info' | 'warn' },
 ) => void;
 
-/** Appends records for one simulator to the workspace's device.ndjson; a failed write never fails the boot. */
 export function iosBootRecorder(root: string, slot: string | undefined, udid: string): IosBootRecorder {
   return (event, { level = 'info', ...fields }) => {
     try {

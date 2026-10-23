@@ -68,14 +68,14 @@ test('copySpringBoardCrashReports copies matches from DiagnosticReports and Reti
   );
   report('', 'SpringBoard-2026-10-22-100000.ips', own('2026-10-22 10:00:00.0000 -0400'), 13 * 3600_000);
 
-  const files = await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home });
+  const { files } = await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home });
 
   expect(files.toSorted()).toEqual(['SpringBoard-2026-10-22-235800.ips', 'SpringBoard-2026-10-22-235817.ips']);
   expect(readdirSync(dest).toSorted()).toEqual(files.toSorted());
   expect(readFileSync(join(dest, 'SpringBoard-2026-10-22-235817.ips'), 'utf8')).toBe(own());
   expect(readFileSync(live, 'utf8')).toBe(own());
   expect(readFileSync(retired, 'utf8')).toContain('23:58:00');
-  expect(await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home })).toEqual(files);
+  expect((await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home })).files).toEqual(files);
 });
 
 test('copySpringBoardCrashReports finds nothing when no report matches and creates no copy', async () => {
@@ -84,13 +84,19 @@ test('copySpringBoardCrashReports finds nothing when no report matches and creat
     'SpringBoard-2026-10-22-235810.ips',
     ips('com.apple.CoreSimulator.SimDevice.OTHER', '2026-10-22 23:58:10.0000 -0400'),
   );
-  expect(await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home })).toEqual([]);
+  expect(await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home })).toEqual({
+    files: [],
+    dropped: 0,
+  });
   expect(readdirSync(home)).not.toContain('logs');
 });
 
 test('copySpringBoardCrashReports tolerates missing report folders', async () => {
   rmSync(join(home, 'Library'), { recursive: true });
-  expect(await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home })).toEqual([]);
+  expect(await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home })).toEqual({
+    files: [],
+    dropped: 0,
+  });
 });
 
 test('copySpringBoardCrashReports stops at 40 stored reports and skips oversized ones', async () => {
@@ -99,7 +105,14 @@ test('copySpringBoardCrashReports stops at 40 stored reports and skips oversized
   report('', 'SpringBoard-2026-10-22-235801.ips', own('2026-10-22 23:58:01.0000 -0400'), 3000);
   report('', 'SpringBoard-2026-10-22-235802.ips', own('2026-10-22 23:58:02.0000 -0400'), 2000);
   report('', 'SpringBoard-2026-10-22-235803.ips', `${own()}${' '.repeat(1024 * 1024)}`, 1000);
-  const files = await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home });
+  const { files, dropped } = await copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home });
   expect(files).toEqual(['SpringBoard-2026-10-22-235802.ips']);
+  expect(dropped).toBe(1);
   expect(readdirSync(dest).filter((name) => name.startsWith('SpringBoard-2026'))).toEqual(files);
+});
+
+test('copySpringBoardCrashReports reports an unreadable report folder instead of finding nothing', async () => {
+  rmSync(join(home, 'Library/Logs/DiagnosticReports/Retired'), { recursive: true });
+  writeFileSync(join(home, 'Library/Logs/DiagnosticReports/Retired'), 'not a directory');
+  await expect(copySpringBoardCrashReports({ udid: UDID, destDir: dest, now: NOW, home })).rejects.toThrow(/ENOTDIR/);
 });
