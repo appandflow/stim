@@ -16,7 +16,7 @@ import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { getExecutor } from '../exec.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import {
-  assertOwnedAvdStopped,
+  assertOwnedAvdStoppedAsync,
   createOwnedAvd,
   listAvdsAsync,
   ownedAvdDeviceProfile,
@@ -182,7 +182,7 @@ export async function prepareOwnedAvd({
             cause: error,
           });
         }
-        if (!resolved.serial) assertOwnedAvdStopped(avdName);
+        if (!resolved.serial) await assertOwnedAvdStoppedAsync(avdName);
         prepared = {
           avdName,
           created: false,
