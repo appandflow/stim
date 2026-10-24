@@ -1466,7 +1466,7 @@ describe('verifyLaunch', () => {
     });
     setTimeout(() => controller.abort(), 30);
     await expect(waiting).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
-  }, 2000);
+  });
 
   describe('manifest requests from an Expo dev client', () => {
     const manifest = (

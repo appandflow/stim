@@ -1370,8 +1370,8 @@ Inspect what remains with gc() before retrying a mutation.
   cancelled starts no further build tool and stops before it installs. A
   Ctrl-C while the run waits for the app to load its bundle or report
   readiness ends that wait and reports STIM_CANCELLED. A second Ctrl-C exits at
-  once, and so does a Ctrl-C with no build tool, SimSlim or launch wait to
-  stop; those exits print no payload. Run the same command again when you want the
+  once, and so does a Ctrl-C with no build tool, SimSlim or launch readiness
+  wait to stop; those exits print no payload. Run the same command again when you want the
   app on a device.`,
     },
     STIM_STOP_BLOCKED: {
