@@ -34,7 +34,13 @@ import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
-import { SERVICE_IN_USE, serviceRunningFrom } from '../workspace/service-guard.ts';
+import { SERVICE_IN_USE, serviceRunningFrom, stimCliEntries, stimCliUseOf } from '../workspace/service-guard.ts';
+import {
+  archiveWorktreeChanges,
+  discardWorktreeArchive,
+  worktreeArchiveMismatch,
+  type WorktreeArchive,
+} from '../workspace/worktree-archive.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { currentDiskLevel, measureDiskAsync } from '../maintenance/measure.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
@@ -609,12 +615,14 @@ function pathArgs(lines: string[] | null | undefined, limit = 5): string {
   return `${shown.join(' ')}${paths.length > shown.length ? ' ...' : ''}`;
 }
 
+const DIRTY_BLOCKER = 'uncommitted changes or untracked files';
+
 export function removalBlockers({ dirty, unpushed }: { dirty: boolean | null; unpushed: string[] | null }): string[] {
   const blockers: string[] = [];
   if (dirty === null || unpushed === null) {
     blockers.push('could not determine git status; re-run with --force to override');
   }
-  if (dirty) blockers.push('uncommitted changes or untracked files');
+  if (dirty) blockers.push(DIRTY_BLOCKER);
   if (unpushed && unpushed.length) {
     blockers.push(`${plural(unpushed.length, 'commit')} not on any remote or any other local branch`);
   }
@@ -930,6 +938,18 @@ interface RemoveOptions {
   mergedHead?: string;
   /** The HEAD the caller approved for removal; the worktree is kept when HEAD is anything else under the locks. */
   expectedHead?: string;
+  /**
+   * Archive uncommitted and untracked files under `$STIM_HOME/archive/worktrees` instead of refusing them; the worktree
+   * is kept when the archive cannot be written or verified, or the files change before git removes it.
+   */
+  archiveDirty?: {
+    pullRequest: { number: number; url: string; state: string } | null;
+    onArchived: (archive: WorktreeArchive) => void;
+  };
+}
+
+function blockersOf(inspection: RemovalInspection, opts: RemoveOptions): string[] {
+  return opts.archiveDirty ? inspection.blockers.filter((blocker) => blocker !== DIRTY_BLOCKER) : inspection.blockers;
 }
 
 interface RemovalInspection {
@@ -1273,6 +1293,13 @@ async function removeOrRefuse(
     output.fail();
     return;
   }
+  const cli = stimCliUseOf(path, nativeCanonicalPath, stimCliEntries(opts.operation?.env));
+  if (cli.length) {
+    output.error(chalk.red(`Refusing to remove ${path}: ${cli.join('; ')}.`));
+    output.error(chalk.dim('Run stim from another checkout or install, or point PATH elsewhere, then retry.'));
+    output.fail();
+    return;
+  }
 
   const project = getProject(path);
   const branch = entry.branch;
@@ -1298,7 +1325,7 @@ async function removeOrRefuse(
       );
     }
   }
-  if (inspection.blockers.length && !opts.force) {
+  if (blockersOf(inspection, opts).length && !opts.force) {
     await printRemovalRefusal(path, inspection, output, opts.operation);
     return;
   }
@@ -1331,16 +1358,45 @@ async function removeOrRefuse(
             return;
           }
           const current = await inspectRemoval(path, mergedHead, opts.operation);
-          if (current.blockers.length && !opts.force) {
+          if (blockersOf(current, opts).length && !opts.force) {
             await printRemovalRefusal(path, current, output, opts.operation);
             return;
           }
+          let archive: WorktreeArchive | null = null;
+          if (opts.archiveDirty && !opts.force && current.dirtyLines.length) {
+            try {
+              if (!inspectedHead) throw new Error('its HEAD could not be read');
+              archive = await archiveWorktreeChanges({
+                path,
+                repository: source.path,
+                branch: branch ?? null,
+                head: inspectedHead,
+                pullRequest: opts.archiveDirty.pullRequest,
+                operation: opts.operation,
+              });
+            } catch (error) {
+              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+                throw error;
+              opts.operation?.signal.throwIfAborted();
+              output.error(
+                chalk.red(
+                  `Refusing to remove ${path}: could not archive its uncommitted changes: ${(error instanceof Error ? error.message : String(error)).split('\n')[0]}`,
+                ),
+              );
+              output.fail();
+              return;
+            }
+          }
+          const discardArchive = async (): Promise<void> => {
+            if (archive) await discardWorktreeArchive(archive);
+          };
           const result = await reclaimAll(path, lockedKeys, {
             preserveRootProject: true,
             removedBy: opts.removedBy ?? 'worktree-remove',
             operation: opts.operation,
           });
           if (result.keptEntries.length) {
+            await discardArchive();
             reportRetainedResources(path, result, output);
             return;
           }
@@ -1353,6 +1409,7 @@ async function removeOrRefuse(
                 throw error;
               opts.operation?.signal.throwIfAborted();
               if (!isTimeoutError(error)) throw error;
+              await discardArchive();
               await printRemovalRefusal(path, timedOutInspection(error), output, opts.operation);
               output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
               printRemovalCleanup(result, true, output);
@@ -1360,7 +1417,17 @@ async function removeOrRefuse(
             }
           }
           if (headMoved) {
+            await discardArchive();
             output.error(chalk.red(`Refusing to remove ${path}: its HEAD moved while its environment was reclaimed.`));
+            output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
+            printRemovalCleanup(result, true, output);
+            output.fail();
+            return;
+          }
+          const stale = archive ? await worktreeArchiveMismatch(path, archive, opts.operation) : null;
+          if (stale) {
+            await discardArchive();
+            output.error(chalk.red(`Refusing to remove ${path}: ${stale}.`));
             output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
             printRemovalCleanup(result, true, output);
             output.fail();
@@ -1377,7 +1444,7 @@ async function removeOrRefuse(
           try {
             await removeWorktreeAsync(path, {
               from: source.path,
-              force: opts.force,
+              force: opts.force || archive !== null,
               env: options.env,
               signal: options.signal,
               declareFor: opts.operation,
@@ -1403,9 +1470,21 @@ async function removeOrRefuse(
               );
             }
             output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
+            if (archive) output.error(chalk.dim(`Its uncommitted changes stay archived in ${archive.dir}.`));
             printRemovalCleanup(result, true, output);
             output.fail();
             return;
+          }
+          if (archive) {
+            opts.archiveDirty?.onArchived(archive);
+            output.error(
+              chalk.dim(
+                phaseLine(
+                  'archive',
+                  `saved ${plural(archive.tracked.length + archive.untracked.length, 'uncommitted file')} to ${archive.dir}; restore: ${archive.restore.join(' && ')}`,
+                ),
+              ),
+            );
           }
           onRemoved();
           try {

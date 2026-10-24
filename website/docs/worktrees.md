@@ -352,11 +352,14 @@ the default branch, or when its pull request was merged or closed, and plain
 removes a worktree that is idle: no Stim command has used it for
 `--older-than` days, or 7 days without that option. Either way, gc keeps a
 worktree that is the source checkout, bare, locked, holds another worktree
-(`stim worktree remove` refuses that too), in use, dirty (untracked
-files count, except watchman's `.watchman-cookie-*` files), unpushed, or has
-initialized submodules. In use includes a running dev server, a Stim run or live build, a booted owned simulator or
-emulator, and a held device lease; a device left booted keeps the worktree
-until `stim stop` or `stim gc --idle` shuts it down. With `--delete`, gc runs
+(`stim worktree remove` refuses that too), in use, unpushed, or has
+initialized submodules. A dirty worktree (untracked files count, except
+watchman's `.watchman-cookie-*` files) is kept unless it is finished, in which
+case gc archives its uncommitted files first (see below). In use includes a
+running dev server, a Stim run or live build, a booted owned simulator or
+emulator, a held device lease, and a worktree that holds the running `stim`
+or the `stim` on your PATH; a device left booted keeps the worktree until
+`stim stop` or `stim gc --idle` shuts it down. With `--delete`, gc runs
 `stim worktree remove` without `--force` on each removable worktree. That
 command checks the worktree again before removing it, parks or shuts down its
 devices, and handles branches as it does when you run it yourself. A worktree that fails is
@@ -398,18 +401,48 @@ squash or rebase merge whose remote branch was deleted and pruned locally, the
 branch's commits exist only locally; gc still removes the worktree, because
 their change is on the default branch, and keeps the branch.
 
-A clean, pushed worktree with no commits of its own beyond the default branch
-holds nothing git would lose, but looks just like a worktree created a minute
-ago, so plain `gc --delete` keeps it. `--worktrees` removes it once it is idle:
-by its last Stim use when one is recorded, else by its git and Stim activity
-(the same sources as the grace period below) being older than `--older-than`
-days. Automatic maintenance removes it the same way in its daily age sweep,
-after `maintenance.olderThanDays`, only with `maintenance.removeIdleWorktrees`
-(off by default), and at disk pressure level 3 once
-that activity is older than `maintenance.pressureProtectMinutes`, and never
-sooner than 5 minutes after it, even when that setting is 0. Before
+A clean, pushed worktree with no commits of its own beyond the default branch,
+such as a detached baseline or bench checkout of `main` or an abandoned branch
+that never got a commit, holds nothing git would lose. `gc --delete` and the
+maintenance worktree check remove it once its git and Stim activity (the same
+sources as the grace period below) is older than both `gc.worktreeGraceMinutes`
+and `maintenance.protectRecentHours`, 2 hours by default, unless it has an open
+pull request. At disk pressure level 3 the window is
+`maintenance.pressureProtectMinutes`, and never shorter than 5 minutes. Before
 removing it, gc checks again that its HEAD did not move and that it is still
-idle.
+idle. A program Stim does not track, such as a benchmark started from that
+checkout, does not keep it; lock such a checkout with `git worktree lock`.
+
+A finished worktree that is dirty only because of uncommitted or untracked
+files, such as a scratch file an agent left behind, is archived, then removed,
+by `gc --delete` and the maintenance worktree check. Stim saves
+`git diff --binary HEAD` as `tracked.patch` and the untracked files git does not
+ignore as `untracked.tar`, with a `manifest.json` naming the branch, HEAD, pull
+request and files, under
+`$STIM_HOME/archive/worktrees/<repository>/<branch-or-dir>-<timestamp>/`.
+Ignored files such as `node_modules` and build output are not saved. It checks
+the patch with `git apply --check -R`, checks the tarball lists every file, and
+checks again just before git removes the worktree that no archived file
+changed; any failure keeps the worktree. It also keeps the worktree when the
+archive would leave less free disk than `budget.hardFloorDiskGb`, and disk
+pressure level 3 never archives. Archives are private to your user but not
+redacted: an untracked `.env` file that git does not ignore is saved with the
+rest, so set `archive.enabled false` for a sensitive repository. A `git status`
+or editor refresh that rewrites the index counts as activity and restarts the
+grace period. The removal line and the gc and
+maintenance logs name the archive and the commands that restore it:
+
+```sh
+git -C <repository> worktree add --detach <path> <HEAD>
+git -C <path> apply <archive>/tracked.patch
+tar -xf <archive>/untracked.tar -C <path>
+```
+
+Worktree archives follow `archive.maxAgeDays` and `archive.maxTotalGb`; every
+worktree removal deletes the expired ones, then the oldest while they total
+more than the cap. With `archive.enabled false`, or either limit at 0, dirty
+worktrees are kept as before. `stim worktree remove` itself never archives; it
+refuses uncommitted work unless you pass `--force`.
 
 `gc --delete` and the maintenance worktree check also ask GitHub, with one `gh api graphql` query per repository that
 looks up the 20 newest pull requests of each worktree's branch, as
@@ -451,7 +484,8 @@ checks only for uncommitted and unpushed work.
 gc also waits out a grace period, 2 hours by default, before it removes a
 finished worktree. The period starts at the worktree's latest activity: a
 change to its git index, HEAD or reflog, a Stim state or log write, or the
-merge of its branch into the default branch or of its pull request. An agent that just merged its
+merge of its branch into the default branch or of its pull request, and, for a
+dirty worktree it would archive, a change to one of its uncommitted files. An agent that just merged its
 pull request still has time to run `stim stop` and `stim worktree remove`
 itself. gc reports such a worktree as kept with the reason `recent-activity`
 and the time it becomes removable (`eligibleAt` in `--json`). When gc cannot

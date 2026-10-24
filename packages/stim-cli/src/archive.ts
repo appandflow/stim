@@ -14,6 +14,7 @@ import {
   archiveDir,
   archiveLock,
   archiveRoot,
+  worktreeArchiveRoot,
   archivedUsage,
   archiveEnabled,
   listRecordedDevicesAsync,
@@ -496,6 +497,65 @@ function logRemovalOrder(path: string): number {
   return /\.ndjson\.\d+$/.test(path) ? 0 : /^build-.*\.ndjson$/.test(basename(path)) ? 1 : 2;
 }
 
+/**
+ * How long and how large worktree archives of `root` are kept, from `archive.maxAgeDays` and `archive.maxTotalGb`, or
+ * why its uncommitted changes cannot be archived: archives are disabled for it, a limit is 0, or a setting is invalid.
+ */
+export function worktreeArchiveLimits(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { maxAgeDays: number; maxBytes: number } | { refusal: string } {
+  if (!enabled(root, env)) return { refusal: 'archive.enabled is false for it' };
+  let limits: Record<string, number>;
+  try {
+    limits = archiveSettings(env);
+  } catch (error) {
+    return { refusal: (error instanceof Error ? error.message : String(error)).split('\n')[0] ?? '' };
+  }
+  if (!limits.maxAgeDays) return { refusal: 'archive.maxAgeDays is 0, so no archive would be kept' };
+  if (!limits.maxTotalGb) return { refusal: 'archive.maxTotalGb is 0, so no archive would be kept' };
+  return { maxAgeDays: limits.maxAgeDays, maxBytes: limits.maxTotalGb * 1024 ** 3 };
+}
+
+async function pruneWorktreeArchives(now: number, limits: Record<string, number>, signal?: AbortSignal): Promise<void> {
+  const root = worktreeArchiveRoot();
+  let repositories: string[];
+  try {
+    repositories = await readdir(root);
+  } catch {
+    return;
+  }
+  const entries: { path: string; at: number; bytes: number }[] = [];
+  for (const repository of repositories) {
+    signal?.throwIfAborted();
+    const dir = join(root, repository);
+    if (!(await lstat(dir)).isDirectory()) continue;
+    for (const name of await readdir(dir)) {
+      const path = join(dir, name);
+      const entry = await lstat(path);
+      if (!entry.isDirectory()) continue;
+      const created = Date.parse(String(readJsonObject(join(path, 'manifest.json'))?.createdAt ?? ''));
+      const bytes = (await files(path, signal)).reduce((sum, file) => sum + file.bytes, 0);
+      entries.push({ path, at: Number.isFinite(created) ? created : entry.mtimeMs, bytes });
+    }
+  }
+  entries.sort((a, b) => a.at - b.at);
+  let total = entries.reduce((sum, entry) => sum + entry.bytes, 0);
+  const cap = (limits.maxTotalGb ?? 0) * 1024 ** 3;
+  const maxAgeMs = (limits.maxAgeDays ?? 0) * DAY;
+  for (const entry of entries) {
+    signal?.throwIfAborted();
+    if (now - entry.at < maxAgeMs && total <= cap) continue;
+    await rm(entry.path, { recursive: true, force: true });
+    total -= entry.bytes;
+  }
+  for (const repository of repositories) {
+    const dir = join(root, repository);
+    if (existsSync(dir) && (await lstat(dir)).isDirectory() && !(await readdir(dir)).length)
+      await rm(dir, { recursive: true });
+  }
+}
+
 export async function enforceArchiveRetention(now: number = Date.now(), operation?: StimContext): Promise<void> {
   const signal = operation?.signal;
   const env = operation?.env ?? process.env;
@@ -591,6 +651,7 @@ export async function enforceArchiveRetention(now: number = Date.now(), operatio
         record.expires.record = new Date(Date.parse(record.removedAt) + limits.maxAgeDays! * DAY).toISOString();
         if (JSON.stringify(record.expires) !== before) await writeRecord(archiveDir(record.id), record);
       }
+      await pruneWorktreeArchives(now, limits, signal);
     },
     { waitMs: 30_000, signal },
   );

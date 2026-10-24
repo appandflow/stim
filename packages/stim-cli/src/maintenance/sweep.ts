@@ -181,7 +181,7 @@ export async function planWorktrees({
     idle: idleDays !== null,
     olderThan: idleDays,
     now,
-    removesNoOwnCommits: level === 3,
+    underPressure: level === 3,
     operation,
     ...(graceMs === undefined ? {} : { graceMs }),
     ...(refresh === undefined ? {} : { refresh }),
