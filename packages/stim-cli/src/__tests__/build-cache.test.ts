@@ -28,6 +28,7 @@ import {
   compareSourceLists,
   diffFingerprintSources,
   entryDir,
+  evictBuild,
   fingerprintDiffRecord,
   DEFAULT_FINGERPRINT_IGNORES,
   fingerprintProject,
@@ -174,6 +175,17 @@ test('storeBuild with { overwrite } REPLACES an existing entry, so a poisoned on
   const stored = await storeBuild('ios', 'fp-overwrite', fresh, { root, overwrite: true });
   assert(stored);
   expect(readFileSync(stored, 'utf-8')).toBe('rebuilt');
+});
+
+test('evictBuild removes one entry and leaves its neighbours and the cache directory', async () => {
+  seedEntry('ios', 'fp-bad', 'MyApp.app');
+  const neighbour = seedEntry('ios', 'fp-good', 'MyApp.app');
+
+  expect(await evictBuild('ios', 'fp-bad', root)).toBe(true);
+  expect(resolveBuild('ios', 'fp-bad', root)).toBeNull();
+  expect(readdirSync(join(root, 'ios'))).toEqual(['fp-good']);
+  expect(resolveBuild('ios', 'fp-good', root)).toBe(neighbour);
+  expect(await evictBuild('ios', 'fp-bad', root)).toBe(false);
 });
 
 test('storeBuild accepts the cache root as a string or as { root }', async () => {

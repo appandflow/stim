@@ -9,7 +9,7 @@ import { isIgnoredPathWithMatchObjects } from '@expo/fingerprint/build/utils/Pat
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
 import { resolveArtifact, storeArtifactAsync, type StimContext } from '@stim-cli/core';
 import { trace } from '@stim-cli/core/state';
-import { readdir, writeFile } from 'node:fs/promises';
+import { readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
@@ -511,6 +511,20 @@ export async function storeBuild(
 export type BuildStore = (...args: Parameters<typeof storeBuild>) => string | null | ReturnType<typeof storeBuild>;
 
 export type AppIdReader = (artifactPath: string) => string | null | Promise<string | null>;
+
+/** Removes a stored build by renaming its entry aside first, so no run sees a half-deleted entry. */
+export async function evictBuild(platform: string, key: string, root: string = cacheRoot()): Promise<boolean> {
+  const dir = entryDir(platform, key, root);
+  const evicted = `${dir}.evicted-${process.pid}`;
+  try {
+    await rm(evicted, { recursive: true, force: true });
+    await rename(dir, evicted);
+  } catch {
+    return false;
+  }
+  await rm(evicted, { recursive: true, force: true }).catch(() => {});
+  return true;
+}
 
 export const PROVIDER_DOWNLOAD_DIR = 'cache-provider';
 

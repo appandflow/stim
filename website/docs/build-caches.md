@@ -442,6 +442,15 @@ worker does the same for its own cache. A build sent there with
 `--remote-build <machine>` fails with that code; one placed there
 automatically builds here instead.
 
+A cached iOS simulator app can be damaged without failing to build. If a
+cache-hit app is killed at launch because dyld cannot bind a symbol that one
+part of the app needs from another part of the same app, Stim removes that
+entry from the shared cache and fails with `STIM_LAUNCH_FAILED` naming it. Run
+the command again to build the app fresh. A crash that the app's own bytes did
+not cause, such as a missing system library, leaves the entry alone, and so
+does an app built by the same run. A cache provider keeps its own copy of an
+entry; add `--no-build-cache` to skip it.
+
 Each iOS build holds a shared claim on the compilation cache while xcodebuild
 runs, in a `compilation-cache.claims` directory beside it. `gc --delete
 --cache`, automatic maintenance and the corruption check empty the cache only

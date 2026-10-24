@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http';
 import { symbolicateErrors } from '../diagnostics/error-symbolication.ts';
 import { errorDiagnostics, mergeErrorCopies } from '../diagnostics/error-diagnostics.ts';
 import {
+  bundleBindFailure,
   captureNativeCrashes,
   captureWorkspaceCrashes,
   parseAndroidCrashes,
@@ -209,6 +210,64 @@ test('iOS reports cannot leak another simulator, app or previous launch into the
   expect(parseIosCrash(text, { ...target, appId: 'other' })).toBeNull();
   expect(parseIosCrash(text, { ...target, since: target.since + 2000 })).toBeNull();
   expect(parseIosCrash(text, { ...target, until: target.since + 500 })).toBeNull();
+});
+
+test('only a symbol one part of the app needs from another part of the same app marks the stored build as unlaunchable', () => {
+  const bundle = '/Users/USER/Library/Developer/CoreSimulator/Devices/D/data/Containers/Bundle/Application/A/Stim.app';
+  const crash = (termination: object) => {
+    const body = {
+      captureTime: '2025-01-02T00:00:01Z',
+      coalitionName: 'com.apple.CoreSimulator.SimDevice.own',
+      bundleInfo: { CFBundleIdentifier: 'app.test' },
+      incident: 'incident',
+      exception: { type: 'EXC_CRASH', signal: 'SIGABRT' },
+      termination,
+    };
+    const target = {
+      platform: 'ios' as const,
+      deviceId: 'own',
+      appId: 'app.test',
+      since: Date.parse('2025-01-02T00:00:00Z'),
+    };
+    return parseIosCrash('{}\n' + JSON.stringify(body), target)?.record ?? {};
+  };
+  const symbol = '__ZN8facebook6hermes3cdp11CDPDebugAPI17addConsoleMessageENS1_14ConsoleMessageE';
+
+  expect(
+    bundleBindFailure(
+      crash({
+        namespace: 'DYLD',
+        indicator: 'Symbol missing',
+        reasons: [
+          `Symbol not found: ${symbol}`,
+          `Referenced from: <0D5DABD8-59B5-36C0-B957-475A4985ECC3> ${bundle}/Frameworks/React.framework/React`,
+          `Expected in:     <22A8186E-E00E-32BB-A9FF-082E90BAEA6F> ${bundle}/Frameworks/hermesvm.framework/hermesvm`,
+        ],
+      }),
+    ),
+  ).toBe(symbol);
+
+  for (const termination of [
+    {
+      namespace: 'DYLD',
+      indicator: 'Symbol missing',
+      reasons: [
+        'Symbol not found: _objc_claimAutoreleasedReturnValue',
+        `Referenced from: <0D5DABD8-59B5-36C0-B957-475A4985ECC3> ${bundle}/Frameworks/React.framework/React`,
+        'Expected in:     <22A8186E-E00E-32BB-A9FF-082E90BAEA6F> /usr/lib/libobjc.A.dylib',
+      ],
+    },
+    {
+      namespace: 'DYLD',
+      indicator: 'Library missing',
+      reasons: [
+        'Library not loaded: /usr/lib/libSystem.B.dylib',
+        `Referenced from: <FBFA434E-83F1-3D72-B54D-578931412E61> ${bundle}/Stim`,
+      ],
+    },
+    { namespace: 'SIGNAL', indicator: 'Abort trap: 6' },
+  ])
+    expect(bundleBindFailure(crash(termination))).toBeNull();
 });
 
 test('Android crash buffer retains the exception from a dead app but not another process or old crash', () => {

@@ -23,6 +23,7 @@ import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import assert from 'node:assert';
 import { vi } from 'vitest';
 import * as crashDiagnostics from '../diagnostics/native-crash.ts';
+import type { NdjsonRecord } from '../ndjson.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { ACTIVE_BUILD_KEY, buildReport, parseActiveBuild } from '../engine/build-progress.ts';
 import { ClaimUnavailableError, readClaimSet } from '../ownership-claim.ts';
@@ -252,6 +253,7 @@ interface RecordedArgs {
   readBundleExecutable: unknown;
   storeBuild: { options?: unknown; platform?: unknown; path?: unknown; key?: unknown };
   resolveBuild: { key?: unknown };
+  evictBuild: { platform?: unknown; key?: unknown };
   verifyLaunch: { since?: unknown; logsDir?: unknown; platform?: unknown };
   uploadRemote: { fingerprintHash?: unknown; buildPath?: unknown };
   resolveRemote: { projectRoot?: unknown; platform?: unknown; fingerprintHash?: unknown };
@@ -347,6 +349,10 @@ function harness(overrides: LooseDeps = {}) {
     resolveBuild: (platform, key) => {
       record('resolveBuild', { platform, key });
       return null;
+    },
+    evictBuild: async (platform, key) => {
+      record('evictBuild', { platform, key });
+      return true;
     },
     storeBuild: (platform, key, path, options) => {
       record('storeBuild', {
@@ -1522,6 +1528,69 @@ describe('global workspace storage', () => {
     expect(typeof result).toBe('string');
     expect(existsSync(join(project, '.stim'))).toBe(false);
     expect(notes).toEqual([]);
+  });
+});
+
+describe('a cached app that cannot bind its own frameworks', () => {
+  const dyldCrash = (termination: object) => ({
+    src: 'device',
+    level: 'fatal',
+    event: 'native_crash',
+    msg: 'Native crash',
+    rawReport: `{}\n${JSON.stringify({ termination })}`,
+  });
+  const bundle =
+    '/Users/USER/Library/Developer/CoreSimulator/Devices/D/data/Containers/Bundle/Application/A/Fixture.app';
+  const unbound = dyldCrash({
+    namespace: 'DYLD',
+    indicator: 'Symbol missing',
+    reasons: [
+      'Symbol not found: __ZN8facebook6hermes3cdp11CDPDebugAPI17addConsoleMessageENS1_14ConsoleMessageE',
+      `Referenced from: <A> ${bundle}/Frameworks/React.framework/React`,
+      `Expected in:     <B> ${bundle}/Frameworks/hermesvm.framework/hermesvm`,
+    ],
+  });
+  const fatalLaunch = async () => ({ verified: false, fatal: true, processAlive: false, waitedMs: 1000 });
+
+  async function launchWithCrash(crash: NdjsonRecord, overrides: LooseDeps = {}) {
+    reserve();
+    const read = vi.spyOn(crashDiagnostics, 'captureNativeCrashes').mockResolvedValue([crash]);
+    try {
+      return await run({ json: true }, { verifyLaunch: fatalLaunch, ...overrides });
+    } finally {
+      read.mockRestore();
+    }
+  }
+
+  test('a cache hit that dies this way is evicted and the run names the entry to rebuild', async () => {
+    const { calls, logs, exitCode } = await launchWithCrash(unbound, {
+      resolveBuild: () => join(tmpHome, 'build-cache', 'ios', 'k', 'Fixture.app'),
+    });
+    expect(exitCode).toBe(1);
+    expect(calls.args.evictBuild).toEqual({ platform: 'ios', key: `${FINGERPRINT}-debug-sim-arm64` });
+    const failure = parseFirst(logs);
+    expect(failure.code).toBe('STIM_LAUNCH_FAILED');
+    expect(failure.message).toContain('CDPDebugAPI');
+    expect(failure.remedy).toContain(`${FINGERPRINT}-debug-sim-arm64`);
+  });
+
+  test('an app built by this run is left in the cache', async () => {
+    const { calls, exitCode } = await launchWithCrash(unbound);
+    expect(exitCode).toBe(1);
+    expect(calls.order).not.toContain('evictBuild');
+  });
+
+  test('a dyld failure that the stored bytes did not cause leaves a cache hit alone', async () => {
+    const { calls, exitCode } = await launchWithCrash(
+      dyldCrash({
+        namespace: 'DYLD',
+        indicator: 'Library missing',
+        reasons: ['Library not loaded: /usr/lib/libSystem.B.dylib', `Referenced from: <A> ${bundle}/Fixture`],
+      }),
+      { resolveBuild: () => join(tmpHome, 'build-cache', 'ios', 'k', 'Fixture.app') },
+    );
+    expect(exitCode).toBe(1);
+    expect(calls.order).not.toContain('evictBuild');
   });
 });
 

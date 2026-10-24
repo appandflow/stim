@@ -36,7 +36,7 @@ import { workspaceDevServerMode } from '../../supervisor/state.ts';
 import type { VerifyLaunchResultLike, DeviceLike, IosBootLike, FailArgs } from './types.ts';
 import { PLATFORM, deviceLabel, deviceShortName, appNameFromPath } from './support.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
-import type { IosFacts } from '../../engine/build-facts.ts';
+import type { CacheHitLevel, IosFacts } from '../../engine/build-facts.ts';
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { type ReportIosResultArgs, reportIosResult } from './result.ts';
 import { workspaceLinks } from '../../devices/stim-desktop.ts';
@@ -44,6 +44,7 @@ import { launchOutcomeRecord, type MobileRuntimePreparation, type RuntimeReadine
 import type { RuntimePlan } from '../../engine/runtime-plan.ts';
 import { COLLECTOR_EXIT_WAIT_MS } from './collector.ts';
 import {
+  bundleBindFailure,
   captureNativeCrashes,
   IOS_CRASH_REPORT_RETRY,
   printNativeCrashReport,
@@ -630,6 +631,59 @@ async function cleanAdoptedIosApps({
   return `Could not remove ${swept.failed.join(', ')}, left by the previous workspace.`;
 }
 
+async function evictUnbindableCacheHit({
+  d,
+  root,
+  slot,
+  udid,
+  bundleId,
+  appPath,
+  launchedAt,
+  logsDir,
+  cacheHit,
+  storeKey,
+  runCommand,
+  local,
+  logFields,
+  operation,
+}: {
+  d: IosDeps;
+  root: string;
+  slot: string | undefined;
+  udid: string;
+  bundleId: string | null;
+  appPath: string;
+  launchedAt: number;
+  logsDir: string;
+  cacheHit: CacheHitLevel;
+  storeKey: string | null;
+  runCommand: string;
+  local: boolean;
+  logFields: FailArgs['build'];
+  operation: VerifyIosRunArgs['operation'];
+}): Promise<FailArgs | null> {
+  if (!cacheHit || !storeKey || !bundleId || !local) return null;
+  const crashes = await captureNativeCrashes(
+    { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath },
+    logsDir,
+    operation?.signal,
+    operation?.env,
+  );
+  const symbol = crashes.map(bundleBindFailure).find(Boolean);
+  if (!symbol || !(await d.evictBuild('ios', storeKey))) return null;
+  const provider = cacheHit === 'remote';
+  return {
+    code: 'STIM_LAUNCH_FAILED',
+    message: `The cached app cannot start: dyld could not bind ${symbol} between two parts of the app itself.`,
+    remedy:
+      `Stim removed the cache entry ${storeKey}${provider ? ', but the cache provider still holds its copy' : ''}. ` +
+      `Run \`${runCommand}\`${provider ? ' with `--no-build-cache`' : ''} again to build the app fresh. ` +
+      "If the fresh app crashes the same way, the project's own native code is the cause.",
+    logPath: logsDir,
+    build: logFields,
+  };
+}
+
 function installMayBeProven(adopting: boolean, parkedCacheKey: string | undefined, storeKey: string | null): boolean {
   return !adopting || !parkedCacheKey || parkedCacheKey === storeKey;
 }
@@ -1126,6 +1180,23 @@ export async function finishIosRun({
     enterActivity,
   });
   if (launchState === LAUNCH_FATAL) {
+    const evicted = await evictUnbindableCacheHit({
+      d,
+      root,
+      slot,
+      udid,
+      bundleId,
+      appPath,
+      launchedAt,
+      logsDir,
+      cacheHit,
+      storeKey,
+      runCommand,
+      local: !physical && !remoteDevice,
+      logFields: { ...buildFailure, appPath, bundleId },
+      operation,
+    });
+    if (evicted) return fail(evicted);
     return fail({
       code: 'STIM_LAUNCH_FAILED',
       message: 'The app failed its launch readiness check.',
