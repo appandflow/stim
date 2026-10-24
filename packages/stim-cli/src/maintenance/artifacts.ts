@@ -300,6 +300,9 @@ export async function clearArtifact(
     protectedRoot: string;
     pinned: (workspace: string) => boolean;
     worktrees: readonly ArtifactWorktree[];
+    /** Keep dependencies that worktree warm could not restore, instead of deleting them without a restore record. */
+    requireRestorable?: boolean;
+    restoreCache?: Parameters<typeof restoreProblem>[1];
   },
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
   const worktree = options.worktrees
@@ -318,13 +321,14 @@ export async function clearArtifact(
   const candidate = { worktree: worktree.path, path: action.target, keys: worktree.keys };
   const early = keptReason(candidate, kind, { ...options, now: Date.now() });
   if (early) return { status: 'kept', bytes: 0, detail: early };
-  const restorable = kind === 'dependencies' && !(await restoreProblem(candidate));
+  const unrestorable = kind === 'dependencies' ? await restoreProblem(candidate, options.restoreCache) : null;
+  if (unrestorable && options.requireRestorable) return { status: 'kept', bytes: 0, detail: unrestorable };
   const before = lowestFree(measureDisk());
   const [key] = candidate.keys;
   const remove = () => {
     const reason = keptReason(candidate, kind, { ...options, now: Date.now(), ...(key ? { locked: key } : {}) });
     if (reason) return reason;
-    if (restorable) recordLightened(candidate.keys, candidate.path);
+    if (kind === 'dependencies' && !unrestorable) recordLightened(candidate.keys, candidate.path);
     rmSync(candidate.path, { recursive: true, force: true });
     return null;
   };

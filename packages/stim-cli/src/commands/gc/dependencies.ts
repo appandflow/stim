@@ -62,6 +62,7 @@ export async function lightenWorktreeDependencies(
   if (!found?.candidates.length) return 0;
   const worktrees = artifactWorktrees();
   const protectedRoot = canonicalPath(operation?.cwd ?? process.cwd());
+  const restoreCache: Parameters<typeof restoreProblem>[1] = new Map();
   let failures = 0;
   for (const { worktree, path } of found.candidates) {
     operation?.signal.throwIfAborted();
@@ -69,7 +70,14 @@ export async function lightenWorktreeDependencies(
       const outcome = await clearArtifact(
         { kind: 'would-delete-dependencies', target: path, bytes: 0, reason: 'gc --delete' },
         'dependencies',
-        { windowMs: LIGHTEN_AFTER_MS, protectedRoot, pinned: maintenancePinned, worktrees },
+        {
+          windowMs: LIGHTEN_AFTER_MS,
+          protectedRoot,
+          pinned: maintenancePinned,
+          worktrees,
+          requireRestorable: true,
+          restoreCache,
+        },
       );
       if (outcome.status === 'done') {
         log(

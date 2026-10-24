@@ -41,7 +41,8 @@ async function sourceFacts(worktree: string, operation?: StimContext): Promise<S
       isJsonObject(settings) && Array.isArray(settings.exclude)
         ? settings.exclude.filter((entry): entry is string => typeof entry === 'string')
         : [];
-    const patterns = readWorktreeExclude(source) ?? configured;
+    const excluded = readWorktreeExclude(source);
+    const patterns = excluded?.length ? excluded : configured;
     return {
       source,
       carryable: new Set(

@@ -94,7 +94,7 @@ function idleRepo(worktrees: { name: string; workspace: boolean }[]): Record<str
   git('init -q -b main');
   git('config user.email test@example.com');
   git('config user.name test');
-  writeFileSync(join(repo, '.gitignore'), 'node_modules/\n');
+  writeFileSync(join(repo, '.gitignore'), 'node_modules/\nios/\n');
   writeFileSync(join(repo, 'package.json'), '{}');
   writeFileSync(join(repo, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
   git('add -A');
@@ -107,7 +107,9 @@ function idleRepo(worktrees: { name: string; workspace: boolean }[]): Record<str
   const hourAgo = new Date(Date.now() - 60 * 60_000);
   for (const [name, root] of Object.entries(roots)) {
     write(join(root, 'node_modules', 'pkg', 'index.js'));
+    write(join(root, 'ios', 'Pods', 'Manifest.lock'));
     ageTree(join(root, 'node_modules'), hourAgo);
+    ageTree(join(root, 'ios'), hourAgo);
     if (name === 'repo' || worktrees.find((entry) => entry.name === name)?.workspace) {
       upsertProject(root, { metroPort: null });
       recordWorkspaceUse(root, hourAgo);
@@ -181,6 +183,12 @@ test.skipIf(process.platform === 'win32')(
     expect(detail('busy')).toBe(`process ${child.pid} works in it`);
     expect(detail('keyless')).toMatch(/no workspace/);
     expect(detail('drifted')).toMatch(/pnpm-lock.yaml differs/);
+    expect(existsSync(join(at('feature'), 'ios', 'Pods', 'Manifest.lock'))).toBe(true);
+    expect(
+      payload.sections.worktreeDependencies.find(
+        (entry: { path: string }) => entry.path === join(at('feature'), 'ios', 'Pods'),
+      )?.detail,
+    ).toMatch(/would not copy ios\/Pods back/);
   },
   60_000,
 );
