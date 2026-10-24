@@ -127,6 +127,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
+// Each Git child of a removal starts Windows PowerShell 5.1 for its report job (#4103), about 0.5 s apiece.
+const GIT_REMOVAL_TIMEOUT_MS = process.platform === 'win32' ? 240_000 : undefined;
 let tmpHome: string;
 let projects: string;
 
@@ -1455,35 +1457,40 @@ test.each(['remove', 'branch delete', 'pod restore'] as const)(
       for (const handle of handles) releaseClaim(handle);
     }
   },
+  GIT_REMOVAL_TIMEOUT_MS,
 );
 
-test('removing the invoking worktree finishes branch cleanup from a surviving checkout', async () => {
-  const { repo, worktrees } = gitRepoWithWorktrees(['invoking']);
-  const path = worktrees.invoking;
-  if (!path) throw new Error('The fixture worktree is missing');
-  upsertProject(path, { metroPort: null, worktreeBranch: 'invoking', worktreeBranchOwned: true });
-  resetExecutor();
-  const executor = getExecutor();
-  const real = executor.runFileAsync.bind(executor);
-  const probe = vi
-    .spyOn(executor, 'runFileAsync')
-    .mockImplementation((file, args, options) => (file === 'git' ? real(file, args, options) : Promise.resolve('')));
-  const operation = testContext({ cwd: path, projectRoot: path });
-  const fail = vi.fn<() => void>();
-  try {
-    expect(
-      await withAmbientContext(operation, () =>
-        removeWorktreeTarget(path, { operation, output: { error: () => {}, fail } }),
-      ),
-    ).toBe(true);
-    expect(fail).not.toHaveBeenCalled();
-    expect(existsSync(path)).toBe(false);
-    expect(getProject(path)).toBe(null);
-    expect(execSync('git for-each-ref refs/heads/invoking', { cwd: repo, encoding: 'utf8' }).trim()).toBe('');
-  } finally {
-    probe.mockRestore();
-  }
-});
+test(
+  'removing the invoking worktree finishes branch cleanup from a surviving checkout',
+  async () => {
+    const { repo, worktrees } = gitRepoWithWorktrees(['invoking']);
+    const path = worktrees.invoking;
+    if (!path) throw new Error('The fixture worktree is missing');
+    upsertProject(path, { metroPort: null, worktreeBranch: 'invoking', worktreeBranchOwned: true });
+    resetExecutor();
+    const executor = getExecutor();
+    const real = executor.runFileAsync.bind(executor);
+    const probe = vi
+      .spyOn(executor, 'runFileAsync')
+      .mockImplementation((file, args, options) => (file === 'git' ? real(file, args, options) : Promise.resolve('')));
+    const operation = testContext({ cwd: path, projectRoot: path });
+    const fail = vi.fn<() => void>();
+    try {
+      expect(
+        await withAmbientContext(operation, () =>
+          removeWorktreeTarget(path, { operation, output: { error: () => {}, fail } }),
+        ),
+      ).toBe(true);
+      expect(fail).not.toHaveBeenCalled();
+      expect(existsSync(path)).toBe(false);
+      expect(getProject(path)).toBe(null);
+      expect(execSync('git for-each-ref refs/heads/invoking', { cwd: repo, encoding: 'utf8' }).trim()).toBe('');
+    } finally {
+      probe.mockRestore();
+    }
+  },
+  GIT_REMOVAL_TIMEOUT_MS,
+);
 
 function answerGh(pullsOf: (branch: string) => object[], calls: { cwd?: string; args: string[] }[] = []) {
   const current = getExecutor();
@@ -1884,7 +1891,7 @@ test('gc --delete removes a worktree whose pull request merged or closed only wh
   expect(existsSync(worktrees.shipped!)).toBe(false);
   expect(existsSync(worktrees.abandoned!)).toBe(false);
   for (const name of ['unsaved', 'wip', 'gone', 'noPr']) expect(existsSync(worktrees[name]!)).toBe(true);
-}, 120_000);
+}, 240_000);
 
 test('a signed-out or unresponsive gh is asked once per repository per gc run, and every worktree says why', async () => {
   const { worktrees } = gitRepoWithWorktrees(['one', 'two']);
@@ -2227,7 +2234,7 @@ test('gc keeps a merged worktree that holds another worktree under an ignored pa
   await captureLog(() => runGc({ delete: true }));
   expect(existsSync(join(inner, 'wip.txt'))).toBe(true);
   expect(existsSync(merged)).toBe(true);
-}, 120_000);
+}, 240_000);
 
 test('gc --delete also removes merged linked worktrees of a registered repository where no stim command ran', async () => {
   const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
@@ -2238,7 +2245,7 @@ test('gc --delete also removes merged linked worktrees of a registered repositor
   for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(at(name))).toBe(false);
   for (const name of ['fresh', 'evil', 'open', 'dirty']) expect(existsSync(at(name))).toBe(true);
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
-}, 120_000);
+}, 240_000);
 
 test('plain gc --delete removes merged worktrees, squash merges included, after fetching the default branch', async () => {
   const { repo, worktrees, git } = repoWithMergedBranches();
@@ -2280,7 +2287,7 @@ test('plain gc --delete removes merged worktrees, squash merges included, after 
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
   expect(git('branch --list squashed')).toContain('squashed');
   expect(process.exitCode).not.toBe(1);
-}, 120_000);
+}, 240_000);
 
 async function checkWorktrees() {
   return (await planWorktrees({ protectedRoot: projects, pinned: () => false, now: Date.now() })).sweep;
@@ -2367,7 +2374,7 @@ test('plain gc fetches nothing and asks gh nothing, shows what the maintenance w
   expect(ghCalls).toHaveLength(2);
   for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name] ?? '')).toBe(false);
   expect(existsSync(worktrees.open ?? '')).toBe(true);
-}, 120_000);
+}, 240_000);
 
 test('plain gc trusts a merge proven from existing refs and a fresh cached pull request lookup, never an old one', async () => {
   const names = ['landed', 'shipped', 'aged', 'abandoned', 'moved', 'legacy', 'quiet', 'unknown'];
@@ -2459,7 +2466,7 @@ test('plain gc trusts a merge proven from existing refs and a fresh cached pull 
   });
   expect(fetches).toEqual([]);
   expect(ghCalls).toEqual([]);
-}, 120_000);
+}, 240_000);
 
 function backdateWorktreeActivity(path: string, when: Date): void {
   const gitDir = execSync('git rev-parse --path-format=absolute --git-dir', { cwd: path, encoding: 'utf-8' }).trim();
@@ -2505,7 +2512,7 @@ test('gc --worktrees --delete removes idle worktrees with no commits of their ow
   expect(existsSync(at('followup'))).toBe(true);
   expect(lines.join('\n')).toContain(`Kept the worktree ${at('followup')}: its HEAD moved since gc checked it`);
   for (const name of ['open', 'evil', 'dirty']) expect(existsSync(at(name))).toBe(true);
-}, 120_000);
+}, 240_000);
 
 test('worktree removal keeps a worktree whose HEAD is not the one the caller approved', async () => {
   const { worktrees, git } = repoWithMergedBranches({ registerWorktrees: false });
@@ -2522,7 +2529,7 @@ test('worktree removal keeps a worktree whose HEAD is not the one the caller app
     error.mockRestore();
   }
   expect(existsSync(fresh)).toBe(false);
-}, 120_000);
+}, 240_000);
 
 test.skipIf(process.platform === 'win32')(
   'gc --delete archives a dirty finished worktree, then removes it, and keeps it while archives are off',
@@ -2551,7 +2558,7 @@ test.skipIf(process.platform === 'win32')(
     for (const command of manifest.restore) execSync(command, { stdio: 'pipe', timeout: 30_000 });
     expect(readFileSync(join(dirty, 'notes.txt'), 'utf8')).toBe('wip');
   },
-  120_000,
+  240_000,
 );
 
 test('the grace period of a dirty finished worktree counts changes to its uncommitted files', async () => {
@@ -2574,7 +2581,7 @@ test('the grace period of a dirty finished worktree counts changes to its uncomm
     skipCode: 'recent-activity',
     skipped: expect.stringMatching(/^recent activity: an uncommitted file change 10m ago/),
   });
-}, 120_000);
+}, 240_000);
 
 test('gc --delete removes a clean detached worktree on the default branch once idle, and keeps a fresh one', async () => {
   const { worktrees, git } = repoWithMergedBranches({ registerWorktrees: false });
@@ -2592,7 +2599,7 @@ test('gc --delete removes a clean detached worktree on the default branch once i
   );
   expect(existsSync(fresh)).toBe(true);
   for (const name of ['open', 'evil', 'dirty']) expect(existsSync(worktrees[name] ?? '')).toBe(true);
-}, 120_000);
+}, 240_000);
 
 test('gc keeps a finished worktree that holds the running stim, and worktree remove refuses it', async () => {
   const { worktrees } = repoWithMergedBranches({ registerWorktrees: false });
@@ -2622,7 +2629,7 @@ test('gc keeps a finished worktree that holds the running stim, and worktree rem
     error.mockRestore();
   }
   expect(existsSync(merged)).toBe(true);
-}, 120_000);
+}, 240_000);
 
 test('disk pressure level 3 removes a worktree with no commits of its own once idle for the pressure window', async () => {
   const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
@@ -2647,7 +2654,7 @@ test('disk pressure level 3 removes a worktree with no commits of its own once i
   await captureLog(() => removeWorktrees(pressured.sweep));
   for (const name of ['fresh', 'reused']) expect(existsSync(at(name))).toBe(false);
   for (const name of ['followup', 'open', 'dirty']) expect(existsSync(at(name))).toBe(true);
-}, 120_000);
+}, 240_000);
 
 test.skipIf(process.platform === 'win32')(
   'disk pressure level 3 keeps a worktree with no commits of its own that was active minutes ago, even with no pressure window',
@@ -2687,7 +2694,7 @@ test.skipIf(process.platform === 'win32')(
       chmodSync(logs, 0o755);
     }
   },
-  120_000,
+  240_000,
 );
 
 test('disk pressure level 3 keeps a worktree with no commits of its own that became active after the plan', async () => {
@@ -2708,7 +2715,7 @@ test('disk pressure level 3 keeps a worktree with no commits of its own that bec
 
   expect(existsSync(at('fresh'))).toBe(true);
   expect(output).toContain(`Kept the worktree ${at('fresh')}: recent activity: a git `);
-}, 120_000);
+}, 240_000);
 
 test('gc keeps a merged worktree when the fetch fails, and when its HEAD moves after the report', async () => {
   const { repo, remote, worktrees, git } = repoWithMergedBranches();
@@ -2748,7 +2755,7 @@ test('gc keeps a merged worktree when the fetch fails, and when its HEAD moves a
   expect(existsSync(worktrees.merged!)).toBe(true);
   expect(lines.join('\n')).toContain(`Kept the worktree ${worktrees.merged}: its HEAD moved since gc checked it`);
   expect(existsSync(worktrees.squashed!)).toBe(false);
-}, 120_000);
+}, 240_000);
 
 test('gc --delete keeps a just-merged worktree for the grace period, then removes it and tears down its device', async () => {
   process.env.STIM_GC_WORKTREE_GRACE_MINUTES = '120';
@@ -2871,7 +2878,7 @@ test('gc --delete keeps a just-merged worktree for the grace period, then remove
   expect(simctlCalls).toContain('xcrun simctl delete U-OLD');
   expect(simctlCalls.some((call) => /(shutdown|delete) U-BOOTED/.test(call))).toBe(false);
   expect(getProject(worktrees.booted!)?.platforms?.ios).toMatchObject({ deviceUdid: 'U-BOOTED', owned: true });
-}, 120_000);
+}, 240_000);
 
 test('mergedAt is the merge commit date, also when the merged branch moved past the local HEAD', () => {
   const repo = join(projects, 'merge-time');
