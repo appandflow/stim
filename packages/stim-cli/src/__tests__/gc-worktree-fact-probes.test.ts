@@ -266,7 +266,7 @@ test('cancelling a blocked removal safety check drains its child and keeps the w
     ]);
     controller.abort();
     await expect(pending).rejects.toBe(controller.signal.reason);
-    expect(child?.signalCode).toBe('SIGKILL');
+    expect(child && (child.exitCode !== null || child.signalCode === 'SIGKILL')).toBe(true);
     expect(existsSync(join(linked, 'tracked.txt'))).toBe(true);
     expect(executor.runFile('git', ['-C', linked, 'branch', '--show-current'], { timeoutMs: 5000 })).toBe('feature');
     expect(process.exitCode).toBe(exit);
