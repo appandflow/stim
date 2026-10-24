@@ -1021,12 +1021,18 @@ RULES
                               what --delete would remove; withWorkspace
                               marks those of a gone workspace, removed with
                               its workspace directory
-    workspaceBuildOutputs   { dir, projectRoot, bytes, idleDays, willClear,
-                              reason, detail }  derived-data, gradle-build,
-                              android-cas, cache-provider, macos/build,
-                              macos/<Product>.app and macos/staging-* of each
-                              workspace; willClear marks the ones --delete
-                              would clear; --cache workspaces omits the
+    workspaceBuildOutputs   { dir, projectRoot, inTreeDirs, bytes, idleDays,
+                              willClear, reason, detail }  derived-data,
+                              gradle-build, android-cas, cache-provider,
+                              macos/build, macos/<Product>.app and
+                              macos/staging-* of each workspace; inTreeDirs
+                              lists the project's android/app/build,
+                              android/build,
+                              android/.gradle and .build that --delete
+                              clears with them, every file in them
+                              ignored by git and none tracked, and
+                              bytes includes them; willClear marks the ones
+                              --delete would lighten; --cache workspaces omits the
                               directories that --delete removes whole (dead
                               projects and orphanedWorkspaces), and --cache
                               all does not

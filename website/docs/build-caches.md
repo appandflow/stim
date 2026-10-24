@@ -471,18 +471,25 @@ stim gc --delete --older-than 7
 stim gc --delete --cache workspaces`}
 />
 
-Plain `gc --delete` clears the build outputs of every workspace that is not in
-use. A workspace is in use while its dev server runs, a `stim ios` or
-`stim android` run holds it, a build names it, or a tunnel or remote lock is
-held. A running, building, unverified or hosted macOS app also keeps its
-workspace untouched. `--older-than <days>` clears only workspaces no Stim
-command has used for that many days. `--cache workspaces` clears the outputs and nothing else, and
-`--cache all` includes them. `--cache parked` is the one reserved name that
-`all` leaves out: it erases parked simulators and emulators (see
-[owned devices](./owned-devices.md)). The workspace keeps its `workspace.json`,
-`state.json`, logs, devices and ports, along with `macos/` itself,
-`macos/runtime.lock`, its claim set and other macOS files. The project's own
-`.build` stays.
+Plain `gc --delete` lightens every workspace that is not building and did not
+run `stim ios`, `stim android` or `stim macos` in the last 15 minutes, and
+prints the bytes it freed for each. A running dev server, a booted or hosted
+simulator or emulator, or a tunnel no longer keeps the outputs. They stay while
+a `stim ios` or `stim android` run holds the workspace, a build names it, or its
+macOS app or build runs or cannot be verified. Lightening also clears the
+project's own `android/app/build`, `android/build`, `android/.gradle` and
+`.build` when git ignores every file in the directory and tracks none.
+`ios/build` stays, because React Native's `pod install` writes files there that
+only `pod install` recreates. The shared build cache, the Xcode compilation cache, the Gradle caches
+and the Metro cache are never touched. `--older-than <days>` clears only
+workspaces no Stim command has used for that many days. `--cache workspaces`
+clears the outputs and nothing else, and `--cache all` includes them.
+`--cache parked` is the one reserved name that `all` leaves out: it erases
+parked simulators and emulators (see [owned devices](./owned-devices.md)). The
+workspace keeps its `workspace.json`, `state.json`, logs, devices, ports and
+running dev server, along with `macos/` itself, `macos/runtime.lock`, its claim
+set and other macOS files. Automatic maintenance keeps its own rules and does
+not use the 15-minute window.
 
 The next build of an unchanged app installs from the shared build cache. After
 a native change, the Xcode compilation cache speeds up the rebuild. On React

@@ -64,7 +64,7 @@ import {
 } from '../ownership-claim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { registerCollector } from '../collector/state.ts';
-import { LOG_ROTATE_BYTES, withAmbientContext } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, buildCacheRoot, withAmbientContext } from '@stim-cli/core';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';
 import { diskUsageCacheFile, pullRequestCacheFile, worktreeArchiveRoot } from '@stim-cli/core/state';
@@ -604,6 +604,7 @@ describe('planning workspace build output clearing', () => {
     problem: null,
     bytes: 1024,
     lastUsed: now - 10 * DAY_MS,
+    nativeUsed: NaN,
     inUse: [] as string[],
     ...overrides,
   });
@@ -626,6 +627,15 @@ describe('planning workspace build output clearing', () => {
     expect(old?.willClear).toBe(true);
     expect(recent).toMatchObject({ keptCode: 'recently-used', keptReason: 'used 2d ago, within --older-than 3' });
     expect(unknown).toMatchObject({ keptCode: 'last-use-unknown', keptReason: 'its last use is unknown' });
+  });
+
+  test('a workspace that ran ios, android or macos within 15 minutes keeps its outputs; an older run does not', () => {
+    const [recent, older] = planWorkspaceOutputs(
+      [entry({ nativeUsed: now - 14 * 60_000 }), entry({ nativeUsed: now - 16 * 60_000 })],
+      { olderThan: null, now },
+    );
+    expect(recent).toMatchObject({ willClear: false, keptCode: 'recently-used' });
+    expect(older?.willClear).toBe(true);
   });
 
   test('an unresolved workspace directory is never cleared', () => {
@@ -656,7 +666,7 @@ test('gc --delete --cache workspaces measures and clears macOS outputs while pre
   expect(report).toMatch(/Workspace build outputs \(detected\)/);
   expect(report).toMatch(/Swift/);
   expect(report).toContain(`${root} (idle 1d)`);
-  expect(report).toContain('would be CLEARED');
+  expect(report).toContain('would be LIGHTENED');
   expect(report).not.toContain('Shared cache');
 
   const { payload } = await gcJson({ cache: 'workspaces' });
@@ -758,6 +768,58 @@ test('plain gc --delete clears idle workspaces, and --older-than limits it by la
     expect(existsSync(join(recent.dir, output))).toBe(false);
     expect(existsSync(join(busy.dir, output))).toBe(true);
   }
+});
+
+test('plain gc --delete lightens a workspace whose dev server runs, but never a building or just-built one, or the build cache', async () => {
+  const iosBuild = (minutesAgo: number) => ({
+    lastIosBuild: {
+      platform: 'ios',
+      status: 'success',
+      startedAt: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
+      durationMs: 0,
+    },
+  });
+  const active = builtWorkspace('active');
+  execSync('git init -q && git config user.email t@t && git config user.name t', { cwd: active.root });
+  writeFileSync(join(active.root, '.gitignore'), 'ios/build/\nandroid/\n.build/*\n!.build/keep\n');
+  mkdirSync(join(active.root, '.build'));
+  writeFileSync(join(active.root, '.build', 'keep'), 'untracked, not ignored');
+  mkdirSync(join(active.root, 'ios', 'build', 'rncore-facades'), { recursive: true });
+  writeFileSync(join(active.root, 'ios', 'build', 'rncore-facades', 'React-Core.podspec.json'), 'pod install output');
+  mkdirSync(join(active.root, 'android', 'app', 'build'), { recursive: true });
+  writeFileSync(join(active.root, 'android', 'app', 'build', 'blob'), 'regenerable');
+  mkdirSync(join(active.root, 'android', 'build'), { recursive: true });
+  writeFileSync(join(active.root, 'android', 'build', 'tracked'), 'committed');
+  execSync('git add .gitignore && git add -f android/build/tracked && git commit -qm init', { cwd: active.root });
+  writeWorkspaceState(active.root, { supervisor: { ...liveClaimOwner(), port: 8100 }, ...iosBuild(60) });
+  expect(workspaceInUse(active.root).join('\n')).toMatch(/supervisor \(pid \d+\) is running/);
+  const building = builtWorkspace('building');
+  holdNativeRun(building.root);
+  const recent = builtWorkspace('recent');
+  writeWorkspaceState(recent.root, iosBuild(5));
+  const artifact = join(buildCacheRoot(), 'app-ios-key', 'App.app');
+  mkdirSync(artifact, { recursive: true });
+  writeFileSync(join(artifact, 'binary'), 'artifact');
+
+  const { payload } = await gcJson({ cache: 'workspaces' });
+  expect(
+    payload.sections.workspaceBuildOutputs.find((w: { projectRoot: string }) => w.projectRoot === active.root),
+  ).toMatchObject({ willClear: true, inTreeDirs: [join(active.root, 'android', 'app', 'build')] });
+
+  const report = await captureLog(() => runGc({ delete: true }));
+  for (const output of OUTPUTS) {
+    expect(existsSync(join(active.dir, output))).toBe(false);
+    expect(existsSync(join(building.dir, output))).toBe(true);
+    expect(existsSync(join(recent.dir, output))).toBe(true);
+  }
+  expect(existsSync(join(active.root, 'android', 'app', 'build'))).toBe(false);
+  expect(existsSync(join(active.root, 'ios', 'build', 'rncore-facades', 'React-Core.podspec.json'))).toBe(true);
+  expect(readFileSync(join(active.root, 'android', 'build', 'tracked'), 'utf8')).toBe('committed');
+  expect(readFileSync(join(active.root, '.build', 'keep'), 'utf8')).toBe('untracked, not ignored');
+  expect(readFileSync(join(artifact, 'binary'), 'utf8')).toBe('artifact');
+  expect(report).toMatch(/Lightened .*active: freed/);
+  expect(report).toMatch(/Kept the build outputs of .*building: in use: .*native-run/);
+  expect(report).toMatch(/Kept the build outputs of .*recent: ran ios, android or macos within the last 15 minutes/);
 });
 
 function loggedWorkspace(name: string): { root: string; logs: string } {

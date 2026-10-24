@@ -480,11 +480,14 @@ LINKED WORKTREES
   only when it has no unique commits.
 
 IN USE
-  gc and worktree remove never delete a workspace's directory, build outputs
-  or checkout while it is in use: its dev server supervisor is running or
+  gc and worktree remove never delete a workspace's directory or checkout
+  while it is in use: its dev server supervisor is running or
   cannot be verified, a \`stim ios\`, \`stim android\` or \`stim stop\` run
   holds its native-run.lock, a live or unresolvable build lock or slot names it,
-  or its managed tunnel or managed remote lock is held. The deletion holds
+  or its managed tunnel or managed remote lock is held. Build outputs follow
+  the narrower rule in WORKSPACE BUILD OUTPUTS (\`guide cleanup disk\`): only
+  a build, a running macOS app, or an ios, android or macos run in the last
+  15 minutes keeps them. The deletion holds
   native-run.lock itself, so no native run can start partway through. A lock
   that names no workspace blocks nothing, because every build also holds its
   own workspace's native-run.lock; gc lists it with the command that removes
@@ -1050,9 +1053,10 @@ THE ONE CASE GC WILL NOT REAP
         'disk usage, workspace build outputs, logs and device recordings, AVD and build-log sizes, the data partition, trimming the shared caches',
       body: () => `DISK
   Logs, state, pidfiles and Xcode DerivedData are under the global workspace
-  directory, and \`worktree remove\` reclaims them. \`gc --delete\` clears the
-  build outputs of workspaces nobody is using (WORKSPACE BUILD OUTPUTS
-  below) and keeps the rest. Gradle retains its normal
+  directory, and \`worktree remove\` reclaims them. \`gc --delete\` lightens
+  every workspace that is not building and did not run a native command in
+  the last 15 minutes, clearing its build outputs (WORKSPACE BUILD OUTPUTS
+  below), and keeps the rest. Gradle retains its normal
   project build directories while sharing task outputs through its build cache.
 
   Android AVDs normally live under ~/.android/avd, and a booted owned AVD can
@@ -1103,17 +1107,33 @@ a changed value.
 WORKSPACE BUILD OUTPUTS
   Each workspace directory holds derived-data/, gradle-build/, android-cas/,
   cache-provider/, macos/build, the staged macos/<Product>.app and macos/staging-*
-  leftovers. \`gc\` reports them as one detected cache, "Workspace build
-  outputs", with a per-workspace size, last use and verdict. Plain
-  \`gc --delete\` clears them for every workspace not in use (see \`guide
-  cleanup gc\`), before anything else. \`--older-than <days>\` limits that to
+  leftovers. The project's own android/app/build, android/build,
+  android/.gradle and .build count with them when git ignores every file in
+  the directory and tracks none; one that fails that check, or is not in a
+  git checkout, stays, and \`gc --delete\` prints why when the check fails
+  between the report and the deletion. ios/build stays: React Native's pod
+  install writes podspec facades and codegen output there that only pod
+  install recreates. \`gc\` reports them as one
+  detected cache, "Workspace build outputs", with a per-workspace size, last
+  use and verdict. Plain \`gc --delete\` lightens every workspace, before
+  anything else, by clearing them, and prints the bytes freed per workspace.
+  A running dev server, a booted or hosted simulator or emulator and a managed
+  tunnel no longer keep them. They stay while the workspace is building (its
+  native-run.lock is held, a live or unresolvable build lock or slot names
+  it, or its build claim is live), while its macOS app or build runs or cannot
+  be verified, and for 15 minutes after its last ios, android or macos run,
+  cache hits included, as recorded in state.json's build records. Dev server
+  starts, reloads and logs do not count as a native run. The shared build
+  cache, the Xcode compilation cache, the Gradle caches and the Metro cache
+  are never touched. \`--older-than <days>\` limits that to
   workspaces idle at least that long, and keeps one whose last use is
   unknown. \`--cache workspaces\` acts on them alone, except in the workspace
   directories that plain \`gc --delete\` removes whole (dead projects and
   orphaned directories); \`--cache all\` includes them. macos/ itself,
   macos/runtime.lock and its claim set, workspace.json, state.json, logs/,
-  other macOS files, locks and device records stay, as does the project's
-  own .build. The workspace keeps its devices and ports. A running, building,
+  other macOS files, locks and device records stay. The workspace keeps its
+  devices, ports and running dev server. Automatic maintenance keeps its
+  own rules (DISK PRESSURE LEVELS) and does not use the 15-minute window. A running, building,
   unverified or hosted macOS app keeps its workspace untouched.
     stim gc --delete --cache workspaces --older-than 7
   Last use is the newest of the lastUsedAt that start, ios, android, reload

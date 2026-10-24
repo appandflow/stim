@@ -14,6 +14,7 @@ import { matchWorktreeEntry, reclaimKeys } from '../commands/worktree.ts';
 import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
 import { childEnvironment } from '../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
+import { ARTIFACT_DIRS, type ArtifactKind } from '../workspace/regenerable-dirs.ts';
 import {
   listWorktrees,
   resolveSourceCheckoutAsync,
@@ -23,14 +24,6 @@ import {
 } from '../workspace/worktree.ts';
 import { measureDisk } from './measure.ts';
 import { lowestFree } from './pressure.ts';
-
-export type ArtifactKind = 'build' | 'dependencies';
-
-/** Directories that hold only what a build or an install regenerates, relative to an app or package root. */
-export const ARTIFACT_DIRS: Record<ArtifactKind, readonly string[]> = {
-  build: ['ios/build', 'android/app/build', 'android/build', 'android/.gradle', '.build'],
-  dependencies: ['node_modules', 'ios/Pods'],
-};
 
 const PACKAGE_PARENTS = ['apps', 'packages'];
 const SCAN_DEPTH: Record<ArtifactKind, number> = { build: 3, dependencies: 1 };
