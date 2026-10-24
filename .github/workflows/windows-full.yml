@@ -35,6 +35,7 @@ jobs:
           path: test-results/unit-windows-${{ matrix.shard }}.json
           if-no-files-found: ignore
           retention-days: 7
+          overwrite: true
 
   result:
     name: full Windows unit suite
