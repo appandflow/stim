@@ -37,4 +37,4 @@ delete process.env.SHELL;
 
 // @expo/fingerprint runs `npx react-native config` in a project without expo-modules-autolinking 1.12 or later, and
 // npx installs react-native (about 330 MB) from the registry when the project has none. Offline, npx fails at once.
-process.env.npm_config_offline = 'true';
+process.env.npm_config_offline ??= 'true';
