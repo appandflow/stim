@@ -36,14 +36,14 @@ function kill(pid: number, group: boolean): void {
 
 export function reapChildren(): void {
   if (live.size === 0) return;
-  const tracked = [...live.values()];
+  const tracked = [...live];
   live.clear();
   if (process.platform === 'win32') {
-    for (const { pid, exited } of tracked) if (!exited) kill(pid, false);
+    for (const [child, { exited }] of tracked) if (!exited) child.kill('SIGKILL');
     return;
   }
-  const below = descendants(tracked.filter(({ exited }) => !exited).map(({ pid }) => pid));
-  for (const { pid, detached } of tracked) kill(pid, detached);
+  const below = descendants(tracked.filter(([, { exited }]) => !exited).map(([, { pid }]) => pid));
+  for (const [, { pid, detached }] of tracked) kill(pid, detached);
   for (const pid of below) kill(pid, false);
 }
 
