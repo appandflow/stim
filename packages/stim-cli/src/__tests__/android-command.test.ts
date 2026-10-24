@@ -8108,6 +8108,33 @@ describe('named Android hosting placement', () => {
     expect(h.calls.build[0]?.abi).toBe('arm64-v8a');
     expect(result.facts?.cacheKey).toContain('arm64-v8a');
   });
+
+  test('Ctrl-C during hosted launch readiness records a cancelled run', async () => {
+    const controller = new AbortController();
+    const context = testContext({ signal: controller.signal });
+    const h = harness({
+      context,
+      json: true,
+      remoteDevice: 'mini',
+      prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: hostDevice, session: null }),
+      placeHostedAndroid: async () => ({ placement, launched: 'unverified' }),
+      verifyLaunched: ({ signal }: Parameters<typeof verifyLaunch>[0] = {}) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+          controller.abort('SIGINT');
+        }),
+    });
+    const result = await withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+      write: () => {},
+    });
+    expect(result.error?.code).toBe('STIM_CANCELLED');
+    expect(h.stdout.map((line) => JSON.parse(line))).toEqual([expect.objectContaining({ code: 'STIM_CANCELLED' })]);
+    expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({
+      status: 'failed',
+      errorCode: 'STIM_CANCELLED',
+    });
+    expect(readBuildLedger().at(-1)).toMatchObject({ platform: 'android', outcome: 'cancelled' });
+  });
 });
 
 test('stop cancels a remote-only placement wait, which got the run signal and its --wait', async () => {

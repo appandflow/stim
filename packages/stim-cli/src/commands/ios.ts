@@ -1182,6 +1182,7 @@ async function runIos(
       compilationCache = artifact.cache.compilation;
       if (hostedTarget)
         return await finishHostedIosRun({
+          operation: context,
           output: context.output,
           target: hostedTarget,
           projectBundleId: integration.bundleId,
