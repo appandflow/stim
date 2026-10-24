@@ -217,11 +217,23 @@ test.skipIf(process.platform === 'win32')(
     });
     expect(warm.calls).toEqual([root, root]);
     execSync('git checkout -- pnpm-lock.yaml', { cwd: root });
+    const sourceInstall = join(projects, 'repo', 'node_modules', '.pnpm', 'lock.yaml');
+    write(sourceInstall);
+    expect(await restoreLightenedDependencies(root, context)).toMatchObject({
+      message: expect.stringContaining('was not installed from its own lockfile'),
+    });
+    rmSync(sourceInstall);
 
     warm.restores = [dir];
     expect(await restoreLightenedDependencies(root, context)).toBeNull();
     expect(warm.calls).toEqual([root, root, root]);
     expect(lightenedDirs(root)).toEqual([]);
+
+    write(join(dir, 'partial'));
+    recordLightened([root], dir);
+    expect(await restoreLightenedDependencies(root, context)).toBeNull();
+    expect(existsSync(join(dir, 'partial'))).toBe(false);
+    expect(warm.calls).toHaveLength(4);
   },
   60_000,
 );
