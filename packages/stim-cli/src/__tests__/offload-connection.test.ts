@@ -1154,7 +1154,7 @@ describe('exact peer artifacts', () => {
     }
   });
 
-  test.each(['hit', 'miss', 'corrupt', 'old-worker', 'changed-source', 'changed-during-fetch'] as const)(
+  test.each(['hit', 'miss', 'corrupt', 'old-worker', 'changed-source', 'changed-during-fetch', 'crlf-listing'] as const)(
     'SwiftPM cache-only %s never uploads sources or starts a compiler job',
     async (scenario) => {
       const app = join(repo, 'archive-source', 'Sample.app');
@@ -1222,6 +1222,15 @@ describe('exact peer artifacts', () => {
       expect(JSON.stringify(offered ?? {})).not.toContain('private-worker-value');
       if (typeof choice === 'string') return;
       if (scenario === 'changed-source') writeFileSync(join(repo, 'package.json'), '{"changed":true}');
+      const executor = getExecutor();
+      const original = executor.runFileAsync.bind(executor);
+      const tarSpy = scenario === 'crlf-listing'
+        ? vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) =>
+            file === 'tar' && args[0] === '-tf'
+              ? Promise.resolve('Sample.app/\r\nSample.app/Contents/\r\nSample.app/Contents/Info.plist\r\nSample.app/Contents/MacOS/\r\nSample.app/Contents/MacOS/App\r\n')
+              : original(file, args, options),
+          )
+        : null;
       const pending = offloadBuild({
         choice,
         request,
@@ -1237,7 +1246,8 @@ describe('exact peer artifacts', () => {
         machine.release();
       }
       const outcome = await pending;
-      expect(outcome.ok).toBe(scenario === 'hit');
+      tarSpy?.mockRestore();
+      expect(outcome.ok).toBe(scenario === 'hit' || scenario === 'crlf-listing');
       const observed = outcome.ok
         ? {
             cacheHit: outcome.cacheHit,
@@ -1248,7 +1258,7 @@ describe('exact peer artifacts', () => {
           }
         : { stagingRemoved: !existsSync(join(home, 'staging')) };
       expect(observed).toEqual(
-        scenario === 'hit'
+        scenario === 'hit' || scenario === 'crlf-listing'
           ? { cacheHit: true, syncMs: 0, uploadedBytes: 0, workerMs: 0, contents: 'SwiftPM executable' }
           : { stagingRemoved: true },
       );
