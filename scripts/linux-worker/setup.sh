@@ -121,7 +121,7 @@ preflight() {
 }
 
 apt_install() {
-  sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y --no-install-recommends "$@" >/dev/null
+  sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y --no-install-recommends "$@" >/dev/null
 }
 
 install_base() {
@@ -248,7 +248,7 @@ install_server() {
   else
     local sudo_npm=()
     [ -w "$(npm root -g)" ] || sudo_npm=(sudo env "PATH=$PATH")
-    "${sudo_npm[@]}" npm install --global --no-fund --no-audit "@stim-cli/server@$server_version" >/dev/null
+    "${sudo_npm[@]}" npm install --global --no-fund --no-audit --update-notifier=false "@stim-cli/server@$server_version" >/dev/null
     hash -r
     ok "stim-server $(stim-server --version 2>/dev/null | head -n1 || true)"
   fi
