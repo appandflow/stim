@@ -12,6 +12,7 @@ import {
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
+import { loadConfig, upsertProject } from '../workspace/config.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { createRunRecorder, readStats, recordRunStats } from '../engine/stats.ts';
 import { goneClaimOwner, plantClaim, makeIosSim, makeConfig, makeAdbDevices, makeExecutor } from './_factories.ts';
@@ -370,6 +371,33 @@ test('waiting progress names workspaces for live devices and boot claims', async
   expect(lines[0]).toContain(expected);
   expect(lines[0]).toContain(join(root, 'device-waits'));
   expect(deviceSlotWaitingLine({ count: 2, max: 2, holders: ['tree-one', 'tree-two'], elapsedMs: 0 })).toBe(expected);
+});
+
+test('waiting progress tells same-named worktree holders and the queue head apart', async () => {
+  const trees = ['one', 'two', 'three'];
+  const sims = trees.map((tree) => makeIosSim({ udid: tree, name: `stim-${tree}`, state: 'Booted' }));
+  for (const tree of trees) {
+    const path = join(root, 'trees', tree, 'apps', 'mobile');
+    mkdirSync(path, { recursive: true });
+    upsertProject(path, { platforms: { ios: { deviceUdid: tree, owned: true } } });
+  }
+  const lines: string[] = [];
+  let now = Date.now();
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+      root: join(root, 'trees', 'two', 'apps', 'mobile'),
+      max: 3,
+      waitMs: 1,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      out: (line) => lines.push(line),
+      sources: { ...empty, sims, config: loadConfig() },
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+  expect(lines[0]).toContain('(3/3 in use: mobile (one), mobile (three), mobile (two))');
+  expect(lines[0]).toContain('queue position 1, head mobile (two);');
 });
 
 test('cancelling a queued run promptly releases its ticket without booting', async () => {

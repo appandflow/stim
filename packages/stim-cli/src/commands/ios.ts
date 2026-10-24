@@ -19,7 +19,7 @@ import {
   thrownRunFailureRecord,
   type BuildProgress,
 } from '../engine/build-progress.ts';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { artifactCachePolicy, optimizationBuildProfile } from '../optimizations.ts';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
@@ -626,7 +626,6 @@ async function runIos(
   const deviceSlotWait = {
     automatic: false,
     waitMs: deviceSlotWaitMs,
-    displayName: basename(root),
     reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     ...deviceWaitRun.policy,
     onWait: (ms: number) => {
