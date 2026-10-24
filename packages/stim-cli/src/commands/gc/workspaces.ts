@@ -234,7 +234,7 @@ export const REBUILD_COST: string =
   'are off), so that build recompiles Swift. The next stim macos in a cleared workspace is a full Swift build.';
 
 /** How long after its last ios, android or macos run a workspace keeps its build outputs. */
-export const LIGHTEN_AFTER_MS: number = 15 * 60_000;
+const LIGHTEN_AFTER_MS = 15 * 60_000;
 
 const BUILD_CHECKS = { devServer: false, hosted: false, managedLocks: false } as const;
 const BUILD_IN_PROGRESS = 'a build is in progress';
