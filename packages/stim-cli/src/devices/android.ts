@@ -1461,20 +1461,28 @@ export function parseAvdEmulatorProcesses(psOutput: string, avdName: string): nu
   return pids;
 }
 
-const PROCESS_TABLE_READ_TIMEOUTS_MS = [5000, 10_000, 20_000];
+function listAvdEmulatorProcesses(avdName: string, platform: NodeJS.Platform): number[] | null {
+  if (platform === 'win32') return [];
+  const out = getExecutor().runFileQuiet('ps', ['-axww', '-o', 'pid=,command='], { timeoutMs: 5000 });
+  return out === null ? null : parseAvdEmulatorProcesses(out, avdName);
+}
 
-function readProcessTable(args: string[]): string | null {
+const PROCESS_TABLE_READ_TIMEOUTS_MS = [5000, 15_000];
+
+async function readProcessTableAsync(
+  operation: StimContext | undefined,
+  args: string[],
+  options: { cwd?: string } = {},
+): Promise<string | null> {
   for (const timeoutMs of PROCESS_TABLE_READ_TIMEOUTS_MS) {
-    const out = getExecutor().runFileQuiet('ps', args, { timeoutMs });
+    const out = await runOperationFileQuiet(operation, getExecutor(), 'ps', args, {
+      timeoutMs,
+      killSignal: 'SIGKILL',
+      ...options,
+    });
     if (out !== null) return out;
   }
   return null;
-}
-
-function listAvdEmulatorProcesses(avdName: string, platform: NodeJS.Platform): number[] | null {
-  if (platform === 'win32') return [];
-  const out = readProcessTable(['-axww', '-o', 'pid=,command=']);
-  return out === null ? null : parseAvdEmulatorProcesses(out, avdName);
 }
 
 async function listAvdEmulatorProcessesAsync(
@@ -1483,10 +1491,7 @@ async function listAvdEmulatorProcessesAsync(
   operation?: StimContext,
 ): Promise<number[] | null> {
   if (platform === 'win32') return [];
-  const out = await runOperationFileQuiet(operation, getExecutor(), 'ps', ['-axww', '-o', 'pid=,command='], {
-    timeoutMs: 5000,
-    killSignal: 'SIGKILL',
-  });
+  const out = await readProcessTableAsync(operation, ['-axww', '-o', 'pid=,command=']);
   return out === null ? null : parseAvdEmulatorProcesses(out, avdName);
 }
 
@@ -1507,7 +1512,7 @@ function scanAvdEmulatorProcesses(
 function emulatorProcessRunning(pid: number): boolean {
   if (!pidExists(pid)) return false;
   if (process.platform === 'win32') return true;
-  const stat = readProcessTable(['-o', 'stat=', '-p', String(pid)]);
+  const stat = getExecutor().runFileQuiet('ps', ['-o', 'stat=', '-p', String(pid)], { timeoutMs: 5000 });
   return stat === null || !stat.trim().startsWith('Z');
 }
 
@@ -1549,9 +1554,7 @@ export async function assertOwnedAvdStoppedAsync(
     const stat =
       process.platform === 'win32'
         ? null
-        : await runOperationFileQuiet(operation, getExecutor(), 'ps', ['-o', 'stat=', '-p', String(processId)], {
-            timeoutMs: 5000,
-            killSignal: 'SIGKILL',
+        : await readProcessTableAsync(operation, ['-o', 'stat=', '-p', String(processId)], {
             cwd: operation?.cwd,
           });
     if (stat === null || !stat.trim().startsWith('Z')) live.add(processId);

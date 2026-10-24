@@ -52,6 +52,7 @@ import {
   physicalDeviceModel,
   resolvePhysicalDevice,
   assertOwnedAvdStopped,
+  assertOwnedAvdStoppedAsync,
   parseAvdEmulatorProcesses,
   parseEmulatorVersion,
   parseDfAvailableBytes,
@@ -1193,49 +1194,90 @@ test('assertOwnedAvdStopped refuses an emulator process of the AVD that its proc
   ).toThrow(/Could not read the process table/);
 });
 
-describe('assertOwnedAvdStopped when the process table read is slow under load', () => {
-  const stoppedAvd = {
+describe('owned AVD stop verification when the process table read is slow under load', () => {
+  const table = '  1 /sbin/launchd\n  2 /usr/sbin/syslogd';
+  const liveTable = '  4242 /sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd stim-app';
+  const noLock = {
     platform: 'darwin' as const,
     resolveDirectory: () => '/avds/stim-app.avd',
     readProcessId: () => null,
   };
+  const posixOnly = process.platform === 'win32';
 
-  test('a timed-out first read is retried, so a stopped emulator is verified stopped', () => {
+  function psReads(results: Array<string | Error>) {
     const timeouts: Array<number | undefined> = [];
     setExecutor({
-      runFileQuiet: (_file, _args, opts) => {
+      runFileAsync: async (_file, _args, opts) => {
         timeouts.push(opts?.timeoutMs);
-        return timeouts.length === 1 ? null : '  1 /sbin/launchd\n  2 /usr/sbin/syslogd';
+        const next = results[Math.min(timeouts.length, results.length) - 1] ?? '';
+        if (next instanceof Error) throw next;
+        return next;
       },
     });
+    return timeouts;
+  }
 
-    expect(() => assertOwnedAvdStopped('stim-app', stoppedAvd)).not.toThrow();
-    expect(timeouts).toEqual([5000, 10_000]);
+  test.skipIf(posixOnly)('assertOwnedAvdStoppedAsync verifies a stopped AVD after a timed-out first read', async () => {
+    const timeouts = psReads([new Error('timed out'), table]);
+
+    await expect(
+      assertOwnedAvdStoppedAsync('stim-app', testContext(), () => '/avds/stim-app.avd'),
+    ).resolves.toBeUndefined();
+    expect(timeouts).toEqual([5000, 15_000]);
   });
 
-  test('a retried read still reports a live emulator process', () => {
-    let reads = 0;
-    setExecutor({
-      runFileQuiet: () =>
-        ++reads === 1 ? null : '  4242 /sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd stim-app',
-    });
+  test.skipIf(posixOnly)(
+    'assertOwnedAvdStoppedAsync still reports a live emulator found by a retried read',
+    async () => {
+      psReads([new Error('timed out'), liveTable]);
 
-    expect(() => assertOwnedAvdStopped('stim-app', stoppedAvd)).toThrow(
-      'Owned AVD stim-app still has a live emulator process (4242).',
+      await expect(assertOwnedAvdStoppedAsync('stim-app', testContext(), () => '/avds/stim-app.avd')).rejects.toThrow(
+        'Owned AVD stim-app still has a live emulator process (4242).',
+      );
+    },
+  );
+
+  test.skipIf(posixOnly)('assertOwnedAvdStoppedAsync refuses after two failed reads of the table', async () => {
+    const timeouts = psReads([new Error('timed out')]);
+
+    await expect(assertOwnedAvdStoppedAsync('stim-app', testContext(), () => '/avds/stim-app.avd')).rejects.toThrow(
+      /Could not read the process table/,
     );
+    expect(timeouts).toEqual([5000, 15_000]);
   });
 
-  test('a table that never reads refuses after a bounded number of attempts', () => {
+  test.skipIf(posixOnly)('assertOwnedAvdStoppedAsync stops retrying when the operation is cancelled', async () => {
+    const controller = new AbortController();
     let reads = 0;
     setExecutor({
-      runFileQuiet: () => {
+      runFileAsync: async () => {
         reads += 1;
-        return null;
+        controller.abort(new Error('cancelled'));
+        throw new Error('timed out');
       },
     });
 
-    expect(() => assertOwnedAvdStopped('stim-app', stoppedAvd)).toThrow(/Could not read the process table/);
-    expect(reads).toBe(3);
+    await expect(
+      assertOwnedAvdStoppedAsync('stim-app', testContext({ signal: controller.signal }), () => '/avds/stim-app.avd'),
+    ).rejects.toThrow('cancelled');
+    expect(reads).toBe(1);
+  });
+
+  test('waitForAndroidEmulatorShutdown treats a stopped AVD as stopped after a timed-out first read', async () => {
+    const timeouts = psReads([new Error('timed out'), table]);
+
+    await expect(
+      waitForAndroidEmulatorShutdown('stim-app', null, { ...noLock, operation: testContext() }),
+    ).resolves.toBeUndefined();
+    expect(timeouts).toEqual([5000, 15_000]);
+  });
+
+  test('waitForAndroidEmulatorShutdown refuses when the table never reads', async () => {
+    psReads([new Error('timed out')]);
+
+    await expect(
+      waitForAndroidEmulatorShutdown('stim-app', null, { ...noLock, operation: testContext() }),
+    ).rejects.toThrow(/Could not read the process table/);
   });
 });
 
