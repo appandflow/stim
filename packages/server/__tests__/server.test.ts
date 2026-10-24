@@ -1334,7 +1334,9 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it('shares cached reports and pushes refreshes only to the proved Desktop connection', async () => {
-    const port = await start({ env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } });
+    const port = await start({
+      env: { HOME: root, USERPROFILE: root, PATH: dirname(process.execPath), STIM_MAINTENANCE: 'off' },
+    });
     const { token } = createPairingToken(Date.now(), capabilitiesFor(true));
     const remote = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
     const hello = await remote.request('hello', { client: CLIENT });
@@ -1498,7 +1500,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
   it('applies the report byte quota to both get and pushed errors', async () => {
     await start({
       commandLimits: { maxOutputBytes: 1 },
-      env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' },
+      env: { HOME: root, USERPROFILE: root, PATH: dirname(process.execPath), STIM_MAINTENANCE: 'off' },
     });
     const client = await desktop();
     expect(await client.request('desktop.reports.get', { report: 'gc' })).toMatchObject({
@@ -6863,7 +6865,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
       const stopping = client.request('action', { action: 'stop', workspace });
       let owned: { pid: number; processToken: string } | undefined;
       try {
-        await until(() => existsSync(entered));
+        await until(() => existsSync(entered) && readFileSync(entered, 'utf8') !== '', 1000);
         const pid = Number(readFileSync(entered, 'utf8'));
         const processToken = captureProcessToken(pid);
         assert(processToken);

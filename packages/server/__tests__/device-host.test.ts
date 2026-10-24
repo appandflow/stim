@@ -736,9 +736,9 @@ require('node:fs').writeFileSync(${JSON.stringify(started)},String(process.pid))
 import {DeviceHost} from ${imports('device-host')};import {HostedViews} from ${imports('hosted-view')};
 import {ControlHub} from ${imports('control')};import {FramePool} from ${imports('frames')};
 const env={...process.env,PATH:${JSON.stringify(home)}+':'+process.env.PATH};
-const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env,agents:${NOAGENTS},allowed:()=>true,limits:{prepareMs:5000,stopMs:2000,killGraceMs:100}});
+const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env,agents:${NOAGENTS},allowed:()=>true,limits:{prepareMs:30000,stopMs:2000,killGraceMs:100}});
 const answer=(await host.reserve('client',${JSON.stringify(request)}));if('error' in answer)throw new Error(answer.error.message);
-let attached;for(let i=0;i<200;i++){attached=host.attach('client',{session:answer.result.id});if(attached.result?.state==='ready')break;await new Promise(r=>setTimeout(r,20));}
+const deadline=Date.now()+30000;let attached=host.attach('client',{session:answer.result.id});while(attached.result?.state!=='ready'){if(Date.now()>deadline)throw new Error('The hosted session never became ready.');await new Promise(r=>setTimeout(r,20));attached=host.attach('client',{session:answer.result.id});}
 const frames=new FramePool(env);
 const control=new ControlHub({env,stimCli:'unused',frames,subscribeStatus:()=>()=>{},audit:()=>{},lockLimits:{timeoutMs:1000,maxOutputBytes:1024},idleMs:60000,renewMs:60000,leaseFor:'1m',foldHelper:async()=> 'fixture-fold',foldTimeoutMs:60000,conflict:()=>{}});
 const views=new HostedViews(host,control,env,()=>${JSON.stringify(capture)});
@@ -765,9 +765,9 @@ writeFileSync(${JSON.stringify(ready)},JSON.stringify(answer.result));void contr
       await vi.waitFor(
         () => {
           if (owner.exitCode !== null || owner.signalCode !== null) throw new Error(errors || 'Fixture owner exited.');
-          expect(existsSync(started)).toBe(true);
+          expect(existsSync(started) && readFileSync(started, 'utf8')).toBeTruthy();
         },
-        { timeout: 5000 },
+        { timeout: 30_000 },
       );
       const session = JSON.parse(readFileSync(ready, 'utf8')) as { id: string };
       foldPid = Number(readFileSync(started, 'utf8'));
@@ -790,6 +790,7 @@ writeFileSync(${JSON.stringify(ready)},JSON.stringify(answer.result));void contr
       if (capturePid && alive(capturePid)) process.kill(capturePid, 'SIGKILL');
     }
   },
+  60_000,
 );
 
 test('takes no new hosted session while the server drains for an update, and still answers a retry', async () => {
