@@ -441,10 +441,12 @@ git -C <path> apply <archive>/tracked.patch
 tar -xf <archive>/untracked.tar -C <path>
 ```
 
-Worktree archives follow `archive.maxAgeDays` and `archive.maxTotalGb`: archive
-retention, which runs after each new archive and each worktree removal that
-archives its workspace, deletes the expired ones, then the oldest at least an
-hour old while they total more than the cap. With `archive.enabled false`, or
+Worktree archives follow `archive.maxAgeDays` and `archive.maxTotalGb`. Archive
+retention, which runs around each new archive and after each worktree removal
+that archives its workspace, deletes the expired ones. A new archive that would
+not fit beside the others under the cap keeps its worktree instead, so the
+oldest go for size only after you lower the cap, and an archive whose removal is
+still running is never deleted. With `archive.enabled false`, or
 either limit at 0, dirty worktrees are kept as before. A worktree whose staged
 version of a file differs from its working tree is kept too, because the patch
 holds only the working tree. `stim worktree remove` itself never archives; it

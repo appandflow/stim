@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
-import { chmod, lstat, mkdir, readdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, rename, rm, rmdir, stat, utimes, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { withDirLockTransaction, workspaceName, type StimContext } from '@stim-cli/core';
 import {
@@ -517,13 +517,15 @@ export function worktreeArchiveLimits(
   return { maxAgeDays: limits.maxAgeDays, maxBytes: limits.maxTotalGb * 1024 ** 3 };
 }
 
-async function pruneWorktreeArchives(now: number, limits: Record<string, number>, signal?: AbortSignal): Promise<void> {
+async function listWorktreeArchives(
+  signal?: AbortSignal,
+): Promise<{ repositories: string[]; entries: { path: string; at: number; bytes: number }[] }> {
   const root = worktreeArchiveRoot();
   let repositories: string[];
   try {
     repositories = await readdir(root);
   } catch {
-    return;
+    return { repositories: [], entries: [] };
   }
   const entries: { path: string; at: number; bytes: number }[] = [];
   for (const repository of repositories) {
@@ -540,6 +542,16 @@ async function pruneWorktreeArchives(now: number, limits: Record<string, number>
       entries.push({ path, at: Number.isFinite(created) ? created : entry.mtimeMs, bytes });
     }
   }
+  return { repositories, entries };
+}
+
+/** Bytes every worktree archive holds, the one being written included. */
+export async function worktreeArchiveBytes(signal?: AbortSignal): Promise<number> {
+  return (await listWorktreeArchives(signal)).entries.reduce((sum, entry) => sum + entry.bytes, 0);
+}
+
+async function pruneWorktreeArchives(now: number, limits: Record<string, number>, signal?: AbortSignal): Promise<void> {
+  const { repositories, entries } = await listWorktreeArchives(signal);
   entries.sort((a, b) => a.at - b.at);
   let total = entries.reduce((sum, entry) => sum + entry.bytes, 0);
   const cap = (limits.maxTotalGb ?? 0) * 1024 ** 3;
@@ -552,9 +564,9 @@ async function pruneWorktreeArchives(now: number, limits: Record<string, number>
     total -= entry.bytes;
   }
   for (const repository of repositories) {
-    const dir = join(root, repository);
-    if (existsSync(dir) && (await lstat(dir)).isDirectory() && !(await readdir(dir)).length)
-      await rm(dir, { recursive: true });
+    try {
+      await rmdir(join(worktreeArchiveRoot(), repository));
+    } catch {}
   }
 }
 

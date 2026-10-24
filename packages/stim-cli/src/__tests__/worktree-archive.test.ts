@@ -13,15 +13,28 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import { clearFreeClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { worktreeArchiveRoot } from '@stim-cli/core/state';
 import { enforceArchiveRetention } from '../archive.ts';
 import { removeWorktreeTarget } from '../commands/worktree.ts';
 import {
   archiveWorktreeChanges,
+  releaseWorktreeArchive,
   worktreeArchiveMismatch,
   type WorktreeArchive,
 } from '../workspace/worktree-archive.ts';
+
+const trashHook = vi.hoisted((): { beforeMove?: () => void } => ({}));
+vi.mock('../workspace/worktree-trash.ts', async (importOriginal) => {
+  const trash = await importOriginal<typeof import('../workspace/worktree-trash.ts')>();
+  return {
+    ...trash,
+    moveIgnoredTreesToTrash: async (...args: Parameters<typeof trash.moveIgnoredTreesToTrash>) => {
+      trashHook.beforeMove?.();
+      return trash.moveIgnoredTreesToTrash(...args);
+    },
+  };
+});
 
 let home: string;
 let repo: string;
@@ -49,6 +62,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  trashHook.beforeMove = undefined;
   rmSync(home, { recursive: true, force: true });
   for (const key of Object.keys(process.env))
     if (key === 'STIM_HOME' || key.startsWith('STIM_ARCHIVE_')) delete process.env[key];
@@ -177,6 +191,45 @@ test('nothing is archived when writing it would cross budget.hardFloorDiskGb', a
   await expect(archive()).rejects.toThrow(/budget\.hardFloorDiskGb/);
   expect(existsSync(worktreeArchiveRoot())).toBe(false);
 }, 60_000);
+
+test('an archive holds its claim until the removal that needs it releases it', async () => {
+  dirtyTheWorktree();
+  const saved = await archive();
+  const root = `${saved.dir}.claims`;
+
+  expect(clearFreeClaimSet({ root, label: 'worktree archive' }).status).toBe('held');
+  releaseWorktreeArchive(saved);
+  expect(clearFreeClaimSet({ root, label: 'worktree archive' }).status).toBe('cleared');
+}, 60_000);
+
+test('a new archive that does not fit beside the others keeps its worktree', async () => {
+  const other = join(worktreeArchiveRoot(), 'repo', 'earlier');
+  mkdirSync(other, { recursive: true });
+  writeFileSync(join(other, 'untracked.tar'), Buffer.alloc(900));
+  process.env.STIM_ARCHIVE_MAX_TOTAL_GB = String(1000 / 1024 ** 3);
+  writeFileSync(join(worktree, 'scratch.txt'), 'x'.repeat(200));
+
+  await expect(archive()).rejects.toThrow(/do not fit in archive\.maxTotalGb/);
+  expect(readdirSync(join(worktreeArchiveRoot(), 'repo'))).toEqual(['earlier']);
+}, 60_000);
+
+test('a file written while the removal runs keeps the worktree and discards its archive', async () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  onTestFinished(() => error.mockRestore());
+  writeFileSync(join(worktree, 'scratch.txt'), 'scratch\n');
+  trashHook.beforeMove = () => writeFileSync(join(worktree, 'late.txt'), 'written during removal\n');
+
+  const removed = await removeWorktreeTarget(worktree, {
+    linkedOnly: true,
+    archiveDirty: { pullRequest: null, onArchived: () => {} },
+  });
+
+  expect(removed).toBe(false);
+  expect(readFileSync(join(worktree, 'late.txt'), 'utf8')).toBe('written during removal\n');
+  expect(readFileSync(join(worktree, 'scratch.txt'), 'utf8')).toBe('scratch\n');
+  expect(readdirSync(join(worktreeArchiveRoot(), 'repo'))).toEqual([]);
+  expect(error.mock.calls.flat().join('\n')).toContain('changed while they were archived');
+}, 120_000);
 
 test('nothing is archived when archives are off for the worktree', async () => {
   process.env.STIM_ARCHIVE_ENABLED = 'false';

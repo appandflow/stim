@@ -4,7 +4,7 @@ import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/
 import { worktreeArchiveRoot } from '@stim-cli/core/state';
 import { chmod, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { enforceArchiveRetention, worktreeArchiveLimits } from '../archive.ts';
+import { enforceArchiveRetention, worktreeArchiveBytes, worktreeArchiveLimits } from '../archive.ts';
 import { readVolumeSpaceAsync, resolveBudget } from '../budget.ts';
 import { getExecutor, type ExecOptions } from '../exec.ts';
 import { gitAsync } from './git.ts';
@@ -194,11 +194,23 @@ export async function archiveWorktreeChanges({
   const staged = await stagedOnly(path, operation);
   if (staged.length) throw new Error(`the staged content of ${staged.join(', ')} differs from its working tree`);
   if (!changes.tracked.length && !changes.untracked.length) throw new Error('git reported no change it could save');
+  const retention = async (): Promise<void> => {
+    try {
+      await enforceArchiveRetention(undefined, operation);
+    } catch (error) {
+      if (error instanceof Error && 'reportCleanup' in error) throw error;
+      operation?.signal.throwIfAborted();
+    }
+  };
+  await retention();
+  const existing = await worktreeArchiveBytes(operation?.signal);
   let bytes = 0;
   for (const file of changes.untracked) bytes += (await lstat(join(path, file))).size;
-  if (bytes > limits.maxBytes) throw new Error(`its untracked files (${bytes} bytes) exceed archive.maxTotalGb`);
   let tracked = await headSizes(path, changes.tracked, operation);
   for (const file of changes.tracked) tracked += (await lstat(join(path, file)).catch(() => null))?.size ?? 0;
+  if (existing + bytes > limits.maxBytes) {
+    throw new Error(`its untracked files (${bytes} bytes) do not fit in archive.maxTotalGb beside the other archives`);
+  }
   const [volume] = await readVolumeSpaceAsync([worktreeArchiveRoot()], operation?.signal);
   const floorMb = resolveBudget({ env: operation?.env }).budget.hardFloorDiskMb;
   const neededMb = (bytes + 2 * tracked) / 1024 ** 2;
@@ -221,14 +233,9 @@ export async function archiveWorktreeChanges({
     releaseClaim(attempt.pending);
     throw new Error('its archive claim is held');
   }
-  try {
-    await mkdir(dir, { mode: 0o700 });
-  } catch (error) {
-    releaseClaim(claim);
-    throw error;
-  }
   const restore = [`git -C ${quotedPath(repository)} worktree add --detach ${quotedPath(path)} ${head}`];
   try {
+    await mkdir(dir, { mode: 0o700 });
     if (changes.tracked.length) {
       const patch = join(dir, 'tracked.patch');
       await gitAsync(
@@ -249,35 +256,28 @@ export async function archiveWorktreeChanges({
         { ...execution(operation), timeoutMs: ARCHIVE_TIMEOUT_MS },
       );
       await chmod(patch, 0o600);
-      const size = (await lstat(patch)).size;
-      if (size > limits.maxBytes) throw new Error(`the tracked patch (${size} bytes) exceeds archive.maxTotalGb`);
       restore.push(`git -C ${quotedPath(path)} apply ${quotedPath(patch)}`);
     }
     if (changes.untracked.length) {
       const tarball = join(dir, 'untracked.tar');
-      const exec = {
-        ...execution(operation),
-        cwd: path,
-        timeoutMs: ARCHIVE_TIMEOUT_MS,
-      };
+      const exec = { ...execution(operation), cwd: path, timeoutMs: ARCHIVE_TIMEOUT_MS };
       await getExecutor().runFileAsync('tar', ['-cf', tarball, '--null', '-T', '-'], {
         ...exec,
         input: `${changes.untracked.join('\0')}\0`,
       });
       await chmod(tarball, 0o600);
-      const listed = (
-        await getExecutor().runFileAsync('tar', ['-tf', tarball], {
-          ...exec,
-          untrimmed: true,
-        })
-      )
+      const listed = (await getExecutor().runFileAsync('tar', ['-tf', tarball], { ...exec, untrimmed: true }))
         .split('\n')
         .filter(Boolean)
         .toSorted();
       if (!sameList(listed, changes.untracked)) throw new Error('the untracked tarball does not list every file');
-      const size = (await lstat(tarball)).size;
-      if (size > limits.maxBytes) throw new Error(`the untracked tarball (${size} bytes) exceeds archive.maxTotalGb`);
       restore.push(`tar -xf ${quotedPath(tarball)} -C ${quotedPath(path)}`);
+    }
+    const total = await worktreeArchiveBytes(operation?.signal);
+    if (total > limits.maxBytes) {
+      throw new Error(
+        `the archive (${total - existing} bytes) does not fit in archive.maxTotalGb beside the other archives`,
+      );
     }
     const archive: WorktreeArchive = { dir, at, ...changes, restore, claim };
     const mismatch = await worktreeArchiveMismatch(path, archive, operation);
@@ -297,21 +297,17 @@ export async function archiveWorktreeChanges({
       restore,
     };
     const tmp = join(dir, '.manifest.json.tmp');
-    await writeFile(tmp, `${JSON.stringify(manifest, null, 2)}\n`, {
-      mode: 0o600,
-    });
+    await writeFile(tmp, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
     await rename(tmp, join(dir, 'manifest.json'));
-    try {
-      await enforceArchiveRetention(undefined, operation);
-    } catch (error) {
-      if (error instanceof Error && 'reportCleanup' in error) throw error;
-      operation?.signal.throwIfAborted();
-    }
+    await retention();
     if (!(await lstat(join(dir, 'manifest.json')).catch(() => null))) throw new Error('archive retention removed it');
     return archive;
   } catch (error) {
-    await rm(dir, { recursive: true, force: true });
-    releaseClaim(claim);
+    try {
+      await rm(dir, { recursive: true, force: true });
+    } finally {
+      releaseClaim(claim);
+    }
     throw error;
   }
 }

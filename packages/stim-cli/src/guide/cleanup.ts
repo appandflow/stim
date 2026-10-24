@@ -645,10 +645,12 @@ SWEEPING FINISHED WORKTREES
     git -C <repository> worktree add --detach <path> <HEAD>
     git -C <path> apply <archive>/tracked.patch
     tar -xf <archive>/untracked.tar -C <path>
-  Archive retention, which runs after each new worktree archive and each
-  removal that archives a workspace, deletes worktree archives older than
-  archive.maxAgeDays, then the oldest at least an hour old while they total
-  more than archive.maxTotalGb. Plain \`stim worktree remove\` never archives; it
+  Archive retention, which runs before and after each new worktree archive
+  and after each removal that archives a workspace, deletes worktree archives
+  older than archive.maxAgeDays. A new archive that would not fit beside the
+  others in archive.maxTotalGb keeps its worktree instead, so the oldest are
+  deleted for size only after that cap is lowered. An archive whose removal
+  is still running holds an ownership claim and is never deleted. Plain \`stim worktree remove\` never archives; it
   refuses dirty work as before.
 
   PULL REQUESTS: with fresh state, gc runs one \`gh api graphql\` query per
