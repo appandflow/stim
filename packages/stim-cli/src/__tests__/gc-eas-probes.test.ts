@@ -21,7 +21,7 @@ let home: string;
 let child: ChildProcess | undefined;
 
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-gc-eas-probes-')));
+  home = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-gc-eas-probes-')));
   vi.stubEnv('STIM_HOME', home);
   resetExecutor();
   takeGcResults();

@@ -132,14 +132,14 @@ let tmpHome: string;
 let projects: string;
 
 beforeEach(() => {
-  tmpHome = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-')));
+  tmpHome = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-')));
   process.env.STIM_HOME = tmpHome;
   vi.stubEnv('HOME', tmpHome);
   vi.stubEnv('USERPROFILE', tmpHome);
   vi.stubEnv('AGENT_DEVICE_STATE_DIR', '');
   vi.stubEnv('AGENT_DEVICE_IOS_RUNNER_LEASE_DIR', '');
   process.env.STIM_GC_WORKTREE_GRACE_MINUTES = '0';
-  projects = realpathSync(mkdtempSync(join(tmpdir(), 'stim-projects-')));
+  projects = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-projects-')));
   const real = getExecutor();
   setExecutor({
     ...real,
