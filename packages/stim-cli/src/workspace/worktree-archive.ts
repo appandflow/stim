@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { StimContext } from '@stim-cli/core';
 import { quotedPath } from '@stim-cli/core';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
@@ -107,15 +108,33 @@ async function newestChange(
 }
 
 /**
- * Bundles HEAD's commits that the default branch lacks, so the restore can recreate HEAD after its branch is deleted
- * and git collects the commits; null when the default branch already contains HEAD.
+ * Plans a bundle of HEAD's commits that the default branch lacks, all of HEAD's history without `origin/HEAD`, so the
+ * restore can recreate HEAD after its branch is deleted and git collects the commits; null when the default branch
+ * already contains HEAD. `bytes` is their size on disk.
  */
-async function bundleHead(path: string, head: string, dir: string, operation?: StimContext): Promise<string | null> {
+async function headBundlePlan(
+  path: string,
+  head: string,
+  operation?: StimContext,
+): Promise<{ exclude: string[]; bytes: number } | null> {
   const run = { ...execution(operation), timeoutMs: ARCHIVE_TIMEOUT_MS };
   const base = (await gitQuietAsync(path, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], run))?.trim();
   if (base && (await gitQuietAsync(path, ['merge-base', '--is-ancestor', head, base], run)) !== null) return null;
+  const exclude = base ? [`^${base}`] : [];
+  const bytes = Number(await gitAsync(path, ['rev-list', '--disk-usage', '--objects', 'HEAD', ...exclude], run));
+  if (!Number.isFinite(bytes)) throw new Error('git did not report the size of the commits to bundle');
+  return { exclude, bytes };
+}
+
+async function bundleHead(
+  path: string,
+  plan: { exclude: string[] },
+  dir: string,
+  operation?: StimContext,
+): Promise<string> {
+  const run = { ...execution(operation), timeoutMs: ARCHIVE_TIMEOUT_MS };
   const bundle = join(dir, 'head.bundle');
-  await gitAsync(path, ['bundle', 'create', bundle, 'HEAD', ...(base ? [`^${base}`] : [])], run);
+  await gitAsync(path, ['bundle', 'create', bundle, 'HEAD', ...plan.exclude], run);
   await chmod(bundle, 0o600);
   await gitAsync(path, ['bundle', 'verify', bundle], run);
   return bundle;
@@ -237,12 +256,15 @@ export async function archiveWorktreeChanges({
   for (const file of changes.untracked) bytes += (await lstat(join(path, file))).size;
   let tracked = await headSizes(path, changes.tracked, operation);
   for (const file of changes.tracked) tracked += (await lstat(join(path, file)).catch(() => null))?.size ?? 0;
-  if (existing + bytes > limits.maxBytes) {
-    throw new Error(`its untracked files (${bytes} bytes) do not fit in archive.maxTotalGb beside the other archives`);
+  const plan = await headBundlePlan(path, head, operation);
+  if (existing + bytes + (plan?.bytes ?? 0) > limits.maxBytes) {
+    throw new Error(
+      `its untracked files and unmerged commits (${bytes + (plan?.bytes ?? 0)} bytes) do not fit in archive.maxTotalGb beside the other archives`,
+    );
   }
   const [volume] = await readVolumeSpaceAsync([worktreeArchiveRoot()], operation?.signal);
   const floorMb = resolveBudget({ env: operation?.env }).budget.hardFloorDiskMb;
-  const neededMb = (bytes + 2 * tracked) / 1024 ** 2;
+  const neededMb = (bytes + 2 * tracked + 2 * (plan?.bytes ?? 0)) / 1024 ** 2;
   if (!volume || volume.freeMb - neededMb < floorMb) {
     throw new Error(
       volume
@@ -253,7 +275,7 @@ export async function archiveWorktreeChanges({
   const dir = join(
     worktreeArchiveRoot(),
     safeName(basename(repository)),
-    `${safeName(branch?.replace(/^refs\/heads\//, '') ?? basename(path))}-${stamp(at)}`,
+    `${safeName(branch?.replace(/^refs\/heads\//, '') ?? basename(path))}-${stamp(at)}-${randomUUID().slice(0, 8)}`,
   );
   await mkdir(dirname(dir), { recursive: true, mode: 0o700 });
   const attempt = tryAcquireClaim({ root: `${dir}.claims`, mode: 'exclusive', label: 'worktree archive' });
@@ -262,10 +284,12 @@ export async function archiveWorktreeChanges({
     releaseClaim(attempt.pending);
     throw new Error('its archive claim is held');
   }
+  let created = false;
   const restore = [`git -C ${quotedPath(repository)} worktree add --detach ${quotedPath(path)} ${head}`];
   try {
     await mkdir(dir, { mode: 0o700 });
-    const bundle = await bundleHead(path, head, dir, operation);
+    created = true;
+    const bundle = plan ? await bundleHead(path, plan, dir, operation) : null;
     if (bundle) restore.unshift(`git -C ${quotedPath(repository)} bundle unbundle ${quotedPath(bundle)}`);
     if (changes.tracked.length) {
       const patch = join(dir, 'tracked.patch');
@@ -340,7 +364,7 @@ export async function archiveWorktreeChanges({
     return archive;
   } catch (error) {
     try {
-      await rm(dir, { recursive: true, force: true });
+      if (created) await rm(dir, { recursive: true, force: true });
     } finally {
       releaseClaim(claim);
     }

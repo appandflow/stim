@@ -632,7 +632,8 @@ SWEEPING FINISHED WORKTREES
   patch with \`git apply --check -R\`, the tarball's file list, and that no
   archived file changed, again just before git removes the worktree; any
   failure keeps the worktree and deletes the archive. It also keeps a
-  worktree whose archive.enabled is false, with archive.maxAgeDays or
+  worktree whose archive.enabled is false, or false for a project registered
+  inside it, with archive.maxAgeDays or
   archive.maxTotalGb 0, whose untracked files or patch exceed
   archive.maxTotalGb, whose archive would leave less free disk than
   budget.hardFloorDiskGb, whose staged version of a file differs from its
