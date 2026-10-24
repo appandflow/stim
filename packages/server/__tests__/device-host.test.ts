@@ -45,6 +45,7 @@ import { takeHostedInputClaim } from '../src/hosted-input.ts';
 import { DeviceHost } from '../src/device-host.ts';
 import { formatHostedSessions } from '../src/hosted-sessions.ts';
 import { setupClient } from './noise-client.ts';
+import { readPid } from './pid-file.ts';
 import { AgentDeviceDriver } from '../../agent-driver-agent-device/driver.ts';
 import * as processes from '../../agent-driver-agent-device/processes.ts';
 import { keepAgentClaim } from './fixtures/kept-agent-claim.ts';
@@ -233,7 +234,7 @@ afterEach(async () => {
     const file = join(areas, id, 'home', 'fake-app-pid');
     if (existsSync(file)) {
       try {
-        process.kill(Number(readFileSync(file, 'utf8')), 'SIGKILL');
+        process.kill(await readPid(file), 'SIGKILL');
       } catch {}
     }
   }
@@ -599,7 +600,7 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
     };
     try {
       await vi.waitFor(() => expect(existsSync(started)).toBe(true));
-      const pid = Number(readFileSync(started, 'utf8'));
+      const pid = await readPid(started);
       if (ending === 'takeover') {
         const replacement = { device: { id: 'client', name: 'Replacement' }, send: () => {} };
         const taken = await control.beginHosted(
@@ -632,7 +633,7 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
       writeFileSync(release, '');
       await input;
       await control.close();
-      const pid = existsSync(started) ? Number(readFileSync(started, 'utf8')) : null;
+      const pid = existsSync(started) ? await readPid(started) : null;
       if (pid !== null && alive(pid)) process.kill(pid, 'SIGKILL');
       await vi.waitFor(() => expect(pid === null || !alive(pid)).toBe(true));
       vi.restoreAllMocks();
@@ -785,7 +786,7 @@ writeFileSync(${JSON.stringify(ready)},JSON.stringify(answer.result));void contr
       await state(session.id, 'stopped');
     } finally {
       if (owner.exitCode === null && owner.signalCode === null) owner.kill('SIGKILL');
-      foldPid ??= existsSync(started) ? Number(readFileSync(started, 'utf8')) : undefined;
+      foldPid ??= existsSync(started) ? await readPid(started) : undefined;
       if (foldPid && alive(foldPid)) process.kill(foldPid, 'SIGKILL');
       if (capturePid && alive(capturePid)) process.kill(capturePid, 'SIGKILL');
     }
@@ -894,7 +895,7 @@ test.skipIf(process.platform === 'win32')(
     const first = await reserve({ deviceType: 'hang' });
     const file = join(deviceHostArea(first.id), 'home', 'entered');
     await vi.waitFor(() => expect(existsSync(file)).toBe(true));
-    const pid = Number(readFileSync(file, 'utf8'));
+    const pid = await readPid(file);
     expect(host.attach('client', { session: first.id })).toHaveProperty('result.state', 'preparing');
     host.stop('client', { session: first.id });
     await state(first.id, 'stopped');
@@ -928,8 +929,8 @@ test.skipIf(process.platform === 'win32')(
     const first = await reserve({ deviceType: 'descendant' });
     const area = join(deviceHostArea(first.id), 'home');
     await vi.waitFor(() => expect(existsSync(join(area, 'descendant'))).toBe(true));
-    const leader = Number(readFileSync(join(area, 'entered'), 'utf8'));
-    const descendant = Number(readFileSync(join(area, 'descendant'), 'utf8'));
+    const leader = await readPid(join(area, 'entered'));
+    const descendant = await readPid(join(area, 'descendant'));
     try {
       host.stop('client', { session: first.id });
       await state(first.id, 'stopped');
@@ -1701,7 +1702,7 @@ describe.skipIf(process.platform === 'win32')('binding capacity probes', () => {
     });
     const pending = host.reserve('client', request);
     await vi.waitFor(() => expect(existsSync(join(home, 'count-entered'))).toBe(true));
-    const pid = Number(readFileSync(join(home, 'count-entered'), 'utf8'));
+    const pid = await readPid(join(home, 'count-entered'));
     if (ending === 'close') await host.close();
     else if (ending === 'revoke') {
       allowed.delete('client');
@@ -1816,8 +1817,8 @@ test.each(['deadline', 'revoke', 'close'])(
     });
     const pending = host.offer('client', { platform: 'ios', deviceType: 'sdk-hang' });
     await vi.waitFor(() => expect(existsSync(join(home, 'probe-descendant'))).toBe(true));
-    const leader = Number(readFileSync(join(home, 'probe-entered'), 'utf8'));
-    const descendant = Number(readFileSync(join(home, 'probe-descendant'), 'utf8'));
+    const leader = await readPid(join(home, 'probe-entered'));
+    const descendant = await readPid(join(home, 'probe-descendant'));
     try {
       if (action === 'revoke') {
         allowed.delete('client');
@@ -2557,7 +2558,7 @@ test(
     const pending = host.logsQuery('client', { session: session.id });
     const workerHome = join(deviceHostArea(session.id), 'home');
     await vi.waitFor(() => expect(existsSync(join(workerHome, 'logs-entered'))).toBe(true));
-    const pid = Number(readFileSync(join(workerHome, 'logs-entered'), 'utf8'));
+    const pid = await readPid(join(workerHome, 'logs-entered'));
     expect(host.viewTarget('client', session.id)).toHaveProperty('platform', 'ios');
     const rerun = { ...app.params, attempt: 'rerun' };
     expect(host.appOffer('client', rerun)).toHaveProperty('result.missing', []);
@@ -2621,7 +2622,7 @@ test.each(['ios', 'android'].flatMap((platform) => ['stop', 'close', 'revoke'].m
     const pending = host.logsQuery('client', { session: session.id });
     const workerHome = join(deviceHostArea(session.id), 'home');
     await vi.waitFor(() => expect(existsSync(join(workerHome, 'logs-entered'))).toBe(true));
-    const pid = Number(readFileSync(join(workerHome, 'logs-entered'), 'utf8'));
+    const pid = await readPid(join(workerHome, 'logs-entered'));
     if (ending === 'close') await host.close();
     else if (ending === 'revoke') {
       allowed.delete('client');
@@ -2990,7 +2991,7 @@ test('Android native followers coalesce under a child-aware claim and retain col
   const workerHome = join(deviceHostArea(session.id), 'home');
   await vi.waitFor(() => expect(existsSync(join(workerHome, 'logs-entered'))).toBe(true));
   const claim = readClaimSet(claimRoot).live[0];
-  expect(claim?.child?.pid).toBe(Number(readFileSync(join(workerHome, 'logs-entered'), 'utf8')));
+  expect(claim?.child?.pid).toBe(await readPid(join(workerHome, 'logs-entered')));
   const result = await first;
   expect(await second).toEqual(result);
   expect(result).toHaveProperty('result.records', [

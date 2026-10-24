@@ -100,6 +100,7 @@ import { workspaceName, workspaceStateDir } from '@stim-cli/core';
 import { captureProcessToken, inspectProcessIdentity, processStartMicros } from '@stim-cli/core/process-identity';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { serviceRoot } from '../src/service-manager.ts';
+import { readPid } from './pid-file.ts';
 
 const registryWatch = vi.hoisted(() => ({ dropEvents: false }));
 
@@ -780,7 +781,7 @@ syncBuiltinESMExports();
         expect(existsSync(calls)).toBe(false);
         expect(existsSync(join(process.env.STIM_HOME!, 'server'))).toBe(false);
         expect(error).toHaveBeenCalledWith(expect.stringContaining('not serving clients'));
-        const pid = Number(readFileSync(blocked.pidFile, 'utf8'));
+        const pid = await readPid(blocked.pidFile);
         expect(() => process.kill(pid, 0)).toThrow('ESRCH');
       } finally {
         error.mockRestore();
@@ -6865,8 +6866,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
       const stopping = client.request('action', { action: 'stop', workspace });
       let owned: { pid: number; processToken: string } | undefined;
       try {
-        await until(() => existsSync(entered) && readFileSync(entered, 'utf8') !== '', 1000);
-        const pid = Number(readFileSync(entered, 'utf8'));
+        const pid = await readPid(entered);
         const processToken = captureProcessToken(pid);
         assert(processToken);
         owned = { pid, processToken };
@@ -6876,7 +6876,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
         await server.close();
         server = null;
         expect(existsSync(escaped)).toBe(false);
-        expect(alive(Number(readFileSync(entered, 'utf8')))).toBe(false);
+        expect(alive(await readPid(entered))).toBe(false);
       } finally {
         if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
         await stopping;
@@ -8834,7 +8834,7 @@ describe('frames.subscribe', () => {
         { input: 'touch', phase: 'down', x: 0.25, y: 0.75, duoRevision: revision },
         { input: 'duo-release' },
       ]);
-      expect(alive(Number(readFileSync(`${toolCalls}.started`, 'utf8')))).toBe(true);
+      expect(alive(await readPid(`${toolCalls}.started`))).toBe(true);
       expect(await viewer.next()).toMatchObject({ event: 'frame' });
       viewer.socket.close();
     },
@@ -9316,9 +9316,10 @@ describe('frames.subscribe', () => {
           error: { code: 'action-failed', message: 'sim-fold did not finish within 0.5 s.' },
         });
         await until(() => existsSync(grandchild));
-        expect(() => process.kill(Number(readFileSync(grandchild, 'utf8')), 0)).not.toThrow();
+        const grandchildPid = await readPid(grandchild);
+        expect(() => process.kill(grandchildPid, 0)).not.toThrow();
       } finally {
-        if (existsSync(grandchild)) process.kill(Number(readFileSync(grandchild, 'utf8')), 'SIGKILL');
+        if (existsSync(grandchild)) process.kill(await readPid(grandchild), 'SIGKILL');
       }
     },
     10_000,
@@ -11347,7 +11348,7 @@ setInterval(() => {}, 1000);
             typeof reply.result.subscription === 'string',
         );
         await until(() => existsSync(witness));
-        const pid = Number(readFileSync(witness, 'utf8'));
+        const pid = await readPid(witness);
         const processToken = captureProcessToken(pid);
         assert(processToken);
         record = { pid, processToken };
