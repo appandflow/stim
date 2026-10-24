@@ -354,66 +354,18 @@ struct WorkspaceRow: View {
   var showsGit: Bool
   var selection: SidebarItem?
   var openLogs: (String) -> Void
-  @EnvironmentObject private var actions: ActionCenter
-  @State private var confirmingStop = false
-  @State private var removal: WorktreeRemoval?
   @Environment(\.tutorialHint) private var tutorialHint
   let prefs = SidebarPreferences()
 
   var body: some View {
     let isHidden = prefs.hiddenWorkspaces.paths.contains(env.path)
-    TimelineView(.everyMinute) { _ in
-      WorkspaceRowContent(env: env, now: Date(), place: place, showsGit: showsGit, openLogs: openLogs, isHidden: isHidden)
-    }
-    .tutorialGlowInPlace(tutorialHint, .sidebarRow, workspaces: [env.path])
-    .sidebarTag(.environment(env.path), selection: selection)
-    .contextMenu {
-      WorkspaceActionsMenu(
-        kind: .workspace(
-          metroRunning: env.metro?.running == true, platforms: env.runPlatforms,
-          linkedWorktree: env.worktree != nil),
-        path: env.path,
-        busy: actions.active(for: env.path) != nil,
-        removalAllowed: worktreeRemovalAllowed(git: env.worktree?.git),
-        building: env.build?.isRunning == true,
-        reloadAllowed: env.canReload,
-        onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
-        onRun: { platform in actions.runApp(env, platform: platform) },
-        onReload: { actions.run("Reload \(env.names.title)", steps: [StimCommand(["reload"], cwd: env.path)], present: false) },
-        onStartDevServer: {
-          actions.run("Start \(env.names.title)", steps: [StimCommand(["start"], cwd: env.path)], present: false)
-        },
-        onStopDevServer: {
-          if env.remoteDevices?.isEmpty == false {
-            confirmingStop = true
-          } else {
-            actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
-          }
-        },
-        onShowLogs: { openLogs(env.path) },
-        onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } },
-        hidden: isHidden,
-        canHide: !env.isActive && actions.active(for: env.path) == nil && actions.active(for: env.worktreeActionKey) == nil,
-        onToggleHidden: { prefs.setHidden(!isHidden, path: env.path) })
-    }
-    .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
-      Button("Run stim stop", role: .destructive) {
-        actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
+    WorkspaceActions(env: env, openLogs: openLogs) { menu in
+      TimelineView(.everyMinute) { _ in
+        WorkspaceRowContent(env: env, now: Date(), place: place, showsGit: showsGit, openLogs: openLogs, isHidden: isHidden)
       }
-    } message: {
-      Text("This also ends the workspace's billable EAS Simulator session.")
-    }
-    .confirmationDialog(
-      "Remove This Worktree?",
-      isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
-      titleVisibility: .visible,
-      presenting: removal
-    ) { _ in
-      Button("Run stim worktree remove", role: .destructive) {
-        actions.run("Remove \(env.names.title)", StimCommand(["worktree", "remove"], cwd: env.path))
-      }
-    } message: { removal in
-      Text(worktreeRemovalMessage(path: env.path, branch: removal.branch))
+      .tutorialGlowInPlace(tutorialHint, .sidebarRow, workspaces: [env.path])
+      .sidebarTag(.environment(env.path), selection: selection)
+      .contextMenu { menu }
     }
   }
 }
