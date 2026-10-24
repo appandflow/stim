@@ -432,7 +432,7 @@ test('Android errors are paged into the workspace once per slot and stop copies 
   methods = [];
   await stopHostedAndroid(root, 'tablet');
   const stop = methods.findIndex((entry) => entry.method === 'device-host.stop');
-  expect(methods.slice(0, stop).some((entry) => entry.method === 'device-host.logs.query')).toBe(true);
+  expect(methods.slice(0, stop).some((entry) => entry.method === 'device-host.logs.query')).toBe(false);
   expect(methods.slice(stop + 1).some((entry) => entry.method === 'device-host.logs.query')).toBe(true);
   expect(readFileSync(file, 'utf8')).toContain('stop-time native tail');
   expect(readHostedAndroid(root)).toEqual({});
