@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -15,15 +15,20 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
-import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { LIGHTENED_KEY, restoreLightenedDependencies } from '../workspace/lightened.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { lightenedDirs, recordLightened, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { testContext } from './_context.ts';
 
-const warm = vi.hoisted((): { exitCode: 0 | 1; calls: string[] } => ({ exitCode: 0, calls: [] }));
+const warm = vi.hoisted((): { exitCode: 0 | 1; calls: string[]; restores: string[] } => ({
+  exitCode: 0,
+  calls: [],
+  restores: [],
+}));
 vi.mock('../commands/worktree.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../commands/worktree.ts')>()),
   warmWorktreeTarget: async ({ cwd }: { cwd: string }) => {
     warm.calls.push(cwd);
+    for (const dir of warm.restores) mkdirSync(dir, { recursive: true });
     return { exitCode: warm.exitCode };
   },
 }));
@@ -55,6 +60,7 @@ beforeEach(() => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   warm.exitCode = 0;
   warm.calls = [];
+  warm.restores = [];
 });
 
 afterEach(() => {
@@ -81,7 +87,7 @@ function write(path: string) {
   writeFileSync(path, 'x');
 }
 
-function idleRepoWithFeature(): { repo: string; feature: string } {
+function idleRepo(worktrees: { name: string; workspace: boolean }[]): Record<string, string> {
   const repo = join(projects, 'repo');
   mkdirSync(repo, { recursive: true });
   const git = (args: string, cwd = repo) => execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 }).trim();
@@ -90,24 +96,42 @@ function idleRepoWithFeature(): { repo: string; feature: string } {
   git('config user.name test');
   writeFileSync(join(repo, '.gitignore'), 'node_modules/\n');
   writeFileSync(join(repo, 'package.json'), '{}');
+  writeFileSync(join(repo, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
   git('add -A');
   git('commit -q -m init');
-  const feature = join(projects, 'feature');
-  git(`worktree add -q "${feature}" -b feature`);
-  for (const base of [repo, feature]) write(join(base, 'node_modules', 'pkg', 'index.js'));
-  const roots = { repo: realpathSync.native(repo), feature: realpathSync.native(feature) };
+  const roots: Record<string, string> = { repo: realpathSync.native(repo) };
+  for (const { name } of worktrees) {
+    git(`worktree add -q "${join(projects, name)}" -b ${name}`);
+    roots[name] = realpathSync.native(join(projects, name));
+  }
   const hourAgo = new Date(Date.now() - 60 * 60_000);
-  for (const root of Object.values(roots)) {
-    upsertProject(root, { metroPort: null });
-    recordWorkspaceUse(root, hourAgo);
-    ensureWorkspaceStorage(root);
+  for (const [name, root] of Object.entries(roots)) {
+    write(join(root, 'node_modules', 'pkg', 'index.js'));
     ageTree(join(root, 'node_modules'), hourAgo);
-    utimesSync(workspaceStateFile(root), hourAgo, hourAgo);
+    if (name === 'repo' || worktrees.find((entry) => entry.name === name)?.workspace) {
+      upsertProject(root, { metroPort: null });
+      recordWorkspaceUse(root, hourAgo);
+      ensureWorkspaceStorage(root);
+      utimesSync(workspaceStateFile(root), hourAgo, hourAgo);
+    }
     const gitDir = git('rev-parse --path-format=absolute --git-dir', root);
     for (const file of ['index', 'HEAD', join('logs', 'HEAD')])
       if (existsSync(join(gitDir, file))) utimesSync(join(gitDir, file), hourAgo, hourAgo);
   }
   return roots;
+}
+
+async function gcJson() {
+  const stdout: string[] = [];
+  const log = vi.spyOn(console, 'log').mockImplementation((...args) => void stdout.push(args.join(' ')));
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await runGc({ json: true });
+  } finally {
+    log.mockRestore();
+    error.mockRestore();
+  }
+  return { payload: JSON.parse(stdout[0] ?? '') };
 }
 
 async function quietly(fn: () => Promise<unknown>): Promise<string> {
@@ -122,36 +146,64 @@ async function quietly(fn: () => Promise<unknown>): Promise<string> {
 }
 
 test.skipIf(process.platform === 'win32')(
-  'gc --delete lightens an idle linked worktree and records its dependencies for restore; the source checkout keeps its own',
+  'gc --delete lightens only an idle linked worktree that warm can restore and nothing runs in',
   async () => {
-    const { repo, feature } = idleRepoWithFeature();
+    const roots = idleRepo([
+      { name: 'feature', workspace: true },
+      { name: 'busy', workspace: true },
+      { name: 'keyless', workspace: false },
+      { name: 'drifted', workspace: true },
+    ]);
+    const at = (name: string): string => {
+      const root = roots[name];
+      if (!root) throw new Error(`no worktree ${name}`);
+      return root;
+    };
+    writeFileSync(join(at('drifted'), 'pnpm-lock.yaml'), 'lockfileVersion: 9\npackages: {}\n');
+    const child = spawn('sleep', ['60'], { cwd: roots.busy, stdio: 'ignore' });
+    let report: string;
+    let payload: { sections: { worktreeDependencies: { path: string; detail: string | null }[] } };
+    try {
+      ({ payload } = await gcJson());
+      report = await quietly(() => runGc({ delete: true }));
+    } finally {
+      child.kill('SIGKILL');
+    }
 
-    const report = await quietly(() => runGc({ delete: true }));
-
-    expect(existsSync(join(feature, 'node_modules'))).toBe(false);
-    expect(existsSync(join(repo, 'node_modules', 'pkg', 'index.js'))).toBe(true);
+    expect(existsSync(join(at('feature'), 'node_modules'))).toBe(false);
+    expect(lightenedDirs(at('feature'))).toEqual([join(at('feature'), 'node_modules')]);
     expect(report).toMatch(/Lightened .*feature: deleted .*node_modules/);
-    expect(readWorkspaceState(feature)?.[LIGHTENED_KEY]).toMatchObject({ dirs: [join(feature, 'node_modules')] });
+    for (const name of ['repo', 'busy', 'keyless', 'drifted'])
+      expect(existsSync(join(at(name), 'node_modules', 'pkg', 'index.js'))).toBe(true);
+    const detail = (name: string) =>
+      payload.sections.worktreeDependencies.find((entry: { path: string }) => entry.path.startsWith(`${at(name)}/`))
+        ?.detail;
+    expect(detail('busy')).toBe(`process ${child.pid} works in it`);
+    expect(detail('keyless')).toMatch(/no workspace/);
+    expect(detail('drifted')).toMatch(/pnpm-lock.yaml differs/);
   },
   60_000,
 );
 
-test('a lightened workspace restores through worktree warm and forgets the record; a failed warm keeps it and refuses', async () => {
+test('a lightened workspace restores through worktree warm and forgets the record only once the directories are back', async () => {
   const root = join(projects, 'app');
   mkdirSync(root, { recursive: true });
-  const record = { [LIGHTENED_KEY]: { at: new Date().toISOString(), dirs: [join(root, 'node_modules')] } };
+  ensureWorkspaceStorage(root);
+  const dir = join(root, 'node_modules');
   const context = testContext({ cwd: root, projectRoot: root });
 
   expect(await restoreLightenedDependencies(root, context)).toBeNull();
   expect(warm.calls).toEqual([]);
 
-  writeWorkspaceState(root, record);
+  recordLightened([root], dir);
   warm.exitCode = 1;
   expect(await restoreLightenedDependencies(root, context)).toMatchObject({ code: 'STIM_DEPS_FAILED' });
-  expect(readWorkspaceState(root)?.[LIGHTENED_KEY]).toBeDefined();
-
   warm.exitCode = 0;
+  expect(await restoreLightenedDependencies(root, context)).toMatchObject({ code: 'STIM_DEPS_FAILED' });
+  expect(lightenedDirs(root)).toEqual([dir]);
+
+  warm.restores = [dir];
   expect(await restoreLightenedDependencies(root, context)).toBeNull();
-  expect(warm.calls).toEqual([root, root]);
-  expect(readWorkspaceState(root)?.[LIGHTENED_KEY]).toBeUndefined();
+  expect(warm.calls).toEqual([root, root, root]);
+  expect(lightenedDirs(root)).toEqual([]);
 });

@@ -497,9 +497,13 @@ A worktree keeps them while its dev server runs or a native run or build holds
 it, for 15 minutes after its last git, Stim or dependency activity, while git
 tracks a file in them, and while a stim-server service, the `stim` on your PATH
 or a running process (by command line or working directory) uses the worktree.
-gc records what it deleted, and the next `stim start`, `stim ios` or
-`stim android` in that worktree runs `stim worktree warm` first to restore it.
-If that warm fails, the command refuses with `STIM_DEPS_FAILED`. `.pnpm-store`
+It also keeps them when `stim worktree warm` could not restore the same
+versions: the source checkout lacks the directory, or the worktree's lockfile
+differs from the source checkout's. gc records what it deleted, and the next
+`stim start`, `stim ios` or `stim android` in that worktree runs
+`stim worktree warm` first to restore it. If that warm fails or leaves a
+directory missing, the command refuses with `STIM_DEPS_FAILED`. Other commands,
+such as a test run, find the directory missing until then. `.pnpm-store`
 stays, because it is all clones and deleting it frees nothing.
 
 ### Device recordings

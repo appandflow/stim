@@ -46,6 +46,10 @@ function procCwds(): RunningProcesses['cwds'] | null {
   }
 }
 
+function listsSelf(list: readonly { pid: number }[]): boolean {
+  return list.some(({ pid }) => pid === process.pid);
+}
+
 export function readRunningProcesses(platform: NodeJS.Platform = process.platform): RunningProcesses | null {
   if (platform !== 'darwin' && platform !== 'linux') return null;
   const exec = getExecutor();
@@ -58,7 +62,8 @@ export function readRunningProcesses(platform: NodeJS.Platform = process.platfor
           const lsof = exec.runFileQuiet('lsof', ['-a', '-d', 'cwd', '-Fpn', '-w'], { timeoutMs: LIST_TIMEOUT_MS });
           return lsof === null ? null : parseLsof(lsof);
         })();
-  return cwds === null ? null : { commands: parsePs(ps), cwds };
+  const commands = parsePs(ps);
+  return cwds && listsSelf(commands) && listsSelf(cwds) ? { commands, cwds } : null;
 }
 
 function stimOnPath(): string | null {
@@ -83,9 +88,9 @@ export function runningFromReason(folder: string, running: RunningProcesses | nu
   const stim = stimOnPath();
   if (stim && inside(stim)) return `the stim on PATH runs from it (${stim})`;
   if (!running) return 'the running processes cannot be listed to prove nothing runs from it';
-  const command = running.commands.find(({ pid, line }) => pid !== process.pid && line.includes(`${root}${sep}`));
+  const command = running.commands.find(({ line }) => line.includes(`${root}${sep}`));
   if (command) return `process ${command.pid} runs from it`;
-  const cwd = running.cwds.find(({ pid, path }) => pid !== process.pid && inside(canonicalPath(path)));
+  const cwd = running.cwds.find(({ path }) => inside(canonicalPath(path)));
   if (cwd) return `process ${cwd.pid} works in it`;
   return null;
 }

@@ -323,8 +323,8 @@ export async function clearArtifact(
   const remove = () => {
     const reason = keptReason(candidate, kind, { ...options, now: Date.now(), ...(key ? { locked: key } : {}) });
     if (reason) return reason;
-    rmSync(candidate.path, { recursive: true, force: true });
     if (kind === 'dependencies') recordLightened(candidate.keys, candidate.path);
+    rmSync(candidate.path, { recursive: true, force: true });
     return null;
   };
   const kept = key

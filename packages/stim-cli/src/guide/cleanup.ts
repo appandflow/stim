@@ -1111,12 +1111,15 @@ WORKTREE DEPENDENCIES
   directory), while git tracks a file in them, while a stim-server service
   or the stim on PATH runs from it, while a live process has its command
   line or working directory in it, and when the running processes cannot be
-  listed. gc records what it deleted in the workspace's state.json; the next
-  \`stim start\`, \`stim ios\` or \`stim android\` there runs \`stim worktree
-  warm\` first to restore it, and refuses with STIM_DEPS_FAILED when that warm
-  fails. A worktree with no Stim workspace keeps its dependencies, since
-  nothing would restore them. .pnpm-store stays: it is all clones and frees
-  nothing.
+  listed (always on Windows). It also keeps them when \`stim worktree warm\`
+  could not put the same thing back: the source checkout has no such
+  directory, or the worktree's lockfile (or ios/Podfile.lock for Pods)
+  differs from the source checkout's. gc records what it deleted in the
+  workspace's lightened.json; the next \`stim start\`, \`stim ios\` or
+  \`stim android\` there runs \`stim worktree warm\` first to restore it, and
+  refuses with STIM_DEPS_FAILED when warm fails or leaves a directory
+  missing. Other commands, such as a test run, find the directory missing
+  until then. .pnpm-store stays: it is all clones and frees nothing.
 
 WORKSPACE LOGS
   \`gc\` reports the size of each workspace's logs/ (the workspaceLogs
