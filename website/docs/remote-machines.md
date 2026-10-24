@@ -898,6 +898,12 @@ app still shows its short label.
 |                       | `connect-failed`                    | The connection failed in a way none of the other codes names.                                                                                                                               | On that Mac, run `stim-server service status`.                                                                                                                      |
 | Compatibility         | `server-outdated`                   | stim-server speaks an older protocol.                                                                                                                                                       | Run the update command the finding prints.                                                                                                                          |
 
+`stim ios|android|macos --remote` prints the same message and remedy when the
+machine does not connect, for example `mini is offline on Tailscale (last seen
+18 h ago)`. It reads `tailscale status` only after the connection failed, and
+skips doctor's `tailscale ping`, so a silent connection reads `peer-offline` or
+`peer-no-answer` and never `server-no-answer`.
+
 A machine that answers outranks Tailscale's own online flag, which can lag a
 reachable Mac. Approval states (`pending`, `revoked`, `lapsed`, `key-changed`)
 mean the machine answered; they have their own findings and remedies.

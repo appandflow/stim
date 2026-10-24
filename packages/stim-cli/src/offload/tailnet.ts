@@ -14,6 +14,8 @@ import {
 } from '@stim-cli/core/noise-session';
 import {
   clientIdentity,
+  endpoint,
+  findPeer,
   isJsonObject,
   machineEndpoint,
   parseMachine,
@@ -428,7 +430,7 @@ export function doctorIo(operation?: StimContext): TailnetMachineIo {
  * serving; an older stim-server answers without it, and the diagnosis then says only that it is not ready.
  */
 export async function diagnoseOutcome(
-  io: TailnetMachineIo,
+  io: Pick<TailnetMachineIo, 'startup' | 'ping'>,
   input: { entry: string; peer: TailnetPeer; port: number; target: Endpoint; reason: string; transport?: Transport },
 ): Promise<RemoteDiagnosis> {
   const { target, ...rest } = input;
@@ -436,6 +438,33 @@ export async function diagnoseOutcome(
   const startup = needsStartup ? await io.startup?.(target) : null;
   const pinged = rest.transport?.kind === 'silent' ? await io.ping?.(rest.peer.address) : undefined;
   return diagnoseUnreachable({ ...rest, startup, pinged });
+}
+
+/**
+ * The diagnosis `stim doctor` gives for a machine that resolved to a tailnet peer but did not connect, without
+ * doctor's `tailscale ping`: the connection has already waited out its timeout. Reads `tailscale status` only here,
+ * after the failure. Null when Tailscale no longer lists the machine.
+ */
+export async function diagnoseConnectFailure(
+  machine: string,
+  failure: ConnectFailure,
+  signal?: AbortSignal,
+): Promise<RemoteDiagnosis | null> {
+  const parsed = parseMachine(machine);
+  if (!parsed) return null;
+  const peer = findPeer(await tailscaleStatusAsync(signal), parsed.name);
+  if (typeof peer === 'string') return null;
+  return diagnoseOutcome(
+    { startup: peerStartup },
+    {
+      entry: machine,
+      peer,
+      port: parsed.port,
+      target: endpoint(peer, parsed.port),
+      reason: failure.failure,
+      ...(failure.transport ? { transport: failure.transport } : {}),
+    },
+  );
 }
 
 /** Why `status` is null, as a diagnosis of the Tailscale layer; falls back to the daemon being unavailable. */
