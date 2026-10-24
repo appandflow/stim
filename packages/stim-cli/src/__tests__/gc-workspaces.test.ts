@@ -782,7 +782,9 @@ test('plain gc --delete lightens a workspace whose dev server runs, but never a 
   });
   const active = builtWorkspace('active');
   execSync('git init -q && git config user.email t@t && git config user.name t', { cwd: active.root });
-  writeFileSync(join(active.root, '.gitignore'), 'ios/build/\nandroid/\n');
+  writeFileSync(join(active.root, '.gitignore'), 'ios/build/\nandroid/\n.build/*\n!.build/keep\n');
+  mkdirSync(join(active.root, '.build'));
+  writeFileSync(join(active.root, '.build', 'keep'), 'untracked, not ignored');
   mkdirSync(join(active.root, 'ios', 'build'), { recursive: true });
   writeFileSync(join(active.root, 'ios', 'build', 'blob'), 'regenerable');
   mkdirSync(join(active.root, 'android', 'build'), { recursive: true });
@@ -798,6 +800,11 @@ test('plain gc --delete lightens a workspace whose dev server runs, but never a 
   mkdirSync(artifact, { recursive: true });
   writeFileSync(join(artifact, 'binary'), 'artifact');
 
+  const { payload } = await gcJson({ cache: 'workspaces' });
+  expect(
+    payload.sections.workspaceBuildOutputs.find((w: { projectRoot: string }) => w.projectRoot === active.root),
+  ).toMatchObject({ willClear: true, inTreeDirs: [join(active.root, 'ios', 'build')] });
+
   const report = await captureLog(() => runGc({ delete: true }));
   for (const output of OUTPUTS) {
     expect(existsSync(join(active.dir, output))).toBe(false);
@@ -806,9 +813,9 @@ test('plain gc --delete lightens a workspace whose dev server runs, but never a 
   }
   expect(existsSync(join(active.root, 'ios', 'build'))).toBe(false);
   expect(readFileSync(join(active.root, 'android', 'build', 'tracked'), 'utf8')).toBe('committed');
+  expect(readFileSync(join(active.root, '.build', 'keep'), 'utf8')).toBe('untracked, not ignored');
   expect(readFileSync(join(artifact, 'binary'), 'utf8')).toBe('artifact');
   expect(report).toMatch(/Lightened .*active: freed/);
-  expect(report).toMatch(/Kept .*android.build: it holds files git tracks/);
   expect(report).toMatch(/Kept the build outputs of .*building: in use: .*native-run/);
   expect(report).toMatch(/Kept the build outputs of .*recent: ran ios, android or macos within the last 15 minutes/);
 });

@@ -1028,7 +1028,8 @@ RULES
                               lists the project's ios/build,
                               android/app/build, android/build,
                               android/.gradle and .build that --delete
-                              clears with them when git ignores them, and
+                              clears with them, every file in them
+                              ignored by git and none tracked, and
                               bytes includes them; willClear marks the ones
                               --delete would lighten; --cache workspaces omits the
                               directories that --delete removes whole (dead

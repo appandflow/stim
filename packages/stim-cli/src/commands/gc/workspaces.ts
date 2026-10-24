@@ -254,6 +254,13 @@ async function workspaceBuildReasonsAsync(
   return workspaceBuildInProgress(root) ? [...reasons, BUILD_IN_PROGRESS] : reasons;
 }
 
+async function inTreeBuildDirs(root: string, signal?: AbortSignal): Promise<string[]> {
+  const dirs: string[] = [];
+  for (const path of regenerableDirsOf(root, 'build'))
+    if (!(await regenerableDirProblem(root, path, signal))) dirs.push(path);
+  return dirs;
+}
+
 export const WORKSPACE_OUTPUT_DIRS: readonly string[] = [
   'derived-data',
   'gradle-build',
@@ -382,12 +389,12 @@ export function collectWorkspaceOutputs({
   lighten = false,
 }: WorkspaceOutputsOptions): WorkspaceOutputsReport | Promise<WorkspaceOutputsReport> {
   const mountedVolumes = listMountedVolumes();
-  const outputEntries = (entries: WorkspaceDirEntry[]) =>
+  const outputEntries = (entries: WorkspaceDirEntry[], inTree: ReadonlyMap<string, string[]> = new Map()) =>
     entries
       .filter((entry) => !exclude.includes(entry.dir))
       .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
       .map((entry) => {
-        const inTreeDirs = lighten && entry.projectRoot !== null ? regenerableDirsOf(entry.projectRoot, 'build') : [];
+        const inTreeDirs = inTree.get(entry.dir) ?? [];
         return Object.assign({}, entry, { inTreeDirs, paths: [...outputPaths(entry.dir), ...inTreeDirs] });
       })
       .filter((entry) => entry.paths.length > 0);
@@ -418,7 +425,12 @@ export function collectWorkspaceOutputs({
     );
   return (async () => {
     const sizes: (WorkspaceDirEntry & { inTreeDirs: string[]; bytes: number | null; inUse: string[] })[] = [];
-    const entries = outputEntries(await listWorkspaceDirsAsync(signal));
+    const listed = await listWorkspaceDirsAsync(signal);
+    const inTree = new Map<string, string[]>();
+    if (lighten)
+      for (const { dir, projectRoot } of listed)
+        if (projectRoot !== null && !exclude.includes(dir)) inTree.set(dir, await inTreeBuildDirs(projectRoot, signal));
+    const entries = outputEntries(listed, inTree);
     const bytes = measure
       ? await outputBytes(
           entries.map((entry) => entry.paths),
@@ -488,10 +500,9 @@ export async function clearWorkspaceOutputs(
             { olderThan, now },
           );
           if (again?.keptReason) return again.keptReason;
-          const inTree = (lighten ? regenerableDirsOf(root, 'build') : []).map((path) => ({
-            path,
-            problem: regenerableDirProblem(root, path),
-          }));
+          const inTree: { path: string; problem: string | null }[] = [];
+          for (const path of lighten ? regenerableDirsOf(root, 'build') : [])
+            inTree.push({ path, problem: await regenerableDirProblem(root, path, signal) });
           for (const path of [
             ...outputPaths(entry.dir),
             ...inTree.filter((dir) => !dir.problem).map((dir) => dir.path),

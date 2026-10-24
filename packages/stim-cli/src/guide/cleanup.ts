@@ -1058,9 +1058,10 @@ WORKSPACE BUILD OUTPUTS
   Each workspace directory holds derived-data/, gradle-build/, android-cas/,
   cache-provider/, macos/build, the staged macos/<Product>.app and macos/staging-*
   leftovers. The project's own ios/build, android/app/build, android/build,
-  android/.gradle and .build count with them when git ignores the directory
-  and tracks no file in it; one that fails that check, or is not in a git
-  checkout, stays and \`gc --delete\` prints why. \`gc\` reports them as one
+  android/.gradle and .build count with them when git ignores every file in
+  the directory and tracks none; one that fails that check, or is not in a
+  git checkout, stays, and \`gc --delete\` prints why when the check fails
+  between the report and the deletion. \`gc\` reports them as one
   detected cache, "Workspace build outputs", with a per-workspace size, last
   use and verdict. Plain \`gc --delete\` lightens every workspace, before
   anything else, by clearing them, and prints the bytes freed per workspace.

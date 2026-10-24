@@ -469,8 +469,8 @@ simulator or emulator, or a tunnel no longer keeps the outputs. They stay while
 a `stim ios` or `stim android` run holds the workspace, a build names it, or its
 macOS app or build runs or cannot be verified. Lightening also clears the
 project's own `ios/build`, `android/app/build`, `android/build`,
-`android/.gradle` and `.build` when git ignores the directory and tracks no file
-in it. The shared build cache, the Xcode compilation cache, the Gradle caches
+`android/.gradle` and `.build` when git ignores every file in the directory and
+tracks none. The shared build cache, the Xcode compilation cache, the Gradle caches
 and the Metro cache are never touched. `--older-than <days>` clears only
 workspaces no Stim command has used for that many days. `--cache workspaces`
 clears the outputs and nothing else, and `--cache all` includes them.
