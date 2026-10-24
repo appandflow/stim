@@ -6,6 +6,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -416,7 +417,7 @@ test.each(process.platform === 'win32' ? ['script', 'npm', 'pnpm', 'pnpm-absolut
 
 function abortAfterMarker(marker: string, controller: AbortController) {
   const timer = setInterval(() => {
-    if (existsSync(marker)) controller.abort();
+    if ((statSync(marker, { throwIfNoEntry: false })?.size ?? 0) > 0) controller.abort();
   }, 5);
   return () => clearInterval(timer);
 }
