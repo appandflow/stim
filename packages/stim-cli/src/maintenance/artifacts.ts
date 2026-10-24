@@ -15,7 +15,12 @@ import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
 import { childEnvironment } from '../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
 import { ARTIFACT_DIRS, type ArtifactKind } from '../workspace/regenerable-dirs.ts';
-import { readRunningProcesses, runningFromReason, type RunningProcesses } from '../workspace/running-from.ts';
+import {
+  readRunningProcesses,
+  readRunningProcessesAsync,
+  runningFromReason,
+  type RunningProcesses,
+} from '../workspace/running-from.ts';
 import { finishLightened, recordLightened, restoreProblem } from '../workspace/lightened.ts';
 import {
   listWorktrees,
@@ -209,7 +214,7 @@ export async function collectArtifactsAsync(
 ): Promise<ReturnType<typeof collectArtifacts>> {
   const candidates: ArtifactCandidate[] = [];
   const skips: { target: string; reason: string }[] = [];
-  const running = kind === 'dependencies' ? readRunningProcesses() : null;
+  const running = kind === 'dependencies' ? await readRunningProcessesAsync(signal) : null;
   for (const worktree of await artifactWorktreesAsync(signal, operation)) {
     if (kind === 'dependencies' && !worktree.linked) continue;
     const root = canonicalPath(worktree.path);
@@ -319,14 +324,20 @@ export async function clearArtifact(
   if (options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`))
     return { status: 'kept', bytes: 0, detail: 'the command that started this pass runs inside its worktree' };
   const candidate = { worktree: worktree.path, path: action.target, keys: worktree.keys };
-  const early = keptReason(candidate, kind, { ...options, now: Date.now() });
+  const running = kind === 'dependencies' ? await readRunningProcessesAsync() : null;
+  const early = keptReason(candidate, kind, { ...options, now: Date.now(), running });
   if (early) return { status: 'kept', bytes: 0, detail: early };
   const unrestorable = kind === 'dependencies' ? await restoreProblem(candidate, options.restoreCache) : null;
   if (unrestorable && options.requireRestorable) return { status: 'kept', bytes: 0, detail: unrestorable };
   const before = lowestFree(measureDisk());
   const [key] = candidate.keys;
-  const remove = () => {
-    const reason = keptReason(candidate, kind, { ...options, now: Date.now(), ...(key ? { locked: key } : {}) });
+  const remove = async () => {
+    const reason = keptReason(candidate, kind, {
+      ...options,
+      now: Date.now(),
+      running: kind === 'dependencies' ? await readRunningProcessesAsync() : null,
+      ...(key ? { locked: key } : {}),
+    });
     if (reason) return reason;
     const record = kind === 'dependencies' && !unrestorable;
     if (record) recordLightened(candidate.keys, candidate.path);
@@ -338,7 +349,7 @@ export async function clearArtifact(
     ? await withIdleWorkspace(key, remove, { purpose: 'maintenance', supervisor: kind === 'dependencies' }).then(
         (run) => (run.ran ? run.value : `in use: ${run.reasons.join('; ')}`),
       )
-    : remove();
+    : await remove();
   if (kept) return { status: 'kept', bytes: 0, detail: kept };
   const freed = Math.max(0, lowestFree(measureDisk()) - before);
   return {

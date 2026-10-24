@@ -50,20 +50,34 @@ function listsSelf(list: readonly { pid: number }[]): boolean {
   return list.some(({ pid }) => pid === process.pid);
 }
 
+function runningFrom(ps: string | null, cwds: RunningProcesses['cwds'] | null): RunningProcesses | null {
+  if (ps === null || cwds === null) return null;
+  const commands = parsePs(ps);
+  return listsSelf(commands) && listsSelf(cwds) ? { commands, cwds } : null;
+}
+
+const PS_ARGS = ['-axww', '-o', 'pid=,args='];
+const LSOF_ARGS = ['-a', '-d', 'cwd', '-Fpn', '-w'];
+
 export function readRunningProcesses(platform: NodeJS.Platform = process.platform): RunningProcesses | null {
   if (platform !== 'darwin' && platform !== 'linux') return null;
   const exec = getExecutor();
-  const ps = exec.runFileQuiet('ps', ['-axww', '-o', 'pid=,args='], { timeoutMs: LIST_TIMEOUT_MS });
-  if (ps === null) return null;
-  const cwds =
-    platform === 'linux'
-      ? procCwds()
-      : (() => {
-          const lsof = exec.runFileQuiet('lsof', ['-a', '-d', 'cwd', '-Fpn', '-w'], { timeoutMs: LIST_TIMEOUT_MS });
-          return lsof === null ? null : parseLsof(lsof);
-        })();
-  const commands = parsePs(ps);
-  return cwds && listsSelf(commands) && listsSelf(cwds) ? { commands, cwds } : null;
+  const ps = exec.runFileQuiet('ps', PS_ARGS, { timeoutMs: LIST_TIMEOUT_MS });
+  if (platform === 'linux') return runningFrom(ps, procCwds());
+  const lsof = exec.runFileQuiet('lsof', LSOF_ARGS, { timeoutMs: LIST_TIMEOUT_MS });
+  return runningFrom(ps, lsof === null ? null : parseLsof(lsof));
+}
+
+export async function readRunningProcessesAsync(
+  signal?: AbortSignal,
+  platform: NodeJS.Platform = process.platform,
+): Promise<RunningProcesses | null> {
+  if (platform !== 'darwin' && platform !== 'linux') return null;
+  const exec = getExecutor();
+  const ps = await exec.runFileQuietAsync('ps', PS_ARGS, { timeoutMs: LIST_TIMEOUT_MS, signal });
+  if (platform === 'linux') return runningFrom(ps, procCwds());
+  const lsof = await exec.runFileQuietAsync('lsof', LSOF_ARGS, { timeoutMs: LIST_TIMEOUT_MS, signal });
+  return runningFrom(ps, lsof === null ? null : parseLsof(lsof));
 }
 
 function stimOnPath(): string | null {
