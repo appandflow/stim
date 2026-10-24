@@ -7,7 +7,7 @@ import { basename, dirname, join } from 'node:path';
 import { enforceArchiveRetention, worktreeArchiveBytes, worktreeArchiveLimits } from '../archive.ts';
 import { readVolumeSpaceAsync, resolveBudget } from '../budget.ts';
 import { getExecutor, type ExecOptions } from '../exec.ts';
-import { gitAsync } from './git.ts';
+import { gitAsync, gitQuietAsync } from './git.ts';
 import { childEnvironment } from './git-read.ts';
 
 const WATCHMAN_COOKIE = /(?:^|\/)\.watchman-cookie-[^/]*$/;
@@ -79,18 +79,45 @@ async function headSizes(path: string, files: readonly string[], operation?: Sti
   return out.split('\n').reduce((sum, line) => sum + (/^\d+$/.test(line.trim()) ? Number(line.trim()) : 0), 0);
 }
 
-async function newestChange(path: string, changes: Changes): Promise<number | null> {
-  let newest: number | null = null;
-  for (const file of [...changes.tracked, ...changes.untracked]) {
+async function changedAt(file: string, deleted: 'skip' | 'parent'): Promise<number | null> {
+  for (let current = file; ; current = dirname(current)) {
     try {
-      const { mtimeMs, ctimeMs } = await lstat(join(path, file));
-      const changed = Math.max(mtimeMs, ctimeMs);
-      if (newest === null || changed > newest) newest = changed;
+      const { mtimeMs, ctimeMs } = await lstat(current);
+      return Math.max(mtimeMs, ctimeMs);
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      if (deleted === 'skip' || dirname(current) === current) return null;
     }
   }
+}
+
+/** With `parent`, a deleted file counts its nearest existing parent directory's change, since unlinking changes it. */
+async function newestChange(
+  path: string,
+  changes: Changes,
+  deleted: 'skip' | 'parent' = 'skip',
+): Promise<number | null> {
+  let newest: number | null = null;
+  for (const file of [...changes.tracked, ...changes.untracked]) {
+    const changed = await changedAt(join(path, file), deleted);
+    if (changed !== null && (newest === null || changed > newest)) newest = changed;
+  }
   return newest;
+}
+
+/**
+ * Bundles HEAD's commits that the default branch lacks, so the restore can recreate HEAD after its branch is deleted
+ * and git collects the commits; null when the default branch already contains HEAD.
+ */
+async function bundleHead(path: string, head: string, dir: string, operation?: StimContext): Promise<string | null> {
+  const run = { ...execution(operation), timeoutMs: ARCHIVE_TIMEOUT_MS };
+  const base = (await gitQuietAsync(path, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], run))?.trim();
+  if (base && (await gitQuietAsync(path, ['merge-base', '--is-ancestor', head, base], run)) !== null) return null;
+  const bundle = join(dir, 'head.bundle');
+  await gitAsync(path, ['bundle', 'create', bundle, 'HEAD', ...(base ? [`^${base}`] : [])], run);
+  await chmod(bundle, 0o600);
+  await gitAsync(path, ['bundle', 'verify', bundle], run);
+  return bundle;
 }
 
 /**
@@ -103,7 +130,7 @@ export async function uncommittedActivityOf(
   operation?: StimContext,
 ): Promise<{ at: number; basis: string } | null | 'unreadable'> {
   try {
-    const at = await newestChange(path, await changesOf(path, operation));
+    const at = await newestChange(path, await changesOf(path, operation), 'parent');
     return at === null ? null : { at, basis: 'an uncommitted file change' };
   } catch (error) {
     operation?.signal.throwIfAborted();
@@ -236,6 +263,8 @@ export async function archiveWorktreeChanges({
   const restore = [`git -C ${quotedPath(repository)} worktree add --detach ${quotedPath(path)} ${head}`];
   try {
     await mkdir(dir, { mode: 0o700 });
+    const bundle = await bundleHead(path, head, dir, operation);
+    if (bundle) restore.unshift(`git -C ${quotedPath(repository)} bundle unbundle ${quotedPath(bundle)}`);
     if (changes.tracked.length) {
       const patch = join(dir, 'tracked.patch');
       await gitAsync(
@@ -290,6 +319,7 @@ export async function archiveWorktreeChanges({
       branch,
       head,
       pullRequest,
+      headBundle: bundle ? 'head.bundle' : null,
       trackedPatch: changes.tracked.length ? 'tracked.patch' : null,
       untrackedTarball: changes.untracked.length ? 'untracked.tar' : null,
       tracked: changes.tracked,

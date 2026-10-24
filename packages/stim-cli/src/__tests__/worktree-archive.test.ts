@@ -20,6 +20,7 @@ import { removeWorktreeTarget } from '../commands/worktree.ts';
 import {
   archiveWorktreeChanges,
   releaseWorktreeArchive,
+  uncommittedActivityOf,
   worktreeArchiveMismatch,
   type WorktreeArchive,
 } from '../workspace/worktree-archive.ts';
@@ -111,6 +112,47 @@ test('the archive of a dirty worktree restores its tracked, staged, deleted, bin
   expect([...readFileSync(join(worktree, 'bin.dat'))]).toEqual([9, 0, 8, 0, 7]);
   expect(readFileSync(join(worktree, 'notes', 'scratch file.txt'), 'utf8')).toBe('scratch\n');
   expect(existsSync(join(worktree, 'build'))).toBe(false);
+}, 60_000);
+
+test('the archive restores a HEAD that no branch keeps once git has collected it', async () => {
+  const remote = join(home, 'origin.git');
+  git(home, `init -q --bare -b main "${remote}"`);
+  git(repo, `remote add origin "${remote}"`);
+  git(repo, 'push -q origin main');
+  git(repo, 'remote set-head origin main');
+  writeFileSync(join(worktree, 'feature.txt'), 'feature\n');
+  git(worktree, 'add feature.txt');
+  git(worktree, 'commit -q -m feature');
+  const head = git(worktree, 'rev-parse HEAD');
+  writeFileSync(join(worktree, 'scratch.txt'), 'scratch\n');
+  const saved = await archive();
+  expect(existsSync(join(saved.dir, 'head.bundle'))).toBe(true);
+
+  git(repo, `worktree remove --force "${worktree}"`);
+  git(repo, 'branch -D topic');
+  git(repo, 'reflog expire --expire=now --all');
+  git(repo, 'gc -q --prune=now');
+  expect(() => git(repo, `cat-file -e ${head}`)).toThrow(/Command failed/);
+  for (const command of saved.restore) execFileSync('sh', ['-c', command], { timeout: 30_000, stdio: 'pipe' });
+
+  expect(git(worktree, 'rev-parse HEAD')).toBe(head);
+  expect(readFileSync(join(worktree, 'feature.txt'), 'utf8')).toBe('feature\n');
+  expect(readFileSync(join(worktree, 'scratch.txt'), 'utf8')).toBe('scratch\n');
+}, 120_000);
+
+test('a recent deletion counts as uncommitted activity through its parent directory', async () => {
+  const sub = join(worktree, 'docs');
+  mkdirSync(sub);
+  writeFileSync(join(sub, 'old.txt'), 'old\n');
+  git(worktree, 'add docs/old.txt');
+  git(worktree, 'commit -q -m docs');
+  const before = Date.now();
+  unlinkSync(join(sub, 'old.txt'));
+
+  const activity = await uncommittedActivityOf(worktree);
+
+  expect(activity).toMatchObject({ basis: 'an uncommitted file change' });
+  expect(activity !== null && activity !== 'unreadable' && activity.at >= before - 1000).toBe(true);
 }, 60_000);
 
 test('an archive no longer describes the worktree once an archived file changes or a new one appears', async () => {

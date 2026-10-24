@@ -433,9 +433,12 @@ redacted: an untracked `.env` file that git does not ignore is saved with the
 rest, so set `archive.enabled false` for a sensitive repository. A `git status`
 or editor refresh that rewrites the index counts as activity and restarts the
 grace period. The removal line and the gc and
-maintenance logs name the archive and the commands that restore it:
+maintenance logs name the archive and the commands that restore it. When the
+default branch does not contain HEAD, as after a squash merge, `head.bundle`
+holds the missing commits, so the restore works after the branch is deleted:
 
 ```sh
+git -C <repository> bundle unbundle <archive>/head.bundle
 git -C <repository> worktree add --detach <path> <HEAD>
 git -C <path> apply <archive>/tracked.patch
 tar -xf <archive>/untracked.tar -C <path>

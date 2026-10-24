@@ -641,7 +641,10 @@ SWEEPING FINISHED WORKTREES
   ignore is saved; use archive.enabled false for a sensitive repository. A
   \`git status\` or editor refresh that rewrites the index restarts RECENT
   ACTIVITY. The removal line and the gc
-  and maintenance logs name the archive and the restore commands:
+  and maintenance logs name the archive and the restore commands; head.bundle
+  holds HEAD's commits the default branch lacks, so the restore works after
+  the branch is deleted:
+    git -C <repository> bundle unbundle <archive>/head.bundle
     git -C <repository> worktree add --detach <path> <HEAD>
     git -C <path> apply <archive>/tracked.patch
     tar -xf <archive>/untracked.tar -C <path>
