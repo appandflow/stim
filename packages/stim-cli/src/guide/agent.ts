@@ -300,7 +300,9 @@ Ask the user before these actions:
   was closed), and lightens every workspace that is not building and ran
   no ios, android or macos command in the last 15 minutes, a running dev
   server included, by clearing its build outputs and its git-ignored
-  in-tree build directories. Run stim gc --json first and show
+  in-tree build directories, and deletes node_modules and ios/Pods of idle
+  linked worktrees, which the next start, ios or android restores with
+  worktree warm. Run stim gc --json first and show
   the user the entries its sections list (guide facts gc). gc --delete
   --cache all empties the shared build caches and those outputs instead, and
   gc --delete --cache workspaces clears only the outputs; both inspect

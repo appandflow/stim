@@ -55,6 +55,7 @@ import { idleDeviceLines, type IdleDevice } from './idle.ts';
 import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from './recordings.ts';
 import { tempLeftoverLines, tempLeftoverSection, type TempLeftoverReport } from './temp-leftovers.ts';
 import { trashLines, type TrashReport } from './trash.ts';
+import type { WorktreeDependencies } from './dependencies.ts';
 import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, type WatchmanRoot } from './memory.ts';
 
 export interface GcReport {
@@ -91,6 +92,7 @@ export interface GcReport {
   gradleVersions?: GradleVersionSweep | null;
   caches: GcCache[];
   workspaceOutputs: WorkspaceOutputsReport | null;
+  worktreeDependencies?: WorktreeDependencies | null;
   workspaceLogs: WorkspaceLogs[];
   recordings: WorkspaceRecordings[];
   worktreeSweep?: WorktreeSweep | null;
@@ -253,6 +255,7 @@ export function formatGcReport(
     gradleVersions,
     caches = [],
     workspaceOutputs = null,
+    worktreeDependencies,
     workspaceLogs = [],
     recordings = [],
     worktreeSweep = null,
@@ -293,6 +296,7 @@ export function formatGcReport(
       expiredLeases,
       easSessionSweep.orphaned,
       workspaceOutputs?.workspaces.filter((entry) => entry.willClear) ?? [],
+      dependencyCandidates(worktreeDependencies),
       workspaceLogs.filter((entry) => entry.willTrim),
       worktreeSweep?.worktrees.filter((entry) => !entry.skipped) ?? [],
     ].every((found) => found.length === 0)
@@ -433,6 +437,7 @@ export function formatGcReport(
     for (const entry of skipped) lines.push(`  ${entry.dir}: ${entry.reason}`);
   }
 
+  lines.push(...worktreeDependencyLines(worktreeDependencies));
   lines.push(...workspaceLogLines(workspaceLogs));
   lines.push(...recordingLines(recordings));
   lines.push(...cacheLines(caches, workspaceOutputs));
@@ -445,6 +450,20 @@ export function formatGcReport(
   lines.push(...memoryLines(memory, memoryCacheKind(cacheScope), now));
   lines.push(...maintenanceReportLines(maintenance));
 
+  return lines;
+}
+
+function dependencyCandidates(found: WorktreeDependencies | null | undefined): string[] {
+  return found?.candidates.map(({ path }) => path) ?? [];
+}
+
+function worktreeDependencyLines(found: WorktreeDependencies | null | undefined): string[] {
+  if (!found || (!found.candidates.length && !found.skips.length)) return [];
+  const lines = [
+    `Worktree dependencies (${found.candidates.length} of ${found.candidates.length + found.skips.length} would be LIGHTENED; the next start, ios or android restores them with worktree warm):`,
+  ];
+  for (const { path } of found.candidates) lines.push(`  ${path}`, '              would be LIGHTENED');
+  for (const { target, reason } of found.skips) lines.push(`  ${target}`, `              kept: ${reason}`);
   return lines;
 }
 
@@ -755,6 +774,7 @@ export interface GcJsonSections {
     reason: WorkspaceLogsKeptCode | null;
     detail: string | null;
   }[];
+  worktreeDependencies: { path: string; willDelete: boolean; detail: string | null }[];
   recordings: {
     dir: string;
     projectRoot: string | null;
@@ -824,6 +844,7 @@ export function gcReportSections({
   easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
   workspaceOutputs = null,
   workspaceLogs = [],
+  worktreeDependencies = null,
   recordings = [],
   agentDeviceUsage = null,
   swiftpmCacheUsage = null,
@@ -962,6 +983,14 @@ export function gcReportSections({
       reason: w.keptCode,
       detail: w.keptReason,
     })),
+    worktreeDependencies: [
+      ...(worktreeDependencies?.candidates ?? []).map(({ path }) => ({ path, willDelete: true, detail: null })),
+      ...(worktreeDependencies?.skips ?? []).map(({ target, reason }) => ({
+        path: target,
+        willDelete: false,
+        detail: reason,
+      })),
+    ],
     recordings: recordings.map((r) => ({
       dir: r.dir,
       projectRoot: r.projectRoot,

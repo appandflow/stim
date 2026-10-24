@@ -127,7 +127,9 @@ DISK PRESSURE LEVELS
        the short window: their dev server stops and their owned simulators
        and emulators are deleted
     4. node_modules and ios/Pods at the root or a project root of idle linked
-       worktrees, never the source checkout
+       worktrees, never the source checkout, with the running-process checks
+       of WORKTREE DEPENDENCIES; when worktree warm can restore them they are
+       recorded for the next start, ios or android to restore
     5. idle Gradle and Kotlin daemons, stopped as gc --delete --cache
        gradle-daemons stops them (never during a Stim build, never a busy or
        unverified one, never with STIM_HOME set), only when every Gradle
@@ -1150,6 +1152,30 @@ WORKSPACE BUILD OUTPUTS
   React Native 0.86 Swift does not use it (explicit modules are off), so that
   build recompiles Swift. The next \`stim macos\` rebuilds its scratch from
   nothing (a full Swift build) and restages the app.
+
+WORKTREE DEPENDENCIES
+  Plain \`gc --delete\` also lightens linked worktrees: it deletes the
+  node_modules and ios/Pods at the root or a project root of a linked
+  worktree that has a Stim workspace, never the source checkout. A worktree
+  keeps them while it is in use (its dev server runs, a native run or build
+  holds it), while it was used in the last 15 minutes (a git index, HEAD or
+  reflog write, a Stim state or log write, or a write at the top of the
+  directory), while git tracks a file in them, while a stim-server service
+  or the stim on PATH runs from it, while a live process has its command
+  line or working directory in it, and when the running processes cannot be
+  listed (always on Windows). It also keeps them when \`stim worktree warm\`
+  could not put the same thing back: warm would not copy that directory from
+  the source checkout (it is missing there, excluded by .worktreeexclude or
+  worktree.exclude, or inside a larger ignored directory such as a wholly
+  ignored ios/), the worktree's lockfile (or ios/Podfile.lock for Pods)
+  differs from the source checkout's, or the source checkout's own copy was
+  not installed from its lockfile. gc records what it deleted in the
+  workspace's lightened.json; the next \`stim start\`, \`stim ios\` or
+  \`stim android\` there runs \`stim worktree warm\` first to restore it, and
+  refuses with STIM_DEPS_FAILED, keeping the record, when those checks no
+  longer pass, when warm fails, or when it leaves a directory missing. A
+  deletion that stopped part-way is finished before the warm. Other commands, such as a test run, find the directory missing
+  until then. .pnpm-store stays: it is all clones and frees nothing.
 
 WORKSPACE LOGS
   \`gc\` reports the size of each workspace's logs/ (the workspaceLogs

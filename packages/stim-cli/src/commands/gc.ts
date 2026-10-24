@@ -89,6 +89,7 @@ import {
   type EasSessionSweep,
 } from './gc/eas-sessions.ts';
 import { formatGcReport, gcReportSections, type GcJsonSections, type GcReport } from './gc/report.ts';
+import { collectWorktreeDependencies, lightenWorktreeDependencies } from './gc/dependencies.ts';
 import {
   clearWorkspaceOutputs,
   collectOrphanedWorkspaces,
@@ -630,6 +631,7 @@ export async function collectGcReport(
       operation,
       lighten: true,
     }),
+    worktreeDependencies: await collectWorktreeDependencies({ now, operation }),
     workspaceLogs: await collectWorkspaceLogs({ exclude: goneWorkspaceDirs, operation }),
     recordings: await collectRecordings({ whole: false, olderThan, now }, goneWorkspaceDirs, operation?.signal),
     worktreeSweep,
@@ -1016,6 +1018,7 @@ function reportActionable(report: GcReport): boolean {
     deadProjects.length + invalidProjects.length > 0 ||
       report.orphanedWorkspaces.length > 0 ||
       Boolean(report.workspaceOutputs?.workspaces.some((entry) => entry.willClear)) ||
+      Boolean(report.worktreeDependencies?.candidates.length) ||
       report.workspaceLogs.some((entry) => entry.willTrim) ||
       report.recordings.some((entry) => entry.willDelete && !entry.withWorkspace) ||
       Boolean(report.tempLeftovers?.entries.some((entry) => entry.willDelete)) ||
@@ -1175,6 +1178,8 @@ async function runGcCore(
         )
       ).failures
     : 0;
+  throwIfCancelled(signal, 'GC');
+  deleteFailures += await lightenWorktreeDependencies(report.worktreeDependencies, output, deps.operation);
   throwIfCancelled(signal, 'GC');
   deleteFailures += await trimWorkspaceLogs(report.workspaceLogs, output, deps.operation);
   throwIfCancelled(signal, 'GC');

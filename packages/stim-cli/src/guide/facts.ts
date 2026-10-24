@@ -846,7 +846,8 @@ RULES
                   why) or "failed" (detail says why and what to retry).
                   kind: device, parkedDevice, parkedHostedDevice, idleDevice,
                   deviceRecord,
-                  workspaceOutputs, recording, workspaceDirectory, project,
+                  workspaceOutputs, worktreeDependencies, recording,
+                  workspaceDirectory, project,
                   buildLock, buildSlot, deviceLease, easSession, worktree,
                   cache, gradleVersion, tempLeftover (one "done" labelled
                   with the TMPDIR it cleared, plus a "kept" or "failed" per
@@ -1015,6 +1016,11 @@ RULES
                               Metro, client and device logs over twice the
                               8 MiB cap; willTrim marks the ones it would
                               trim
+    worktreeDependencies    { path, willDelete, detail }  node_modules and
+                              ios/Pods of linked worktrees; willDelete marks
+                              the ones --delete would lighten, and detail
+                              says why the others stay. Sizes are not
+                              measured: APFS clones make them misleading
     recordings              { dir, projectRoot, bytes, deleteBytes,
                               willDelete, withWorkspace, reason, detail }
                               recordings/ of each workspace; deleteBytes is

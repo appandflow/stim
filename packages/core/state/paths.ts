@@ -61,6 +61,11 @@ export function workspaceStateFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'state.json');
 }
 
+/** The dependency directories `gc --delete` deleted from the workspace's worktree, apart from state.json so writing it is not workspace activity. */
+export function workspaceLightenedFile(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'lightened.json');
+}
+
 export function workspaceStateLock(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'state.lock');
 }

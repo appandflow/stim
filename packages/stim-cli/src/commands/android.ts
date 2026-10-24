@@ -76,6 +76,7 @@ import {
 } from '../engine/stats.ts';
 import { writeWorkspaceLaunchAsync } from '../supervisor/state.ts';
 import { readWorkspaceState, recordWorkspaceUseAsync, writeWorkspaceStateAsync } from '../workspace/workspace-state.ts';
+import { printLightenedFailure, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import {
   installAndroidApp,
   launchAndroidApp,
@@ -275,6 +276,11 @@ export function runAndroidOperation(
     root,
     { command: 'android', platform: PLATFORM, slot: opts.slot ?? 'default' },
     async (claim) => {
+      const lightened = await restoreLightenedDependencies(root, context);
+      if (lightened) {
+        printLightenedFailure(context, lightened, Boolean(opts.json));
+        return { ok: false, error: lightened };
+      }
       await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
       const progress = startBuildProgress({
         root,
