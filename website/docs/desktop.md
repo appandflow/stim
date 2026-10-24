@@ -553,6 +553,13 @@ Click a card or its header to open the workspace (on the Active Workspaces page,
 project), or the stream to open the workspace with that device focused. Cards that scroll out of view
 stop streaming and reconnect when you return to them.
 
+Right-click a card for the sidebar row's workspace menu behind **Open Workspace**: open in your editor or
+Terminal, **Reveal in Finder**, **Copy Path**, **Last Output**, **Run on iOS** and **Run on Android**, **Reload App**,
+**Stop**, **Show Logs** and **Remove Worktree...**. A card with several apps shows the worktree menu with per-app
+submenus instead. Right-click the stream or a device button for **Open Device Viewer** and, on a simulator,
+emulator or macOS app, **Build and Run** and **Stop**. Right-click an Idle project card for **Open Project**,
+**Reveal in Finder** and **Copy Path**. Stop and Remove Worktree ask for the same confirmation as in the sidebar.
+
 Run, Reload App, Start Dev Server and Stop from the workspace or sidebar menus keep
 you on the workspace page, as do Stop or Shut down in the now band and Build and Run and Stop
 on a macOS app card. Open **Last Output** or **Operations** for command details,
@@ -698,7 +705,7 @@ See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for 
 (**Approved**, **Waiting for approval**, the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading),
 a line with its running builds and free disk, what each does (**Builds**, **Simulators**), up and down buttons, **Details** and
 **Remove...**. The status shows only a state that stops this Mac using the machine; notes, such as an
-Android SDK package Gradle downloads on the first build, never change it. With two or more machines each row shows its place in the list. The order is the placement priority: builds, simulators, emulators and macOS apps go to the first machine that has room and a load under its own limit, and to the next only when it has none. The buttons write the new order to `remote.machines`. A machine's page also lists the ten newest builds that ran there, each opening to its phases and failure like the **Builds** page. It updates itself; there is no Refresh button. With none, it
+Android SDK package Gradle downloads on the first build, never change it. With two or more machines each row shows its place in the list. The order is the placement priority: builds, simulators, emulators and macOS apps go to the first machine that has room and a load under its own limit, and to the next only when it has none. The buttons write the new order to `remote.machines`. Right-clicking a row shows the same actions. A machine's page also lists the ten newest builds that ran there, each opening to its phases and failure like the **Builds** page. It updates itself; there is no Refresh button. With none, it
 offers **Add Remote Machine…**, which guides you through five steps:
 
 1. Check Tailscale and pick a Mac, Linux or Windows machine on your tailnet.

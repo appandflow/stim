@@ -56,6 +56,31 @@ struct WorkspaceCardView: View {
   private var choiceKey: String { card.page.identity }
 
   var body: some View {
+    let showLogs = { (app: Workspace) in openLogs(app.path) }
+    if card.isMultiApp {
+      WorktreeActions(page: card.page, openLogs: showLogs) { menu in
+        content.contextMenu {
+          openWorkspace
+          Divider()
+          menu
+        }
+      }
+    } else {
+      WorkspaceActions(env: card.apps[0].workspace, openLogs: openLogs, showsHide: false) { menu in
+        content.contextMenu {
+          openWorkspace
+          Divider()
+          menu
+        }
+      }
+    }
+  }
+
+  private var openWorkspace: some View {
+    Button("Open Workspace", systemImage: "arrow.up.right.square", action: open)
+  }
+
+  @ViewBuilder private var content: some View {
     let options = card.options
     let selected = card.selected(choice: choices.choices[choiceKey])
     let env = selected?.app.workspace ?? card.apps[0].workspace
@@ -117,9 +142,24 @@ struct WorkspaceCardView: View {
           Pill(tone: isSelected ? .brand : .neutral, size: .small, outlined: !isSelected) { Text(option.label) }
         }
         .buttonStyle(.hoverRow())
+        .contextMenu { deviceMenu(option) }
         .help("Stream \(option.label)")
         .accessibilityLabel(option.label)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+      }
+    }
+  }
+
+  @ViewBuilder private func deviceMenu(_ option: WallCard.Option) -> some View {
+    let env = option.app.workspace
+    switch option.kind {
+    case .device(let device):
+      Button("Open Device Viewer", systemImage: "rectangle.expand.vertical") { openDevice(env.path, device.id) }
+      if DeviceTileMenu.applies(to: device) {
+        Divider()
+        DeviceTileMenuItems(
+          device: device, workspace: env.path, building: env.runningBuild(for: device) != nil, choice: nil,
+          openBuildLogs: nil)
       }
     }
   }
@@ -138,6 +178,7 @@ struct WorkspaceCardView: View {
             pausesWhenOffscreen: true, embedded: true)
         }
         .buttonStyle(CardPressStyle(highlightsDevice: true))
+        .contextMenu { deviceMenu(selected) }
         .id(selected.id)
       }
     } else {
