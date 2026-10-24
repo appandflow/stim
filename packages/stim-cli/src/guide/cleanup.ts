@@ -124,7 +124,9 @@ DISK PRESSURE LEVELS
        the short window: their dev server stops and their owned simulators
        and emulators are deleted
     4. node_modules and ios/Pods at the root or a project root of idle linked
-       worktrees, never the source checkout
+       worktrees, never the source checkout, with the running-process checks
+       of WORKTREE DEPENDENCIES; when worktree warm can restore them they are
+       recorded for the next start, ios or android to restore
     5. idle Gradle and Kotlin daemons, stopped as gc --delete --cache
        gradle-daemons stops them (never during a Stim build, never a busy or
        unverified one, never with STIM_HOME set), only when every Gradle

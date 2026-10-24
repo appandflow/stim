@@ -16,7 +16,7 @@ import { childEnvironment } from '../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
 import { ARTIFACT_DIRS, type ArtifactKind } from '../workspace/regenerable-dirs.ts';
 import { readRunningProcesses, runningFromReason, type RunningProcesses } from '../workspace/running-from.ts';
-import { recordLightened } from '../workspace/lightened.ts';
+import { recordLightened, restoreProblem } from '../workspace/lightened.ts';
 import {
   listWorktrees,
   resolveSourceCheckoutAsync,
@@ -323,7 +323,7 @@ export async function clearArtifact(
   const remove = () => {
     const reason = keptReason(candidate, kind, { ...options, now: Date.now(), ...(key ? { locked: key } : {}) });
     if (reason) return reason;
-    if (kind === 'dependencies') recordLightened(candidate.keys, candidate.path);
+    if (kind === 'dependencies' && !restoreProblem(candidate)) recordLightened(candidate.keys, candidate.path);
     rmSync(candidate.path, { recursive: true, force: true });
     return null;
   };

@@ -33,6 +33,7 @@ import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import * as memory from '../commands/gc/memory.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
+import { lightenedDirs } from '../workspace/lightened.ts';
 
 const GB = 1024;
 const MINUTE_MS = 60_000;
@@ -213,6 +214,7 @@ test('level 2 clears only untracked build directories of idle worktrees, and lev
 
   expect(existsSync(join(feature, 'node_modules'))).toBe(process.platform === 'win32');
   expect(existsSync(join(repo, 'node_modules'))).toBe(true);
+  expect(lightenedDirs(feature)).toEqual(process.platform === 'win32' ? [] : [join(feature, 'node_modules')]);
   expect(readMaintenanceState()?.lastPass?.blocked).toEqual(
     expect.arrayContaining([expect.stringContaining('disk pressure level 3')]),
   );
@@ -231,6 +233,19 @@ test.skipIf(process.platform === 'win32')(
     } finally {
       child.kill('SIGKILL');
     }
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'level 3 deletes the dependencies of a worktree whose lockfile drifted without promising a restore',
+  async () => {
+    const { feature } = repoWithFeatureWorktree();
+    writeFileSync(join(feature, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+    freeDisk(4);
+    await pass();
+    expect(existsSync(join(feature, 'node_modules'))).toBe(false);
+    expect(lightenedDirs(feature)).toEqual([]);
   },
   60_000,
 );

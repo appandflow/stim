@@ -1,10 +1,11 @@
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { isJsonObject, readJsonObject, workspaceLightenedFile, workspaceMetadataFile } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
 import { warmWorktreeTarget } from '../commands/worktree.ts';
 import { withWorkspaceStateLock } from './workspace-state.ts';
+import { listWorktrees, sourceCheckoutOf } from './worktree.ts';
 
 export function lightenedDirs(root: string): string[] {
   const record = readJsonObject(workspaceLightenedFile(root));
@@ -16,6 +17,43 @@ export function lightenedDirs(root: string): string[] {
 /** The keys among `keys` that have a Stim workspace, which is what restores a lightened worktree. */
 export function workspaceKeys(keys: readonly string[]): string[] {
   return keys.filter((key) => existsSync(workspaceMetadataFile(key)));
+}
+
+const LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lock', 'bun.lockb'];
+
+function readOrNull(path: string): Buffer | null {
+  try {
+    return readFileSync(path);
+  } catch {
+    return null;
+  }
+}
+
+/** Why `worktree warm` could not put back what was deleted at `path`: it copies the source checkout's copy. */
+export function restoreProblem(
+  { worktree, path }: { worktree: string; path: string },
+  sources: Map<string, string | null> = new Map(),
+): string | null {
+  if (!sources.has(worktree)) {
+    const source = sourceCheckoutOf(listWorktrees(worktree));
+    sources.set(worktree, 'refusal' in source ? null : source.path);
+  }
+  const source = sources.get(worktree);
+  if (!source) return 'its source checkout cannot be resolved, so worktree warm could not restore it';
+  const rel = relative(worktree, path);
+  if (!existsSync(join(source, rel))) return `the source checkout has no ${rel} for worktree warm to copy back`;
+  const pods = basename(rel) === 'Pods';
+  const locks = pods
+    ? [join(dirname(rel), 'Podfile.lock')]
+    : [...new Set(['.', dirname(rel)])].flatMap((dir) => LOCKFILES.map((name) => join(dir, name)));
+  const differs = locks.find((lock) => {
+    const mine = readOrNull(join(worktree, lock));
+    const theirs = readOrNull(join(source, lock));
+    return mine === null ? theirs !== null : theirs === null || !mine.equals(theirs);
+  });
+  return differs
+    ? `its ${differs} differs from the source checkout's, so worktree warm would restore other versions`
+    : null;
 }
 
 /** Records in each Stim workspace among `keys` that `dir` is being deleted to lighten its worktree. */

@@ -1,5 +1,3 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { basename, dirname, join, relative } from 'node:path';
 import chalk from 'chalk';
 import type { StimContext } from '@stim-cli/core';
 import { formatBytes } from '../../fs-util.ts';
@@ -10,8 +8,7 @@ import {
   type ArtifactCandidate,
 } from '../../maintenance/artifacts.ts';
 import { maintenancePinned } from '../../maintenance/protect.ts';
-import { listWorktrees, sourceCheckoutOf } from '../../workspace/worktree.ts';
-import { workspaceKeys } from '../../workspace/lightened.ts';
+import { restoreProblem, workspaceKeys } from '../../workspace/lightened.ts';
 import { canonicalPath } from './paths.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { LIGHTEN_AFTER_MS } from './workspaces.ts';
@@ -22,40 +19,6 @@ export interface WorktreeDependencies {
 }
 
 const NO_RESTORE = 'Stim has no workspace in its worktree, so no start, ios or android run would restore it';
-const LOCKFILES = ['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'bun.lock', 'bun.lockb'];
-
-function readOrNull(path: string): Buffer | null {
-  try {
-    return readFileSync(path);
-  } catch {
-    return null;
-  }
-}
-
-/** Why `worktree warm` could not put back what was deleted at `path`: it copies the source checkout's copy. */
-function restoreProblem({ worktree, path }: ArtifactCandidate, sources: Map<string, string | null>): string | null {
-  if (!sources.has(worktree)) {
-    const source = sourceCheckoutOf(listWorktrees(worktree));
-    sources.set(worktree, 'refusal' in source ? null : source.path);
-  }
-  const source = sources.get(worktree);
-  if (!source) return 'its source checkout cannot be resolved, so worktree warm could not restore it';
-  const rel = relative(worktree, path);
-  if (!existsSync(join(source, rel))) return `the source checkout has no ${rel} for worktree warm to copy back`;
-  const pods = basename(rel) === 'Pods';
-  const locks = pods
-    ? [join(dirname(rel), 'Podfile.lock')]
-    : [...new Set(['.', dirname(rel)])].flatMap((dir) => LOCKFILES.map((name) => join(dir, name)));
-  const differs = locks.find((lock) => {
-    const mine = readOrNull(join(worktree, lock));
-    const theirs = readOrNull(join(source, lock));
-    return mine === null ? theirs !== null : theirs === null || !mine.equals(theirs);
-  });
-  return differs
-    ? `its ${differs} differs from the source checkout's, so worktree warm would restore other versions`
-    : null;
-}
-
 /**
  * node_modules and ios/Pods of linked worktrees `gc --delete` lightens: idle for LIGHTEN_AFTER_MS, holding a Stim
  * workspace that restores them, and with nothing running from them.
