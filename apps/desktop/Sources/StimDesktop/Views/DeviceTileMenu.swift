@@ -35,8 +35,6 @@ struct DeviceTileMenu: View {
   }
 }
 
-/// The items of `DeviceTileMenu`, also used as a device's context menu. A nil `choice` leaves out a macOS app's
-/// window items, which only the tile that owns the window choice can offer.
 struct DeviceTileMenuItems: View {
   var device: DeviceRef
   var workspace: String
@@ -67,7 +65,6 @@ struct DeviceTileMenuItems: View {
   }
 }
 
-/// A macOS app's window items, observing `choice` so the list follows the app's windows.
 private struct MacosWindowItems: View {
   @ObservedObject var choice: MacosWindowChoice
   var hosted: Bool

@@ -120,8 +120,6 @@ struct WorkspaceActionsMenu: View {
   }
 }
 
-/// A provisioned workspace's actions menu and the confirmations its Stop and Remove Worktree items raise, shared by
-/// the sidebar row and the dashboard card. `content` places the menu, as `WorktreeActions` does for a worktree.
 struct WorkspaceActions<Content: View>: View {
   var env: Workspace
   var openLogs: (String) -> Void

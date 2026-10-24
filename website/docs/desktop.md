@@ -554,9 +554,9 @@ project), or the stream to open the workspace with that device focused. Cards th
 stop streaming and reconnect when you return to them.
 
 Right-click a card for the sidebar row's workspace menu behind **Open Workspace**: open in your editor or
-Terminal, **Reveal in Finder**, **Copy Path**, **Last Output**, **Run on iOS** and **Run on Android**, **Reload App**,
-**Stop**, **Show Logs** and **Remove Worktree...**. A card with several apps shows the worktree menu with per-app
-submenus instead. Right-click the stream or a device button for **Open Device Viewer** and, on a simulator,
+Terminal, **Reveal in Finder**, **Copy Path**, **Last Output**, **Run on** each platform the app supports,
+**Reload App**, **Start Dev Server** or **Stop**, **Show Logs** and **Remove Worktree...**. A card with several apps shows
+the worktree menu with per-app submenus, **Stop All**, **Hide** and **Remove Worktree...** instead. Right-click the stream or a device button for **Open Device Viewer** and, on a simulator,
 emulator or macOS app, **Build and Run** and **Stop**. Right-click an Idle project card for **Open Project**,
 **Reveal in Finder** and **Copy Path**. Stop and Remove Worktree ask for the same confirmation as in the sidebar.
 
