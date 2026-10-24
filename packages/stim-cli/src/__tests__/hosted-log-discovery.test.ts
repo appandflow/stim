@@ -82,7 +82,7 @@ test.each([false, true])('discovery recovers a late or replaced state directory 
   if (!late) fs.rmSync(workspaceDir(root), { recursive: true });
   writeWorkspaceState(root, {});
   const afterCreation = stateReads();
-  if (!late) await vi.advanceTimersByTimeAsync(10_000);
+  await vi.advanceTimersByTimeAsync(10_000);
   await vi.waitFor(() => expect(stateReads()).toBeGreaterThan(afterCreation), { timeout: 1000 });
 
   writeWorkspaceState(root, { discoveryFixture: 1 });
