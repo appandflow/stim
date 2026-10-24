@@ -49,6 +49,8 @@ vi.mock('../devices/stim-desktop.ts', async (importOriginal) => {
   return { ...actual, workspaceLinks: vi.fn<typeof actual.workspaceLinks>(actual.workspaceLinks) };
 });
 
+// Each Git child of a warm starts Windows PowerShell 5.1 for its report job (#4103), about 0.5 s apiece.
+const TEST_TIMEOUT_MS = process.platform === 'win32' ? 120_000 : 30_000;
 let base: string;
 let root: string;
 let target: string;
@@ -114,7 +116,7 @@ beforeEach(() => {
   git(root, 'push', '-q', '-u', 'origin', 'main');
   git(root, 'remote', 'set-head', 'origin', '-a');
   git(root, 'worktree', 'add', '-qb', 'linked', target);
-}, 30_000);
+}, TEST_TIMEOUT_MS);
 
 async function cleanupFixture() {
   while (pendingWarms.length) await Promise.allSettled(pendingWarms.splice(0));
@@ -276,84 +278,96 @@ test('the refresh decisions read off the state without touching git', () => {
   });
 });
 
-test('--refresh fast-forwards the source checkout, then copies', async () => {
-  const published = fallBehind({ 'src/new.ts': 'upstream work\n' });
-  write(root, '.env', 'main env');
-  const result = await runWarm(target, '--refresh');
-  expect(result.code).toBe(0);
-  expect(result.stdout).toEqual([]);
-  expect(result.stderr).toContain(
-    `checkout    main 1 commit behind origin/main -> fast-forwarded to ${published.slice(0, 7)}`,
-  );
-  expect(result.stderr).toContain(`deps        source ${root}: no lockfile in this repository -> skipped`);
-  expect(result.stderr).toContain(`pods        source ${root}: no ios/ directory -> skipped`);
-  expect(result.stderr).toMatch(/carry {7}complete: 1 ignored entries copied/);
-  expect(git(root, 'rev-parse', 'HEAD')).toBe(published);
-  expect(git(target, 'branch', '--show-current')).toBe('linked');
-  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-}, 30_000);
-
-test('a warm that registers an app ends with the Stim Desktop link on stderr, also when the refresh had nothing to do', async () => {
-  write(target, 'package.json', '{"name":"app","dependencies":{"react-native":"0.80.0"}}\n');
-  vi.mocked(workspaceLinks).mockResolvedValue({ desktop: 'stim-desktop://workspace?path=/w' });
-  try {
-    for (const args of [[], ['--refresh']]) {
-      const result = await runWarm(target, ...args);
-      expect(result.code).toBe(0);
-      expect(result.stdout).toEqual([]);
-      expect(result.stderr).toContain('Open in Stim: stim-desktop://workspace?path=/w');
-    }
-    expect(vi.mocked(workspaceLinks)).toHaveBeenLastCalledWith(target);
-  } finally {
-    vi.mocked(workspaceLinks).mockReset();
-  }
-}, 30_000);
-
-test('a current refresh copies under its shared claim while a sibling copy still holds the seed', async () => {
-  write(root, '.env', 'main env');
-  const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'copy' });
-  const real = getExecutor();
-  const modes: string[][] = [];
-  const copyModes: string[][] = [];
-  let fetched = false;
-  setExecutor({
-    ...real,
-    async runFileAsync(cmd, args, options) {
-      if (cmd === 'git' && args.includes('--ignored')) {
-        copyModes.push(readClaimSet(warmClaimPath(root)).live.map((claim) => claim.mode));
-      }
-      return real.runFileAsync(cmd, args, options);
-    },
-    runFileQuiet(cmd, args, options) {
-      if (cmd === 'git' && args.includes('fetch')) fetched = true;
-      if (cmd === 'git' && args.includes('ls-remote')) {
-        modes.push(readClaimSet(warmClaimPath(root)).live.map((claim) => claim.mode));
-      }
-      return real.runFileQuiet(cmd, args, options);
-    },
-  });
-  let completed = false;
-  const warming = runWarm(target, '--refresh').then((result) => {
-    completed = true;
-    return result;
-  });
-  try {
-    await waitUntil('the sibling copy to finish', () => completed);
-    expect(completed).toBe(true);
+test(
+  '--refresh fast-forwards the source checkout, then copies',
+  async () => {
+    const published = fallBehind({ 'src/new.ts': 'upstream work\n' });
+    write(root, '.env', 'main env');
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(0);
+    expect(result.stdout).toEqual([]);
+    expect(result.stderr).toContain(
+      `checkout    main 1 commit behind origin/main -> fast-forwarded to ${published.slice(0, 7)}`,
+    );
+    expect(result.stderr).toContain(`deps        source ${root}: no lockfile in this repository -> skipped`);
+    expect(result.stderr).toContain(`pods        source ${root}: no ios/ directory -> skipped`);
+    expect(result.stderr).toMatch(/carry {7}complete: 1 ignored entries copied/);
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(published);
+    expect(git(target, 'branch', '--show-current')).toBe('linked');
     expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-    expect(readClaimSet(warmClaimPath(root)).live).toHaveLength(1);
-  } finally {
-    held.release();
-    await warming;
-  }
-  const result = await warming;
-  expect(result.code).toBe(0);
-  expect(result.stdout).toEqual([]);
-  expect(result.stderr).toContain('acquired shared (seed current)');
-  expect(fetched).toBe(false);
-  expect(modes).toEqual([['shared', 'shared']]);
-  expect(copyModes).toEqual([['shared', 'shared']]);
-}, 30_000);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'a warm that registers an app ends with the Stim Desktop link on stderr, also when the refresh had nothing to do',
+  async () => {
+    write(target, 'package.json', '{"name":"app","dependencies":{"react-native":"0.80.0"}}\n');
+    vi.mocked(workspaceLinks).mockResolvedValue({ desktop: 'stim-desktop://workspace?path=/w' });
+    try {
+      for (const args of [[], ['--refresh']]) {
+        const result = await runWarm(target, ...args);
+        expect(result.code).toBe(0);
+        expect(result.stdout).toEqual([]);
+        expect(result.stderr).toContain('Open in Stim: stim-desktop://workspace?path=/w');
+      }
+      expect(vi.mocked(workspaceLinks)).toHaveBeenLastCalledWith(target);
+    } finally {
+      vi.mocked(workspaceLinks).mockReset();
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'a current refresh copies under its shared claim while a sibling copy still holds the seed',
+  async () => {
+    write(root, '.env', 'main env');
+    const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'copy' });
+    const real = getExecutor();
+    const modes: string[][] = [];
+    const copyModes: string[][] = [];
+    let fetched = false;
+    setExecutor({
+      ...real,
+      async runFileAsync(cmd, args, options) {
+        if (cmd === 'git' && args.includes('--ignored')) {
+          copyModes.push(readClaimSet(warmClaimPath(root)).live.map((claim) => claim.mode));
+        }
+        return real.runFileAsync(cmd, args, options);
+      },
+      runFileQuiet(cmd, args, options) {
+        if (cmd === 'git' && args.includes('fetch')) fetched = true;
+        if (cmd === 'git' && args.includes('ls-remote')) {
+          modes.push(readClaimSet(warmClaimPath(root)).live.map((claim) => claim.mode));
+        }
+        return real.runFileQuiet(cmd, args, options);
+      },
+    });
+    let completed = false;
+    const warming = runWarm(target, '--refresh').then((result) => {
+      completed = true;
+      return result;
+    });
+    try {
+      await waitUntil('the sibling copy to finish', () => completed);
+      expect(completed).toBe(true);
+      expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
+      expect(readClaimSet(warmClaimPath(root)).live).toHaveLength(1);
+    } finally {
+      held.release();
+      await warming;
+    }
+    const result = await warming;
+    expect(result.code).toBe(0);
+    expect(result.stdout).toEqual([]);
+    expect(result.stderr).toContain('acquired shared (seed current)');
+    expect(fetched).toBe(false);
+    expect(modes).toEqual([['shared', 'shared']]);
+    expect(copyModes).toEqual([['shared', 'shared']]);
+  },
+  TEST_TIMEOUT_MS,
+);
 
 test.each(['fast-forward', 'remote changes', 'dependencies', 'pods'])(
   'a refresh needing %s drains copies before fetching or installing',
@@ -410,139 +424,175 @@ test.each(['fast-forward', 'remote changes', 'dependencies', 'pods'])(
     expect(modes.every((mode) => mode.length === 1 && mode[0] === 'exclusive')).toBe(true);
     expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
   },
-  30_000,
+  TEST_TIMEOUT_MS,
 );
 
-test('a refresh rechecks checkout safety after releasing shared and waiting for exclusive', async () => {
-  fallBehind({ 'src/new.ts': 'upstream work\n' });
-  const before = git(root, 'rev-parse', 'HEAD');
-  write(root, '.env', 'main env');
-  const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'copy' });
-  const warming = runWarm(target, '--refresh');
-  try {
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    write(root, 'package.json', '{"name":"edited-while-waiting"}\n');
-  } finally {
-    held.release();
-  }
-  const result = await warming;
-  expect(result.code).toBe(1);
-  expect(result.stderr).toContain('failed: STIM_MAIN_DIRTY');
-  expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
-  expect(existsSync(join(target, '.env'))).toBe(false);
-}, 30_000);
+test(
+  'a refresh rechecks checkout safety after releasing shared and waiting for exclusive',
+  async () => {
+    fallBehind({ 'src/new.ts': 'upstream work\n' });
+    const before = git(root, 'rev-parse', 'HEAD');
+    write(root, '.env', 'main env');
+    const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'copy' });
+    const warming = runWarm(target, '--refresh');
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      write(root, 'package.json', '{"name":"edited-while-waiting"}\n');
+    } finally {
+      held.release();
+    }
+    const result = await warming;
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('failed: STIM_MAIN_DIRTY');
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
+    expect(existsSync(join(target, '.env'))).toBe(false);
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('--refresh reports a fetch it could not run and continues with the local state', async () => {
-  fallBehind({ 'src/new.ts': 'upstream work\n' });
-  git(root, 'remote', 'set-url', 'origin', join(base, 'gone.git'));
-  const result = await runWarm(target, '--refresh');
-  expect(result.code).toBe(0);
-  expect(result.stderr).toContain('checkout    could not fetch; continuing with the local state');
-  expect(result.stderr).toMatch(/checkout {4}main 1 commit behind origin\/main -> fast-forwarded to/);
-}, 30_000);
+test(
+  '--refresh reports a fetch it could not run and continues with the local state',
+  async () => {
+    fallBehind({ 'src/new.ts': 'upstream work\n' });
+    git(root, 'remote', 'set-url', 'origin', join(base, 'gone.git'));
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('checkout    could not fetch; continuing with the local state');
+    expect(result.stderr).toMatch(/checkout {4}main 1 commit behind origin\/main -> fast-forwarded to/);
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('--refresh refuses a diverged source checkout without merging or resetting it', async () => {
-  fallBehind({ 'src/new.ts': 'upstream work\n' });
-  write(root, 'src/local.ts', 'local work\n');
-  commit(root, 'local');
-  const before = git(root, 'rev-parse', 'HEAD');
-  const result = await runWarm(target, '--refresh');
-  expect(result.code).toBe(1);
-  expect(result.stderr).toMatch(/main is 1 ahead of and 1 behind origin\/main/);
-  expect(result.stderr).toContain('failed: STIM_MAIN_DIVERGED');
-  expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
-  expect(result.stderr).not.toMatch(/carry {7}complete/);
-}, 30_000);
+test(
+  '--refresh refuses a diverged source checkout without merging or resetting it',
+  async () => {
+    fallBehind({ 'src/new.ts': 'upstream work\n' });
+    write(root, 'src/local.ts', 'local work\n');
+    commit(root, 'local');
+    const before = git(root, 'rev-parse', 'HEAD');
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(1);
+    expect(result.stderr).toMatch(/main is 1 ahead of and 1 behind origin\/main/);
+    expect(result.stderr).toContain('failed: STIM_MAIN_DIVERGED');
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
+    expect(result.stderr).not.toMatch(/carry {7}complete/);
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('--refresh refuses a dirty source checkout and names the path, but a plain warm still copies it', async () => {
-  write(root, 'package.json', '{"name":"edited-in-main"}\n');
-  write(root, '.env', 'main env');
-  const refused = await runWarm(target, '--refresh');
-  expect(refused.code).toBe(1);
-  expect(refused.stderr).toMatch(/uncommitted changes to tracked files/);
-  expect(refused.stderr).toContain('package.json');
-  expect(refused.stderr).toContain('failed: STIM_MAIN_DIRTY');
-  expect(existsSync(join(target, '.env'))).toBe(false);
+test(
+  '--refresh refuses a dirty source checkout and names the path, but a plain warm still copies it',
+  async () => {
+    write(root, 'package.json', '{"name":"edited-in-main"}\n');
+    write(root, '.env', 'main env');
+    const refused = await runWarm(target, '--refresh');
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toMatch(/uncommitted changes to tracked files/);
+    expect(refused.stderr).toContain('package.json');
+    expect(refused.stderr).toContain('failed: STIM_MAIN_DIRTY');
+    expect(existsSync(join(target, '.env'))).toBe(false);
 
-  process.exitCode = 0;
-  const plain = await runWarm(target);
-  expect(plain.code).toBe(0);
-  expect(plain.stdout).toEqual([]);
-  expect(plain.stderr).toMatch(/carry {7}complete: 1 ignored entries copied, 0 kept, 0 failed/);
-  expect(plain.stderr).not.toMatch(/checkout|deps|lock/);
-  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-  expect(readFileSync(join(root, 'package.json'), 'utf-8')).toBe('{"name":"edited-in-main"}\n');
-}, 30_000);
+    process.exitCode = 0;
+    const plain = await runWarm(target);
+    expect(plain.code).toBe(0);
+    expect(plain.stdout).toEqual([]);
+    expect(plain.stderr).toMatch(/carry {7}complete: 1 ignored entries copied, 0 kept, 0 failed/);
+    expect(plain.stderr).not.toMatch(/checkout|deps|lock/);
+    expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
+    expect(readFileSync(join(root, 'package.json'), 'utf-8')).toBe('{"name":"edited-in-main"}\n');
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('--refresh refuses a source checkout with a merge in progress', async () => {
-  git(root, 'checkout', '-qb', 'other');
-  write(root, 'package.json', '{"name":"other-side"}\n');
-  commit(root, 'other side');
-  git(root, 'checkout', '-q', 'main');
-  write(root, 'package.json', '{"name":"main-side"}\n');
-  commit(root, 'main side');
-  expect(() => git(root, 'merge', 'other')).toThrow('Command failed');
-  expect(existsSync(join(root, '.git', 'MERGE_HEAD'))).toBe(true);
+test(
+  '--refresh refuses a source checkout with a merge in progress',
+  async () => {
+    git(root, 'checkout', '-qb', 'other');
+    write(root, 'package.json', '{"name":"other-side"}\n');
+    commit(root, 'other side');
+    git(root, 'checkout', '-q', 'main');
+    write(root, 'package.json', '{"name":"main-side"}\n');
+    commit(root, 'main side');
+    expect(() => git(root, 'merge', 'other')).toThrow('Command failed');
+    expect(existsSync(join(root, '.git', 'MERGE_HEAD'))).toBe(true);
 
-  const result = await runWarm(target, '--refresh');
-  expect(result.code).toBe(1);
-  expect(result.stderr).toMatch(/a merge is in progress there/);
-  expect(result.stderr).toContain('failed: STIM_MAIN_DIRTY');
-  expect(existsSync(join(root, '.git', 'MERGE_HEAD'))).toBe(true);
-}, 30_000);
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(1);
+    expect(result.stderr).toMatch(/a merge is in progress there/);
+    expect(result.stderr).toContain('failed: STIM_MAIN_DIRTY');
+    expect(existsSync(join(root, '.git', 'MERGE_HEAD'))).toBe(true);
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('--refresh refuses a detached source checkout and an untracked file is not a reason to refuse', async () => {
-  write(root, 'untracked.txt', 'not a reason\n');
-  git(root, 'checkout', '-q', '--detach');
-  const result = await runWarm(target, '--refresh');
-  expect(result.code).toBe(1);
-  expect(result.stderr).toMatch(/HEAD is detached/);
-  expect(result.stderr).toContain('failed: STIM_MAIN_DETACHED');
+test(
+  '--refresh refuses a detached source checkout and an untracked file is not a reason to refuse',
+  async () => {
+    write(root, 'untracked.txt', 'not a reason\n');
+    git(root, 'checkout', '-q', '--detach');
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(1);
+    expect(result.stderr).toMatch(/HEAD is detached/);
+    expect(result.stderr).toContain('failed: STIM_MAIN_DETACHED');
 
-  process.exitCode = 0;
-  git(root, 'checkout', '-q', 'main');
-  const attached = await runWarm(target, '--refresh');
-  expect(attached.code).toBe(0);
-  expect(attached.stderr).toContain('checkout    main up to date with origin/main');
-}, 30_000);
+    process.exitCode = 0;
+    git(root, 'checkout', '-q', 'main');
+    const attached = await runWarm(target, '--refresh');
+    expect(attached.code).toBe(0);
+    expect(attached.stderr).toContain('checkout    main up to date with origin/main');
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('--refresh leaves a branch with no upstream where it is', async () => {
-  git(root, 'checkout', '-qb', 'solo');
-  const head = git(root, 'rev-parse', 'HEAD');
-  const result = await runWarm(target, '--refresh');
-  expect(result.code).toBe(0);
-  expect(result.stderr).toContain(`checkout    solo has no upstream -> left at ${head.slice(0, 7)}`);
-  expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
-}, 30_000);
+test(
+  '--refresh leaves a branch with no upstream where it is',
+  async () => {
+    git(root, 'checkout', '-qb', 'solo');
+    const head = git(root, 'rev-parse', 'HEAD');
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain(`checkout    solo has no upstream -> left at ${head.slice(0, 7)}`);
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('--refresh warns when the source checkout is not on the default branch, and stays quiet when it is', async () => {
-  const onDefault = await runWarm(target, '--refresh');
-  expect(onDefault.stderr).not.toMatch(/default branch/);
+test(
+  '--refresh warns when the source checkout is not on the default branch, and stays quiet when it is',
+  async () => {
+    const onDefault = await runWarm(target, '--refresh');
+    expect(onDefault.stderr).not.toMatch(/default branch/);
 
-  process.exitCode = 0;
-  git(root, 'checkout', '-qb', 'wip');
-  git(root, 'push', '-q', '-u', 'origin', 'wip');
-  const onFeature = await runWarm(target, '--refresh');
-  expect(onFeature.code).toBe(0);
-  expect(onFeature.stderr).toContain('            not the default branch (main); worktrees seeded from this copy');
-  expect(onFeature.stderr).toContain("            carry wip's dependencies");
-}, 30_000);
+    process.exitCode = 0;
+    git(root, 'checkout', '-qb', 'wip');
+    git(root, 'push', '-q', '-u', 'origin', 'wip');
+    const onFeature = await runWarm(target, '--refresh');
+    expect(onFeature.code).toBe(0);
+    expect(onFeature.stderr).toContain('            not the default branch (main); worktrees seeded from this copy');
+    expect(onFeature.stderr).toContain("            carry wip's dependencies");
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('worktree.defaultBranch outranks origin/HEAD, and neither resolving says why instead of warning', async () => {
-  write(root, '.stim.json', '{"worktree":{"defaultBranch":"release"}}');
-  const configured = await runWarm(target, '--refresh');
-  expect(configured.code).toBe(0);
-  expect(configured.stderr).toContain('not the default branch (release)');
+test(
+  'worktree.defaultBranch outranks origin/HEAD, and neither resolving says why instead of warning',
+  async () => {
+    write(root, '.stim.json', '{"worktree":{"defaultBranch":"release"}}');
+    const configured = await runWarm(target, '--refresh');
+    expect(configured.code).toBe(0);
+    expect(configured.stderr).toContain('not the default branch (release)');
 
-  process.exitCode = 0;
-  rmSync(join(root, '.stim.json'));
-  git(root, 'remote', 'set-head', 'origin', '-d');
-  git(root, 'remote', 'remove', 'origin');
-  const unknown = await runWarm(target, '--refresh');
-  expect(unknown.code).toBe(0);
-  expect(unknown.stderr).toMatch(/could not tell the default branch: no worktree.defaultBranch setting and no/);
-  expect(unknown.stderr).toContain('git remote set-head origin -a');
-}, 30_000);
+    process.exitCode = 0;
+    rmSync(join(root, '.stim.json'));
+    git(root, 'remote', 'set-head', 'origin', '-d');
+    git(root, 'remote', 'remove', 'origin');
+    const unknown = await runWarm(target, '--refresh');
+    expect(unknown.code).toBe(0);
+    expect(unknown.stderr).toMatch(/could not tell the default branch: no worktree.defaultBranch setting and no/);
+    expect(unknown.stderr).toContain('git remote set-head origin -a');
+  },
+  TEST_TIMEOUT_MS,
+);
 
 test.each(['.', 'apps/mobile'])(
   '--refresh names the source dependency root at %s and the invoking app for pods',
@@ -586,127 +636,143 @@ test.each(['.', 'apps/mobile'])(
     expect(result.stderr).not.toContain(`pods        source ${join(root, 'apps', 'other')}`);
     expect(result.stderr).not.toContain(`deps        source ${target}`);
   },
-  30_000,
+  TEST_TIMEOUT_MS,
 );
 
-test('fixture cleanup waits for an in-flight refresh before resetting its state', async () => {
-  write(root, 'pnpm-lock.yaml', 'lock v1\n');
-  commit(root, 'lockfile');
-  git(root, 'push', '-q', 'origin', 'main');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
-  write(root, '.env', 'main env');
-  const previous = process.cwd();
-  const home = process.env.STIM_HOME;
-  const child = makeChildProcess();
-  const real = getExecutor();
-  let installerStarted!: () => void;
-  const started = new Promise<void>((resolve) => {
-    installerStarted = resolve;
-  });
-  const executor = {
-    ...real,
-    spawn: () => {
-      installerStarted();
-      return child;
-    },
-  };
-  setExecutor(executor);
-  const warm = runWarm(target, '--refresh');
-  await started;
-  const cleanup = cleanupFixture();
-  let cleaned = false;
-  void cleanup.then(
-    () => {
-      cleaned = true;
-      return undefined;
-    },
-    () => {
-      cleaned = true;
-      return undefined;
-    },
-  );
-  try {
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(cleaned).toBe(false);
-    expect(process.cwd()).toBe(target);
-    expect(process.env.STIM_HOME).toBe(home);
-    expect(getExecutor()).toBe(executor);
-    expect(vi.isMockFunction(console.error)).toBe(true);
-    expect(existsSync(base)).toBe(true);
+test(
+  'fixture cleanup waits for an in-flight refresh before resetting its state',
+  async () => {
+    write(root, 'pnpm-lock.yaml', 'lock v1\n');
+    commit(root, 'lockfile');
+    git(root, 'push', '-q', 'origin', 'main');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+    write(root, '.env', 'main env');
+    const previous = process.cwd();
+    const home = process.env.STIM_HOME;
+    const child = makeChildProcess();
+    const real = getExecutor();
+    let installerStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      installerStarted = resolve;
+    });
+    const executor = {
+      ...real,
+      spawn: () => {
+        installerStarted();
+        return child;
+      },
+    };
+    setExecutor(executor);
+    const warm = runWarm(target, '--refresh');
+    await started;
+    const cleanup = cleanupFixture();
+    let cleaned = false;
+    void cleanup.then(
+      () => {
+        cleaned = true;
+        return undefined;
+      },
+      () => {
+        cleaned = true;
+        return undefined;
+      },
+    );
+    try {
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(cleaned).toBe(false);
+      expect(process.cwd()).toBe(target);
+      expect(process.env.STIM_HOME).toBe(home);
+      expect(getExecutor()).toBe(executor);
+      expect(vi.isMockFunction(console.error)).toBe(true);
+      expect(existsSync(base)).toBe(true);
+      expect(existsSync(join(target, '.env'))).toBe(false);
+    } finally {
+      child.stderr?.emit('data', Buffer.from('ERR_PNPM_OUTDATED_LOCKFILE\n'));
+      child.emit('exit', 1, null);
+      child.emit('close', 1, null);
+      await Promise.allSettled([warm, cleanup]);
+    }
+    const result = await warm;
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('ERR_PNPM_OUTDATED_LOCKFILE');
+    expect(result.stderr).toContain('failed: STIM_DEPS_FAILED');
+    await cleanup;
+    expect(process.cwd()).toBe(previous);
+    expect(getExecutor()).toBe(real);
+    expect(process.env.STIM_HOME).toBeUndefined();
+    expect(process.exitCode).toBe(0);
+    expect(existsSync(base)).toBe(false);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'a failed install refuses with the code the build path uses and does not copy',
+  async () => {
+    write(root, 'pnpm-lock.yaml', 'lock v1\n');
+    commit(root, 'lockfile');
+    git(root, 'push', '-q', 'origin', 'main');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+    write(root, '.env', 'main env');
+    const real = getExecutor();
+    setExecutor({ ...real, spawn: () => makeExitingChild(1, 'ERR_PNPM_OUTDATED_LOCKFILE\n') });
+    const result = await runWarm(target, '--refresh');
+    expect(result.code).toBe(1);
+    expect(result.stderr).toMatch(/`pnpm install` failed \(exit code 1\)/);
+    expect(result.stderr).toContain('ERR_PNPM_OUTDATED_LOCKFILE');
+    expect(result.stderr).toContain('failed: STIM_DEPS_FAILED');
     expect(existsSync(join(target, '.env'))).toBe(false);
-  } finally {
-    child.stderr?.emit('data', Buffer.from('ERR_PNPM_OUTDATED_LOCKFILE\n'));
-    child.emit('exit', 1, null);
-    child.emit('close', 1, null);
-    await Promise.allSettled([warm, cleanup]);
-  }
-  const result = await warm;
-  expect(result.code).toBe(1);
-  expect(result.stderr).toContain('ERR_PNPM_OUTDATED_LOCKFILE');
-  expect(result.stderr).toContain('failed: STIM_DEPS_FAILED');
-  await cleanup;
-  expect(process.cwd()).toBe(previous);
-  expect(getExecutor()).toBe(real);
-  expect(process.env.STIM_HOME).toBeUndefined();
-  expect(process.exitCode).toBe(0);
-  expect(existsSync(base)).toBe(false);
-}, 30_000);
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('a failed install refuses with the code the build path uses and does not copy', async () => {
-  write(root, 'pnpm-lock.yaml', 'lock v1\n');
-  commit(root, 'lockfile');
-  git(root, 'push', '-q', 'origin', 'main');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
-  write(root, '.env', 'main env');
-  const real = getExecutor();
-  setExecutor({ ...real, spawn: () => makeExitingChild(1, 'ERR_PNPM_OUTDATED_LOCKFILE\n') });
-  const result = await runWarm(target, '--refresh');
-  expect(result.code).toBe(1);
-  expect(result.stderr).toMatch(/`pnpm install` failed \(exit code 1\)/);
-  expect(result.stderr).toContain('ERR_PNPM_OUTDATED_LOCKFILE');
-  expect(result.stderr).toContain('failed: STIM_DEPS_FAILED');
-  expect(existsSync(join(target, '.env'))).toBe(false);
-}, 30_000);
+test(
+  'a refresh in flight blocks a plain warm from another app of the same repository',
+  async () => {
+    write(root, 'apps/a/package.json', '{"name":"a"}\n');
+    write(root, 'apps/b/package.json', '{"name":"b"}\n');
+    commit(root, 'apps');
+    git(root, 'push', '-q', 'origin', 'main');
+    git(target, 'merge', '-q', '--ff-only', 'main');
+    write(root, '.env', 'main env');
 
-test('a refresh in flight blocks a plain warm from another app of the same repository', async () => {
-  write(root, 'apps/a/package.json', '{"name":"a"}\n');
-  write(root, 'apps/b/package.json', '{"name":"b"}\n');
-  commit(root, 'apps');
-  git(root, 'push', '-q', 'origin', 'main');
-  git(target, 'merge', '-q', '--ff-only', 'main');
-  write(root, '.env', 'main env');
-
-  const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'refresh' });
-  const warm = runWarm(join(target, 'apps', 'b'));
-  while (warm.stderrSoFar() === '') await new Promise((resolve) => setTimeout(resolve, 50));
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  expect(existsSync(join(target, '.env'))).toBe(false);
-  held.release();
-  const result = await warm;
-  expect(result.code).toBe(0);
-  expect(result.stderr).toMatch(/lock {8}acquired/);
-  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-}, 30_000);
-
-test('warms from two apps of one monorepo resolve one claim, keyed on the repository root', async () => {
-  write(root, 'apps/a/package.json', '{"name":"a"}\n');
-  write(root, 'apps/b/package.json', '{"name":"b"}\n');
-  commit(root, 'apps');
-  git(root, 'push', '-q', 'origin', 'main');
-  git(target, 'merge', '-q', '--ff-only', 'main');
-  for (const app of ['a', 'b']) {
-    expect(warmClaimPath((await warmWorktreePaths(join(target, 'apps', app))).root)).toBe(warmClaimPath(root));
-  }
-  const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'refresh' });
-  try {
-    expect(readdirSync(warmClaimsDir())).toEqual([basename(warmClaimPath(root))]);
-  } finally {
+    const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'refresh' });
+    const warm = runWarm(join(target, 'apps', 'b'));
+    while (warm.stderrSoFar() === '') await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(existsSync(join(target, '.env'))).toBe(false);
     held.release();
-  }
-  expect(existsSync(warmClaimPath(root))).toBe(false);
-}, 30_000);
+    const result = await warm;
+    expect(result.code).toBe(0);
+    expect(result.stderr).toMatch(/lock {8}acquired/);
+    expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'warms from two apps of one monorepo resolve one claim, keyed on the repository root',
+  async () => {
+    write(root, 'apps/a/package.json', '{"name":"a"}\n');
+    write(root, 'apps/b/package.json', '{"name":"b"}\n');
+    commit(root, 'apps');
+    git(root, 'push', '-q', 'origin', 'main');
+    git(target, 'merge', '-q', '--ff-only', 'main');
+    for (const app of ['a', 'b']) {
+      expect(warmClaimPath((await warmWorktreePaths(join(target, 'apps', app))).root)).toBe(warmClaimPath(root));
+    }
+    const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'refresh' });
+    try {
+      expect(readdirSync(warmClaimsDir())).toEqual([basename(warmClaimPath(root))]);
+    } finally {
+      held.release();
+    }
+    expect(existsSync(warmClaimPath(root))).toBe(false);
+  },
+  TEST_TIMEOUT_MS,
+);
 
 function claimedInstaller(): { pid?: number } | null | undefined {
   const dir = exclusiveClaimDir(warmClaimPath(root));
@@ -716,121 +782,137 @@ function claimedInstaller(): { pid?: number } | null | undefined {
   return JSON.parse(readFileSync(join(dir, name), 'utf-8')).record;
 }
 
-test('--refresh records the installer process group it spawned, so its own death cannot free the claim', async () => {
-  write(root, 'pnpm-lock.yaml', 'lock v1\n');
-  commit(root, 'lockfile');
-  git(root, 'push', '-q', 'origin', 'main');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+test(
+  '--refresh records the installer process group it spawned, so its own death cannot free the claim',
+  async () => {
+    write(root, 'pnpm-lock.yaml', 'lock v1\n');
+    commit(root, 'lockfile');
+    git(root, 'push', '-q', 'origin', 'main');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
 
-  const real = getExecutor();
-  const gate = join(base, 'finish-install');
-  let spawnedPid: number | undefined;
-  let leadsItsOwnGroup: unknown;
-  setExecutor({
-    ...real,
-    spawn(_cmd: string, _args: string[], opts: SpawnOptions) {
-      leadsItsOwnGroup = opts?.detached;
-      const child = real.spawn(
-        process.execPath,
-        [
-          '-e',
-          'const fs = require("node:fs"); const timer = setInterval(() => { if (fs.existsSync(process.argv[1])) clearInterval(timer); }, 20);',
-          gate,
-        ],
-        opts,
-      );
-      spawnedPid = child.pid;
-      return child;
-    },
-  });
-  const warm = runWarm(target, '--refresh');
-  try {
-    const duringInstall = await waitUntil('the installer child claim', claimedInstaller);
-    expect(leadsItsOwnGroup).toBe(true);
-    expect(duringInstall).toEqual({ pid: spawnedPid, processToken: expect.any(String) });
-  } finally {
-    writeFileSync(gate, 'go');
-  }
-  const result = await warm;
-  expect(result.code).toBe(0);
-  expect(claimedInstaller()).toBe(undefined);
-}, 30_000);
+    const real = getExecutor();
+    const gate = join(base, 'finish-install');
+    let spawnedPid: number | undefined;
+    let leadsItsOwnGroup: unknown;
+    setExecutor({
+      ...real,
+      spawn(_cmd: string, _args: string[], opts: SpawnOptions) {
+        leadsItsOwnGroup = opts?.detached;
+        const child = real.spawn(
+          process.execPath,
+          [
+            '-e',
+            'const fs = require("node:fs"); const timer = setInterval(() => { if (fs.existsSync(process.argv[1])) clearInterval(timer); }, 20);',
+            gate,
+          ],
+          opts,
+        );
+        spawnedPid = child.pid;
+        return child;
+      },
+    });
+    const warm = runWarm(target, '--refresh');
+    try {
+      const duringInstall = await waitUntil('the installer child claim', claimedInstaller);
+      expect(leadsItsOwnGroup).toBe(true);
+      expect(duringInstall).toEqual({ pid: spawnedPid, processToken: expect.any(String) });
+    } finally {
+      writeFileSync(gate, 'go');
+    }
+    const result = await warm;
+    expect(result.code).toBe(0);
+    expect(claimedInstaller()).toBe(undefined);
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('an error from the copy itself is not an unavailable claim, and does not start a second copy', async () => {
-  write(root, '.env', 'main env');
-  mkdirSync(join(root, '.worktreeexclude'), { recursive: true });
-  const result = await runWarm(target);
-  expect(result.code).toBe(1);
-  expect(result.stderr).not.toMatch(/lock {8}unavailable/);
-  expect(result.stderr.match(/Could not warm this worktree/g)).toHaveLength(1);
-  expect(result.stderr).not.toMatch(/carry {7}complete/);
-  expect(existsSync(join(target, '.env'))).toBe(false);
-  expect(existsSync(warmClaimPath(root))).toBe(false);
-}, 30_000);
+test(
+  'an error from the copy itself is not an unavailable claim, and does not start a second copy',
+  async () => {
+    write(root, '.env', 'main env');
+    mkdirSync(join(root, '.worktreeexclude'), { recursive: true });
+    const result = await runWarm(target);
+    expect(result.code).toBe(1);
+    expect(result.stderr).not.toMatch(/lock {8}unavailable/);
+    expect(result.stderr.match(/Could not warm this worktree/g)).toHaveLength(1);
+    expect(result.stderr).not.toMatch(/carry {7}complete/);
+    expect(existsSync(join(target, '.env'))).toBe(false);
+    expect(existsSync(warmClaimPath(root))).toBe(false);
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('a warm claim Stim cannot resolve refuses both paths instead of copying past it', async () => {
-  write(root, '.env', 'main env');
-  const claim = plantClaim(warmClaimPath(root), 'exclusive', goneClaimOwner(), {
-    claimId: 'half-spawned',
-    child: { record: null },
-  });
+test(
+  'a warm claim Stim cannot resolve refuses both paths instead of copying past it',
+  async () => {
+    write(root, '.env', 'main env');
+    const claim = plantClaim(warmClaimPath(root), 'exclusive', goneClaimOwner(), {
+      claimId: 'half-spawned',
+      child: { record: null },
+    });
 
-  const plain = await runWarm(target);
-  expect(plain.code).toBe(1);
-  expect(plain.stderr).toContain('failed: STIM_CLAIM_REFUSED');
-  expect(plain.stderr).toContain(claim);
-  expect(existsSync(join(target, '.env'))).toBe(false);
+    const plain = await runWarm(target);
+    expect(plain.code).toBe(1);
+    expect(plain.stderr).toContain('failed: STIM_CLAIM_REFUSED');
+    expect(plain.stderr).toContain(claim);
+    expect(existsSync(join(target, '.env'))).toBe(false);
 
-  process.exitCode = 0;
-  const refresh = await runWarm(target, '--refresh');
-  expect(refresh.code).toBe(1);
-  expect(refresh.stderr).toContain('failed: STIM_CLAIM_REFUSED');
-  expect(existsSync(join(target, '.env'))).toBe(false);
-  expect(existsSync(claim)).toBe(true);
-}, 30_000);
+    process.exitCode = 0;
+    const refresh = await runWarm(target, '--refresh');
+    expect(refresh.code).toBe(1);
+    expect(refresh.stderr).toContain('failed: STIM_CLAIM_REFUSED');
+    expect(existsSync(join(target, '.env'))).toBe(false);
+    expect(existsSync(claim)).toBe(true);
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('a retry after a failed install runs it again instead of copying a half-installed node_modules', async () => {
-  write(root, 'pnpm-lock.yaml', 'lock v1\n');
-  commit(root, 'lockfile');
-  git(root, 'push', '-q', 'origin', 'main');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
-  write(root, '.env', 'main env');
+test(
+  'a retry after a failed install runs it again instead of copying a half-installed node_modules',
+  async () => {
+    write(root, 'pnpm-lock.yaml', 'lock v1\n');
+    commit(root, 'lockfile');
+    git(root, 'push', '-q', 'origin', 'main');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+    write(root, '.env', 'main env');
 
-  const real = getExecutor();
-  setExecutor({ ...real, spawn: () => makeExitingChild(1, 'ERR_PNPM_OUTDATED_LOCKFILE\n') });
-  const failed = await runWarm(target, '--refresh');
-  expect(failed.code).toBe(1);
-  expect(failed.stderr).toContain('failed: STIM_DEPS_FAILED');
+    const real = getExecutor();
+    setExecutor({ ...real, spawn: () => makeExitingChild(1, 'ERR_PNPM_OUTDATED_LOCKFILE\n') });
+    const failed = await runWarm(target, '--refresh');
+    expect(failed.code).toBe(1);
+    expect(failed.stderr).toContain('failed: STIM_DEPS_FAILED');
 
-  process.exitCode = 0;
-  const spawned: string[] = [];
-  setExecutor({
-    ...real,
-    spawn(cmd: string, args: string[]) {
-      spawned.push([cmd, ...args].join(' '));
-      return makeExitingChild(0);
-    },
-  });
-  const retried = await runWarm(target, '--refresh');
-  expect(retried.code).toBe(0);
-  expect(retried.stderr).toContain('checkout    main up to date with origin/main');
-  expect(retried.stderr).toContain(
-    `deps        source ${root}: the last install of pnpm-lock.yaml did not finish -> pnpm install`,
-  );
-  expect(spawned).toEqual(['pnpm install']);
-  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
+    process.exitCode = 0;
+    const spawned: string[] = [];
+    setExecutor({
+      ...real,
+      spawn(cmd: string, args: string[]) {
+        spawned.push([cmd, ...args].join(' '));
+        return makeExitingChild(0);
+      },
+    });
+    const retried = await runWarm(target, '--refresh');
+    expect(retried.code).toBe(0);
+    expect(retried.stderr).toContain('checkout    main up to date with origin/main');
+    expect(retried.stderr).toContain(
+      `deps        source ${root}: the last install of pnpm-lock.yaml did not finish -> pnpm install`,
+    );
+    expect(spawned).toEqual(['pnpm install']);
+    expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
 
-  process.exitCode = 0;
-  spawned.length = 0;
-  const settled = await runWarm(target, '--refresh');
-  expect(settled.code).toBe(0);
-  expect(settled.stderr).toContain(
-    `deps        source ${root}: pnpm-lock.yaml matches the last completed install -> skipped`,
-  );
-  expect(spawned).toEqual([]);
-}, 30_000);
+    process.exitCode = 0;
+    spawned.length = 0;
+    const settled = await runWarm(target, '--refresh');
+    expect(settled.code).toBe(0);
+    expect(settled.stderr).toContain(
+      `deps        source ${root}: pnpm-lock.yaml matches the last completed install -> skipped`,
+    );
+    expect(spawned).toEqual([]);
+  },
+  TEST_TIMEOUT_MS,
+);
 
 test.skipIf(process.platform === 'win32')(
   'both warm paths refuse an unwritable claim store before copying and report recovery (POSIX directory modes; skipped on win32)',
@@ -854,81 +936,97 @@ test.skipIf(process.platform === 'win32')(
       chmodSync(home, 0o700);
     }
   },
-  30_000,
+  TEST_TIMEOUT_MS,
 );
 
-test('a dangling STIM_HOME link refuses both warm paths before copying or changing the source', async () => {
-  write(root, '.env', 'main env');
-  fallBehind({ 'package.json': '{"name":"updated-fixture"}\n' });
-  const before = git(root, 'rev-parse', 'HEAD');
-  symlinkSync(join(base, 'missing-home'), String(process.env.STIM_HOME));
+test(
+  'a dangling STIM_HOME link refuses both warm paths before copying or changing the source',
+  async () => {
+    write(root, '.env', 'main env');
+    fallBehind({ 'package.json': '{"name":"updated-fixture"}\n' });
+    const before = git(root, 'rev-parse', 'HEAD');
+    symlinkSync(join(base, 'missing-home'), String(process.env.STIM_HOME));
 
-  for (const args of [[], ['--refresh']]) {
-    process.exitCode = 0;
-    const result = await runWarm(target, ...args);
+    for (const args of [[], ['--refresh']]) {
+      process.exitCode = 0;
+      const result = await runWarm(target, ...args);
+      expect(result.code).toBe(1);
+      expect(result.stdout).toEqual([]);
+      expect(result.stderr).toContain('failed: STIM_CLAIM_UNAVAILABLE');
+      expect(result.stderr).toContain('ENOENT:');
+      expect(result.stderr).toContain('symlink targets');
+      expect(existsSync(join(target, '.env'))).toBe(false);
+      expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'a copy that waited for the lock reads the exclusions the refresh left behind, not the ones it started with',
+  async () => {
+    write(root, '.env.production', 'secret');
+    const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'refresh' });
+    const warm = runWarm(target);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    writeFileSync(join(root, '.stim.json'), '{"worktree":{"exclude":[".env.production"]}}');
+    held.release();
+    const result = await warm;
+    expect(result.code).toBe(0);
+    expect(existsSync(join(target, '.env.production'))).toBe(false);
+    expect(result.stderr).toMatch(/carry {7}complete: 0 ignored entries copied/);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '--refresh installs at the repository root when upstream removed the app it was invoked from',
+  async () => {
+    write(root, 'pnpm-lock.yaml', 'lock v1\n');
+    write(root, 'apps/mobile/package.json', '{"name":"mobile"}\n');
+    commit(root, 'monorepo');
+    git(root, 'push', '-q', 'origin', 'main');
+    git(target, 'merge', '-q', '--ff-only', 'main');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    rmSync(join(root, 'apps'), { recursive: true, force: true });
+    fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'drop the mobile app');
+
+    const real = getExecutor();
+    const spawned: { cmd: string; cwd: unknown }[] = [];
+    setExecutor({
+      ...real,
+      spawn(cmd: string, _args: string[], opts: { cwd?: unknown }) {
+        spawned.push({ cmd, cwd: opts?.cwd });
+        return makeExitingChild(0);
+      },
+    });
+    const result = await runWarm(join(target, 'apps', 'mobile'), '--refresh');
+    expect(result.code).toBe(0);
+    expect(existsSync(join(root, 'apps', 'mobile'))).toBe(false);
+    expect(result.stderr).toContain(`deps        source ${root}: pnpm-lock.yaml changed -> pnpm install`);
+    expect(spawned).toEqual([{ cmd: 'pnpm', cwd: root }]);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  '--refresh refuses a source checkout whose only change is staged, with the working file back at HEAD',
+  async () => {
+    write(root, 'package.json', '{"name":"staged"}\n');
+    git(root, 'add', 'package.json');
+    write(root, 'package.json', '{"name":"refresh-fixture"}\n');
+    expect(git(root, 'diff', '--name-only', 'HEAD')).toBe('');
+    const before = git(root, 'rev-parse', 'HEAD');
+
+    const result = await runWarm(target, '--refresh');
     expect(result.code).toBe(1);
-    expect(result.stdout).toEqual([]);
-    expect(result.stderr).toContain('failed: STIM_CLAIM_UNAVAILABLE');
-    expect(result.stderr).toContain('ENOENT:');
-    expect(result.stderr).toContain('symlink targets');
-    expect(existsSync(join(target, '.env'))).toBe(false);
+    expect(result.stderr).toMatch(/uncommitted changes to tracked files/);
+    expect(result.stderr).toContain('package.json');
+    expect(result.stderr).toContain('failed: STIM_MAIN_DIRTY');
     expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
-  }
-}, 30_000);
-
-test('a copy that waited for the lock reads the exclusions the refresh left behind, not the ones it started with', async () => {
-  write(root, '.env.production', 'secret');
-  const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'refresh' });
-  const warm = runWarm(target);
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  writeFileSync(join(root, '.stim.json'), '{"worktree":{"exclude":[".env.production"]}}');
-  held.release();
-  const result = await warm;
-  expect(result.code).toBe(0);
-  expect(existsSync(join(target, '.env.production'))).toBe(false);
-  expect(result.stderr).toMatch(/carry {7}complete: 0 ignored entries copied/);
-}, 30_000);
-
-test('--refresh installs at the repository root when upstream removed the app it was invoked from', async () => {
-  write(root, 'pnpm-lock.yaml', 'lock v1\n');
-  write(root, 'apps/mobile/package.json', '{"name":"mobile"}\n');
-  commit(root, 'monorepo');
-  git(root, 'push', '-q', 'origin', 'main');
-  git(target, 'merge', '-q', '--ff-only', 'main');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  rmSync(join(root, 'apps'), { recursive: true, force: true });
-  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'drop the mobile app');
-
-  const real = getExecutor();
-  const spawned: { cmd: string; cwd: unknown }[] = [];
-  setExecutor({
-    ...real,
-    spawn(cmd: string, _args: string[], opts: { cwd?: unknown }) {
-      spawned.push({ cmd, cwd: opts?.cwd });
-      return makeExitingChild(0);
-    },
-  });
-  const result = await runWarm(join(target, 'apps', 'mobile'), '--refresh');
-  expect(result.code).toBe(0);
-  expect(existsSync(join(root, 'apps', 'mobile'))).toBe(false);
-  expect(result.stderr).toContain(`deps        source ${root}: pnpm-lock.yaml changed -> pnpm install`);
-  expect(spawned).toEqual([{ cmd: 'pnpm', cwd: root }]);
-}, 30_000);
-
-test('--refresh refuses a source checkout whose only change is staged, with the working file back at HEAD', async () => {
-  write(root, 'package.json', '{"name":"staged"}\n');
-  git(root, 'add', 'package.json');
-  write(root, 'package.json', '{"name":"refresh-fixture"}\n');
-  expect(git(root, 'diff', '--name-only', 'HEAD')).toBe('');
-  const before = git(root, 'rev-parse', 'HEAD');
-
-  const result = await runWarm(target, '--refresh');
-  expect(result.code).toBe(1);
-  expect(result.stderr).toMatch(/uncommitted changes to tracked files/);
-  expect(result.stderr).toContain('package.json');
-  expect(result.stderr).toContain('failed: STIM_MAIN_DIRTY');
-  expect(git(root, 'rev-parse', 'HEAD')).toBe(before);
-}, 30_000);
+  },
+  TEST_TIMEOUT_MS,
+);
 
 async function waitUntil<T>(what: string, read: () => T | null | undefined, timeoutMs = 20_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
@@ -1070,109 +1168,121 @@ test.skipIf(process.platform === 'win32')(
     expect(installLedger()).toMatchObject({ completed: true });
     expect(existsSync(warmClaimPath(root))).toBe(false);
   },
-  30_000,
+  TEST_TIMEOUT_MS,
 );
 
-test('the evidence that an install is owed is written before the fast-forward moves HEAD', async () => {
-  write(root, 'pnpm-lock.yaml', 'lock v1\n');
-  commit(root, 'lockfile');
-  git(root, 'push', '-q', 'origin', 'main');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
-  const snapshot = join(base, 'ledger-as-git-saw-it.json');
-  const hook = join(root, '.git', 'hooks', 'post-merge');
-  mkdirSync(dirname(hook), { recursive: true });
-  const shellPath = (path: string) => JSON.stringify(path.split(sep).join('/'));
-  writeFileSync(
-    hook,
-    `#!/bin/sh\ncat ${shellPath(join(String(process.env.STIM_HOME), 'warm-installs'))}/*.json > ${shellPath(snapshot)} 2>/dev/null || echo '"none"' > ${shellPath(snapshot)}\n`,
-  );
-  chmodSync(hook, 0o755);
+test(
+  'the evidence that an install is owed is written before the fast-forward moves HEAD',
+  async () => {
+    write(root, 'pnpm-lock.yaml', 'lock v1\n');
+    commit(root, 'lockfile');
+    git(root, 'push', '-q', 'origin', 'main');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+    const snapshot = join(base, 'ledger-as-git-saw-it.json');
+    const hook = join(root, '.git', 'hooks', 'post-merge');
+    mkdirSync(dirname(hook), { recursive: true });
+    const shellPath = (path: string) => JSON.stringify(path.split(sep).join('/'));
+    writeFileSync(
+      hook,
+      `#!/bin/sh\ncat ${shellPath(join(String(process.env.STIM_HOME), 'warm-installs'))}/*.json > ${shellPath(snapshot)} 2>/dev/null || echo '"none"' > ${shellPath(snapshot)}\n`,
+    );
+    chmodSync(hook, 0o755);
 
-  const real = getExecutor();
-  setExecutor({ ...real, spawn: () => makeExitingChild(0) });
-  const first = await runWarm(target, '--refresh');
-  expect(first.code).toBe(0);
-  // The first hook git runs after it moves HEAD already sees the ledger saying the install is unfinished,
-  // so a process killed anywhere past this point leaves a retry that installs instead of one that skips.
-  const atHook = JSON.parse(readFileSync(snapshot, 'utf-8'));
-  expect(atHook).toMatchObject({ lock: 'pnpm-lock.yaml', hash: sha256('lock v1\n'), completed: false });
+    const real = getExecutor();
+    setExecutor({ ...real, spawn: () => makeExitingChild(0) });
+    const first = await runWarm(target, '--refresh');
+    expect(first.code).toBe(0);
+    // The first hook git runs after it moves HEAD already sees the ledger saying the install is unfinished,
+    // so a process killed anywhere past this point leaves a retry that installs instead of one that skips.
+    const atHook = JSON.parse(readFileSync(snapshot, 'utf-8'));
+    expect(atHook).toMatchObject({ lock: 'pnpm-lock.yaml', hash: sha256('lock v1\n'), completed: false });
 
-  process.exitCode = 0;
-  writeFileSync(installLedgerFile(), JSON.stringify(atHook));
-  const spawned: string[] = [];
-  setExecutor({
-    ...real,
-    spawn(cmd: string, args: string[]) {
-      spawned.push([cmd, ...args].join(' '));
-      return makeExitingChild(0);
-    },
-  });
-  const retry = await runWarm(target, '--refresh');
-  expect(retry.code).toBe(0);
-  expect(retry.stderr).toContain('checkout    main up to date with origin/main');
-  expect(retry.stderr).toContain(
-    `deps        source ${root}: the last install of pnpm-lock.yaml did not finish -> pnpm install`,
-  );
-  expect(spawned).toEqual(['pnpm install']);
-  expect(installLedger()).toMatchObject({ hash: sha256('lock v2\n'), completed: true });
-}, 30_000);
-
-test('the ledger records the lockfile the installer read, not the one on disk when it finished', async () => {
-  write(root, 'pnpm-lock.yaml', 'lock v1\n');
-  commit(root, 'lockfile');
-  git(root, 'push', '-q', 'origin', 'main');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
-
-  const real = getExecutor();
-  setExecutor({
-    ...real,
-    spawn() {
-      write(root, 'pnpm-lock.yaml', 'lock v3\n');
-      commit(root, 'a third lockfile, committed while the install was running');
-      return makeExitingChild(0);
-    },
-  });
-  const first = await runWarm(target, '--refresh');
-  expect(first.code).toBe(0);
-  expect(installLedger()).toMatchObject({ lock: 'pnpm-lock.yaml', hash: sha256('lock v2\n'), completed: true });
-
-  process.exitCode = 0;
-  const spawned: string[] = [];
-  setExecutor({
-    ...real,
-    spawn(cmd: string, args: string[]) {
-      spawned.push([cmd, ...args].join(' '));
-      return makeExitingChild(0);
-    },
-  });
-  const second = await runWarm(target, '--refresh');
-  expect(second.code).toBe(0);
-  expect(second.stderr).toContain(
-    `deps        source ${root}: pnpm-lock.yaml does not match the last completed install -> pnpm install`,
-  );
-  expect(spawned).toEqual(['pnpm install']);
-  expect(installLedger()).toMatchObject({ lock: 'pnpm-lock.yaml', hash: sha256('lock v3\n'), completed: true });
-}, 30_000);
-
-test('a STIM_HOME that is a regular file refuses both warm paths and names the blocking file', async () => {
-  write(root, '.env', 'main env');
-  const home = String(process.env.STIM_HOME);
-  rmSync(home, { recursive: true, force: true });
-  writeFileSync(home, 'not a directory');
-
-  for (const args of [[], ['--refresh']]) {
     process.exitCode = 0;
-    const result = await runWarm(target, ...args);
-    expect(result.code).toBe(1);
-    expect(result.stdout).toEqual([]);
-    expect(result.stderr).toContain('failed: STIM_CLAIM_REFUSED');
-    expect(result.stderr).toContain(`mv -i '${home}' '${home}.stim-backup'`);
-    expect(readFileSync(home, 'utf8')).toBe('not a directory');
-    expect(existsSync(join(target, '.env'))).toBe(false);
-  }
-}, 30_000);
+    writeFileSync(installLedgerFile(), JSON.stringify(atHook));
+    const spawned: string[] = [];
+    setExecutor({
+      ...real,
+      spawn(cmd: string, args: string[]) {
+        spawned.push([cmd, ...args].join(' '));
+        return makeExitingChild(0);
+      },
+    });
+    const retry = await runWarm(target, '--refresh');
+    expect(retry.code).toBe(0);
+    expect(retry.stderr).toContain('checkout    main up to date with origin/main');
+    expect(retry.stderr).toContain(
+      `deps        source ${root}: the last install of pnpm-lock.yaml did not finish -> pnpm install`,
+    );
+    expect(spawned).toEqual(['pnpm install']);
+    expect(installLedger()).toMatchObject({ hash: sha256('lock v2\n'), completed: true });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'the ledger records the lockfile the installer read, not the one on disk when it finished',
+  async () => {
+    write(root, 'pnpm-lock.yaml', 'lock v1\n');
+    commit(root, 'lockfile');
+    git(root, 'push', '-q', 'origin', 'main');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      spawn() {
+        write(root, 'pnpm-lock.yaml', 'lock v3\n');
+        commit(root, 'a third lockfile, committed while the install was running');
+        return makeExitingChild(0);
+      },
+    });
+    const first = await runWarm(target, '--refresh');
+    expect(first.code).toBe(0);
+    expect(installLedger()).toMatchObject({ lock: 'pnpm-lock.yaml', hash: sha256('lock v2\n'), completed: true });
+
+    process.exitCode = 0;
+    const spawned: string[] = [];
+    setExecutor({
+      ...real,
+      spawn(cmd: string, args: string[]) {
+        spawned.push([cmd, ...args].join(' '));
+        return makeExitingChild(0);
+      },
+    });
+    const second = await runWarm(target, '--refresh');
+    expect(second.code).toBe(0);
+    expect(second.stderr).toContain(
+      `deps        source ${root}: pnpm-lock.yaml does not match the last completed install -> pnpm install`,
+    );
+    expect(spawned).toEqual(['pnpm install']);
+    expect(installLedger()).toMatchObject({ lock: 'pnpm-lock.yaml', hash: sha256('lock v3\n'), completed: true });
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'a STIM_HOME that is a regular file refuses both warm paths and names the blocking file',
+  async () => {
+    write(root, '.env', 'main env');
+    const home = String(process.env.STIM_HOME);
+    rmSync(home, { recursive: true, force: true });
+    writeFileSync(home, 'not a directory');
+
+    for (const args of [[], ['--refresh']]) {
+      process.exitCode = 0;
+      const result = await runWarm(target, ...args);
+      expect(result.code).toBe(1);
+      expect(result.stdout).toEqual([]);
+      expect(result.stderr).toContain('failed: STIM_CLAIM_REFUSED');
+      expect(result.stderr).toContain(`mv -i '${home}' '${home}.stim-backup'`);
+      expect(readFileSync(home, 'utf8')).toBe('not a directory');
+      expect(existsSync(join(target, '.env'))).toBe(false);
+    }
+  },
+  TEST_TIMEOUT_MS,
+);
 
 test.skipIf(process.platform === 'win32')(
   'a plain warm refuses the tree a real failed install left, and copies once a refresh finishes it (spawns a real npm ci; skipped on win32)',
@@ -1243,70 +1353,84 @@ test.skipIf(process.platform === 'win32')(
   120_000,
 );
 
-test('an incomplete install of a superseded lockfile does not block a copy', async () => {
-  write(root, 'pnpm-lock.yaml', 'lock v1\n');
-  commit(root, 'lockfile');
-  git(root, 'push', '-q', 'origin', 'main');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  writeFileSync(join(root, 'node_modules', 'value'), 'INSTALLED');
-  write(root, '.env', 'main env');
-  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+test(
+  'an incomplete install of a superseded lockfile does not block a copy',
+  async () => {
+    write(root, 'pnpm-lock.yaml', 'lock v1\n');
+    commit(root, 'lockfile');
+    git(root, 'push', '-q', 'origin', 'main');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    writeFileSync(join(root, 'node_modules', 'value'), 'INSTALLED');
+    write(root, '.env', 'main env');
+    fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
 
-  const real = getExecutor();
-  setExecutor({ ...real, spawn: () => makeExitingChild(1, 'ERR_PNPM_OUTDATED_LOCKFILE\n') });
-  const failed = await runWarm(target, '--refresh');
-  expect(failed.code).toBe(1);
-  expect(installLedger()).toMatchObject({ lock: 'pnpm-lock.yaml', hash: sha256('lock v2\n'), completed: false });
+    const real = getExecutor();
+    setExecutor({ ...real, spawn: () => makeExitingChild(1, 'ERR_PNPM_OUTDATED_LOCKFILE\n') });
+    const failed = await runWarm(target, '--refresh');
+    expect(failed.code).toBe(1);
+    expect(installLedger()).toMatchObject({ lock: 'pnpm-lock.yaml', hash: sha256('lock v2\n'), completed: false });
 
-  process.exitCode = 0;
-  write(root, 'pnpm-lock.yaml', 'lock v3\n');
-  commit(root, 'a lockfile whose dependencies were installed by hand since that failure');
-  const result = await runWarm(target);
-  expect(result.code).toBe(0);
-  expect(result.stderr).not.toContain('STIM_DEPS_INCOMPLETE');
-  expect(result.stderr).toMatch(/carry {7}complete: 2 ignored entries copied/);
-  expect(readFileSync(join(target, 'node_modules', 'value'), 'utf-8')).toBe('INSTALLED');
-  expect(installLedger()).toMatchObject({ completed: false });
-}, 30_000);
+    process.exitCode = 0;
+    write(root, 'pnpm-lock.yaml', 'lock v3\n');
+    commit(root, 'a lockfile whose dependencies were installed by hand since that failure');
+    const result = await runWarm(target);
+    expect(result.code).toBe(0);
+    expect(result.stderr).not.toContain('STIM_DEPS_INCOMPLETE');
+    expect(result.stderr).toMatch(/carry {7}complete: 2 ignored entries copied/);
+    expect(readFileSync(join(target, 'node_modules', 'value'), 'utf-8')).toBe('INSTALLED');
+    expect(installLedger()).toMatchObject({ completed: false });
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('a repository with no install ledger copies exactly as it did before the ledger existed', async () => {
-  write(root, 'pnpm-lock.yaml', 'lock v1\n');
-  commit(root, 'lockfile');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  writeFileSync(join(root, 'node_modules', 'value'), 'INSTALLED');
-  write(root, '.env', 'main env');
-  expect(existsSync(join(String(process.env.STIM_HOME), 'warm-installs'))).toBe(false);
+test(
+  'a repository with no install ledger copies exactly as it did before the ledger existed',
+  async () => {
+    write(root, 'pnpm-lock.yaml', 'lock v1\n');
+    commit(root, 'lockfile');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    writeFileSync(join(root, 'node_modules', 'value'), 'INSTALLED');
+    write(root, '.env', 'main env');
+    expect(existsSync(join(String(process.env.STIM_HOME), 'warm-installs'))).toBe(false);
 
-  const result = await runWarm(target);
-  expect(result.code).toBe(0);
-  expect(result.stderr).toMatch(/carry {7}complete: 2 ignored entries copied, 0 kept, 0 failed/);
-  expect(readFileSync(join(target, 'node_modules', 'value'), 'utf-8')).toBe('INSTALLED');
-}, 30_000);
+    const result = await runWarm(target);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toMatch(/carry {7}complete: 2 ignored entries copied, 0 kept, 0 failed/);
+    expect(readFileSync(join(target, 'node_modules', 'value'), 'utf-8')).toBe('INSTALLED');
+  },
+  TEST_TIMEOUT_MS,
+);
 
-test('a warm from a monorepo app reads the ledger of the repository root that owns the lockfile', async () => {
-  write(root, 'pnpm-lock.yaml', 'lock v1\n');
-  write(root, 'apps/mobile/package.json', '{"name":"mobile"}\n');
-  commit(root, 'monorepo');
-  git(root, 'push', '-q', 'origin', 'main');
-  git(target, 'merge', '-q', '--ff-only', 'main');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  writeFileSync(join(root, 'node_modules', 'value'), 'PARTIAL');
-  write(root, '.env', 'main env');
-  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+test(
+  'a warm from a monorepo app reads the ledger of the repository root that owns the lockfile',
+  async () => {
+    write(root, 'pnpm-lock.yaml', 'lock v1\n');
+    write(root, 'apps/mobile/package.json', '{"name":"mobile"}\n');
+    commit(root, 'monorepo');
+    git(root, 'push', '-q', 'origin', 'main');
+    git(target, 'merge', '-q', '--ff-only', 'main');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    writeFileSync(join(root, 'node_modules', 'value'), 'PARTIAL');
+    write(root, '.env', 'main env');
+    fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
 
-  const real = getExecutor();
-  setExecutor({ ...real, spawn: () => makeExitingChild(1, 'ERR_PNPM_OUTDATED_LOCKFILE\n') });
-  const failed = await runWarm(join(target, 'apps', 'mobile'), '--refresh');
-  expect(failed.code).toBe(1);
-  expect(installLedgerFile()).toBe(join(String(process.env.STIM_HOME), 'warm-installs', `${workspaceName(root)}.json`));
+    const real = getExecutor();
+    setExecutor({ ...real, spawn: () => makeExitingChild(1, 'ERR_PNPM_OUTDATED_LOCKFILE\n') });
+    const failed = await runWarm(join(target, 'apps', 'mobile'), '--refresh');
+    expect(failed.code).toBe(1);
+    expect(installLedgerFile()).toBe(
+      join(String(process.env.STIM_HOME), 'warm-installs', `${workspaceName(root)}.json`),
+    );
 
-  process.exitCode = 0;
-  const refused = await runWarm(join(target, 'apps', 'mobile'));
-  expect(refused.code).toBe(1);
-  expect(refused.stderr).toContain(`Refusing to copy from ${root}`);
-  expect(refused.stderr).toContain('failed: STIM_DEPS_INCOMPLETE');
-  expect(existsSync(join(target, 'node_modules'))).toBe(false);
-}, 30_000);
+    process.exitCode = 0;
+    const refused = await runWarm(join(target, 'apps', 'mobile'));
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain(`Refusing to copy from ${root}`);
+    expect(refused.stderr).toContain('failed: STIM_DEPS_INCOMPLETE');
+    expect(existsSync(join(target, 'node_modules'))).toBe(false);
+  },
+  TEST_TIMEOUT_MS,
+);
 
 test.each([
   { ignoreScripts: 'true', commands: ['npm ci', 'npm run postinstall'] },
@@ -1362,7 +1486,7 @@ test.each([
     expect(spawned).toEqual([]);
     expect(again.stderr).toContain('lock        acquired shared (seed current)');
   },
-  30_000,
+  TEST_TIMEOUT_MS,
 );
 
 describe('a refresh from the worktree root with a nested app that has its own lockfile', () => {
@@ -1430,221 +1554,245 @@ describe('a refresh from the worktree root with a nested app that has its own lo
   });
 });
 
-test('a patches-only change reinstalls nothing outside npm, where a reinstall would not reapply them', async () => {
-  write(root, 'yarn.lock', '# yarn lockfile v1\n');
-  commit(root, 'yarn project');
-  git(root, 'push', '-q', 'origin', 'main');
-  fallBehind({ 'yarn.lock': '# yarn lockfile v1\n# bumped\n' }, 'bump the lockfile');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
+test(
+  'a patches-only change reinstalls nothing outside npm, where a reinstall would not reapply them',
+  async () => {
+    write(root, 'yarn.lock', '# yarn lockfile v1\n');
+    commit(root, 'yarn project');
+    git(root, 'push', '-q', 'origin', 'main');
+    fallBehind({ 'yarn.lock': '# yarn lockfile v1\n# bumped\n' }, 'bump the lockfile');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
 
-  const real = getExecutor();
-  const spawned: string[] = [];
-  setExecutor({
-    ...real,
-    spawn(cmd: string, args: string[]) {
-      spawned.push([cmd, ...args].join(' '));
-      return makeExitingChild(0);
-    },
-  });
+    const real = getExecutor();
+    const spawned: string[] = [];
+    setExecutor({
+      ...real,
+      spawn(cmd: string, args: string[]) {
+        spawned.push([cmd, ...args].join(' '));
+        return makeExitingChild(0);
+      },
+    });
 
-  expect((await runWarm(target, '--refresh')).code).toBe(0);
-  expect(spawned).toEqual(['yarn install']);
+    expect((await runWarm(target, '--refresh')).code).toBe(0);
+    expect(spawned).toEqual(['yarn install']);
 
-  process.exitCode = 0;
-  fallBehind({ 'patches/dep+1.0.0.patch': 'patch v1\n' }, 'add a patch');
-  const result = await runWarm(target, '--refresh');
-  expect(result.code).toBe(0);
-  expect(spawned).toEqual(['yarn install']);
-  expect(result.stderr).toContain(
-    `deps        source ${root}: yarn.lock matches the last completed install -> skipped`,
-  );
-}, 30_000);
-
-test('a refresh from a nested app leaves a repository root that was never installed alone', async () => {
-  const app = join(root, 'app');
-  write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
-  write(app, 'package.json', '{"name":"app","dependencies":{"react-native":"0.80.0"}}\n');
-  write(app, 'package-lock.json', '{"lockfileVersion":3}\n');
-  commit(root, 'monorepo with a nested app');
-  git(root, 'push', '-q', 'origin', 'main');
-  git(target, 'merge', '-q', '--ff-only', 'main');
-  mkdirSync(join(app, 'node_modules'), { recursive: true });
-  upsertProject(app, {});
-  fallBehind({ 'app/package-lock.json': '{"lockfileVersion":3,"name":"app"}\n' }, 'bump the app lockfile');
-
-  const real = getExecutor();
-  const spawned: string[] = [];
-  setExecutor({
-    ...real,
-    spawn(cmd: string, args: string[], opts: { cwd?: unknown }) {
-      spawned.push(`${[cmd, ...args].join(' ')} in ${String(opts?.cwd)}`);
-      return makeExitingChild(0);
-    },
-    runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
-      if (file === 'npm' && args[0] === 'ls') return '{}';
-      if (file === 'npm' && args.join(' ') === 'config get ignore-scripts') return 'false';
-      return real.runFile(file, args, opts);
-    },
-  });
-
-  const result = await runWarm(join(target, 'app'), '--refresh');
-  expect(result.code).toBe(0);
-  expect(spawned).toEqual([`npm ci in ${app}`]);
-  expect(result.stderr).not.toContain(`deps        source ${root}:`);
-}, 30_000);
-
-test('an npm ls failure that reports no problem list never stands in for evidence of an unchanged tree', async () => {
-  write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
-  commit(root, 'npm project');
-  git(root, 'push', '-q', 'origin', 'main');
-  fallBehind({ 'README.md': 'docs\n' }, 'unrelated change');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-
-  const real = getExecutor();
-  const spawned: string[] = [];
-  setExecutor({
-    ...real,
-    spawn(cmd: string, args: string[]) {
-      spawned.push([cmd, ...args].join(' '));
-      return makeExitingChild(0);
-    },
-    runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
-      if (file === 'npm' && args[0] === 'ls') throw new Error('Command failed: npm ls (timed out)');
-      return real.runFile(file, args, opts);
-    },
-  });
-
-  expect((await runWarm(target, '--refresh')).code).toBe(0);
-  expect(spawned).toEqual(['npm ci']);
-
-  process.exitCode = 0;
-  fallBehind({ 'README.md': 'more docs\n' }, 'another unrelated change');
-  expect((await runWarm(target, '--refresh')).code).toBe(0);
-  expect(spawned).toEqual(['npm ci', 'npm ci']);
-}, 30_000);
-
-test('a tree npm ls rejected right after a completed install is reinstalled only when its problems change', async () => {
-  write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
-  commit(root, 'npm project');
-  git(root, 'push', '-q', 'origin', 'main');
-  fallBehind({ 'README.md': 'docs\n' }, 'unrelated change');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-
-  const real = getExecutor();
-  const spawned: string[] = [];
-  let problems = ['missing: react-dom@*, required by some-peer@1.0.0'];
-  setExecutor({
-    ...real,
-    spawn(cmd: string, args: string[]) {
-      spawned.push([cmd, ...args].join(' '));
-      return makeExitingChild(0);
-    },
-    runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
-      if (file === 'npm' && args[0] === 'ls') {
-        throw Object.assign(new Error('Command failed: npm ls'), { stdout: JSON.stringify({ problems }) });
-      }
-      return real.runFile(file, args, opts);
-    },
-  });
-
-  const first = await runWarm(target, '--refresh');
-  expect(first.code).toBe(0);
-  expect(spawned).toEqual(['npm ci']);
-  expect(first.stderr).toContain(
-    `deps        source ${root}: the installed tree does not match package-lock.json -> npm ci (`,
-  );
-  expect(installLedger()).toMatchObject({ completed: true, treeProblems: expect.stringMatching(/^[0-9a-f]{64}$/) });
-
-  process.exitCode = 0;
-  spawned.length = 0;
-  fallBehind({ 'README.md': 'more docs\n' }, 'another unrelated change');
-  const second = await runWarm(target, '--refresh');
-  expect(second.code).toBe(0);
-  expect(spawned).toEqual([]);
-  expect(second.stderr).toContain(
-    `deps        source ${root}: package-lock.json matches the last completed install -> skipped`,
-  );
-
-  process.exitCode = 0;
-  problems = [...problems, 'missing: left-pad@1.3.0, required by refresh-fixture@1.0.0'];
-  fallBehind({ 'README.md': 'even more docs\n' }, 'a third unrelated change');
-  const third = await runWarm(target, '--refresh');
-  expect(third.code).toBe(0);
-  expect(spawned).toEqual(['npm ci']);
-}, 30_000);
-
-test('a failed postinstall leaves the install unfinished, so a plain warm refuses to copy it', async () => {
-  write(root, 'package.json', '{"name":"refresh-fixture","scripts":{"postinstall":"patch-package"}}\n');
-  write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
-  commit(root, 'npm project');
-  git(root, 'push', '-q', 'origin', 'main');
-  fallBehind({ 'patches/dep+1.0.0.patch': 'patch v1\n' }, 'add a patch');
-  mkdirSync(join(root, 'node_modules'), { recursive: true });
-  write(root, '.env', 'main env');
-
-  const real = getExecutor();
-  const spawned: string[] = [];
-  setExecutor({
-    ...real,
-    spawn(cmd: string, args: string[]) {
-      spawned.push([cmd, ...args].join(' '));
-      return args[0] === 'run'
-        ? makeExitingChild(1, '**ERROR** Failed to apply patch for package dep\n')
-        : makeExitingChild(0);
-    },
-    runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
-      if (file === 'npm' && args[0] === 'ls') return '{}';
-      if (file === 'npm' && args.join(' ') === 'config get ignore-scripts') return 'true';
-      return real.runFile(file, args, opts);
-    },
-  });
-
-  const failed = await runWarm(target, '--refresh');
-  expect(failed.code).toBe(1);
-  expect(spawned).toEqual(['npm ci', 'npm run postinstall']);
-  expect(failed.stderr).toContain('`npm run postinstall` failed (exit code 1).');
-  expect(failed.stderr).toContain(`Run \`cd ${root} && npm run postinstall\``);
-  expect(installLedger()).toMatchObject({ lock: 'package-lock.json', completed: false });
-  expect(existsSync(join(target, '.env'))).toBe(false);
-
-  process.exitCode = 0;
-  spawned.length = 0;
-  const refused = await runWarm(target);
-  expect(refused.stderr).toContain('failed: STIM_DEPS_INCOMPLETE');
-}, 30_000);
-
-test('a current refresh retains both copy claims when child cleanup is unresolved', async () => {
-  write(root, '.env', 'source env');
-  const real = getExecutor();
-  let claims: ClaimHandle[] = [];
-  let copies = 0;
-  setExecutor({
-    ...real,
-    async runFileAsync(file, args, options) {
-      if (file !== 'cp') return real.runFileAsync(file, args, options);
-      copies++;
-      assert(options.declareFor);
-      claims = [...operationState(options.declareFor).declaring];
-      for (const claim of claims) markClaimChildPending(claim);
-      const destination = args[2];
-      assert(destination);
-      writeFileSync(destination, 'partial');
-      throw new WorkspaceProcessCleanupError(claims, 'copy child identity is unknown', 'Verify the copy stopped.');
-    },
-  });
-  try {
+    process.exitCode = 0;
+    fallBehind({ 'patches/dep+1.0.0.patch': 'patch v1\n' }, 'add a patch');
     const result = await runWarm(target, '--refresh');
-    expect(result.code).toBe(1);
-    expect(copies).toBe(1);
-    expect(claims.map((claim) => claim.root).toSorted()).toEqual(
-      [warmClaimPath(root), warmClaimPath(target)].toSorted(),
+    expect(result.code).toBe(0);
+    expect(spawned).toEqual(['yarn install']);
+    expect(result.stderr).toContain(
+      `deps        source ${root}: yarn.lock matches the last completed install -> skipped`,
     );
-    for (const claim of claims) {
-      expect(existsSync(claim.path)).toBe(true);
-      expect(result.stderr).toContain(claim.path);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'a refresh from a nested app leaves a repository root that was never installed alone',
+  async () => {
+    const app = join(root, 'app');
+    write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
+    write(app, 'package.json', '{"name":"app","dependencies":{"react-native":"0.80.0"}}\n');
+    write(app, 'package-lock.json', '{"lockfileVersion":3}\n');
+    commit(root, 'monorepo with a nested app');
+    git(root, 'push', '-q', 'origin', 'main');
+    git(target, 'merge', '-q', '--ff-only', 'main');
+    mkdirSync(join(app, 'node_modules'), { recursive: true });
+    upsertProject(app, {});
+    fallBehind({ 'app/package-lock.json': '{"lockfileVersion":3,"name":"app"}\n' }, 'bump the app lockfile');
+
+    const real = getExecutor();
+    const spawned: string[] = [];
+    setExecutor({
+      ...real,
+      spawn(cmd: string, args: string[], opts: { cwd?: unknown }) {
+        spawned.push(`${[cmd, ...args].join(' ')} in ${String(opts?.cwd)}`);
+        return makeExitingChild(0);
+      },
+      runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
+        if (file === 'npm' && args[0] === 'ls') return '{}';
+        if (file === 'npm' && args.join(' ') === 'config get ignore-scripts') return 'false';
+        return real.runFile(file, args, opts);
+      },
+    });
+
+    const result = await runWarm(join(target, 'app'), '--refresh');
+    expect(result.code).toBe(0);
+    expect(spawned).toEqual([`npm ci in ${app}`]);
+    expect(result.stderr).not.toContain(`deps        source ${root}:`);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'an npm ls failure that reports no problem list never stands in for evidence of an unchanged tree',
+  async () => {
+    write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
+    commit(root, 'npm project');
+    git(root, 'push', '-q', 'origin', 'main');
+    fallBehind({ 'README.md': 'docs\n' }, 'unrelated change');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+
+    const real = getExecutor();
+    const spawned: string[] = [];
+    setExecutor({
+      ...real,
+      spawn(cmd: string, args: string[]) {
+        spawned.push([cmd, ...args].join(' '));
+        return makeExitingChild(0);
+      },
+      runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
+        if (file === 'npm' && args[0] === 'ls') throw new Error('Command failed: npm ls (timed out)');
+        return real.runFile(file, args, opts);
+      },
+    });
+
+    expect((await runWarm(target, '--refresh')).code).toBe(0);
+    expect(spawned).toEqual(['npm ci']);
+
+    process.exitCode = 0;
+    fallBehind({ 'README.md': 'more docs\n' }, 'another unrelated change');
+    expect((await runWarm(target, '--refresh')).code).toBe(0);
+    expect(spawned).toEqual(['npm ci', 'npm ci']);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'a tree npm ls rejected right after a completed install is reinstalled only when its problems change',
+  async () => {
+    write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
+    commit(root, 'npm project');
+    git(root, 'push', '-q', 'origin', 'main');
+    fallBehind({ 'README.md': 'docs\n' }, 'unrelated change');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+
+    const real = getExecutor();
+    const spawned: string[] = [];
+    let problems = ['missing: react-dom@*, required by some-peer@1.0.0'];
+    setExecutor({
+      ...real,
+      spawn(cmd: string, args: string[]) {
+        spawned.push([cmd, ...args].join(' '));
+        return makeExitingChild(0);
+      },
+      runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
+        if (file === 'npm' && args[0] === 'ls') {
+          throw Object.assign(new Error('Command failed: npm ls'), { stdout: JSON.stringify({ problems }) });
+        }
+        return real.runFile(file, args, opts);
+      },
+    });
+
+    const first = await runWarm(target, '--refresh');
+    expect(first.code).toBe(0);
+    expect(spawned).toEqual(['npm ci']);
+    expect(first.stderr).toContain(
+      `deps        source ${root}: the installed tree does not match package-lock.json -> npm ci (`,
+    );
+    expect(installLedger()).toMatchObject({ completed: true, treeProblems: expect.stringMatching(/^[0-9a-f]{64}$/) });
+
+    process.exitCode = 0;
+    spawned.length = 0;
+    fallBehind({ 'README.md': 'more docs\n' }, 'another unrelated change');
+    const second = await runWarm(target, '--refresh');
+    expect(second.code).toBe(0);
+    expect(spawned).toEqual([]);
+    expect(second.stderr).toContain(
+      `deps        source ${root}: package-lock.json matches the last completed install -> skipped`,
+    );
+
+    process.exitCode = 0;
+    problems = [...problems, 'missing: left-pad@1.3.0, required by refresh-fixture@1.0.0'];
+    fallBehind({ 'README.md': 'even more docs\n' }, 'a third unrelated change');
+    const third = await runWarm(target, '--refresh');
+    expect(third.code).toBe(0);
+    expect(spawned).toEqual(['npm ci']);
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'a failed postinstall leaves the install unfinished, so a plain warm refuses to copy it',
+  async () => {
+    write(root, 'package.json', '{"name":"refresh-fixture","scripts":{"postinstall":"patch-package"}}\n');
+    write(root, 'package-lock.json', '{"lockfileVersion":3}\n');
+    commit(root, 'npm project');
+    git(root, 'push', '-q', 'origin', 'main');
+    fallBehind({ 'patches/dep+1.0.0.patch': 'patch v1\n' }, 'add a patch');
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    write(root, '.env', 'main env');
+
+    const real = getExecutor();
+    const spawned: string[] = [];
+    setExecutor({
+      ...real,
+      spawn(cmd: string, args: string[]) {
+        spawned.push([cmd, ...args].join(' '));
+        return args[0] === 'run'
+          ? makeExitingChild(1, '**ERROR** Failed to apply patch for package dep\n')
+          : makeExitingChild(0);
+      },
+      runFile(file: string, args: string[], opts: Parameters<typeof real.runFile>[2]) {
+        if (file === 'npm' && args[0] === 'ls') return '{}';
+        if (file === 'npm' && args.join(' ') === 'config get ignore-scripts') return 'true';
+        return real.runFile(file, args, opts);
+      },
+    });
+
+    const failed = await runWarm(target, '--refresh');
+    expect(failed.code).toBe(1);
+    expect(spawned).toEqual(['npm ci', 'npm run postinstall']);
+    expect(failed.stderr).toContain('`npm run postinstall` failed (exit code 1).');
+    expect(failed.stderr).toContain(`Run \`cd ${root} && npm run postinstall\``);
+    expect(installLedger()).toMatchObject({ lock: 'package-lock.json', completed: false });
+    expect(existsSync(join(target, '.env'))).toBe(false);
+
+    process.exitCode = 0;
+    spawned.length = 0;
+    const refused = await runWarm(target);
+    expect(refused.stderr).toContain('failed: STIM_DEPS_INCOMPLETE');
+  },
+  TEST_TIMEOUT_MS,
+);
+
+test(
+  'a current refresh retains both copy claims when child cleanup is unresolved',
+  async () => {
+    write(root, '.env', 'source env');
+    const real = getExecutor();
+    let claims: ClaimHandle[] = [];
+    let copies = 0;
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, options) {
+        if (file !== 'cp') return real.runFileAsync(file, args, options);
+        copies++;
+        assert(options.declareFor);
+        claims = [...operationState(options.declareFor).declaring];
+        for (const claim of claims) markClaimChildPending(claim);
+        const destination = args[2];
+        assert(destination);
+        writeFileSync(destination, 'partial');
+        throw new WorkspaceProcessCleanupError(claims, 'copy child identity is unknown', 'Verify the copy stopped.');
+      },
+    });
+    try {
+      const result = await runWarm(target, '--refresh');
+      expect(result.code).toBe(1);
+      expect(copies).toBe(1);
+      expect(claims.map((claim) => claim.root).toSorted()).toEqual(
+        [warmClaimPath(root), warmClaimPath(target)].toSorted(),
+      );
+      for (const claim of claims) {
+        expect(existsSync(claim.path)).toBe(true);
+        expect(result.stderr).toContain(claim.path);
+      }
+      expect(readFileSync(join(target, '.env'), 'utf8')).toBe('partial');
+    } finally {
+      for (const claim of claims) releaseClaim(claim);
     }
-    expect(readFileSync(join(target, '.env'), 'utf8')).toBe('partial');
-  } finally {
-    for (const claim of claims) releaseClaim(claim);
-  }
-}, 30_000);
+  },
+  TEST_TIMEOUT_MS,
+);
