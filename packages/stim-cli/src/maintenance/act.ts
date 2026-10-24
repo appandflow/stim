@@ -199,7 +199,9 @@ async function removeWorktree(action: MaintenanceAction, context: ActContext): P
   if (worktree.keys.some(maintenancePinned)) return kept('pinned by maintenance.keep');
   const before = lowestFree(measureDisk());
   const { results } = await quietly(() => removeWorktrees({ ...sweep, worktrees: [worktree] }));
-  return outcomeOf(results, freedSince(before));
+  const outcome = outcomeOf(results, freedSince(before));
+  const removal = results.find((result) => result.status === 'done')?.detail;
+  return outcome.status === 'done' ? { ...outcome, detail: removal ?? action.reason } : outcome;
 }
 
 async function removeOrphan(action: MaintenanceAction): Promise<ActionOutcome> {

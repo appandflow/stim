@@ -231,6 +231,11 @@ export function archiveLock(): string {
   return join(archiveRoot(), '.lock');
 }
 
+/** Uncommitted changes of removed worktrees: `<repository>/<branch-or-dir>-<timestamp>/` holding `manifest.json`. */
+export function worktreeArchiveRoot(): string {
+  return join(archiveRoot(), 'worktrees');
+}
+
 /** This machine's own long-term X25519 key as a client of other machines' stim-servers. */
 export function clientIdentityKeyFile(): string {
   return join(configDir(), 'client-identity.key');

@@ -67,7 +67,7 @@ import { registerCollector } from '../collector/state.ts';
 import { LOG_ROTATE_BYTES, withAmbientContext } from '@stim-cli/core';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';
-import { diskUsageCacheFile, pullRequestCacheFile } from '@stim-cli/core/state';
+import { diskUsageCacheFile, pullRequestCacheFile, worktreeArchiveRoot } from '@stim-cli/core/state';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
@@ -938,6 +938,30 @@ describe('linked worktree sweep classification', () => {
     expect(worktreeSkipReason(facts, null)?.code).toBe(code);
   });
 
+  test('a dirty finished worktree is removable when its changes can be archived and nothing else keeps it', () => {
+    const dirty = { porcelain: ['?? notes.txt'], archiveDirty: true };
+    const notMerged: MergeState = { merged: false, unknown: false, detail: 'not merged into origin/main' };
+    const idle = { activity: { at: 0, basis: 'a git index write' } };
+    expect(worktreeSkipReason(linked({ ...dirty, merge: merged() }), null)).toBe(null);
+    expect(worktreeSkipReason(linked({ ...dirty, merge: notMerged }), null)?.code).toBe('dirty');
+    expect(
+      worktreeSkipReason(linked({ ...dirty, ...idle, merge: noOwnCommits }), null, { ms: 0, now: DAY_MS }, 60_000)
+        ?.code,
+    ).toBe('dirty');
+    expect(worktreeSkipReason(linked({ ...dirty, merge: merged(), unpushed: ['abc wip'] }), null)?.code).toBe('dirty');
+    expect(worktreeSkipReason(linked({ ...dirty, merge: merged(), locked: true }), null)?.code).toBe('locked');
+    expect(
+      worktreeSkipReason(linked({ ...dirty, merge: merged(), inUse: ['it holds the running stim (/w/cli.mjs)'] }), null)
+        ?.code,
+    ).toBe('in-use');
+    expect(
+      worktreeRemovalReason(
+        { merge: merged(), pullRequest: null, idleDays: 0, activity: null, dirty: 2 },
+        { now: 0, noOwnCommitsIdleMs: null },
+      ),
+    ).toBe('merged into origin/main, 2 uncommitted files archived first');
+  });
+
   test('pod install churn alone does not keep a worktree', () => {
     expect(
       worktreeSkipReason(linked({ porcelain: [' M ios/Podfile.lock', ' M ios/App.xcodeproj/project.pbxproj'] }), 7),
@@ -1052,13 +1076,32 @@ describe('linked worktree sweep classification', () => {
     const days = (n: number) => ({ at: now - n * DAY_MS, basis: 'a git index write' });
     const facts = (overrides: Partial<WorktreeFacts>) => linked({ idleDays: null, merge: noOwnCommits, ...overrides });
 
-    test('with --worktrees and no recorded Stim use, is idle by its last activity', () => {
-      expect(worktreeSkipReason(facts({ activity: days(9) }), 7, { ms: 0, now })).toBe(null);
-      expect(worktreeSkipReason(facts({ activity: days(2) }), 7, { ms: 0, now })).toEqual({
-        code: 'recently-used',
-        text: 'recently active: a git index write 2d ago; no commits of its own beyond origin/main',
-      });
-      expect(worktreeSkipReason(facts({ activity: null }), 7, { ms: 0, now })?.code).toBe('last-use-unknown');
+    test('without --worktrees, is removable once its activity is older than the idle window, unless a pull request is open', () => {
+      const open: PullRequestLookup = {
+        pullRequest: {
+          number: 12,
+          state: 'open',
+          draft: false,
+          url: 'https://github.com/o/r/pull/12',
+          head: 'abc',
+          containsHead: true,
+          endedAt: null,
+        },
+      };
+      const window = 2 * 60 * 60_000;
+      const grace = { ms: 0, now };
+      const hourAgo = { at: now - 60 * 60_000, basis: 'a git index write' };
+      expect(worktreeSkipReason(facts({ activity: days(1) }), null, grace, window)).toBe(null);
+      expect(worktreeSkipReason(facts({ activity: hourAgo }), null, grace, window)?.code).toBe('recent-activity');
+      expect(worktreeSkipReason(facts({ activity: days(1), pullRequest: open }), null, grace, window)?.code).toBe(
+        'not-merged',
+      );
+      expect(
+        worktreeRemovalReason(
+          { merge: noOwnCommits, pullRequest: null, idleDays: null, activity: days(1) },
+          { now, noOwnCommitsIdleMs: window },
+        ),
+      ).toBe('no commits of its own beyond origin/main, idle 1d');
     });
 
     test('with --worktrees, its recorded Stim use still decides first', () => {
@@ -1091,7 +1134,7 @@ describe('linked worktree sweep classification', () => {
       const reason = (candidate: Partial<Parameters<typeof worktreeRemovalReason>[0]>, idleMs: number | null) =>
         worktreeRemovalReason(
           { merge: noOwnCommits, pullRequest: null, idleDays: null, activity: null, ...candidate },
-          { now, noOwnCommitsIdleMs: idleMs },
+          { now, noOwnCommitsIdleMs: idleMs, underPressure: true },
         );
       expect(reason({ idleDays: 12 }, null)).toBe('no commits of its own beyond origin/main, idle 12d');
       expect(reason({ idleDays: 0, activity: { at: now - 12 * 60_000, basis: 'a git index write' } }, 600_000)).toBe(
@@ -2155,8 +2198,8 @@ test('plain gc --delete removes merged worktrees, squash merges included, after 
   for (const name of ['fresh', 'followup', 'reused']) {
     expect(byPath[worktrees[name]!]).toMatchObject({
       willRemove: false,
-      reason: 'not-merged',
-      detail: 'no commits of its own beyond origin/main',
+      reason: 'recent-activity',
+      detail: expect.stringMatching(/^recent activity: /),
     });
   }
   for (const name of ['evil', 'spaced']) {
@@ -2222,9 +2265,8 @@ test('plain gc fetches nothing and asks gh nothing, shows what the maintenance w
   );
   expect(byPath[worktrees.fresh ?? '']).toMatchObject({
     willRemove: false,
-    reason: 'merge-unknown',
-    detail:
-      'no commits of its own beyond origin/main; merge state not refreshed: its pull request was not checked; the next maintenance worktree check, which a stim command starts when it is due, or `stim gc --delete` checks again',
+    reason: 'recent-activity',
+    detail: expect.stringMatching(/^recent activity: /),
   });
   for (const name of ['squashed', 'rebased']) {
     expect(byPath[worktrees[name] ?? '']).toMatchObject({
@@ -2420,6 +2462,106 @@ test('worktree removal keeps a worktree whose HEAD is not the one the caller app
   expect(existsSync(fresh)).toBe(false);
 }, 120_000);
 
+test.skipIf(process.platform === 'win32')(
+  'gc --delete archives a dirty finished worktree, then removes it, and keeps it while archives are off',
+  async () => {
+    const { worktrees } = repoWithMergedBranches();
+    const dirty = worktrees.dirty ?? '';
+    onTestFinished(() => {
+      delete process.env.STIM_ARCHIVE_ENABLED;
+    });
+
+    await captureLog(() => runGc({ delete: true }));
+    expect(existsSync(dirty)).toBe(true);
+
+    process.env.STIM_ARCHIVE_ENABLED = 'true';
+    const output = await captureLog(() => runGc({ delete: true }));
+
+    expect(existsSync(dirty)).toBe(false);
+    const repoDir = join(worktreeArchiveRoot(), 'origin-repo');
+    const [entry] = readdirSync(repoDir);
+    const archive = join(repoDir, entry ?? '');
+    const manifest = JSON.parse(readFileSync(join(archive, 'manifest.json'), 'utf8'));
+    expect(manifest).toMatchObject({ branch: 'dirty', worktree: dirty, tracked: [], untracked: ['notes.txt'] });
+    expect(output).toContain(
+      `Removed the worktree ${dirty} (merged into origin/main; archived 1 uncommitted file to ${archive}; restore: `,
+    );
+    for (const command of manifest.restore) execSync(command, { stdio: 'pipe', timeout: 30_000 });
+    expect(readFileSync(join(dirty, 'notes.txt'), 'utf8')).toBe('wip');
+  },
+  120_000,
+);
+
+test('the grace period of a dirty finished worktree counts changes to its uncommitted files', async () => {
+  const { worktrees } = repoWithMergedBranches();
+  const dirty = worktrees.dirty ?? '';
+  process.env.STIM_ARCHIVE_ENABLED = 'true';
+  onTestFinished(() => {
+    delete process.env.STIM_ARCHIVE_ENABLED;
+  });
+  const later = Date.now() + 3 * 60 * 60_000;
+  const verdict = async () =>
+    (await collectWorktreeSweep({ idle: false, olderThan: null, now: later, graceMs: 120 * 60_000 })).worktrees.find(
+      (w) => realpathSync.native(w.path) === dirty,
+    );
+
+  expect(await verdict()).toMatchObject({ skipCode: null, dirty: 1 });
+  const edited = new Date(later - 10 * 60_000);
+  utimesSync(join(dirty, 'notes.txt'), edited, edited);
+  expect(await verdict()).toMatchObject({
+    skipCode: 'recent-activity',
+    skipped: expect.stringMatching(/^recent activity: an uncommitted file change 10m ago/),
+  });
+}, 120_000);
+
+test('gc --delete removes a clean detached worktree on the default branch once idle, and keeps a fresh one', async () => {
+  const { worktrees, git } = repoWithMergedBranches({ registerWorktrees: false });
+  const baseline = join(projects, 'baseline');
+  git(`worktree add -q --detach "${baseline}" origin/main`);
+  backdateWorktreeActivity(baseline, new Date(Date.now() - 3 * 60 * 60_000));
+  const fresh = join(projects, 'fresh-baseline');
+  git(`worktree add -q --detach "${fresh}" origin/main`);
+
+  const output = await captureLog(() => runGc({ delete: true }));
+
+  expect(existsSync(baseline)).toBe(false);
+  expect(output).toMatch(
+    /Removed the worktree .*baseline \(no commits of its own beyond origin\/main, inactive for 3h/,
+  );
+  expect(existsSync(fresh)).toBe(true);
+  for (const name of ['open', 'evil', 'dirty']) expect(existsSync(worktrees[name] ?? '')).toBe(true);
+}, 120_000);
+
+test('gc keeps a finished worktree that holds the running stim, and worktree remove refuses it', async () => {
+  const { worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+  const merged = worktrees.merged ?? '';
+  const argv = process.argv[1] ?? '';
+  process.argv[1] = join(merged, 'package.json');
+  onTestFinished(() => {
+    process.argv[1] = argv;
+  });
+
+  const { payload } = await gcJson({ delete: true });
+
+  expect(
+    payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === merged),
+  ).toMatchObject({
+    willRemove: false,
+    reason: 'in-use',
+    detail: expect.stringContaining('it holds the running stim'),
+  });
+  expect(existsSync(merged)).toBe(true);
+  expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    expect(await removeWorktreeTarget(merged, { linkedOnly: true, force: true })).toBe(false);
+    expect(error.mock.calls.flat().join('\n')).toContain('it holds the running stim');
+  } finally {
+    error.mockRestore();
+  }
+  expect(existsSync(merged)).toBe(true);
+}, 120_000);
+
 test('disk pressure level 3 removes a worktree with no commits of its own once idle for the pressure window', async () => {
   const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
   const at = (name: string) => worktrees[name] ?? name;
@@ -2471,7 +2613,7 @@ test.skipIf(process.platform === 'win32')(
             olderThan: null,
             now: Date.now(),
             graceMs: 0,
-            removesNoOwnCommits: true,
+            underPressure: true,
           })
         ).worktrees.map((w) => [w.path, w.skipCode]),
       );
