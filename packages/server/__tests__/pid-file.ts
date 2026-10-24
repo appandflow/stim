@@ -1,10 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-/**
- * A fixture child creates its pid file and writes the pid in two steps, so the file can exist and be empty.
- * Waits for it to hold a pid and returns it.
- */
 export async function readPid(file: string, timeoutMs = 10_000): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
