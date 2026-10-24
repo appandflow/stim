@@ -796,7 +796,7 @@ describe('stim status --watch --json', () => {
       const before = cpu(last(lines));
       await until(() => reads() >= 2, 30_000);
       moveCpu();
-      await until(() => cpu(last(lines)) > before, 30_000);
+      await until(() => cpu(last(lines)) > before, 25_000);
       expect(cpu(last(lines))).toBe(20);
     }, 40_000);
 
