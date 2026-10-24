@@ -28,6 +28,12 @@ node scripts/perf/bench.mjs --version 1.25.0 --reps 3 --publish
 node scripts/perf/bench.mjs --cli packages/stim-cli/dist/cli.mjs --reps 3 --publish
 ```
 
+The version is installed into a scratch prefix and `bench.mjs` runs that install's `cli.mjs` by path. Do not
+replace this with `npx stim@<version>` from this repository: the root `package.json` lists `packages/*` as
+workspaces, so when the requested version equals the workspace's own `stim` version, npx treats it as installed,
+skips the download and runs whichever `stim` is first on `PATH`, which can be a different build. Run a pinned
+`npx stim@<version>` from a directory outside any Stim checkout.
+
 Each repetition adds a detached git worktree of this repository at `--sha` (default `HEAD`) and runs, from its
 `apps/mobile`:
 
