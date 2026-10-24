@@ -495,16 +495,6 @@ export async function stopHostedNative(
     signal?.addEventListener('abort', cancel, { once: true });
     try {
       host = await connectHost(placement.machine, undefined, false, signal);
-      try {
-        await pullHostedNativeLogs(root, name, placement, host, true, platform, signal);
-      } catch (error) {
-        signal?.throwIfAborted();
-        ambientWrite(
-          'stderr',
-          `Could not copy final native logs from ${placement.machine}: ${(error as Error).message}\n`,
-        );
-      }
-      signal?.throwIfAborted();
       const stopped = await settle(
         host,
         hostedSession(host, await call(host, 'device-host.stop', { session: placement.session }), platform),

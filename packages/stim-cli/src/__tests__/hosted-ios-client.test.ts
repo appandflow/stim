@@ -31,7 +31,7 @@ import { reconcileHostedMetro, watchHostedMetro } from '../supervisor/hosted-met
 import { getConfigPath, getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { parseLogStreamLine } from '../collector/ios.ts';
-import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
+import { pullHostedNativeLogs, readHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { followHostedMacosLogs, followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../engine/slot-launch.ts';
@@ -621,6 +621,43 @@ test('cancelling a hosted stop preserves both placements and never stops the sib
   expect(fixtureConnection.close).toHaveBeenCalled();
 });
 
+test('stop copies the final native logs once, after the host has stopped the session', async () => {
+  writeHostedIos(root, 'default', placement());
+  await stopHostedIos(root);
+  expect(
+    methods
+      .map((entry) => entry.method)
+      .filter((method) => method === 'device-host.stop' || method === 'device-host.logs.query'),
+  ).toEqual(['device-host.stop', 'device-host.logs.query']);
+});
+
+test('cancelling stim stop during the final log copy keeps the placement, and a rerun copies each record once', async () => {
+  writeHostedIos(root, 'default', placement());
+  logRecords = [1, 2, 3, 4, 5].map((ts) => ({ ts, src: 'device', level: 'info', msg: `native ${ts}` }));
+  const controller = new AbortController();
+  const cancelled = new Error('cancel stim stop');
+  const request = fixtureConnection.request.bind(fixtureConnection);
+  fixtureConnection.request = async (...args) => {
+    const result = await request(...args);
+    if (args[0] === 'device-host.logs.query') controller.abort(cancelled);
+    return result;
+  };
+
+  await expect(runStop({ root, report: () => {}, operation: testContext({ signal: controller.signal }) })).rejects.toBe(
+    cancelled,
+  );
+  expect(readHostedIos(root)).toEqual({ default: placement() });
+  expect(readHostedNativeLogs(root, 'ios', 'default')).toEqual([]);
+
+  fixtureConnection.request = request;
+  const result = await runStop({ root, report: () => {} });
+  expect(result.ok).toBe(true);
+  expect(readHostedIos(root)).toEqual({});
+  expect(readHostedNativeLogs(root, 'ios', 'default').map((record) => record.msg)).toEqual(
+    logRecords.map((record) => record.msg),
+  );
+});
+
 test.each([false, true])('workspace removal preserves an unreachable hosting owner: %s', async (unreachable) => {
   writeHostedIos(root, 'default', placement());
   tailnet.changed = unreachable;
@@ -1001,7 +1038,7 @@ test.each(['same-server', 'other-server', 'older-host', 'refused'])(
   },
 );
 
-test('hosted iOS native errors are paged into the workspace once per slot and pulled before stop', async () => {
+test('hosted iOS native errors are paged into the workspace once per slot and pulled after stop', async () => {
   writeHostedIos(root, 'tablet', placement());
   logRecords = [1, 2, 3].map((ts) => ({ ts, src: 'device', level: ts === 3 ? 'error' : 'info', msg: `native ${ts}` }));
   const target = await prepareHostedIos('mini', {}, placement());
@@ -1039,7 +1076,7 @@ test('hosted iOS native errors are paged into the workspace once per slot and pu
   );
   methods = [];
   await stopHostedIos(root, 'tablet');
-  expect(methods.map((entry) => entry.method).indexOf('device-host.logs.query')).toBeLessThan(
+  expect(methods.map((entry) => entry.method).indexOf('device-host.logs.query')).toBeGreaterThan(
     methods.map((entry) => entry.method).indexOf('device-host.stop'),
   );
   const finalLogs = readFileSync(join(workspaceLogsDir(root), 'ios.tablet-host.ndjson'), 'utf8');
