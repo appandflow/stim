@@ -641,6 +641,7 @@ async function evictUnbindableCacheHit({
   launchedAt,
   logsDir,
   cacheHit,
+  providerName,
   storeKey,
   runCommand,
   local,
@@ -656,6 +657,7 @@ async function evictUnbindableCacheHit({
   launchedAt: number;
   logsDir: string;
   cacheHit: CacheHitLevel;
+  providerName: string | null;
   storeKey: string | null;
   runCommand: string;
   local: boolean;
@@ -671,12 +673,12 @@ async function evictUnbindableCacheHit({
   );
   const symbol = crashes.map(bundleBindFailure).find(Boolean);
   if (!symbol || !(await d.evictBuild('ios', storeKey))) return null;
-  const provider = cacheHit === 'remote';
+  const provider = cacheHit === 'remote' || Boolean(providerName);
   return {
     code: 'STIM_LAUNCH_FAILED',
     message: `The cached app cannot start: dyld could not bind ${symbol} between two parts of the app itself.`,
     remedy:
-      `Stim removed the cache entry ${storeKey}${provider ? ', but the cache provider still holds its copy' : ''}. ` +
+      `Stim removed the cache entry ${storeKey}${provider ? ', but the cache provider may still hold its copy' : ''}. ` +
       `Run \`${runCommand}\`${provider ? ' with `--no-build-cache`' : ''} again to build the app fresh. ` +
       "If the fresh app crashes the same way, the project's own native code is the cause.",
     logPath: logsDir,
@@ -887,6 +889,24 @@ export async function finishIosRun({
   let installSkipped = false;
   let launched: IosRuntimeLaunchResult;
   let launchedAt = d.now();
+  const evictUnbound = () =>
+    evictUnbindableCacheHit({
+      d,
+      root,
+      slot,
+      udid,
+      bundleId,
+      appPath,
+      launchedAt,
+      logsDir,
+      cacheHit,
+      providerName,
+      storeKey,
+      runCommand,
+      local: !physical && !remoteDevice,
+      logFields: { ...buildFailure, appPath, bundleId },
+      operation,
+    });
 
   if (physical) {
     const overWifi = await installsOverWifi(d, udid, wireless, note);
@@ -1100,6 +1120,8 @@ export async function finishIosRun({
         operation?.signal,
         operation?.env,
       );
+      const evicted = await evictUnbound();
+      if (evicted) return fail(evicted);
       return fail({
         code: launched.code || 'STIM_LAUNCH_FAILED',
         message: launched.reason,
@@ -1180,22 +1202,7 @@ export async function finishIosRun({
     enterActivity,
   });
   if (launchState === LAUNCH_FATAL) {
-    const evicted = await evictUnbindableCacheHit({
-      d,
-      root,
-      slot,
-      udid,
-      bundleId,
-      appPath,
-      launchedAt,
-      logsDir,
-      cacheHit,
-      storeKey,
-      runCommand,
-      local: !physical && !remoteDevice,
-      logFields: { ...buildFailure, appPath, bundleId },
-      operation,
-    });
+    const evicted = await evictUnbound();
     if (evicted) return fail(evicted);
     return fail({
       code: 'STIM_LAUNCH_FAILED',

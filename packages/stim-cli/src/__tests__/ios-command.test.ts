@@ -1574,6 +1574,16 @@ describe('a cached app that cannot bind its own frameworks', () => {
     expect(failure.remedy).toContain(`${FINGERPRINT}-debug-sim-arm64`);
   });
 
+  test('a launch command that reports the dyld failure itself evicts the cache hit too', async () => {
+    const { calls, logs, exitCode } = await launchWithCrash(unbound, {
+      resolveBuild: () => join(tmpHome, 'build-cache', 'ios', 'k', 'Fixture.app'),
+      launchIosApp: () => ({ failed: true, reason: 'simctl launch failed' }),
+    });
+    expect(exitCode).toBe(1);
+    expect(calls.args.evictBuild).toEqual({ platform: 'ios', key: `${FINGERPRINT}-debug-sim-arm64` });
+    expect(parseFirst(logs).message).toContain('CDPDebugAPI');
+  });
+
   test('an app built by this run is left in the cache', async () => {
     const { calls, exitCode } = await launchWithCrash(unbound);
     expect(exitCode).toBe(1);
