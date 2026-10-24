@@ -239,7 +239,7 @@ test('nothing is archived when archives are off for the worktree', async () => {
   expect(existsSync(worktreeArchiveRoot())).toBe(false);
 }, 60_000);
 
-test('retention deletes worktree archives past archive.maxAgeDays, then the oldest while over archive.maxTotalGb, never one whose removal holds its claim', async () => {
+test('retention deletes worktree archives past archive.maxAgeDays, then the oldest while over archive.maxTotalGb, never counting or deleting one whose removal holds its claim', async () => {
   const day = 86_400_000;
   const now = Date.now();
   const plant = (name: string, ageDays: number, bytes: number) => {
@@ -267,9 +267,11 @@ test('retention deletes worktree archives past archive.maxAgeDays, then the olde
 
   expect(existsSync(expired)).toBe(false);
   expect(existsSync(oldest)).toBe(false);
-  expect(existsSync(recent)).toBe(false);
+  expect(existsSync(recent)).toBe(true);
   expect(existsSync(inFlight)).toBe(true);
-  expect(readdirSync(join(worktreeArchiveRoot(), 'repo')).filter((name) => !name.endsWith('.claims'))).toEqual([
-    'in-flight',
-  ]);
+  expect(
+    readdirSync(join(worktreeArchiveRoot(), 'repo'))
+      .filter((name) => !name.endsWith('.claims'))
+      .toSorted(),
+  ).toEqual(['in-flight', 'recent']);
 });

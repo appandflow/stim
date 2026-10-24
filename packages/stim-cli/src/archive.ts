@@ -551,7 +551,12 @@ export async function worktreeArchiveBytes(signal?: AbortSignal): Promise<number
 }
 
 async function pruneWorktreeArchives(now: number, limits: Record<string, number>, signal?: AbortSignal): Promise<void> {
-  const { repositories, entries } = await listWorktreeArchives(signal);
+  const listed = await listWorktreeArchives(signal);
+  const { repositories } = listed;
+  const entries = listed.entries.filter((entry) => {
+    const claims = readClaimSet(`${entry.path}.claims`);
+    return !claims.live.length && !claims.unresolved.length;
+  });
   entries.sort((a, b) => a.at - b.at);
   let total = entries.reduce((sum, entry) => sum + entry.bytes, 0);
   const cap = (limits.maxTotalGb ?? 0) * 1024 ** 3;

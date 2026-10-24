@@ -133,20 +133,6 @@ export async function worktreeArchiveMismatch(
   archive: WorktreeArchive,
   operation?: StimContext,
 ): Promise<string | null> {
-  for (const file of [
-    ...(archive.tracked.length ? ['tracked.patch'] : []),
-    ...(archive.untracked.length ? ['untracked.tar'] : []),
-  ]) {
-    if (!(await lstat(join(archive.dir, file)).catch(() => null))) return `its archive lost ${file}`;
-  }
-  const now = await changesOf(path, operation);
-  if (!sameList(now.tracked, archive.tracked) || !sameList(now.untracked, archive.untracked)) {
-    return 'its uncommitted or untracked files changed while they were archived';
-  }
-  const newest = await newestChange(path, now);
-  if (newest !== null && newest >= archive.at) return 'an uncommitted file changed while it was archived';
-  const staged = await stagedOnly(path, operation);
-  if (staged.length) return `the staged content of ${staged.join(', ')} differs from its working tree`;
   if (archive.tracked.length) {
     try {
       await gitAsync(path, ['apply', '--check', '-R', join(archive.dir, 'tracked.patch')], {
@@ -158,6 +144,20 @@ export async function worktreeArchiveMismatch(
       operation?.signal.throwIfAborted();
       return `the archived patch does not reverse against the worktree: ${(error instanceof Error ? error.message : String(error)).split('\n')[0]}`;
     }
+  }
+  const staged = await stagedOnly(path, operation);
+  if (staged.length) return `the staged content of ${staged.join(', ')} differs from its working tree`;
+  const now = await changesOf(path, operation);
+  if (!sameList(now.tracked, archive.tracked) || !sameList(now.untracked, archive.untracked)) {
+    return 'its uncommitted or untracked files changed while they were archived';
+  }
+  const newest = await newestChange(path, now);
+  if (newest !== null && newest >= archive.at) return 'an uncommitted file changed while it was archived';
+  for (const file of [
+    ...(archive.tracked.length ? ['tracked.patch'] : []),
+    ...(archive.untracked.length ? ['untracked.tar'] : []),
+  ]) {
+    if (!(await lstat(join(archive.dir, file)).catch(() => null))) return `its archive lost ${file}`;
   }
   return null;
 }
