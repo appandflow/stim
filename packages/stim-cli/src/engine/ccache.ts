@@ -13,7 +13,11 @@ import { defaultAndroidLayout, type AndroidLayout } from '../workspace/settings.
 export const CCACHE_MAX_SIZE = '5G';
 
 export function ccacheInstallCommand(platform: NodeJS.Platform = process.platform): string {
-  return platform === 'darwin' ? 'brew install ccache' : platform === 'linux' ? 'sudo apt install ccache' : 'install ccache';
+  return platform === 'darwin'
+    ? 'brew install ccache'
+    : platform === 'linux'
+      ? 'sudo apt install ccache'
+      : 'install ccache';
 }
 
 // ccache manual, "SLOPPINESS": pch_defines is required for a precompiled

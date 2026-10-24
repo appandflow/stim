@@ -1429,7 +1429,9 @@ describe('missingPackageManagerRemedy', () => {
   });
 
   it('ignores other failures, including a package manager that ran and failed', () => {
-    expect(missingPackageManagerRemedy('m', 'deps-failed: pnpm install --frozen-lockfile exited with 1: x')).toBeUndefined();
+    expect(
+      missingPackageManagerRemedy('m', 'deps-failed: pnpm install --frozen-lockfile exited with 1: x'),
+    ).toBeUndefined();
     expect(missingPackageManagerRemedy('m', 'deps-failed: spawn git ENOENT')).toBeUndefined();
   });
 });
