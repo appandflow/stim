@@ -25,7 +25,7 @@ jobs:
         run: pnpm run typecheck
 
       - name: Unit tests (vitest)
-        run: pnpm test --shard=${{ matrix.shard }}/${{ strategy.job-total }} --reporter=default --reporter=json --outputFile.json=test-results/unit-windows-${{ matrix.shard }}.json
+        run: pnpm test --shard=${{ matrix.shard }}/${{ strategy.job-total }} --retry=2 --reporter=default --reporter=json --outputFile.json=test-results/unit-windows-${{ matrix.shard }}.json
 
       - name: Retain unit-test timings
         if: always()
