@@ -774,7 +774,7 @@ describe('stim status --watch --json', () => {
         join(bin, 'ps'),
         [
           '#!/bin/sh',
-          `moved='${moved}'`,
+          `[ -f '${moved}' ] && up=1 || up=0`,
           `n=0; [ -f '${count}' ] && read n < '${count}'; n=$((n + 1)); echo $n > '${count}'`,
           `echo "100 1 1024 ${cpuExpr}.0 Sat Sep 26 15:33:49 2026 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist"`,
         ].join('\n'),
@@ -792,8 +792,9 @@ describe('stim status --watch --json', () => {
     }
 
     test('a CPU move past a step prints a new line without any state change; skipped off macOS, where no simulator runs', async () => {
-      const { lines, cpu, moveCpu } = await machineWatch('$([ -f "$moved" ] && echo 20 || echo 10)');
+      const { lines, cpu, reads, moveCpu } = await machineWatch('$((up ? 20 : 10))');
       const before = cpu(last(lines));
+      await until(() => reads() >= 2, 30_000);
       moveCpu();
       await until(() => cpu(last(lines)) > before, 30_000);
       expect(cpu(last(lines))).toBe(20);
