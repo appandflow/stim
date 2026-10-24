@@ -2462,31 +2462,35 @@ test('worktree removal keeps a worktree whose HEAD is not the one the caller app
   expect(existsSync(fresh)).toBe(false);
 }, 120_000);
 
-test('gc --delete archives a dirty finished worktree, then removes it, and keeps it while archives are off', async () => {
-  const { worktrees } = repoWithMergedBranches();
-  const dirty = worktrees.dirty ?? '';
-  onTestFinished(() => {
-    delete process.env.STIM_ARCHIVE_ENABLED;
-  });
+test.skipIf(process.platform === 'win32')(
+  'gc --delete archives a dirty finished worktree, then removes it, and keeps it while archives are off',
+  async () => {
+    const { worktrees } = repoWithMergedBranches();
+    const dirty = worktrees.dirty ?? '';
+    onTestFinished(() => {
+      delete process.env.STIM_ARCHIVE_ENABLED;
+    });
 
-  await captureLog(() => runGc({ delete: true }));
-  expect(existsSync(dirty)).toBe(true);
+    await captureLog(() => runGc({ delete: true }));
+    expect(existsSync(dirty)).toBe(true);
 
-  process.env.STIM_ARCHIVE_ENABLED = 'true';
-  const output = await captureLog(() => runGc({ delete: true }));
+    process.env.STIM_ARCHIVE_ENABLED = 'true';
+    const output = await captureLog(() => runGc({ delete: true }));
 
-  expect(existsSync(dirty)).toBe(false);
-  const repoDir = join(worktreeArchiveRoot(), 'origin-repo');
-  const [entry] = readdirSync(repoDir);
-  const archive = join(repoDir, entry ?? '');
-  const manifest = JSON.parse(readFileSync(join(archive, 'manifest.json'), 'utf8'));
-  expect(manifest).toMatchObject({ branch: 'dirty', worktree: dirty, tracked: [], untracked: ['notes.txt'] });
-  expect(output).toContain(
-    `Removed the worktree ${dirty} (merged into origin/main; archived 1 uncommitted file to ${archive}; restore: `,
-  );
-  for (const command of manifest.restore) execSync(command, { stdio: 'pipe', timeout: 30_000 });
-  expect(readFileSync(join(dirty, 'notes.txt'), 'utf8')).toBe('wip');
-}, 120_000);
+    expect(existsSync(dirty)).toBe(false);
+    const repoDir = join(worktreeArchiveRoot(), 'origin-repo');
+    const [entry] = readdirSync(repoDir);
+    const archive = join(repoDir, entry ?? '');
+    const manifest = JSON.parse(readFileSync(join(archive, 'manifest.json'), 'utf8'));
+    expect(manifest).toMatchObject({ branch: 'dirty', worktree: dirty, tracked: [], untracked: ['notes.txt'] });
+    expect(output).toContain(
+      `Removed the worktree ${dirty} (merged into origin/main; archived 1 uncommitted file to ${archive}; restore: `,
+    );
+    for (const command of manifest.restore) execSync(command, { stdio: 'pipe', timeout: 30_000 });
+    expect(readFileSync(join(dirty, 'notes.txt'), 'utf8')).toBe('wip');
+  },
+  120_000,
+);
 
 test('the grace period of a dirty finished worktree counts changes to its uncommitted files', async () => {
   const { worktrees } = repoWithMergedBranches();

@@ -91,54 +91,62 @@ async function archive() {
   });
 }
 
-test('the archive of a dirty worktree restores its tracked, staged, deleted, binary and untracked changes, and no ignored file', async () => {
-  dirtyTheWorktree();
-  const saved = await archive();
+test.skipIf(process.platform === 'win32')(
+  'the archive of a dirty worktree restores its tracked, staged, deleted, binary and untracked changes, and no ignored file',
+  async () => {
+    dirtyTheWorktree();
+    const saved = await archive();
 
-  const manifest = JSON.parse(readFileSync(join(saved.dir, 'manifest.json'), 'utf8'));
-  expect(manifest).toMatchObject({
-    branch: 'topic',
-    pullRequest: { number: 12 },
-    tracked: ['a.txt', 'b.txt', 'bin.dat', 'c.txt'],
-    untracked: ['notes/scratch file.txt'],
-    restore: saved.restore,
-  });
-  git(repo, `worktree remove --force "${worktree}"`);
-  for (const command of saved.restore) execFileSync('sh', ['-c', command], { timeout: 30_000, stdio: 'pipe' });
+    const manifest = JSON.parse(readFileSync(join(saved.dir, 'manifest.json'), 'utf8'));
+    expect(manifest).toMatchObject({
+      branch: 'topic',
+      pullRequest: { number: 12 },
+      tracked: ['a.txt', 'b.txt', 'bin.dat', 'c.txt'],
+      untracked: ['notes/scratch file.txt'],
+      restore: saved.restore,
+    });
+    git(repo, `worktree remove --force "${worktree}"`);
+    for (const command of saved.restore) execFileSync('sh', ['-c', command], { timeout: 30_000, stdio: 'pipe' });
 
-  expect(readFileSync(join(worktree, 'a.txt'), 'utf8')).toBe('edited\n');
-  expect(readFileSync(join(worktree, 'b.txt'), 'utf8')).toBe('staged\n');
-  expect(existsSync(join(worktree, 'c.txt'))).toBe(false);
-  expect([...readFileSync(join(worktree, 'bin.dat'))]).toEqual([9, 0, 8, 0, 7]);
-  expect(readFileSync(join(worktree, 'notes', 'scratch file.txt'), 'utf8')).toBe('scratch\n');
-  expect(existsSync(join(worktree, 'build'))).toBe(false);
-}, 60_000);
+    expect(readFileSync(join(worktree, 'a.txt'), 'utf8')).toBe('edited\n');
+    expect(readFileSync(join(worktree, 'b.txt'), 'utf8')).toBe('staged\n');
+    expect(existsSync(join(worktree, 'c.txt'))).toBe(false);
+    expect([...readFileSync(join(worktree, 'bin.dat'))]).toEqual([9, 0, 8, 0, 7]);
+    expect(readFileSync(join(worktree, 'notes', 'scratch file.txt'), 'utf8')).toBe('scratch\n');
+    expect(existsSync(join(worktree, 'build'))).toBe(false);
+  },
+  60_000,
+);
 
-test('the archive restores a HEAD that no branch keeps once git has collected it', async () => {
-  const remote = join(home, 'origin.git');
-  git(home, `init -q --bare -b main "${remote}"`);
-  git(repo, `remote add origin "${remote}"`);
-  git(repo, 'push -q origin main');
-  git(repo, 'remote set-head origin main');
-  writeFileSync(join(worktree, 'feature.txt'), 'feature\n');
-  git(worktree, 'add feature.txt');
-  git(worktree, 'commit -q -m feature');
-  const head = git(worktree, 'rev-parse HEAD');
-  writeFileSync(join(worktree, 'scratch.txt'), 'scratch\n');
-  const saved = await archive();
-  expect(existsSync(join(saved.dir, 'head.bundle'))).toBe(true);
+test.skipIf(process.platform === 'win32')(
+  'the archive restores a HEAD that no branch keeps once git has collected it',
+  async () => {
+    const remote = join(home, 'origin.git');
+    git(home, `init -q --bare -b main "${remote}"`);
+    git(repo, `remote add origin "${remote}"`);
+    git(repo, 'push -q origin main');
+    git(repo, 'remote set-head origin main');
+    writeFileSync(join(worktree, 'feature.txt'), 'feature\n');
+    git(worktree, 'add feature.txt');
+    git(worktree, 'commit -q -m feature');
+    const head = git(worktree, 'rev-parse HEAD');
+    writeFileSync(join(worktree, 'scratch.txt'), 'scratch\n');
+    const saved = await archive();
+    expect(existsSync(join(saved.dir, 'head.bundle'))).toBe(true);
 
-  git(repo, `worktree remove --force "${worktree}"`);
-  git(repo, 'branch -D topic');
-  git(repo, 'reflog expire --expire=now --all');
-  git(repo, 'gc -q --prune=now');
-  expect(() => git(repo, `cat-file -e ${head}`)).toThrow(/Command failed/);
-  for (const command of saved.restore) execFileSync('sh', ['-c', command], { timeout: 30_000, stdio: 'pipe' });
+    git(repo, `worktree remove --force "${worktree}"`);
+    git(repo, 'branch -D topic');
+    git(repo, 'reflog expire --expire=now --all');
+    git(repo, 'gc -q --prune=now');
+    expect(() => git(repo, `cat-file -e ${head}`)).toThrow(/Command failed/);
+    for (const command of saved.restore) execFileSync('sh', ['-c', command], { timeout: 30_000, stdio: 'pipe' });
 
-  expect(git(worktree, 'rev-parse HEAD')).toBe(head);
-  expect(readFileSync(join(worktree, 'feature.txt'), 'utf8')).toBe('feature\n');
-  expect(readFileSync(join(worktree, 'scratch.txt'), 'utf8')).toBe('scratch\n');
-}, 120_000);
+    expect(git(worktree, 'rev-parse HEAD')).toBe(head);
+    expect(readFileSync(join(worktree, 'feature.txt'), 'utf8')).toBe('feature\n');
+    expect(readFileSync(join(worktree, 'scratch.txt'), 'utf8')).toBe('scratch\n');
+  },
+  120_000,
+);
 
 test('a recent deletion counts as uncommitted activity through its parent directory', async () => {
   const sub = join(worktree, 'docs');
@@ -198,30 +206,36 @@ test('worktree removal with archiveDirty archives and removes a dirty worktree, 
   expect(readFileSync(join(saved[0]?.dir ?? '', 'manifest.json'), 'utf8')).toContain('scratch.txt');
 }, 120_000);
 
-test('a failing git removal keeps both the worktree and its archive', async () => {
-  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-  onTestFinished(() => error.mockRestore());
-  const locked = join(worktree, 'locked');
-  mkdirSync(locked);
-  writeFileSync(join(locked, 'held.txt'), 'held\n');
-  chmodSync(locked, 0o555);
-  let removed: boolean;
-  try {
-    removed = await removeWorktreeTarget(worktree, {
-      linkedOnly: true,
-      archiveDirty: { pullRequest: null, onArchived: () => {} },
-    });
-  } finally {
-    chmodSync(locked, 0o755);
-  }
+test.skipIf(process.platform === 'win32')(
+  'a failing git removal keeps both the worktree and its archive',
+  async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onTestFinished(() => error.mockRestore());
+    const locked = join(worktree, 'locked');
+    mkdirSync(locked);
+    writeFileSync(join(locked, 'held.txt'), 'held\n');
+    chmodSync(locked, 0o555);
+    let removed: boolean;
+    try {
+      removed = await removeWorktreeTarget(worktree, {
+        linkedOnly: true,
+        archiveDirty: { pullRequest: null, onArchived: () => {} },
+      });
+    } finally {
+      chmodSync(locked, 0o755);
+    }
 
-  expect(removed).toBe(false);
-  expect(existsSync(join(locked, 'held.txt'))).toBe(true);
-  const [entry] = readdirSync(join(worktreeArchiveRoot(), 'repo'));
-  const manifest = JSON.parse(readFileSync(join(worktreeArchiveRoot(), 'repo', entry ?? '', 'manifest.json'), 'utf8'));
-  expect(manifest.untracked).toEqual(['locked/held.txt']);
-  expect(error.mock.calls.flat().join('\n')).toContain('Its uncommitted changes stay archived in');
-}, 120_000);
+    expect(removed).toBe(false);
+    expect(existsSync(join(locked, 'held.txt'))).toBe(true);
+    const [entry] = readdirSync(join(worktreeArchiveRoot(), 'repo'));
+    const manifest = JSON.parse(
+      readFileSync(join(worktreeArchiveRoot(), 'repo', entry ?? '', 'manifest.json'), 'utf8'),
+    );
+    expect(manifest.untracked).toEqual(['locked/held.txt']);
+    expect(error.mock.calls.flat().join('\n')).toContain('Its uncommitted changes stay archived in');
+  },
+  120_000,
+);
 
 test('nothing is archived when writing it would cross budget.hardFloorDiskGb', async () => {
   process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = String(1024 ** 3);
