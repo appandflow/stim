@@ -117,6 +117,9 @@ describe('comparison', () => {
     const latest = (count) => run(Array.from({ length: count }, (_, index) => 12_000 + index * 10));
     expect(compareRuns(latest(3), previous(3)).notes.join()).toMatch(/ios-rerun REGRESSION: rerun .* --reps 5/);
     expect(compareRuns(latest(5), previous(5)).notes.join()).not.toMatch(/--reps/);
+    const failed = latest(5);
+    failed.scenarios['ios-rerun'].runs[4].exit = 1;
+    expect(compareRuns(failed, previous(5)).notes.join()).toMatch(/--reps 5/);
   });
 
   it('does not flag a large percentage that is only a few milliseconds', () => {

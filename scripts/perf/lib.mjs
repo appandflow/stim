@@ -140,7 +140,7 @@ export function compareRuns(latest, previous, options = {}) {
         else if (row.busy || Math.max(after.spread ?? 0, before.spread ?? 0) > config.noisySpread) {
           row.status += ' (noisy)';
         }
-        if (Math.min(before.n, after.n) < config.confirmReps) {
+        if (Math.min(before.n - before.failures, after.n - after.failures) < config.confirmReps) {
           notes.push(`${name} ${row.status}: rerun both builds with --reps ${config.confirmReps} to confirm`);
         }
       }
