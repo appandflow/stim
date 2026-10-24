@@ -2366,6 +2366,19 @@ describe('ensureOwnedDevice: ios', () => {
       }
     });
 
+    test('records the SpringBoard pid of a simulator that is still starting after SimSlim rebooted it', async () => {
+      const { root, events, run } = prepareRunning([1111, 0, 4242]);
+      try {
+        await run({ ios: { simslim: 'on' } });
+        expect(getProject(root)?.platforms?.ios?.simslimApplied).toEqual({ profile: 'default', springBoardPid: 4242 });
+        events.length = 0;
+        await run({ ios: { simslim: 'on' } });
+        expect(events).toEqual([]);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     test('runs SimSlim again when the profile file changes, and skips again once it is applied', async () => {
       const { root, events, run } = prepareRunning([4242]);
       try {
