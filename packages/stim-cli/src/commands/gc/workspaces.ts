@@ -9,7 +9,7 @@ import { teardownOwnedBrowser } from '../../devices/teardown.ts';
 import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
-import { regenerableDirProblem, regenerableDirsOf } from '../../workspace/regenerable-dirs.ts';
+import { ARTIFACT_DIRS, existingDirsOf, regenerableDirProblem } from '../../workspace/regenerable-dirs.ts';
 import { workspaceBuildInProgress } from './idle.ts';
 import { mapLimited, sizeConcurrency } from './limited.ts';
 import { canonicalPath } from './paths.ts';
@@ -254,9 +254,13 @@ async function workspaceBuildReasonsAsync(
   return workspaceBuildInProgress(root) ? [...reasons, BUILD_IN_PROGRESS] : reasons;
 }
 
+// React Native 0.88's `pod install` writes podspec facades and codegen output under ios/build that the Pods
+// project references (scripts/cocoapods/rncore_facades.rb), and only `pod install` recreates them.
+const IN_TREE_BUILD_DIRS = ARTIFACT_DIRS.build.filter((dir) => dir !== 'ios/build');
+
 async function inTreeBuildDirs(root: string, signal?: AbortSignal): Promise<string[]> {
   const dirs: string[] = [];
-  for (const path of regenerableDirsOf(root, 'build'))
+  for (const path of existingDirsOf(root, IN_TREE_BUILD_DIRS))
     if (!(await regenerableDirProblem(root, path, signal))) dirs.push(path);
   return dirs;
 }
@@ -275,7 +279,7 @@ export type WorkspaceKeptCode = 'unresolved' | 'in-use' | 'last-use-unknown' | '
 export interface WorkspaceOutputs {
   dir: string;
   projectRoot: string | null;
-  /** The project's own build directories (ios/build, android/app/build and the like) cleared with the outputs. */
+  /** The project's own build directories (android/app/build and the like) cleared with the outputs. */
   inTreeDirs: string[];
   bytes: number | null;
   idleDays: number | null;
@@ -501,7 +505,7 @@ export async function clearWorkspaceOutputs(
           );
           if (again?.keptReason) return again.keptReason;
           const inTree: { path: string; problem: string | null }[] = [];
-          for (const path of lighten ? regenerableDirsOf(root, 'build') : [])
+          for (const path of lighten ? existingDirsOf(root, IN_TREE_BUILD_DIRS) : [])
             inTree.push({ path, problem: await regenerableDirProblem(root, path, signal) });
           for (const path of [
             ...outputPaths(entry.dir),

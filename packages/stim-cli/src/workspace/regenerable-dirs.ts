@@ -11,9 +11,9 @@ export const ARTIFACT_DIRS: Record<ArtifactKind, readonly string[]> = {
   dependencies: ['node_modules', 'ios/Pods'],
 };
 
-/** The existing real directories of `kind` directly under `root`, never through a link. */
-export function regenerableDirsOf(root: string, kind: ArtifactKind): string[] {
-  return ARTIFACT_DIRS[kind]
+/** The existing real directories among `dirs` under `root`, never through a link. */
+export function existingDirsOf(root: string, dirs: readonly string[]): string[] {
+  return dirs
     .map((dir) => join(root, dir))
     .filter((path) => {
       try {

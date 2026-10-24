@@ -785,8 +785,10 @@ test('plain gc --delete lightens a workspace whose dev server runs, but never a 
   writeFileSync(join(active.root, '.gitignore'), 'ios/build/\nandroid/\n.build/*\n!.build/keep\n');
   mkdirSync(join(active.root, '.build'));
   writeFileSync(join(active.root, '.build', 'keep'), 'untracked, not ignored');
-  mkdirSync(join(active.root, 'ios', 'build'), { recursive: true });
-  writeFileSync(join(active.root, 'ios', 'build', 'blob'), 'regenerable');
+  mkdirSync(join(active.root, 'ios', 'build', 'rncore-facades'), { recursive: true });
+  writeFileSync(join(active.root, 'ios', 'build', 'rncore-facades', 'React-Core.podspec.json'), 'pod install output');
+  mkdirSync(join(active.root, 'android', 'app', 'build'), { recursive: true });
+  writeFileSync(join(active.root, 'android', 'app', 'build', 'blob'), 'regenerable');
   mkdirSync(join(active.root, 'android', 'build'), { recursive: true });
   writeFileSync(join(active.root, 'android', 'build', 'tracked'), 'committed');
   execSync('git add .gitignore && git add -f android/build/tracked && git commit -qm init', { cwd: active.root });
@@ -803,7 +805,7 @@ test('plain gc --delete lightens a workspace whose dev server runs, but never a 
   const { payload } = await gcJson({ cache: 'workspaces' });
   expect(
     payload.sections.workspaceBuildOutputs.find((w: { projectRoot: string }) => w.projectRoot === active.root),
-  ).toMatchObject({ willClear: true, inTreeDirs: [join(active.root, 'ios', 'build')] });
+  ).toMatchObject({ willClear: true, inTreeDirs: [join(active.root, 'android', 'app', 'build')] });
 
   const report = await captureLog(() => runGc({ delete: true }));
   for (const output of OUTPUTS) {
@@ -811,7 +813,8 @@ test('plain gc --delete lightens a workspace whose dev server runs, but never a 
     expect(existsSync(join(building.dir, output))).toBe(true);
     expect(existsSync(join(recent.dir, output))).toBe(true);
   }
-  expect(existsSync(join(active.root, 'ios', 'build'))).toBe(false);
+  expect(existsSync(join(active.root, 'android', 'app', 'build'))).toBe(false);
+  expect(existsSync(join(active.root, 'ios', 'build', 'rncore-facades', 'React-Core.podspec.json'))).toBe(true);
   expect(readFileSync(join(active.root, 'android', 'build', 'tracked'), 'utf8')).toBe('committed');
   expect(readFileSync(join(active.root, '.build', 'keep'), 'utf8')).toBe('untracked, not ignored');
   expect(readFileSync(join(artifact, 'binary'), 'utf8')).toBe('artifact');

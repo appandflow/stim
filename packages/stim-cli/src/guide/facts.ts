@@ -1025,8 +1025,8 @@ RULES
                               gradle-build, android-cas, cache-provider,
                               macos/build, macos/<Product>.app and
                               macos/staging-* of each workspace; inTreeDirs
-                              lists the project's ios/build,
-                              android/app/build, android/build,
+                              lists the project's android/app/build,
+                              android/build,
                               android/.gradle and .build that --delete
                               clears with them, every file in them
                               ignored by git and none tracked, and
