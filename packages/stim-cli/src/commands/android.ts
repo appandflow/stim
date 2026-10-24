@@ -1352,6 +1352,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     if (hostedTarget)
       return finishHostedAndroidRun({
+        operation: context,
         target: hostedTarget,
         artifact,
         root,
