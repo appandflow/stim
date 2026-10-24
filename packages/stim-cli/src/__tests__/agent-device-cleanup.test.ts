@@ -285,3 +285,85 @@ test('closes claimed workspace sessions with --state-dir even when the default i
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+describe('a busy agent-device daemon', () => {
+  const busy = (stateDir: string) =>
+    Object.assign(new Error('Command failed: agent-device session list'), {
+      status: 1,
+      stdout: JSON.stringify({
+        success: false,
+        error: {
+          code: 'COMMAND_FAILED',
+          message: 'The running daemon is busy and was not replaced.',
+          details: { reason: 'daemon-busy', stateDir },
+        },
+      }),
+      stderr: '',
+    });
+
+  function withWorkspaceDaemon(run: (workspace: string, stateDir: string, defaultDir: string) => Promise<void>) {
+    return async () => {
+      const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-agent-cleanup-')));
+      vi.stubEnv('STIM_HOME', join(home, 'stim'));
+      vi.stubEnv('AGENT_DEVICE_CLAIMS_DIR', join(home, 'claims'));
+      const workspace = join(home, 'app');
+      mkdirSync(workspace);
+      const stateDir = workspaceAgentDeviceDir(workspace);
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(join(stateDir, 'daemon.json'), '{}');
+      mkdirSync(join(home, 'claims'));
+      writeFileSync(
+        join(home, 'claims', 'claim.json'),
+        JSON.stringify({ session: ios.name, workspace, device: { id: 'U1' } }),
+      );
+      try {
+        await run(workspace, stateDir, join(home, '.agent-device'));
+      } finally {
+        vi.unstubAllEnvs();
+        rmSync(home, { recursive: true, force: true });
+      }
+    };
+  }
+
+  const lines = () =>
+    stderr.mock.calls.map((call: unknown[]) => String(call[0])).filter((line: string) => line.includes('agent-device'));
+
+  test(
+    'is reported once per device, naming each daemon, the consequence and the remedy',
+    withWorkspaceDaemon(async (workspace, stateDir, defaultDir) => {
+      setExecutor({
+        findExecutable: () => '/bin/agent-device',
+        runFile: (_file, args) => {
+          throw busy(args.includes('--state-dir') ? stateDir : defaultDir);
+        },
+      });
+      await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true, workspace);
+      expect(lines()).toHaveLength(1);
+      expect(lines()[0]).toContain('stay open');
+      expect(lines()[0]).not.toContain('closed agent-device session');
+      expect(lines()[0]).toContain(`agent-device daemon stop --state-dir ${defaultDir}`);
+      expect(lines()[0]).toContain(`agent-device daemon stop --state-dir ${stateDir}`);
+    }),
+  );
+
+  test(
+    'still closes sessions on the daemon that answers and reports only the busy one',
+    withWorkspaceDaemon(async (workspace, stateDir, defaultDir) => {
+      const calls: string[][] = [];
+      setExecutor({
+        findExecutable: () => '/bin/agent-device',
+        runFile: (_file, args) => {
+          calls.push(args);
+          if (!args.includes('--state-dir')) throw busy(defaultDir);
+          return args[0] === 'session' ? payload([ios]) : '{"success":true}';
+        },
+      });
+      await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true, workspace);
+      expect(calls.some((args) => args[0] === 'close' && args.includes(stateDir))).toBe(true);
+      const busyLines = lines().filter((line: string) => line.includes('is busy'));
+      expect(busyLines).toHaveLength(1);
+      expect(busyLines[0]).toContain(`agent-device daemon stop --state-dir ${defaultDir}`);
+      expect(busyLines[0]).not.toContain(stateDir);
+    }),
+  );
+});
