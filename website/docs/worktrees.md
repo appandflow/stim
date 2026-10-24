@@ -134,7 +134,8 @@ It checks the branch's upstream, fetches changes when needed, and fast-forwards
 moved: the lockfile's own install command where the lockfile lives (the
 repository root in a monorepo, and the app too when it has a lockfile of its
 own; a root that was never installed is left alone), and `pod install` for the app. The app is the one you ran the command
-from or, from the monorepo root, the one app registered in the source checkout.
+from or, from the monorepo root, the one app registered in the source checkout or in the worktree.
+With no such app, a refresh from the root updates only the repository root and says so.
 In an npm project a change to `patches/` counts as a dependency change. When npm's config sets
 `ignore-scripts` and the project's `package.json` defines `postinstall`
 (patch-package, usually), the refresh runs `npm run postinstall` after `npm ci`;

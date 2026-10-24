@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, sep } from 'node:path';
 import {
@@ -459,6 +459,72 @@ describe('runPodInstall', () => {
     expect(result.diagnosticLines).toEqual([]);
     assert(result.lastLines);
     expect(result.lastLines.join('\n')).toMatch(/Something went wrong/);
+  });
+});
+
+describe('runPodInstall build configuration markers (#4377)', () => {
+  const MARKER = '.last_build_configuration';
+  const markerPath = (pod: string) => join(root, 'ios', 'Pods', pod, MARKER);
+
+  function installPod(pod: string, marker: string | null) {
+    mkdirSync(join(root, 'ios', 'Pods', pod, 'React.xcframework'), { recursive: true });
+    if (marker !== null) writeFileSync(markerPath(pod), marker);
+  }
+
+  function podInstallThat(mutate: () => void) {
+    return () => {
+      mutate();
+      return fakePodChild();
+    };
+  }
+
+  test('puts back the marker that pod install removed from a pod it left in place', async () => {
+    installPod('React-Core-prebuilt', 'Release');
+    installPod('hermes-engine', 'Release');
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: podInstallThat(() => {
+        rmSync(markerPath('React-Core-prebuilt'));
+        rmSync(markerPath('hermes-engine'));
+      }),
+    });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(markerPath('React-Core-prebuilt'), 'utf-8')).toBe('Release');
+    expect(readFileSync(markerPath('hermes-engine'), 'utf-8')).toBe('Release');
+    expect(result.notes?.join('\n')).toContain('React-Core-prebuilt');
+  });
+
+  test('leaves a pod that pod install replaced without a marker, since a fresh install is Debug', async () => {
+    installPod('React-Core-prebuilt', 'Release');
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: podInstallThat(() => {
+        const pod = join(root, 'ios', 'Pods', 'React-Core-prebuilt');
+        mkdirSync(join(root, 'ios', 'Pods', 'fresh', 'React.xcframework'), { recursive: true });
+        rmSync(pod, { recursive: true });
+        renameSync(join(root, 'ios', 'Pods', 'fresh'), pod);
+      }),
+    });
+    expect(result.ok).toBe(true);
+    expect(existsSync(markerPath('React-Core-prebuilt'))).toBe(false);
+    expect(result.notes).toEqual([]);
+  });
+
+  test('writes no marker for a pod that had none', async () => {
+    installPod('React-Core-prebuilt', null);
+    const result = await runPodInstall(root, collectingWriter(), { spawnFn: podInstallThat(() => {}) });
+    expect(result.ok).toBe(true);
+    expect(existsSync(markerPath('React-Core-prebuilt'))).toBe(false);
+  });
+
+  test('puts the marker back when pod install fails after cleaning', async () => {
+    installPod('React-Core-prebuilt', 'Release');
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: () => {
+        rmSync(markerPath('React-Core-prebuilt'));
+        return fakePodChild({ code: 1 });
+      },
+    });
+    expect(result.failed).toBe(true);
+    expect(readFileSync(markerPath('React-Core-prebuilt'), 'utf-8')).toBe('Release');
   });
 });
 

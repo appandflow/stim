@@ -18,6 +18,7 @@ export * from './fingerprint-memo.ts';
 export * from './log-reader.ts';
 export * from './logs-query.ts';
 export * from './ndjson.ts';
+export * from './ndjson-tail.ts';
 export * from './paths.ts';
 export * from './placement.ts';
 export * from './recordings.ts';
