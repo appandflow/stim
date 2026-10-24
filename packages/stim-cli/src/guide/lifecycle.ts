@@ -632,8 +632,8 @@ Logcat retains a finite buffer; records already evicted or persisted beyond the
 overlap may be unavailable. An oversized query retries the recent tail and writes
 a device warning naming any dropped interval. Followers share a child-aware log
 claim; install and stop cancel and settle the worker before native operations.
-Stop copies logs before and after the host's final collection and teardown, with
-each client drain bounded to 30 seconds and progress on stderr. Collected logs
+Stop copies logs once, after the host's final collection and teardown, bounded to
+30 seconds with progress on stderr; Ctrl-C cancels the copy and keeps the placement. Collected logs
 remain readable after stop. The host advertises hosted-android-data for Android
 handoff and native logs. Older hosts get a newer stim-server note, use upload
 and show records already copied here.`,

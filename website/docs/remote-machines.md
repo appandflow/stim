@@ -318,7 +318,7 @@ next collection can retry. A crash before any PID was observed,
 evicted logcat entries and entries persisted beyond the five-second overlap may
 be unavailable. Collection has a bounded output and time budget; an oversized
 query retries the recent tail and records any dropped interval. Stop copies logs
-before and after the host's final collection and retains them locally after
+once, after the host's final collection, and retains them locally after
 emulator parking or deletion. Older hosts without `hosted-android-data` get an update note,
 use uploads and show logs already copied here.
 
