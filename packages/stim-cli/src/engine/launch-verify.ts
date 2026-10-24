@@ -1,4 +1,5 @@
 import { isAppLaunchError } from '../command-output.ts';
+import { cancellableSleep } from '../cancellation.ts';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import { createNdjsonTail, readNdjsonGenerations, type NdjsonRecord } from '../ndjson.ts';
@@ -302,7 +303,8 @@ export async function verifyLaunch({
   onActivity,
   deviceLogsThrough,
   now = Date.now,
-  sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
+  signal,
+  sleep = (ms: number) => cancellableSleep(ms, { signal, what: 'launch readiness check' }),
 }: {
   slot?: string;
   appPid?: number | null;
@@ -334,6 +336,8 @@ export async function verifyLaunch({
    */
   deviceLogsThrough?: (() => number | null) | null;
   now?: () => number;
+  /** Rejects the wait with STIM_CANCELLED once aborted. Ignored when `sleep` is passed. */
+  signal?: AbortSignal;
   sleep?: (ms: number) => Promise<unknown>;
 } = {}): Promise<VerifyLaunchResult> {
   const delivered = (record: NdjsonRecord) => deliveryOwner(record, { slot, appPid, platformShared }) === 'this';
