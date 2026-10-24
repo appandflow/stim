@@ -341,8 +341,8 @@ describe('a busy agent-device daemon', () => {
       expect(lines()).toHaveLength(1);
       expect(lines()[0]).toContain('stay open');
       expect(lines()[0]).not.toContain('closed agent-device session');
-      expect(lines()[0]).toContain(`agent-device daemon stop --state-dir ${defaultDir}`);
-      expect(lines()[0]).toContain(`agent-device daemon stop --state-dir ${stateDir}`);
+      expect(lines()[0]).toContain(`agent-device daemon stop --state-dir '${defaultDir}'`);
+      expect(lines()[0]).toContain(`agent-device daemon stop --state-dir '${stateDir}'`);
     }),
   );
 
@@ -362,7 +362,7 @@ describe('a busy agent-device daemon', () => {
       expect(calls.some((args) => args[0] === 'close' && args.includes(stateDir))).toBe(true);
       const busyLines = lines().filter((line: string) => line.includes('is busy'));
       expect(busyLines).toHaveLength(1);
-      expect(busyLines[0]).toContain(`agent-device daemon stop --state-dir ${defaultDir}`);
+      expect(busyLines[0]).toContain(`agent-device daemon stop --state-dir '${defaultDir}'`);
       expect(busyLines[0]).not.toContain(stateDir);
     }),
   );

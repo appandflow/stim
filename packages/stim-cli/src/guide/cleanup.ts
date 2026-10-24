@@ -271,9 +271,9 @@ continues. Each cleanup pass allows at most 15 seconds of agent-device calls
 per device; the pass \`stop\` makes after shutdown has its own budget.
 A daemon agent-device will not replace (daemon-busy: it is starting up or still
 has sessions, requests or leases) is not retried. Stim prints one line per
-device and state dir, even though it lists sessions before and after shutdown,
-naming the daemon: sessions on the device in it stay open until the daemon is
-idle or, if it is yours, stopped with agent-device daemon stop --state-dir <dir>.
+device, naming each busy daemon, even though it lists sessions before and after
+shutdown: sessions on the device in them stay open until the daemon is idle or,
+if it is yours, stopped with agent-device daemon stop --state-dir <dir>.
 A local daemon that cannot use socket transport or a CLI without the target guard
 skips cleanup with a warning; no remote daemon is used.
 

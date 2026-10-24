@@ -1435,7 +1435,7 @@ test('stop reports a busy agent-device daemon once although it checks before and
           success: false,
           error: {
             message: 'The running daemon is busy and was not replaced.',
-            details: { reason: 'daemon-busy', stateDir: '/h/.agent-device' },
+            details: { reason: 'daemon-busy', stateDir: "/h/it's here/.agent-device" },
           },
         }),
         stderr: '',
@@ -1454,7 +1454,7 @@ test('stop reports a busy agent-device daemon once although it checks before and
       .map((call: unknown[]) => String(call[0]))
       .filter((line: string) => line.includes('agent-device'));
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain('agent-device daemon stop --state-dir /h/.agent-device');
+    expect(lines[0]).toContain("agent-device daemon stop --state-dir '/h/it'\\''s here/.agent-device'");
   } finally {
     write.mockRestore();
   }

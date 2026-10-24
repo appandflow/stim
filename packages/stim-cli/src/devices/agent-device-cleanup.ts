@@ -5,7 +5,7 @@ import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
 import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
-import { phaseLine } from '../command-output.ts';
+import { phaseLine, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
 import { agentDeviceDaemon, readAgentDeviceRecords } from './activity.ts';
 
@@ -231,7 +231,7 @@ export async function closeOwnedDeviceSessions(
     const unreported = [...busy].filter((dir) => !reportedBusy.has(dir));
     if (unreported.length > 0) {
       for (const dir of unreported) reportedBusy.add(dir);
-      const stop = unreported.map((dir) => `agent-device daemon stop${dir ? ` --state-dir ${dir}` : ''}`);
+      const stop = unreported.map((dir) => `agent-device daemon stop${dir ? ` --state-dir ${quotedPath(dir)}` : ''}`);
       report(
         `agent-device daemon is busy, so Stim did not check it for sessions on ${device.platform === 'ios' ? device.id : (device.id ?? device.avdName)}; any that name the device stay open until the daemon is idle or, if it is yours, stopped with ${stop.join(' and ')}`,
       );
