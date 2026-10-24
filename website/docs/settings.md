@@ -266,8 +266,9 @@ new devices wait in FIFO order across the Stim home for 600 seconds by default.
 Use `--wait <seconds>` to change the bound, or `--no-wait` / `--wait 0` to
 refuse immediately. A workspace's own live device bypasses the queue. Waiting
 prints holder names and elapsed time, followed by the queue position, head
-workspace name and `$STIM_HOME/device-waits` path. Timeout names the same head
-and path. `stim stop` cancels a queued run and releases its ticket without
+workspace name and `$STIM_HOME/device-waits` path. Workspaces that share a
+project name show the directory that tells them apart, as in
+`mobile (qa-b-p2)`. Timeout names the same head and path. `stim stop` cancels a queued run and releases its ticket without
 booting its device. Status adds `build.waitingFor`, and
 stats records `capacityWaits` and positive placement `deviceSlotWaitMs`.
 `0` or an unset cap means unlimited devices.
