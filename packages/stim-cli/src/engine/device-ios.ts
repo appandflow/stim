@@ -526,6 +526,11 @@ function simslimProfileIdentity(profile: string | null, slimByDefault: boolean):
   return slimByDefault ? 'default' : null;
 }
 
+async function startedSpringBoardPid(udid: string): Promise<number | null> {
+  const springBoard = await waitForSpringBoard(udid, Date.now() + SPRINGBOARD_MUTE_WAIT_MS);
+  return springBoard.state === 'started' ? springBoard.pid : null;
+}
+
 async function configureOwnedIosSim({
   record,
   projectPath,
@@ -585,7 +590,7 @@ async function configureOwnedIosSim({
   const updated = { ...record };
   if (result.managed) updated.simslimManaged = true;
   else delete updated.simslimManaged;
-  const springBoardAfter = slimConfigured ? await readSpringBoardPid(record.deviceUdid) : null;
+  const springBoardAfter = slimConfigured ? await startedSpringBoardPid(record.deviceUdid) : null;
   if (result.managed && !result.notInstalled && identity !== null && springBoardAfter !== null) {
     updated.simslimApplied = { profile: identity, springBoardPid: springBoardAfter };
   }

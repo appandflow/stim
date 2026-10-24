@@ -821,7 +821,7 @@ test('the iOS ccache finding no longer claims ccache cannot cross worktrees at a
 
 test('ccache on PATH is silent, and ccache absent costs time with a full remedy', () => {
   expect(checkCcacheInstalled(true)).toBe(null);
-  const f = checkCcacheInstalled(false);
+  const f = checkCcacheInstalled(false, 'darwin');
   assert(f);
   expect(f.level).toBe('cost');
   expect(f.title).toMatch(/ccache is not on PATH, so Android C\+\+ recompiles in every worktree/);
@@ -832,6 +832,13 @@ test('ccache on PATH is silent, and ccache absent costs time with a full remedy'
   expect(f.fix).toMatch(/android\/app\/\.cxx/);
   expect(f.fix).toMatch(/node_modules\/\*\*\/android\/\.cxx/);
   expect(f.fix).toMatch(/\/opt\/homebrew\/bin/);
+});
+
+test('ccache absent on Linux names apt and no Homebrew path', () => {
+  const f = checkCcacheInstalled(false, 'linux');
+  assert(f);
+  expect(f.fix).toMatch(/^sudo apt install ccache, then/);
+  expect(f.fix).not.toMatch(/brew|homebrew/i);
 });
 
 test('the ccache finding belongs to the Android group and is filtered out by --platform ios', async () => {

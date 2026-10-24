@@ -54,6 +54,7 @@ import {
   openLogDir,
   queryLogs,
   readBuildHistory,
+  readBuildLedger,
   readLastBuilds,
 } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
@@ -10012,6 +10013,31 @@ test.each(['local build', 'EAS hit'])(
     expect(readClaimSet(join(workspaceDir(root), 'native-run.lock')).live).toEqual([]);
   },
 );
+
+test('Ctrl-C during the launch readiness wait ends the wait and records a cancelled run', async () => {
+  reserve();
+  const result = await run(
+    { json: true },
+    {
+      verifyLaunch: ({ signal }: { signal?: AbortSignal } = {}) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+          process.emit('SIGINT');
+        }),
+    },
+  );
+  expect(result.exitCode).toBe(130);
+  expect(result.logs).toHaveLength(1);
+  expect(parseFirst(result.logs)).toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({ status: 'failed', errorCode: 'STIM_CANCELLED' });
+  expect(readBuildLedger()).toEqual([
+    expect.objectContaining({
+      platform: 'ios',
+      outcome: 'cancelled',
+      failure: expect.objectContaining({ code: 'STIM_CANCELLED' }),
+    }),
+  ]);
+});
 
 test('provider upload cancellation after launch emits one iOS refusal and records failure', async () => {
   reserve();

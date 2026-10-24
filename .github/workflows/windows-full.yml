@@ -2,21 +2,49 @@ name: Windows full validation
 
 on:
   workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   test:
-    name: full Windows unit suite
+    name: full Windows unit suite (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: windows-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-stim
 
       - name: Typecheck (production)
+        if: matrix.shard == 1
         run: pnpm run typecheck
 
       - name: Unit tests (vitest)
-        run: pnpm test
+        run: pnpm test --shard=${{ matrix.shard }}/${{ strategy.job-total }} --reporter=default --reporter=json --outputFile.json=test-results/unit-windows-${{ matrix.shard }}.json
+
+      - name: Retain unit-test timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-timings-windows-${{ matrix.shard }}
+          path: test-results/unit-windows-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  result:
+    name: full Windows unit suite
+    if: always()
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every shard
+        env:
+          SHARDS: ${{ needs.test.result }}
+        run: |
+          echo "shards: $SHARDS"
+          test "$SHARDS" = success

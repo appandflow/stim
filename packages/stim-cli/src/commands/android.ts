@@ -24,7 +24,7 @@ import {
   type BuildProgress,
   type recordFinishedBuild,
 } from '../engine/build-progress.ts';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
@@ -885,7 +885,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     automatic: plan.target.kind === 'hosted' && plan.target.machine === 'auto',
     signal: runCancellationSignal(context),
     waitMs: plan.deviceSlotWaitMs,
-    displayName: basename(root),
     reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     waitingFor: (info: Parameters<typeof progress.waitingFor>[0]) => progress.waitingFor(info, 'device-slot'),
     onWait: (ms: number) => {

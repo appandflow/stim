@@ -20,6 +20,18 @@ test.each([
   }
 });
 
+test('finds no install for a project path that is not below the root', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-dependency-install-'));
+  const elsewhere = mkdtempSync(join(tmpdir(), 'stim-dependency-install-'));
+  try {
+    writeFileSync(join(root, 'pnpm-lock.yaml'), 'lockfile');
+    expect(dependencyInstall(root, elsewhere)).toBeNull();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
+  }
+});
+
 test('changes the marker identity when the major of the pinned Node the worker installs with changes', () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-dependency-install-'));
   const nvm = join(root, 'nvm');

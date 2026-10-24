@@ -34,6 +34,7 @@ import {
 } from '../ownership-claim.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from './workspace-process-lock.ts';
 import { deviceReclaimIdleMinutesSetting } from '../workspace/settings.ts';
+import { workspaceDisplayLabel, workspaceLabels } from '../workspace/display-label.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
 import type { StimContext } from '@stim-cli/core';
 import type { BuildWaitingFor, SettingScope } from '@stim-cli/core/state';
@@ -508,12 +509,13 @@ export function deviceSlotWaitingLine({
 
 function deviceHolders(inventory: DeviceInventory, keys: Set<string>): string[] {
   const names = new Map<string, string>();
-  for (const [root, project] of Object.entries(inventory.config?.projects ?? {})) {
+  const projects = Object.entries(inventory.config?.projects ?? {});
+  const labels = workspaceLabels(projects.map(([root, project]) => ({ root, label: project.label })));
+  for (const [root, project] of projects) {
+    const label = labels.get(root) ?? basename(root);
     for (const { platforms } of projectDeviceSlots(project)) {
-      if (platforms.ios?.deviceUdid)
-        names.set(deviceKey('ios', platforms.ios.deviceUdid), project.label || basename(root));
-      if (platforms.android?.avdName)
-        names.set(deviceKey('android', platforms.android.avdName), project.label || basename(root));
+      if (platforms.ios?.deviceUdid) names.set(deviceKey('ios', platforms.ios.deviceUdid), label);
+      if (platforms.android?.avdName) names.set(deviceKey('android', platforms.android.avdName), label);
     }
   }
   for (const sim of inventory.sims) {
@@ -622,7 +624,7 @@ export async function withDeviceBootAdmission<T>(
     waitMs = DEFAULT_DEVICE_SLOT_WAIT_MS,
     noWait = false,
     automatic = false,
-    displayName = basename(root),
+    displayName = workspaceDisplayLabel(root, loadConfig()),
     reclaimIdleMinutes = deviceReclaimIdleMinutesSetting({}),
     now = Date.now,
     signal,

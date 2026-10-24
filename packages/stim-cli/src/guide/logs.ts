@@ -123,7 +123,8 @@ serve bounded log queries.
   SecTrust, WebKit, CoreUI) that have nothing to do with your app. The proven
   ones are demoted to info by the collector, and iOS main-thread
   "Synchronous URL loading" performance diagnostics (Expo icons served by
-  Metro raise them) to warn, so a launch does not count them as app errors;
+  Metro raise them) and SwiftUI "Invalid Configuration" faults (the Expo dev
+  launcher raises them for a duplicated server entry) to warn, so a launch does not count them as app errors;
   the scope rule covers the rest.
   The metro stream carries exactly one demotion of its own, and it is Stim's
   doing: the dev-client deep link \`ios\`/\`android\` open to wire the app to
@@ -448,7 +449,8 @@ WHAT WRITES WHAT
                        -- and, on iOS, where every Apple framework running in
                        the app's process also logs. The proven noise sources
                        are recorded at info rather than error (Synchronous
-                       URL loading diagnostics at warn); the rest is why
+                       URL loading diagnostics and SwiftUI Invalid Configuration
+                       faults at warn); the rest is why
                        --errors leaves this source out unless asked. A VERIFIED
                        LAUNCH counts these records and prints one line:
 

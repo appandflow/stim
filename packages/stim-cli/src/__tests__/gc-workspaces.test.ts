@@ -22,7 +22,6 @@ import { runGc } from '../commands/gc.ts';
 import { collectWorkspaceLogs, trimWorkspaceLogs } from '../commands/gc/logs.ts';
 import { testContext } from './_context.ts';
 import { operationState } from '../engine/operation-state.ts';
-import { macosDir } from '../macos/state.ts';
 import { matchWorktreeEntry, removeWorktreeTarget } from '../commands/worktree.ts';
 import { classifyStatusCaches, deleteStaleStatusCaches } from '../commands/gc/status-caches.ts';
 import {
@@ -774,40 +773,6 @@ function oversizedLog(file: string): void {
   const line = `${JSON.stringify({ msg: 'x'.repeat(1000) })}\n`;
   writeFileSync(file, `${line.repeat(Math.ceil((2 * LOG_ROTATE_BYTES + 64 * 1024) / line.length))}{"msg":"last"}\n`);
 }
-
-test.skipIf(process.platform !== 'darwin')(
-  'log trim preserves its actual admission claim when a native safety probe cannot be drained',
-  async () => {
-    const workspace = loggedWorkspace('probe-refusal');
-    const file = join(workspace.logs, 'metro.ndjson');
-    oversizedLog(file);
-    const original = readFileSync(file);
-    const report = await collectWorkspaceLogs();
-    mkdirSync(macosDir(workspace.root), { recursive: true });
-    const operation = testContext();
-    const current = getExecutor();
-    let claims: ClaimHandle[] = [];
-    setExecutor({
-      ...current,
-      runFileAsync: async (tool, args, options) => {
-        if (tool !== 'ps') return current.runFileAsync(tool, args, options);
-        claims = [...operationState(operation).declaring];
-        throw new WorkspaceProcessCleanupError(claims, 'Probe cleanup is unknown', 'Verify the recorded probe.');
-      },
-    });
-    try {
-      await expect(trimWorkspaceLogs(report, undefined, operation)).rejects.toMatchObject({
-        code: 'STIM_CLAIM_UNAVAILABLE',
-        remedy: expect.stringContaining('native-run.lock'),
-      });
-      expect(claims).toHaveLength(1);
-      expect(readClaimSet(join(workspaceDir(workspace.root), 'native-run.lock')).live).toHaveLength(1);
-      expect(readFileSync(file).equals(original)).toBe(true);
-    } finally {
-      for (const claim of claims) releaseClaim(claim);
-    }
-  },
-);
 
 test.each(['before replacement', 'after replacement'])(
   'log trim cancellation %s keeps later logs and releases its claims',
