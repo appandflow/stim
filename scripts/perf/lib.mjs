@@ -54,6 +54,10 @@ export function summarizeRuns(runs) {
   };
 }
 
+const rangeMs = (summary) => (summary.maxMs ?? 0) - (summary.minMs ?? 0);
+
+const peakLoad = (scenario) => Math.max(0, ...scenario.runs.map((each) => each.loadBefore).filter(Number.isFinite));
+
 const loadOf = (scenarios) =>
   median(scenarios.flatMap((scenario) => scenario.runs.map((each) => each.loadBefore).filter(Number.isFinite)));
 
@@ -69,6 +73,7 @@ export const DEFAULTS = {
   loadRatio: 2,
   highLoad: 80,
   noisySpread: 0.5,
+  confirmReps: 5,
 };
 
 /**
@@ -126,10 +131,18 @@ export function compareRuns(latest, previous, options = {}) {
     } else {
       const delta = after.medianMs - before.medianMs;
       row.deltaPct = delta / before.medianMs;
+      row.noiseMs = Math.max(rangeMs(before), rangeMs(after));
+      row.busy = Math.max(peakLoad(scenario), peakLoad(previous.scenarios[name])) > config.highLoad;
       if (row.deltaPct > config.threshold && delta >= config.minDeltaMs) row.status = 'REGRESSION';
       else if (row.deltaPct < -config.threshold && -delta >= config.minDeltaMs) row.status = 'faster';
-      if (row.status !== 'ok' && Math.max(after.spread ?? 0, before.spread ?? 0) > config.noisySpread) {
-        row.status += ' (noisy)';
+      if (row.status !== 'ok') {
+        if (Math.abs(delta) <= row.noiseMs) row.status = 'within noise';
+        else if (row.busy || Math.max(after.spread ?? 0, before.spread ?? 0) > config.noisySpread) {
+          row.status += ' (noisy)';
+        }
+        if (Math.min(before.n, after.n) < config.confirmReps) {
+          notes.push(`${name} ${row.status}: rerun both builds with --reps ${config.confirmReps} to confirm`);
+        }
       }
     }
   }

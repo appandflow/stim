@@ -65,14 +65,58 @@ describe('run summary', () => {
 });
 
 describe('comparison', () => {
-  it('flags a median that grew by more than ten percent, by median and not by the outlier repetition', () => {
+  it('flags a median that grew by more than ten percent and by more than the repetitions spread', () => {
     const previous = run([10_000, 10_100, 10_200]);
-    const latest = run([11_500, 11_600, 30_000]);
-    const { rows } = compareRuns(latest, previous);
-    expect(rows[0]).toMatchObject({ scenario: 'ios-rerun', status: 'REGRESSION (noisy)' });
+    const { rows } = compareRuns(run([11_500, 11_600, 11_700]), previous);
+    expect(rows[0]).toMatchObject({ scenario: 'ios-rerun', status: 'REGRESSION' });
     expect(rows[0].deltaPct).toBeCloseTo(0.1485, 3);
     expect(compareRuns(run([10_900, 11_000, 11_050]), previous).rows[0].status).toBe('ok');
     expect(compareRuns(run([8_000, 8_100, 8_200]), previous).rows[0].status).toBe('faster');
+  });
+
+  it('does not flag a change that the repetitions of either run span, whatever the outlier does to the median', () => {
+    const previous = run([10_000, 10_100, 10_200]);
+    expect(compareRuns(run([11_500, 11_600, 30_000]), previous).rows[0].status).toBe('within noise');
+    expect(compareRuns(run([11_500, 11_600, 11_700]), run([8_000, 10_000, 12_500])).rows[0].status).toBe(
+      'within noise',
+    );
+  });
+
+  it('does not flag the ios-rerun change from the 2026-10-23 benchmark, which one repetition at load 81 inflated', () => {
+    const sample = (walls, loads) => {
+      const base = run(walls);
+      base.scenarios['ios-rerun'].runs.forEach((each, index) => {
+        each.loadBefore = loads[index];
+      });
+      return base;
+    };
+    const release = sample([9_100, 8_400, 8_800], [58, 47, 86]);
+    const main = sample([10_700, 9_900, 9_500], [81, 56, 54]);
+    const result = compareRuns(main, release);
+    expect(result.rows[0].status).toBe('within noise');
+    expect(result.rows[0].deltaPct).toBeCloseTo(0.125, 2);
+    expect(result.notes.join()).toMatch(/ios-rerun within noise: rerun both builds with --reps 5/);
+  });
+
+  it('marks a regression as noisy when a repetition in either run started above the load limit', () => {
+    const busy = (index, which) => {
+      const sample = which === 'latest' ? run([11_500, 11_600, 11_700]) : run([10_000, 10_100, 10_200]);
+      sample.scenarios['ios-rerun'].runs[index].loadBefore = 85;
+      return sample;
+    };
+    const quiet = (walls) => run(walls);
+    expect(compareRuns(busy(0, 'latest'), quiet([10_000, 10_100, 10_200])).rows[0].status).toBe('REGRESSION (noisy)');
+    expect(compareRuns(quiet([11_500, 11_600, 11_700]), busy(2, 'previous')).rows[0].status).toBe('REGRESSION (noisy)');
+    expect(compareRuns(busy(0, 'latest'), quiet([10_000, 10_100, 10_200]), { highLoad: 90 }).rows[0].status).toBe(
+      'REGRESSION',
+    );
+  });
+
+  it('asks for five repetitions when a flagged row rests on fewer', () => {
+    const previous = (count) => run(Array.from({ length: count }, (_, index) => 10_000 + index * 10));
+    const latest = (count) => run(Array.from({ length: count }, (_, index) => 12_000 + index * 10));
+    expect(compareRuns(latest(3), previous(3)).notes.join()).toMatch(/ios-rerun REGRESSION: rerun .* --reps 5/);
+    expect(compareRuns(latest(5), previous(5)).notes.join()).not.toMatch(/--reps/);
   });
 
   it('does not flag a large percentage that is only a few milliseconds', () => {
@@ -113,8 +157,8 @@ describe('comparison', () => {
     expect(result.notes.join()).toMatch(/primed/);
   });
 
-  it('marks a flagged change as noisy when repetitions spread widely', () => {
-    const result = compareRuns(run([10_000, 20_000, 30_000]), run([5_000, 5_100, 5_200]));
+  it('marks a flagged change as noisy when repetitions spread widely but the change is larger still', () => {
+    const result = compareRuns(run([10_000, 16_000, 20_000]), run([5_000, 5_100, 5_200]));
     expect(result.rows[0].status).toBe('REGRESSION (noisy)');
   });
 
