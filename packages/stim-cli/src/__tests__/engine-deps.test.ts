@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, sep } from 'node:path';
 import {
@@ -497,8 +497,10 @@ describe('runPodInstall build configuration markers (#4377)', () => {
     installPod('React-Core-prebuilt', 'Release');
     const result = await runPodInstall(root, collectingWriter(), {
       spawnFn: podInstallThat(() => {
-        rmSync(join(root, 'ios', 'Pods', 'React-Core-prebuilt'), { recursive: true });
-        installPod('React-Core-prebuilt', null);
+        const pod = join(root, 'ios', 'Pods', 'React-Core-prebuilt');
+        mkdirSync(join(root, 'ios', 'Pods', 'fresh', 'React.xcframework'), { recursive: true });
+        rmSync(pod, { recursive: true });
+        renameSync(join(root, 'ios', 'Pods', 'fresh'), pod);
       }),
     });
     expect(result.ok).toBe(true);
