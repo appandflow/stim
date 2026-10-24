@@ -311,11 +311,6 @@ function removalBlocker(
     return skip(notMerged?.unknown ? 'merge-unknown' : 'not-merged', details.join('; ') || 'not merged');
   }
   const also = details.map((detail) => `; ${detail}`).join('');
-  if (facts.idleDays === null && noOwnCommits && facts.activity) {
-    const days = activityIdleDays(facts.activity, now);
-    if (days < olderThan) return skip('recently-used', `recently active: ${facts.activity.basis} ${days}d ago${also}`);
-    return null;
-  }
   if (facts.idleDays === null) return skip('last-use-unknown', `recently used: its last use is unknown${also}`);
   if (facts.idleDays < olderThan) return skip('recently-used', `recently used ${facts.idleDays}d ago${also}`);
   return null;
@@ -963,19 +958,11 @@ async function noOwnCommitsRecheck(
   now: number,
   operation?: StimContext,
 ): Promise<string | null> {
-  if (sweep.noOwnCommitsIdleMs !== null) {
-    return (
-      noOwnCommitsActivityBlocker(await worktreeActivityOfAsync(path, keys, operation), sweep.noOwnCommitsIdleMs, now)
-        ?.text ?? null
-    );
-  }
-  if (!sweep.idle) return 'it has no commits of its own and is not idle';
-  const idleDays = idleDaysOf(keys, now);
-  if (idleDays !== null) return idleDays < sweep.idle.olderThan ? `used ${idleDays}d ago since gc checked it` : null;
-  const activity = await worktreeActivityOfAsync(path, keys, operation);
-  if (!activity) return 'its last activity could not be read';
-  const days = activityIdleDays(activity, now);
-  return days < sweep.idle.olderThan ? `active ${days}d ago since gc checked it: ${activity.basis}` : null;
+  if (sweep.noOwnCommitsIdleMs === null) return 'it has no commits of its own and is not idle';
+  return (
+    noOwnCommitsActivityBlocker(await worktreeActivityOfAsync(path, keys, operation), sweep.noOwnCommitsIdleMs, now)
+      ?.text ?? null
+  );
 }
 
 export async function removeWorktrees(

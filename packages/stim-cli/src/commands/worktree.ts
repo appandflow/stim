@@ -1342,6 +1342,8 @@ async function removeOrRefuse(
           : null;
   const branchDeleteCwd = source.path;
 
+  let archive: WorktreeArchive | null = null;
+  let gitRemoving = false;
   await withManagedRemoteWorktreeRemovalLock(
     path,
     () =>
@@ -1362,7 +1364,6 @@ async function removeOrRefuse(
             await printRemovalRefusal(path, current, output, opts.operation);
             return;
           }
-          let archive: WorktreeArchive | null = null;
           if (opts.archiveDirty && !opts.force && current.dirtyLines.length) {
             try {
               if (!inspectedHead) throw new Error('its HEAD could not be read');
@@ -1441,6 +1442,7 @@ async function removeOrRefuse(
             signal: options.signal,
             declareFor: opts.operation,
           });
+          gitRemoving = true;
           try {
             await removeWorktreeAsync(path, {
               from: source.path,
@@ -1584,7 +1586,10 @@ async function removeOrRefuse(
         opts.beforeRemove,
       ),
     { signal: opts.operation?.signal, declareSpawnsFor: opts.operation },
-  );
+  ).catch(async (error: unknown) => {
+    if (archive && !gitRemoving) await discardWorktreeArchive(archive);
+    throw error;
+  });
 }
 
 export function registerRemove(worktree: Command): void {

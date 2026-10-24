@@ -46,6 +46,7 @@ import { workspaceDir } from './workspace/paths.ts';
 import { workspaceRecordingEnabled } from './workspace/recordings.ts';
 
 const DAY = 86_400_000;
+const WORKTREE_ARCHIVE_IN_FLIGHT_MS = 60 * 60_000;
 const KINDS = ['logs', 'recordings', 'agentActions'] as const;
 type Kind = (typeof KINDS)[number];
 const KIND_PATH: Record<Kind, string> = {
@@ -545,7 +546,8 @@ async function pruneWorktreeArchives(now: number, limits: Record<string, number>
   const maxAgeMs = (limits.maxAgeDays ?? 0) * DAY;
   for (const entry of entries) {
     signal?.throwIfAborted();
-    if (now - entry.at < maxAgeMs && total <= cap) continue;
+    const age = now - entry.at;
+    if (age < maxAgeMs && (total <= cap || age < WORKTREE_ARCHIVE_IN_FLIGHT_MS)) continue;
     await rm(entry.path, { recursive: true, force: true });
     total -= entry.bytes;
   }

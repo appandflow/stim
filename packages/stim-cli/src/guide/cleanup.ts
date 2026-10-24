@@ -506,8 +506,8 @@ SWEEPING FINISHED WORKTREES
   \`--worktrees\` also removes
   one that is idle: no recorded use for --older-than days, 7 without it; a
   worktree whose last use is unknown is kept, unless it has no commits of its
-  own beyond the default branch (NO COMMITS OF ITS OWN below). Both need the
-  same clean state;
+  own beyond the default branch (NO COMMITS OF ITS OWN below). Each needs a
+  clean state, except a finished one whose changes are archived;
   a worktree is kept when it is the source checkout, bare, locked, holds
   another worktree (worktree remove refuses it too), in use,
   dirty and not finished, or dirty and finished when its changes cannot be
@@ -634,7 +634,8 @@ SWEEPING FINISHED WORKTREES
   worktree whose archive.enabled is false, with archive.maxAgeDays or
   archive.maxTotalGb 0, whose untracked files or patch exceed
   archive.maxTotalGb, whose archive would leave less free disk than
-  budget.hardFloorDiskGb, or that holds an untracked nested repository; disk
+  budget.hardFloorDiskGb, whose staged version of a file differs from its
+  working tree, or that holds an untracked nested repository; disk
   pressure level 3 never archives. Archives are 0700 and 0600 with no
   redaction, so an untracked secret such as a .env file that git does not
   ignore is saved; use archive.enabled false for a sensitive repository. A
@@ -644,9 +645,10 @@ SWEEPING FINISHED WORKTREES
     git -C <repository> worktree add --detach <path> <HEAD>
     git -C <path> apply <archive>/tracked.patch
     tar -xf <archive>/untracked.tar -C <path>
-  Every worktree removal deletes worktree archives older than
-  archive.maxAgeDays, then the oldest while they total more than
-  archive.maxTotalGb. Plain \`stim worktree remove\` never archives; it
+  Archive retention, which runs after each new worktree archive and each
+  removal that archives a workspace, deletes worktree archives older than
+  archive.maxAgeDays, then the oldest at least an hour old while they total
+  more than archive.maxTotalGb. Plain \`stim worktree remove\` never archives; it
   refuses dirty work as before.
 
   PULL REQUESTS: with fresh state, gc runs one \`gh api graphql\` query per

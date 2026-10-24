@@ -1104,15 +1104,6 @@ describe('linked worktree sweep classification', () => {
       ).toBe('no commits of its own beyond origin/main, idle 1d');
     });
 
-    test('with --worktrees and no recorded Stim use, is idle by its last activity', () => {
-      expect(worktreeSkipReason(facts({ activity: days(9) }), 7, { ms: 0, now })).toBe(null);
-      expect(worktreeSkipReason(facts({ activity: days(2) }), 7, { ms: 0, now })).toEqual({
-        code: 'recently-used',
-        text: 'recently active: a git index write 2d ago; no commits of its own beyond origin/main',
-      });
-      expect(worktreeSkipReason(facts({ activity: null }), 7, { ms: 0, now })?.code).toBe('last-use-unknown');
-    });
-
     test('with --worktrees, its recorded Stim use still decides first', () => {
       expect(worktreeSkipReason(facts({ idleDays: 2, activity: days(30) }), 7, { ms: 0, now })?.code).toBe(
         'recently-used',

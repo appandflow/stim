@@ -14,7 +14,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { worktreeArchiveRoot } from '@stim-cli/core/state';
 import { enforceArchiveRetention } from '../archive.ts';
-import { archiveWorktreeChanges, worktreeArchiveMismatch } from '../workspace/worktree-archive.ts';
+import { removeWorktreeTarget } from '../commands/worktree.ts';
+import {
+  archiveWorktreeChanges,
+  worktreeArchiveMismatch,
+  type WorktreeArchive,
+} from '../workspace/worktree-archive.ts';
 
 let home: string;
 let repo: string;
@@ -103,6 +108,37 @@ test('an archive no longer describes the worktree once an archived file changes 
   writeFileSync(join(worktree, 'a.txt'), 'edited again\n');
   expect(await worktreeArchiveMismatch(worktree, saved)).not.toBe(null);
 }, 60_000);
+
+test('a staged version the working tree no longer holds keeps the worktree instead of being archived', async () => {
+  writeFileSync(join(worktree, 'a.txt'), 'staged only\n');
+  git(worktree, 'add a.txt');
+  writeFileSync(join(worktree, 'a.txt'), 'original\n');
+
+  await expect(archive()).rejects.toThrow(/staged content of a\.txt differs/);
+  expect(existsSync(worktreeArchiveRoot())).toBe(false);
+}, 60_000);
+
+test('worktree removal with archiveDirty archives and removes a dirty worktree, and keeps one it cannot archive', async () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  onTestFinished(() => error.mockRestore());
+  const saved: WorktreeArchive[] = [];
+  const options = {
+    linkedOnly: true,
+    archiveDirty: { pullRequest: null, onArchived: (archived: WorktreeArchive) => saved.push(archived) },
+  };
+  writeFileSync(join(worktree, 'scratch.txt'), 'scratch\n');
+  process.env.STIM_ARCHIVE_ENABLED = 'false';
+
+  expect(await removeWorktreeTarget(worktree, options)).toBe(false);
+  expect(existsSync(join(worktree, 'scratch.txt'))).toBe(true);
+  expect(error.mock.calls.flat().join('\n')).toContain('could not archive its uncommitted changes');
+
+  process.env.STIM_ARCHIVE_ENABLED = 'true';
+  expect(await removeWorktreeTarget(worktree, options)).toBe(true);
+  expect(existsSync(worktree)).toBe(false);
+  expect(saved).toHaveLength(1);
+  expect(readFileSync(join(saved[0]?.dir ?? '', 'manifest.json'), 'utf8')).toContain('scratch.txt');
+}, 120_000);
 
 test('nothing is archived when archives are off for the worktree', async () => {
   process.env.STIM_ARCHIVE_ENABLED = 'false';

@@ -51,6 +51,31 @@ async function changesOf(path: string, operation?: StimContext): Promise<Changes
   return { tracked: tracked.toSorted(), untracked: untracked.toSorted() };
 }
 
+/**
+ * Paths whose staged content differs from the working tree. `git diff HEAD` saves only the working tree, so a staged
+ * version that the working tree no longer holds would be lost.
+ */
+async function stagedOnly(path: string, operation?: StimContext): Promise<string[]> {
+  const read = { ...execution(operation), untrimmed: true, timeoutMs: 60_000 };
+  const staged = new Set(
+    nulList(await gitAsync(path, ['diff', '--cached', '--name-only', '--no-renames', '-z', '--'], read)),
+  );
+  return nulList(await gitAsync(path, ['diff', '--name-only', '--no-renames', '-z', '--'], read)).filter((file) =>
+    staged.has(file),
+  );
+}
+
+async function headSizes(path: string, files: readonly string[], operation?: StimContext): Promise<number> {
+  if (!files.length) return 0;
+  if (files.some((file) => file.includes('\n'))) throw new Error('a changed path contains a newline');
+  const out = await gitAsync(path, ['cat-file', '--batch-check=%(objectsize)'], {
+    ...execution(operation),
+    timeoutMs: 60_000,
+    input: `${files.map((file) => `HEAD:${file}`).join('\n')}\n`,
+  });
+  return out.split('\n').reduce((sum, line) => sum + (/^\d+$/.test(line.trim()) ? Number(line.trim()) : 0), 0);
+}
+
 async function newestChange(path: string, changes: Changes): Promise<number | null> {
   let newest: number | null = null;
   for (const file of [...changes.tracked, ...changes.untracked]) {
@@ -104,12 +129,20 @@ export async function worktreeArchiveMismatch(
   archive: WorktreeArchive,
   operation?: StimContext,
 ): Promise<string | null> {
+  for (const file of [
+    ...(archive.tracked.length ? ['tracked.patch'] : []),
+    ...(archive.untracked.length ? ['untracked.tar'] : []),
+  ]) {
+    if (!(await lstat(join(archive.dir, file)).catch(() => null))) return `its archive lost ${file}`;
+  }
   const now = await changesOf(path, operation);
   if (!sameList(now.tracked, archive.tracked) || !sameList(now.untracked, archive.untracked)) {
     return 'its uncommitted or untracked files changed while they were archived';
   }
   const newest = await newestChange(path, now);
   if (newest !== null && newest >= archive.at) return 'an uncommitted file changed while it was archived';
+  const staged = await stagedOnly(path, operation);
+  if (staged.length) return `the staged content of ${staged.join(', ')} differs from its working tree`;
   if (archive.tracked.length) {
     try {
       await gitAsync(path, ['apply', '--check', '-R', join(archive.dir, 'tracked.patch')], {
@@ -130,7 +163,8 @@ export async function worktreeArchiveMismatch(
  * `tracked.patch` (`git diff --binary HEAD`, staged and unstaged changes together), `untracked.tar` (untracked files
  * git does not ignore) and `manifest.json` naming the branch, HEAD, pull request, files and restore commands. Ignored
  * files are not saved. Throws, leaving no archive, when archives are disabled or limited to 0, the files exceed
- * `archive.maxTotalGb`, an untracked nested repository is present, or the written archive does not verify.
+ * `archive.maxTotalGb` or the disk floor, an untracked nested repository is present, a staged version differs from
+ * the working tree, or the written archive does not verify.
  */
 export async function archiveWorktreeChanges({
   path,
@@ -153,10 +187,13 @@ export async function archiveWorktreeChanges({
   const changes = await changesOf(path, operation);
   const nested = changes.untracked.find((file) => file.endsWith('/'));
   if (nested) throw new Error(`${nested} is an untracked nested repository`);
+  const staged = await stagedOnly(path, operation);
+  if (staged.length) throw new Error(`the staged content of ${staged.join(', ')} differs from its working tree`);
+  if (!changes.tracked.length && !changes.untracked.length) throw new Error('git reported no change it could save');
   let bytes = 0;
   for (const file of changes.untracked) bytes += (await lstat(join(path, file))).size;
   if (bytes > limits.maxBytes) throw new Error(`its untracked files (${bytes} bytes) exceed archive.maxTotalGb`);
-  let tracked = 0;
+  let tracked = await headSizes(path, changes.tracked, operation);
   for (const file of changes.tracked) tracked += (await lstat(join(path, file)).catch(() => null))?.size ?? 0;
   const [volume] = await readVolumeSpaceAsync([worktreeArchiveRoot()], operation?.signal);
   const floorMb = resolveBudget({ env: operation?.env }).budget.hardFloorDiskMb;
