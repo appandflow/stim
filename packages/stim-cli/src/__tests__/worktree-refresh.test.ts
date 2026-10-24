@@ -69,9 +69,9 @@ function commit(dir: string, message: string): void {
 }
 
 function runWarm(cwd: string, ...args: string[]) {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
   const warm = (async () => {
-    const stdout: string[] = [];
-    const stderr: string[] = [];
     const log = vi.spyOn(console, 'log').mockImplementation((value) => stdout.push(String(value)));
     const error = vi.spyOn(console, 'error').mockImplementation((value) => stderr.push(`${String(value)}\n`));
     const stream = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
@@ -93,7 +93,7 @@ function runWarm(cwd: string, ...args: string[]) {
     }
   })();
   pendingWarms.push(warm);
-  return warm;
+  return Object.assign(warm, { stderrSoFar: () => stderr.join('') });
 }
 
 beforeEach(() => {
@@ -680,6 +680,7 @@ test('a refresh in flight blocks a plain warm from another app of the same repos
 
   const held = await acquireWarmClaim({ repositoryRoot: root, phase: 'refresh' });
   const warm = runWarm(join(target, 'apps', 'b'));
+  while (warm.stderrSoFar() === '') await new Promise((resolve) => setTimeout(resolve, 50));
   await new Promise((resolve) => setTimeout(resolve, 400));
   expect(existsSync(join(target, '.env'))).toBe(false);
   held.release();
