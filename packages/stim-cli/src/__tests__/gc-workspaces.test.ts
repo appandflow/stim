@@ -1368,6 +1368,15 @@ function gitRepoWithWorktrees(names: string[], repoName = 'repo', files: Record<
   return { repo, worktrees };
 }
 
+function killIfSame(target: { pid: number; processToken: string }): void {
+  if (inspectProcessIdentity(target) !== 'same') return;
+  try {
+    process.kill(target.pid, 'SIGKILL');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+  }
+}
+
 test.each(['remove', 'branch delete', 'pod restore'] as const)(
   'unverifiable Git cleanup during %s retains the actual worktree removal claims',
   async (phase) => {
@@ -1450,8 +1459,7 @@ test.each(['remove', 'branch delete', 'pod restore'] as const)(
       inspect.mockRestore();
       probe.mockRestore();
       controller.abort();
-      for (const target of targets.toReversed())
-        if (inspectProcessIdentity(target) === 'same') process.kill(target.pid, 'SIGKILL');
+      for (const target of targets.toReversed()) killIfSame(target);
       await closed;
       for (const target of targets) expect(await waitForProcessExit(target, 5000)).toBe(true);
       for (const handle of handles) releaseClaim(handle);
