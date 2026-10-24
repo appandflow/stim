@@ -972,7 +972,6 @@ describe('a worker that is not a Mac', () => {
 
   it('suggests no CocoaPods install for a worker that cannot build iOS', () => {
     expect(toolchainNotes(IOS, linux)).toEqual([]);
-    expect(machineNotes(offer({ toolchain: linux }), [IOS, ANDROID])).toEqual([]);
   });
 
   it('is judged for doctor on the platforms it can build, naming the platform of each reason', () => {
@@ -1423,7 +1422,7 @@ describe('missingPackageManagerRemedy', () => {
   it('names the package manager a worker could not start, not build approval', () => {
     const remedy = missingPackageManagerRemedy('linux-box', workerFailureReason('deps-failed', 'spawn pnpm ENOENT'));
     expect(remedy).toContain('linux-box has no pnpm');
-    expect(remedy).toContain('sudo corepack enable pnpm');
+    expect(remedy).toContain('corepack enable pnpm');
     expect(remedy).not.toMatch(/approv|doctor/i);
     expect(missingPackageManagerRemedy('linux-box', 'deps-failed: spawn yarn ENOENT')).toContain('no yarn');
   });

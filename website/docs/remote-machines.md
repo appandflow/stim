@@ -674,7 +674,8 @@ emulators for Stim. The commands below target Ubuntu 22.04 and 24.04.
 On the Linux machine, as the user that will own the service (not root), run
 [`scripts/linux-worker/setup.sh`](https://github.com/appandflow/stim/blob/main/scripts/linux-worker/setup.sh)
 from a checkout of this repository, or download that file. It needs `sudo`, and
-it is safe to run again:
+it is safe to run again (a rerun restarts the server, which stops a build
+that is running on it):
 
 ```bash
 scripts/linux-worker/setup.sh --hostname stim-linux-worker
@@ -684,7 +685,8 @@ It installs or verifies:
 
 - Node 22.12.0 or later, with Corepack enabled for `pnpm` and `yarn`, so the
   worker runs the package manager version in the app's `packageManager` field
-  and lockfile;
+  (a project without that field gets Corepack's default version, which can
+  refuse `--frozen-lockfile`);
 - JDK 17;
 - the Android command-line tools in `~/Android/Sdk`, with `platform-tools`,
   `platforms;android-37.0`, `build-tools;37.0.0`, `ndk;27.1.12297006` and
@@ -718,7 +720,8 @@ as step 4 of the manual path below.
      yarn or npm equivalent), and without the tool the build is refused with
      `deps-failed: spawn pnpm ENOENT`. Corepack, which ships with Node 22,
      provides the version the project pins:
-     `sudo corepack enable pnpm yarn`.
+     `sudo corepack enable pnpm yarn` (without `sudo` when Node is under your
+     home, as with nvm).
    - **Tailscale**, signed in to the same tailnet.
    - **JDK 17**: `sudo apt install openjdk-17-jdk-headless`.
    - **The Android SDK**, in `~/Android/Sdk` (the service finds it there; pin
@@ -805,8 +808,9 @@ Stim does not host emulators on a Linux worker. If you run one there yourself
 - It needs an x86_64 build. An offloaded build targets the ABI of the emulator
   on the client, which is `arm64-v8a` on an Apple Silicon Mac. An arm64-only
   APK installs on an x86_64 emulator through translation but crashes when it
-  loads its native libraries. Build with
-  `-PreactNativeArchitectures=x86_64` for it.
+  loads its native libraries. `stim android` builds the ABI of its own device;
+  for an emulator on the worker, run Gradle there yourself with
+  `-PreactNativeArchitectures=x86_64`.
 - On Ubuntu 24.04 with emulator 37.2, an API 36 `google_apis` x86_64 image
   booted and stayed up; an API 37 image rebooted every 20 seconds. The
   emulator API level does not have to match the app's `compileSdk`.

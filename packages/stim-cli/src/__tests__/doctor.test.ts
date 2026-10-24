@@ -821,7 +821,7 @@ test('the iOS ccache finding no longer claims ccache cannot cross worktrees at a
 
 test('ccache on PATH is silent, and ccache absent costs time with a full remedy', () => {
   expect(checkCcacheInstalled(true)).toBe(null);
-  const f = checkCcacheInstalled(false);
+  const f = checkCcacheInstalled(false, 'darwin');
   assert(f);
   expect(f.level).toBe('cost');
   expect(f.title).toMatch(/ccache is not on PATH, so Android C\+\+ recompiles in every worktree/);

@@ -25,7 +25,7 @@ export function missingPackageManagerRemedy(machine: string, reason: string): st
   const install =
     tool === 'npm'
       ? 'Reinstall Node there, which ships npm'
-      : `Install it with \`sudo corepack enable ${tool}\` or \`sudo npm install --global ${tool}\``;
+      : `Install it with \`corepack enable ${tool}\` or \`npm install --global ${tool}\`, using sudo where Node is installed system-wide`;
   return `${machine} has no ${tool} on the PATH of its stim-server service, and the app's lockfile needs it. ${install}, then run the same command again, or rerun with --remote-build auto or --remote-build local.`;
 }
 

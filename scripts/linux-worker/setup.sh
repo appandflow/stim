@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Set up an Ubuntu 22.04 or 24.04 x86_64 machine as a Stim Linux worker that
 # takes offloaded Android debug builds. Run it as the user that will own the
-# service, not as root; it calls sudo where it needs it. Safe to run again.
+# service, not as root; it calls sudo where it needs it. Safe to run again; a
+# rerun reinstalls the server and restarts its service, which stops a running
+# build.
 #
 #   scripts/linux-worker/setup.sh [options] [sdkmanager-package ...]
 #
@@ -24,6 +26,7 @@ MIN_NODE="22.12.0"
 JAVA_HOME_DIR="/usr/lib/jvm/java-17-openjdk-amd64"
 ANDROID_HOME_DIR="${ANDROID_HOME:-$HOME/Android/Sdk}"
 
+user_name="$(id -un)"
 emulator=0
 server_version="latest"
 hostname=""
@@ -124,6 +127,13 @@ apt_install() {
   sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y --no-install-recommends "$@" >/dev/null
 }
 
+npm_global_install() {
+  local sudo_npm=()
+  [ -w "$(npm root -g)" ] || sudo_npm=(sudo env "PATH=$PATH")
+  "${sudo_npm[@]}" npm install --global --no-fund --no-audit --update-notifier=false "$@" >/dev/null
+  hash -r
+}
+
 install_base() {
   step "Installing base packages"
   sudo apt-get update -qq
@@ -149,8 +159,10 @@ install_node() {
     hash -r
     ok "Node $(node -p 'process.versions.node')"
   fi
-  command -v corepack >/dev/null ||
-    die "this Node has no corepack; install pnpm and yarn yourself (sudo npm install --global pnpm yarn)"
+  current="$(node -p 'process.versions.node')"
+  version_at_least "$current" "$MIN_NODE" ||
+    die "the node on PATH ($(command -v node)) is $current, older than $MIN_NODE; put /usr/bin before it on PATH (for example by unloading nvm) and run this script again"
+  if ! command -v corepack >/dev/null; then npm_global_install corepack; fi
   local bin
   bin="$(dirname "$(readlink -f "$(command -v node)")")"
   if [ -w "$bin" ]; then
@@ -199,11 +211,11 @@ setup_kvm() {
     warn "/dev/kvm is missing. On a cloud VM, choose an instance type with nested virtualization."
     return
   fi
-  if id -nG "$USER" | tr ' ' '\n' | grep -qx kvm; then
-    ok "$USER is in the kvm group"
+  if id -nG "$user_name" | tr ' ' '\n' | grep -qx kvm; then
+    ok "$user_name is in the kvm group"
   else
-    sudo usermod -aG kvm "$USER"
-    ok "added $USER to the kvm group; log out and in again before the emulator can use KVM"
+    sudo usermod -aG kvm "$user_name"
+    ok "added $user_name to the kvm group; log out and in again before the emulator can use KVM"
   fi
 }
 
@@ -235,8 +247,8 @@ setup_tailscale() {
     if [ -n "$hostname" ]; then sudo tailscale up --hostname "$hostname"; else sudo tailscale up; fi
   fi
   [ "$(tailscale_field state)" = Running ] || die "Tailscale is not running; run 'sudo tailscale up', then run this script again"
-  sudo tailscale set --operator="$USER"
-  ok "signed in as $(tailscale_field name); $USER can run tailscale serve"
+  sudo tailscale set --operator="$user_name"
+  ok "signed in as $(tailscale_field name); $user_name can run tailscale serve"
 }
 
 install_server() {
@@ -246,14 +258,11 @@ install_server() {
   if [ "$server_version" != latest ] && [ "$installed" = "$server_version" ]; then
     ok "stim-server $installed is already installed"
   else
-    local sudo_npm=()
-    [ -w "$(npm root -g)" ] || sudo_npm=(sudo env "PATH=$PATH")
-    "${sudo_npm[@]}" npm install --global --no-fund --no-audit --update-notifier=false "@stim-cli/server@$server_version" >/dev/null
-    hash -r
+    npm_global_install "@stim-cli/server@$server_version"
     ok "stim-server $(stim-server --version 2>/dev/null | head -n1 || true)"
   fi
-  sudo loginctl enable-linger "$USER"
-  ok "linger is on for $USER, so the service survives logout"
+  sudo loginctl enable-linger "$user_name"
+  ok "linger is on for $user_name, so the service survives logout"
   local serve=()
   if [ "$tailscale_step" = 1 ]; then serve=(--serve); fi
   stim-server service install "${serve[@]}" \
