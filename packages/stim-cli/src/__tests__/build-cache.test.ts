@@ -18,6 +18,7 @@ import * as expoFingerprint from '@expo/fingerprint';
 import type { FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
 import { resolveTieredBuild, runCacheProviderContract, storeTieredBuild } from '@stim-cli/cache';
 import { readManifest } from '../cache/cache-manifest.ts';
+import { androidBuildToolName } from '../devices/android.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import {
   androidProjectFingerprintOptions,
@@ -634,7 +635,8 @@ test('storing an Android APK verifies its signature once and records the signed 
   resetExecutor();
   const sdk = join(root, 'sdk');
   mkdirSync(join(sdk, 'build-tools', '36.0.0'), { recursive: true });
-  writeFileSync(join(sdk, 'build-tools', '36.0.0', 'apksigner'), '');
+  const apksigner = join(sdk, 'build-tools', '36.0.0', androidBuildToolName('apksigner'));
+  writeFileSync(apksigner, '');
   const build = join(root, 'build7', 'app-debug.apk');
   const apk = writeSignedApk(build, {}, false);
   const real = getExecutor();
@@ -642,7 +644,7 @@ test('storing an Android APK verifies its signature once and records the signed 
   setExecutor({
     ...real,
     runFileAsync: async (file, args, options) => {
-      if (!file.endsWith('apksigner')) return real.runFileAsync(file, args, options);
+      if (file !== apksigner) return real.runFileAsync(file, args, options);
       signerCalls.push([file, ...(args ?? [])]);
       return 'Verified using v2 scheme (APK Signature Scheme v2): true\n';
     },
@@ -652,9 +654,7 @@ test('storing an Android APK verifies its signature once and records the signed 
   try {
     const stored = await storeBuild('android', 'ak7', build, { root });
     assert(stored);
-    expect(signerCalls.map((call) => call.slice(0, 3))).toEqual([
-      [join(sdk, 'build-tools', '36.0.0', 'apksigner'), 'verify', '--verbose'],
-    ]);
+    expect(signerCalls.map((call) => call.slice(0, 3))).toEqual([[apksigner, 'verify', '--verbose']]);
     expect(recordedSignedTail(stored)).toEqual({
       file: 'app-debug.apk',
       size: apk.size,

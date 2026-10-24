@@ -606,7 +606,11 @@ test('a settings read uses only the client environment for its default home and 
   const userHome = join(scratch, 'user');
   mkdirSync(join(userHome, '.stim'), { recursive: true });
   getExecutor().runFile('git', ['init', '-q', root], { timeoutMs: 60_000 });
-  const stim = createStim({ projectRoot: root, env: { PATH: process.env.PATH, HOME: userHome } });
+  const windowsRuntime =
+    process.platform === 'win32'
+      ? { SystemRoot: process.env.SystemRoot, PSModulePath: process.env.PSModulePath, PATHEXT: process.env.PATHEXT }
+      : {};
+  const stim = createStim({ projectRoot: root, env: { PATH: process.env.PATH, ...windowsRuntime, HOME: userHome } });
   vi.stubEnv('GIT_DIR', join(scratch, 'missing.git'));
   const payload = await stim.settings();
   expect(payload.files.machine).toBe(join(userHome, '.stim', 'config.json'));
@@ -614,7 +618,7 @@ test('a settings read uses only the client environment for its default home and 
   const scoped = await createStim({
     projectRoot: root,
     home: join(userHome, '.stim'),
-    env: { PATH: process.env.PATH },
+    env: { PATH: process.env.PATH, ...windowsRuntime },
   }).settings();
   for (const [key, normal, isolated] of [
     ['archive.enabled', true, false],

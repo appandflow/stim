@@ -547,7 +547,7 @@ const open = fs.open;
 fs.open = function(path, ...args) {
   const callback = args.pop();
   open.call(this, path, ...args, (error, descriptor) => {
-    if (!error && String(path).endsWith(${JSON.stringify(join('Large.app', 'part-0'))})) {
+    if (!error && String(path).replaceAll('\\\\', '/').endsWith('Large.app/part-0')) {
       fs.writeFileSync(${JSON.stringify(opened)}, String(process.pid));
       setInterval(() => {}, 1000);
       return;
