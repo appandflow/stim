@@ -1101,6 +1101,23 @@ WORKSPACE BUILD OUTPUTS
   build recompiles Swift. The next \`stim macos\` rebuilds its scratch from
   nothing (a full Swift build) and restages the app.
 
+WORKTREE DEPENDENCIES
+  Plain \`gc --delete\` also lightens linked worktrees: it deletes the
+  node_modules and ios/Pods at the root or a project root of a linked
+  worktree that has a Stim workspace, never the source checkout. A worktree
+  keeps them while it is in use (its dev server runs, a native run or build
+  holds it), while it was used in the last 15 minutes (a git index, HEAD or
+  reflog write, a Stim state or log write, or a write at the top of the
+  directory), while git tracks a file in them, while a stim-server service
+  or the stim on PATH runs from it, while a live process has its command
+  line or working directory in it, and when the running processes cannot be
+  listed. gc records what it deleted in the workspace's state.json; the next
+  \`stim start\`, \`stim ios\` or \`stim android\` there runs \`stim worktree
+  warm\` first to restore it, and refuses with STIM_DEPS_FAILED when that warm
+  fails. A worktree with no Stim workspace keeps its dependencies, since
+  nothing would restore them. .pnpm-store stays: it is all clones and frees
+  nothing.
+
 WORKSPACE LOGS
   \`gc\` reports the size of each workspace's logs/ (the workspaceLogs
   section of \`gc --json\`). metro.ndjson, client.ndjson and device.ndjson and

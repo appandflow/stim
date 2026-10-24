@@ -155,7 +155,11 @@ Branch on the code, never on the message.`,
   \`yarn install\`, \`bun install\`, \`npm ci\`), the \`npm run postinstall\`
   it runs when npm's config there sets ignore-scripts, or that same pod ladder. The
   message names the command, quotes its last lines, and nothing is copied: fix
-  the source checkout, then warm again.`,
+  the source checkout, then warm again.
+  start, ios and android also refuse with this code when \`gc --delete\`
+  lightened the worktree and the \`stim worktree warm\` they ran to restore
+  its node_modules and ios/Pods failed. The warm's own lines say why; fix
+  that, then run \`stim worktree warm\` or retry the command.`,
     },
     STIM_BUILD_FAILED: {
       summary: 'xcodebuild or gradle failed; the Android missing-SDK and APK refusals',

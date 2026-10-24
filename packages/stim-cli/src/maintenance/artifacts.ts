@@ -15,6 +15,8 @@ import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
 import { childEnvironment } from '../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
 import { ARTIFACT_DIRS, type ArtifactKind } from '../workspace/regenerable-dirs.ts';
+import { readRunningProcesses, runningFromReason, type RunningProcesses } from '../workspace/running-from.ts';
+import { recordLightened } from '../workspace/lightened.ts';
 import {
   listWorktrees,
   resolveSourceCheckoutAsync,
@@ -149,10 +151,17 @@ function keptReason(
     windowMs,
     pinned,
     locked,
-  }: { now: number; windowMs: number; pinned: (workspace: string) => boolean; locked?: string },
+    running,
+  }: {
+    now: number;
+    windowMs: number;
+    pinned: (workspace: string) => boolean;
+    locked?: string;
+    running?: RunningProcesses | null;
+  },
   reads?: { tracked: string | null; activity: ReturnType<typeof worktreeActivityOf>; written: number | null },
 ): string | null {
-  const guarded = artifactGuard(candidate, kind, pinned, locked);
+  const guarded = artifactGuard(candidate, kind, pinned, locked, running);
   if (guarded) return guarded;
   const { worktree, path, keys } = candidate;
   const tracked = reads ? reads.tracked : gitQuiet(worktree, ['ls-files', '--', relative(worktree, path)]);
@@ -171,6 +180,7 @@ function artifactGuard(
   kind: ArtifactKind,
   pinned: (workspace: string) => boolean,
   locked?: string,
+  running?: RunningProcesses | null,
 ): string | null {
   const { worktree, path, keys } = candidate;
   if (keys.some(pinned)) return 'pinned by maintenance.keep';
@@ -186,6 +196,8 @@ function artifactGuard(
     workspaceInUse(key, { supervisor: kind === 'dependencies', nativeRun: key !== locked }),
   );
   if (inUse.length) return `in use: ${inUse.join('; ')}`;
+  if (kind === 'dependencies')
+    return runningFromReason(worktree, running === undefined ? readRunningProcesses() : running);
   return null;
 }
 
@@ -197,6 +209,7 @@ export async function collectArtifactsAsync(
 ): Promise<ReturnType<typeof collectArtifacts>> {
   const candidates: ArtifactCandidate[] = [];
   const skips: { target: string; reason: string }[] = [];
+  const running = kind === 'dependencies' ? readRunningProcesses() : null;
   for (const worktree of await artifactWorktreesAsync(signal, operation)) {
     if (kind === 'dependencies' && !worktree.linked) continue;
     const root = canonicalPath(worktree.path);
@@ -227,7 +240,7 @@ export async function collectArtifactsAsync(
         const candidate = { worktree: worktree.path, path, keys: worktree.keys };
         let reason = protectedHere
           ? 'the command that started this pass runs inside its worktree'
-          : artifactGuard(candidate, kind, options.pinned);
+          : artifactGuard(candidate, kind, options.pinned, undefined, running);
         if (!reason) {
           const tracked = await gitQuietAsync(worktree.path, ['ls-files', '--', relative(worktree.path, path)], {
             ...(operation ? childEnvironment(operation.env) : {}),
@@ -239,7 +252,7 @@ export async function collectArtifactsAsync(
           const untracked = tracked !== null && !tracked.trim();
           const activity = untracked ? await worktreeActivityOfAsync(worktree.path, worktree.keys, operation) : null;
           const written = untracked ? await newestWriteAsync(path, SCAN_DEPTH[kind], signal) : null;
-          reason = keptReason(candidate, kind, options, { tracked, activity, written });
+          reason = keptReason(candidate, kind, { ...options, running }, { tracked, activity, written });
         }
         if (reason) skips.push({ target: path, reason });
         else candidates.push(candidate);
@@ -255,6 +268,7 @@ export function collectArtifacts(
 ): { candidates: ArtifactCandidate[]; skips: { target: string; reason: string }[] } {
   const candidates: ArtifactCandidate[] = [];
   const skips: { target: string; reason: string }[] = [];
+  const running = kind === 'dependencies' ? readRunningProcesses() : null;
   for (const worktree of artifactWorktrees()) {
     if (kind === 'dependencies' && !worktree.linked) continue;
     const root = canonicalPath(worktree.path);
@@ -270,7 +284,7 @@ export function collectArtifacts(
         const candidate = { worktree: worktree.path, path, keys: worktree.keys };
         const reason = protectedHere
           ? 'the command that started this pass runs inside its worktree'
-          : keptReason(candidate, kind, options);
+          : keptReason(candidate, kind, { ...options, running });
         if (reason) skips.push({ target: path, reason });
         else candidates.push(candidate);
       }
@@ -310,6 +324,7 @@ export async function clearArtifact(
     const reason = keptReason(candidate, kind, { ...options, now: Date.now(), ...(key ? { locked: key } : {}) });
     if (reason) return reason;
     rmSync(candidate.path, { recursive: true, force: true });
+    if (kind === 'dependencies') recordLightened(candidate.keys, candidate.path);
     return null;
   };
   const kept = key

@@ -489,6 +489,19 @@ so the first iOS build after a native change recompiles Swift. The next
 `stim macos` recreates its scratch directory with a full Swift build and
 restages the app.
 
+### Worktree dependencies
+
+Plain `gc --delete` also lightens linked worktrees that have a Stim workspace:
+it deletes their `node_modules` and `ios/Pods`, never the source checkout's.
+A worktree keeps them while its dev server runs or a native run or build holds
+it, for 15 minutes after its last git, Stim or dependency activity, while git
+tracks a file in them, and while a stim-server service, the `stim` on your PATH
+or a running process (by command line or working directory) uses the worktree.
+gc records what it deleted, and the next `stim start`, `stim ios` or
+`stim android` in that worktree runs `stim worktree warm` first to restore it.
+If that warm fails, the command refuses with `STIM_DEPS_FAILED`. `.pnpm-store`
+stays, because it is all clones and deleting it frees nothing.
+
 ### Device recordings
 
 `stim-server` records owned simulators, emulators and the Stim-owned Chrome
