@@ -10,6 +10,8 @@ public enum ActionRowKind: Hashable, Sendable {
   case worktree
   /// A project's row in the sidebar, which acts on every live workspace under it.
   case project
+  /// A project with no live workspace, on the dashboard's idle cards.
+  case idleProject
 }
 
 /// One item in the shared workspace/worktree/project actions menu. `nil` in `workspaceMenuItems(for:)` marks a
@@ -56,6 +58,8 @@ public func workspaceMenuItems(for kind: ActionRowKind) -> [WorkspaceMenuItem?] 
     ]
   case .project:
     return [.revealInFinder, .copyPath, nil, .stopAllLiveWorkspaces]
+  case .idleProject:
+    return [.revealInFinder, .copyPath]
   }
 }
 

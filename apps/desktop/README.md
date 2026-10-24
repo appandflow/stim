@@ -200,6 +200,14 @@ opens the workspace (on the Active Workspaces page, the project); clicking the s
 opens the workspace with that device focused. Cards that scroll out of view stop
 streaming and reconnect when they return.
 
+Right-clicking a card shows the sidebar row's workspace menu behind **Open Workspace**
+(a card with several apps shows the worktree menu with per-app submenus); Stop and
+Remove Worktree raise the sidebar's confirmations. Right-clicking the stream or a device
+button shows **Open Device Viewer** and, for a simulator, emulator or macOS app, the
+tile menu's **Build and Run** and **Stop**. Right-clicking an Idle project card shows
+**Open Project**, **Reveal in Finder** and **Copy Path**, and right-clicking a remote
+machine row in Settings shows **Ask**, **Details**, **Move Up**, **Move Down** and **Remove...**.
+
 The sidebar lists projects as a
 tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
