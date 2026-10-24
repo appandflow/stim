@@ -3,6 +3,7 @@ import { basename, dirname, join, relative } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { isJsonObject, readJsonObject, workspaceLightenedFile, workspaceMetadataFile } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
+import { canonicalPath } from '../commands/gc/paths.ts';
 import { warmWorktreeTarget } from '../commands/worktree.ts';
 import { withWorkspaceStateLock } from './workspace-state.ts';
 import {
@@ -174,7 +175,14 @@ export async function restoreLightenedDependencies(
       'stderr',
       `${phaseLine('deps', `gc lightened this worktree; restoring ${missing().join(', ')} with worktree warm`)}\n`,
     );
-    for (const dir of pending) rmSync(dir, { recursive: true, force: true });
+    for (const dir of pending) {
+      if (!worktree || canonicalPath(dir) !== join(canonicalPath(worktree), relative(worktree, dir)))
+        return depsFailure(
+          root,
+          `${dir} is reached through a link or lies outside its worktree, so it was not removed.`,
+        );
+      rmSync(dir, { recursive: true, force: true });
+    }
     let exitCode: number;
     try {
       ({ exitCode } = await warmWorktreeTarget({ cwd: root, operation }));
