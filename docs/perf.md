@@ -74,9 +74,13 @@ node scripts/perf/compare.mjs
 
 clones `perf-data` and prints, per machine, the latest run against the run before it: median wall time per
 scenario, the change, the spread between the fastest and slowest repetition, and how many repetitions failed. A
-scenario is flagged `REGRESSION` when its median grew by more than 10% and by at least 250 ms
-(`--threshold`, `--min-delta-ms`). With three or more repetitions medians ignore one slow repetition, and failed repetitions are left out; a flagged change whose repetitions spread by
-more than 50% is marked `(noisy)`.
+scenario is flagged `REGRESSION` (or `faster`) when its median changed by more than 10% and by at least 250 ms
+(`--threshold`, `--min-delta-ms`) and by more than the larger of the two runs' repetition ranges (slowest minus
+fastest). A change inside that range is reported as `within noise`: with three repetitions a median cannot tell it
+from the variation between repetitions. A flagged change is marked `(noisy)` when any repetition of the scenario in
+either run started above load 80 (`--max-load`) or the repetitions spread by more than 50%. Medians ignore one slow
+repetition, and failed repetitions are left out. For each flagged or `within noise` row that rests on fewer than five
+repetitions, the output suggests rerunning both builds with `--reps 5`.
 
 Load is judged per scenario. A scenario is not compared when the median load before its commands differs by more
 than 20 and by more than a factor of two between the two runs. A primed run and an `--no-prime` run are never
