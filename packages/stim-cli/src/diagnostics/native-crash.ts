@@ -131,6 +131,30 @@ export function parseIosCrash(text: string, target: CrashTarget): { record: Ndjs
   }
 }
 
+/**
+ * The symbol dyld could not bind when one image of the app bundle needs a symbol that another image of the same
+ * bundle does not export. Only the bundle's own bytes decide this, so a stored app that does it never launches.
+ */
+export function bundleBindFailure(record: NdjsonRecord): string | null {
+  if (record.event !== 'native_crash' || typeof record.rawReport !== 'string') return null;
+  try {
+    const termination = (JSON.parse(record.rawReport.slice(record.rawReport.indexOf('\n') + 1)) as IosReport)
+      .termination;
+    if (termination?.namespace !== 'DYLD') return null;
+    const bundles = new Map<string, string>();
+    let symbol: string | undefined;
+    for (const line of termination.reasons ?? []) {
+      symbol ??= /^Symbol not found: (\S+)/.exec(line)?.[1];
+      const image = /^(Referenced from|Expected in):\s+<[^>]+> (.*?\.app)\//.exec(line);
+      if (image?.[1] && image[2]) bundles.set(image[1], image[2]);
+    }
+    const bundle = bundles.get('Referenced from');
+    return symbol && bundle && bundle === bundles.get('Expected in') ? symbol : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Extracts crash-buffer groups only when their own process header names the target app. */
 export function parseAndroidCrashes(text: string, target: CrashTarget, clockOffsetMs: number): NdjsonRecord[] {
   const entries = text

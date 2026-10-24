@@ -523,6 +523,13 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   Trust, then run the command again. It is a per-developer-certificate tap, not
   a per-build one -- but an uninstall clears it, including the one Stim's own
   signer-conflict retry performs.
+  On a local iOS simulator, a cache-hit app that dyld kills at launch because
+  one part of the app cannot bind a symbol from another part of the same app
+  (for example React.framework against hermesvm.framework) is a damaged build,
+  not a launch problem. Stim removes that cache entry, and the remedy names
+  it. Run the command again to build the app fresh. A cache provider's copy is
+  not removed; add \`--no-build-cache\` to skip it. If the fresh app crashes
+  the same way, the project's own native code is the cause.
   With \`--remote eas\` the remedy names the EAS Simulator session that is
   still running, as for STIM_INSTALL_FAILED.`,
     },

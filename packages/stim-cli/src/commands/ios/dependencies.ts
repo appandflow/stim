@@ -13,6 +13,7 @@ import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { memoizedFingerprint } from '../../cache/fingerprint-memo.ts';
 import {
   fingerprintProject,
+  evictBuild,
   resolveBuild,
   storeBuild,
   type BuildStore,
@@ -145,6 +146,7 @@ export interface IosDeps {
   fingerprintProject: typeof fingerprintProject;
   memoizedFingerprint: typeof memoizedFingerprint;
   untrackedNativeFiles: typeof untrackedNativeFiles;
+  evictBuild: typeof evictBuild;
   resolveBuild: typeof resolveBuild;
   storeBuild: BuildStore;
   resolveCacheProviderConfig: typeof resolveCacheProviderConfig;
@@ -252,6 +254,7 @@ export const DEFAULT_DEPS: IosDeps = {
   fingerprintProject,
   memoizedFingerprint,
   untrackedNativeFiles,
+  evictBuild,
   resolveBuild,
   storeBuild,
   resolveCacheProviderConfig,
