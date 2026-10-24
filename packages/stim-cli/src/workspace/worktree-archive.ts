@@ -21,6 +21,7 @@ export interface WorktreeArchive {
   untracked: string[];
   /** Shell commands that recreate the worktree at its HEAD with these changes. */
   restore: string[];
+  bundled: boolean;
   /** Held until the removal that needs the archive ends; retention never deletes an archive with a live claim. */
   claim: ClaimHandle;
 }
@@ -121,9 +122,9 @@ async function bundleHead(path: string, head: string, dir: string, operation?: S
 }
 
 /**
- * When a worktree's uncommitted or untracked, non-ignored files last changed: null when none of them exists, as when
- * the only change is a deleted file, and `unreadable` when git or the files cannot be read. git records no time for
- * these edits, so the idle checks read the files themselves.
+ * When a worktree's uncommitted or untracked, non-ignored files last changed, a deleted file by its nearest existing
+ * parent directory: null when it has none, and `unreadable` when git or the files cannot be read. git records no time
+ * for these edits, so the idle checks read the files themselves.
  */
 export async function uncommittedActivityOf(
   path: string,
@@ -181,6 +182,7 @@ export async function worktreeArchiveMismatch(
   const newest = await newestChange(path, now);
   if (newest !== null && newest >= archive.at) return 'an uncommitted file changed while it was archived';
   for (const file of [
+    ...(archive.bundled ? ['head.bundle'] : []),
     ...(archive.tracked.length ? ['tracked.patch'] : []),
     ...(archive.untracked.length ? ['untracked.tar'] : []),
   ]) {
@@ -302,13 +304,7 @@ export async function archiveWorktreeChanges({
       if (!sameList(listed, changes.untracked)) throw new Error('the untracked tarball does not list every file');
       restore.push(`tar -xf ${quotedPath(tarball)} -C ${quotedPath(path)}`);
     }
-    const total = await worktreeArchiveBytes(operation?.signal);
-    if (total > limits.maxBytes) {
-      throw new Error(
-        `the archive (${total - existing} bytes) does not fit in archive.maxTotalGb beside the other archives`,
-      );
-    }
-    const archive: WorktreeArchive = { dir, at, ...changes, restore, claim };
+    const archive: WorktreeArchive = { dir, at, ...changes, restore, bundled: bundle !== null, claim };
     const mismatch = await worktreeArchiveMismatch(path, archive, operation);
     if (mismatch) throw new Error(mismatch);
     const manifest = {
@@ -329,6 +325,16 @@ export async function archiveWorktreeChanges({
     const tmp = join(dir, '.manifest.json.tmp');
     await writeFile(tmp, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
     await rename(tmp, join(dir, 'manifest.json'));
+    const total = await worktreeArchiveBytes(operation?.signal);
+    if (total > limits.maxBytes) {
+      throw new Error(
+        `the archive (${total - existing} bytes) does not fit in archive.maxTotalGb beside the other archives`,
+      );
+    }
+    const [after] = await readVolumeSpaceAsync([dir], operation?.signal);
+    if (!after || after.freeMb < floorMb) {
+      throw new Error(`it left less free disk than budget.hardFloorDiskGb on ${after?.volume ?? 'its volume'}`);
+    }
     await retention();
     if (!(await lstat(join(dir, 'manifest.json')).catch(() => null))) throw new Error('archive retention removed it');
     return archive;

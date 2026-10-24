@@ -624,7 +624,8 @@ SWEEPING FINISHED WORKTREES
   RECENT ACTIVITY and not in use is archived, then removed, by gc --delete
   and the maintenance worktree check. Under the removal locks Stim writes
   \`git diff --binary HEAD\` (staged and unstaged changes together) to
-  tracked.patch and the untracked files git does not ignore to untracked.tar,
+  tracked.patch, the untracked files git does not ignore to untracked.tar,
+  HEAD's commits the default branch lacks to head.bundle,
   with a manifest.json naming the branch, HEAD, pull request and files, in
   $STIM_HOME/archive/worktrees/<repository>/<branch-or-dir>-<timestamp>/.
   Ignored files (node_modules, build output) are not saved. It verifies the
@@ -642,9 +643,9 @@ SWEEPING FINISHED WORKTREES
   \`git status\` or editor refresh that rewrites the index restarts RECENT
   ACTIVITY. The removal line and the gc
   and maintenance logs name the archive and the restore commands; head.bundle
-  holds HEAD's commits the default branch lacks, so the restore works after
-  the branch is deleted:
-    git -C <repository> bundle unbundle <archive>/head.bundle
+  exists only when the default branch lacks HEAD, and lets the restore work
+  after the branch is deleted:
+    git -C <repository> bundle unbundle <archive>/head.bundle    (with a bundle)
     git -C <repository> worktree add --detach <path> <HEAD>
     git -C <path> apply <archive>/tracked.patch
     tar -xf <archive>/untracked.tar -C <path>

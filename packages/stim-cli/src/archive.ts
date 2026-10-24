@@ -17,6 +17,7 @@ import {
   worktreeArchiveRoot,
   archivedUsage,
   archiveEnabled,
+  isPathPrefix,
   listRecordedDevicesAsync,
   loadConfig,
   readArchivesAsync,
@@ -499,13 +500,18 @@ function logRemovalOrder(path: string): number {
 
 /**
  * How long and how large worktree archives of `root` are kept, from `archive.maxAgeDays` and `archive.maxTotalGb`, or
- * why its uncommitted changes cannot be archived: archives are disabled for it, a limit is 0, or a setting is invalid.
+ * why its uncommitted changes cannot be archived: archives are disabled for it or for a project registered inside it,
+ * a limit is 0, or a setting is invalid.
  */
 export function worktreeArchiveLimits(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
 ): { maxAgeDays: number; maxBytes: number } | { refusal: string } {
   if (!enabled(root, env)) return { refusal: 'archive.enabled is false for it' };
+  const nested = Object.keys(loadConfig()?.projects ?? {}).find(
+    (key) => key !== root && isPathPrefix(root, key) && !enabled(key, env),
+  );
+  if (nested) return { refusal: `archive.enabled is false for ${nested}, inside it` };
   let limits: Record<string, number>;
   try {
     limits = archiveSettings(env);
