@@ -56,6 +56,7 @@ import {
 } from '../../offload/client.ts';
 import {
   fingerprintMismatchRemedy,
+  missingPackageManagerRemedy,
   automaticBuild,
   namedBuildMachine,
   OffloadRefusal,
@@ -673,7 +674,9 @@ export async function acquireAndroidArtifact(
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
         code: 'offload-failed',
         machine: choice.machine,
-        remedy: outcome.ok ? undefined : fingerprintMismatchRemedy(outcome.reason),
+        remedy: outcome.ok
+          ? undefined
+          : (fingerprintMismatchRemedy(outcome.reason) ?? missingPackageManagerRemedy(choice.machine, outcome.reason)),
       });
       writer.write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;
