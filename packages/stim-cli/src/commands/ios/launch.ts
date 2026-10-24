@@ -1,6 +1,7 @@
 import type { PreparedIosArtifact } from './artifact.ts';
 import type { StimContext, StimOutput } from '@stim-cli/core';
 import { launchSlotScope, nativeRunCommand, siblingPlatformSlots } from '../../engine/slot-launch.ts';
+import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import { basename } from 'node:path';
 import chalk from 'chalk';
 import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
@@ -277,31 +278,34 @@ export async function verifyIosMetroRun({
 
   const siblings = metroCheck ? await siblingPlatformSlots(root, 'ios', slot) : [];
   const verification: VerifyLaunchResultLike = metroCheck
-    ? await d.verifyLaunch({
-        requireBundleResponse: true,
-        slot: launchSlotScope(root, slot),
-        appPid: physical || remoteDevice ? null : launched?.pid,
-        platformShared: siblings.length > 0,
-        onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
-        onActivity: enterActivity,
-        logsDir,
-        since: launchedAt,
-        metroPort,
-        platform: 'ios',
-        mode: workspaceDevServerMode(root, isExpo),
-        readNativeCrashes,
-        readDeviceRecords: hostedLogs?.readDeviceRecords,
-        deviceLogsThrough: hostedLogs?.deviceLogsThrough,
-        processAlive: remoteDevice
-          ? null
-          : physical
-            ? deviceProcess
-            : async () => {
-                if (launched?.pid) return d.pidExists(launched.pid);
-                const running = await iosAppProcess(udid, bundleId);
-                return running.state === 'unknown' ? null : running.state === 'running';
-              },
-      })
+    ? await withDrainingCancellation(operation, operation?.signal, () =>
+        d.verifyLaunch({
+          signal: operation?.signal,
+          requireBundleResponse: true,
+          slot: launchSlotScope(root, slot),
+          appPid: physical || remoteDevice ? null : launched?.pid,
+          platformShared: siblings.length > 0,
+          onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
+          onActivity: enterActivity,
+          logsDir,
+          since: launchedAt,
+          metroPort,
+          platform: 'ios',
+          mode: workspaceDevServerMode(root, isExpo),
+          readNativeCrashes,
+          readDeviceRecords: hostedLogs?.readDeviceRecords,
+          deviceLogsThrough: hostedLogs?.deviceLogsThrough,
+          processAlive: remoteDevice
+            ? null
+            : physical
+              ? deviceProcess
+              : async () => {
+                  if (launched?.pid) return d.pidExists(launched.pid);
+                  const running = await iosAppProcess(udid, bundleId);
+                  return running.state === 'unknown' ? null : running.state === 'running';
+                },
+        }),
+      )
     : { verified: false, skipped: true };
   const nativeCrashes = verification.errors?.some((record) => record.event === 'native_crash')
     ? []
