@@ -306,8 +306,11 @@ reclaims only the project at or above that folder, with the projects nested unde
 even with `--force` (`STIM_WORKTREE_SERVICE`): deleting the folder would delete
 the running server's code. Reinstall the service from another build with
 `stim-server service install`, or remove it with `stim-server service uninstall`,
-then retry. Stim does not detect other processes whose working directory is in
-the worktree.
+then retry. It also refuses, even with `--force`, a worktree that holds the
+running `stim` or the `stim` on your PATH, after resolving symlinks, so a
+`pnpm exec stim` or `npx stim` that resolves into the worktree's own
+`node_modules` cannot remove it; run the global `stim` instead. Stim does not
+detect other processes whose working directory is in the worktree.
 
 Windows cannot delete a directory another process holds open. The adb server
 inherits the working directory of the adb client that starts it, and the

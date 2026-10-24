@@ -1,5 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import { quotedPath } from '@stim-cli/core';
+import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { worktreeArchiveRoot } from '@stim-cli/core/state';
 import { chmod, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
@@ -20,6 +21,8 @@ export interface WorktreeArchive {
   untracked: string[];
   /** Shell commands that recreate the worktree at its HEAD with these changes. */
   restore: string[];
+  /** Held until the removal that needs the archive ends; retention never deletes an archive with a live claim. */
+  claim: ClaimHandle;
 }
 
 interface Changes {
@@ -80,8 +83,9 @@ async function newestChange(path: string, changes: Changes): Promise<number | nu
   let newest: number | null = null;
   for (const file of [...changes.tracked, ...changes.untracked]) {
     try {
-      const { mtimeMs } = await lstat(join(path, file));
-      if (newest === null || mtimeMs > newest) newest = mtimeMs;
+      const { mtimeMs, ctimeMs } = await lstat(join(path, file));
+      const changed = Math.max(mtimeMs, ctimeMs);
+      if (newest === null || changed > newest) newest = changed;
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     }
@@ -211,7 +215,18 @@ export async function archiveWorktreeChanges({
     `${safeName(branch?.replace(/^refs\/heads\//, '') ?? basename(path))}-${stamp(at)}`,
   );
   await mkdir(dirname(dir), { recursive: true, mode: 0o700 });
-  await mkdir(dir, { mode: 0o700 });
+  const attempt = tryAcquireClaim({ root: `${dir}.claims`, mode: 'exclusive', label: 'worktree archive' });
+  const claim = attempt.acquired;
+  if (!claim) {
+    releaseClaim(attempt.pending);
+    throw new Error('its archive claim is held');
+  }
+  try {
+    await mkdir(dir, { mode: 0o700 });
+  } catch (error) {
+    releaseClaim(claim);
+    throw error;
+  }
   const restore = [`git -C ${quotedPath(repository)} worktree add --detach ${quotedPath(path)} ${head}`];
   try {
     if (changes.tracked.length) {
@@ -264,7 +279,7 @@ export async function archiveWorktreeChanges({
       if (size > limits.maxBytes) throw new Error(`the untracked tarball (${size} bytes) exceeds archive.maxTotalGb`);
       restore.push(`tar -xf ${quotedPath(tarball)} -C ${quotedPath(path)}`);
     }
-    const archive: WorktreeArchive = { dir, at, ...changes, restore };
+    const archive: WorktreeArchive = { dir, at, ...changes, restore, claim };
     const mismatch = await worktreeArchiveMismatch(path, archive, operation);
     if (mismatch) throw new Error(mismatch);
     const manifest = {
@@ -296,6 +311,7 @@ export async function archiveWorktreeChanges({
     return archive;
   } catch (error) {
     await rm(dir, { recursive: true, force: true });
+    releaseClaim(claim);
     throw error;
   }
 }
@@ -303,4 +319,10 @@ export async function archiveWorktreeChanges({
 /** Deletes an archive whose worktree was kept intact, so a retried removal does not pile up copies. */
 export async function discardWorktreeArchive(archive: WorktreeArchive): Promise<void> {
   await rm(archive.dir, { recursive: true, force: true });
+  releaseWorktreeArchive(archive);
+}
+
+/** Lets retention manage the archive once the removal that needed it has ended. */
+export function releaseWorktreeArchive(archive: WorktreeArchive): void {
+  releaseClaim(archive.claim);
 }

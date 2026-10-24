@@ -1,5 +1,6 @@
 import { execFileSync, execSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -12,6 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { worktreeArchiveRoot } from '@stim-cli/core/state';
 import { enforceArchiveRetention } from '../archive.ts';
 import { removeWorktreeTarget } from '../commands/worktree.ts';
@@ -140,6 +142,42 @@ test('worktree removal with archiveDirty archives and removes a dirty worktree, 
   expect(readFileSync(join(saved[0]?.dir ?? '', 'manifest.json'), 'utf8')).toContain('scratch.txt');
 }, 120_000);
 
+test('a failing git removal keeps both the worktree and its archive', async () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  onTestFinished(() => error.mockRestore());
+  const locked = join(worktree, 'locked');
+  mkdirSync(locked);
+  writeFileSync(join(locked, 'held.txt'), 'held\n');
+  chmodSync(locked, 0o555);
+  let removed: boolean;
+  try {
+    removed = await removeWorktreeTarget(worktree, {
+      linkedOnly: true,
+      archiveDirty: { pullRequest: null, onArchived: () => {} },
+    });
+  } finally {
+    chmodSync(locked, 0o755);
+  }
+
+  expect(removed).toBe(false);
+  expect(existsSync(join(locked, 'held.txt'))).toBe(true);
+  const [entry] = readdirSync(join(worktreeArchiveRoot(), 'repo'));
+  const manifest = JSON.parse(readFileSync(join(worktreeArchiveRoot(), 'repo', entry ?? '', 'manifest.json'), 'utf8'));
+  expect(manifest.untracked).toEqual(['locked/held.txt']);
+  expect(error.mock.calls.flat().join('\n')).toContain('Its uncommitted changes stay archived in');
+}, 120_000);
+
+test('nothing is archived when writing it would cross budget.hardFloorDiskGb', async () => {
+  process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = String(1024 ** 3);
+  onTestFinished(() => {
+    delete process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB;
+  });
+  dirtyTheWorktree();
+
+  await expect(archive()).rejects.toThrow(/budget\.hardFloorDiskGb/);
+  expect(existsSync(worktreeArchiveRoot())).toBe(false);
+}, 60_000);
+
 test('nothing is archived when archives are off for the worktree', async () => {
   process.env.STIM_ARCHIVE_ENABLED = 'false';
   dirtyTheWorktree();
@@ -148,7 +186,7 @@ test('nothing is archived when archives are off for the worktree', async () => {
   expect(existsSync(worktreeArchiveRoot())).toBe(false);
 }, 60_000);
 
-test('retention deletes worktree archives past archive.maxAgeDays, then the oldest while over archive.maxTotalGb', async () => {
+test('retention deletes worktree archives past archive.maxAgeDays, then the oldest while over archive.maxTotalGb, never one whose removal holds its claim', async () => {
   const day = 86_400_000;
   const now = Date.now();
   const plant = (name: string, ageDays: number, bytes: number) => {
@@ -163,7 +201,12 @@ test('retention deletes worktree archives past archive.maxAgeDays, then the olde
   };
   const expired = plant('expired', 40, 10);
   const oldest = plant('oldest', 3, 600);
-  const newest = plant('newest', 1, 600);
+  const recent = plant('recent', 1, 600);
+  const inFlight = plant('in-flight', 2, 1200);
+  const claim = tryAcquireClaim({ root: `${inFlight}.claims`, mode: 'exclusive', label: 'worktree archive' }).acquired;
+  onTestFinished(() => {
+    releaseClaim(claim);
+  });
   process.env.STIM_ARCHIVE_MAX_AGE_DAYS = '30';
   process.env.STIM_ARCHIVE_MAX_TOTAL_GB = String(1000 / 1024 ** 3);
 
@@ -171,6 +214,9 @@ test('retention deletes worktree archives past archive.maxAgeDays, then the olde
 
   expect(existsSync(expired)).toBe(false);
   expect(existsSync(oldest)).toBe(false);
-  expect(existsSync(newest)).toBe(true);
-  expect(readdirSync(join(worktreeArchiveRoot(), 'repo'))).toEqual(['newest']);
+  expect(existsSync(recent)).toBe(false);
+  expect(existsSync(inFlight)).toBe(true);
+  expect(readdirSync(join(worktreeArchiveRoot(), 'repo')).filter((name) => !name.endsWith('.claims'))).toEqual([
+    'in-flight',
+  ]);
 });

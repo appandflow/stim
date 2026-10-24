@@ -813,6 +813,13 @@ largest kind of the oldest archive while total caps are exceeded. Artifact
 expiry keeps records. Turning `recording.enabled` off at machine scope deletes
 archived recordings on the next retention pass.
 
+The same `archive.enabled`, `archive.maxAgeDays` and `archive.maxTotalGb` govern
+the uncommitted changes gc archives before it removes a dirty finished worktree
+([remove finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk)).
+Those archives have their own `archive.maxTotalGb` budget, so all archives
+together can take twice that, and `archive.enabled false` keeps such worktrees
+instead.
+
 <StimTabs code="stim settings set archive.enabled false --scope repo" />
 
 See [archived workspaces](./worktrees.md#archived-workspaces) for privacy and deletion.

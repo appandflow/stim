@@ -38,6 +38,7 @@ import { SERVICE_IN_USE, serviceRunningFrom, stimCliEntries, stimCliUseOf } from
 import {
   archiveWorktreeChanges,
   discardWorktreeArchive,
+  releaseWorktreeArchive,
   worktreeArchiveMismatch,
   type WorktreeArchive,
 } from '../workspace/worktree-archive.ts';
@@ -1096,6 +1097,38 @@ function printRemovalCleanup(result: ReclaimAllResult, failed: boolean, output: 
   }
 }
 
+async function archiveBeforeRemoval(
+  path: string,
+  repository: string,
+  branch: string | null,
+  head: string | null,
+  opts: RemoveOptions,
+  output: RemovalOutput,
+): Promise<WorktreeArchive | null> {
+  try {
+    if (!head) throw new Error('its HEAD could not be read');
+    return await archiveWorktreeChanges({
+      path,
+      repository,
+      branch,
+      head,
+      pullRequest: opts.archiveDirty?.pullRequest ?? null,
+      operation: opts.operation,
+    });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    opts.operation?.signal.throwIfAborted();
+    output.error(
+      chalk.red(
+        `Refusing to remove ${path}: could not archive its uncommitted changes: ${(error instanceof Error ? error.message : String(error)).split('\n')[0]}`,
+      ),
+    );
+    output.fail();
+    return null;
+  }
+}
+
 export async function removeWorktreeTarget(target: string | undefined, opts: RemoveOptions = {}): Promise<boolean> {
   let removed = false;
   await runRemove(target, opts, () => {
@@ -1365,28 +1398,9 @@ async function removeOrRefuse(
             return;
           }
           if (opts.archiveDirty && !opts.force && current.dirtyLines.length) {
-            try {
-              if (!inspectedHead) throw new Error('its HEAD could not be read');
-              archive = await archiveWorktreeChanges({
-                path,
-                repository: source.path,
-                branch: branch ?? null,
-                head: inspectedHead,
-                pullRequest: opts.archiveDirty.pullRequest,
-                operation: opts.operation,
-              });
-            } catch (error) {
-              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-                throw error;
-              opts.operation?.signal.throwIfAborted();
-              output.error(
-                chalk.red(
-                  `Refusing to remove ${path}: could not archive its uncommitted changes: ${(error instanceof Error ? error.message : String(error)).split('\n')[0]}`,
-                ),
-              );
-              output.fail();
-              return;
-            }
+            const saved = await archiveBeforeRemoval(path, source.path, branch ?? null, inspectedHead, opts, output);
+            if (!saved) return;
+            archive = saved;
           }
           const discardArchive = async (): Promise<void> => {
             if (archive) await discardWorktreeArchive(archive);
@@ -1425,15 +1439,6 @@ async function removeOrRefuse(
             output.fail();
             return;
           }
-          const stale = archive ? await worktreeArchiveMismatch(path, archive, opts.operation) : null;
-          if (stale) {
-            await discardArchive();
-            output.error(chalk.red(`Refusing to remove ${path}: ${stale}.`));
-            output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
-            printRemovalCleanup(result, true, output);
-            output.fail();
-            return;
-          }
           await restorePodChurn(path, current.podChurn, output, opts.operation);
           options.signal?.throwIfAborted();
           deleteWatchmanCookies(path, current.cookies);
@@ -1442,6 +1447,32 @@ async function removeOrRefuse(
             signal: options.signal,
             declareFor: opts.operation,
           });
+          let stale: string | null = null;
+          if (archive) {
+            try {
+              stale = await worktreeArchiveMismatch(path, archive, opts.operation);
+            } catch (error) {
+              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+                throw error;
+              stale = `its archive could not be checked: ${error instanceof Error ? error.message : String(error)}`;
+            }
+          }
+          if (stale) {
+            const unrestored = trash ? await restoreTrashedTrees(trash) : [];
+            if (trash && unrestored.length) {
+              output.error(
+                chalk.yellow(
+                  `Could not move ${unrestored.join(', ')} back into ${path}; ${unrestored.length === 1 ? 'it stays' : 'they stay'} in ${trash.dir}, which stim gc keeps while ${path} exists.`,
+                ),
+              );
+            }
+            await discardArchive();
+            output.error(chalk.red(`Refusing to remove ${path}: ${stale}.`));
+            output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
+            printRemovalCleanup(result, true, output);
+            output.fail();
+            return;
+          }
           gitRemoving = true;
           try {
             await removeWorktreeAsync(path, {
@@ -1586,10 +1617,14 @@ async function removeOrRefuse(
         opts.beforeRemove,
       ),
     { signal: opts.operation?.signal, declareSpawnsFor: opts.operation },
-  ).catch(async (error: unknown) => {
-    if (archive && !gitRemoving) await discardWorktreeArchive(archive);
-    throw error;
-  });
+  )
+    .catch(async (error: unknown) => {
+      if (archive && !gitRemoving) await discardWorktreeArchive(archive);
+      throw error;
+    })
+    .finally(() => {
+      if (archive) releaseWorktreeArchive(archive);
+    });
 }
 
 export function registerRemove(worktree: Command): void {
