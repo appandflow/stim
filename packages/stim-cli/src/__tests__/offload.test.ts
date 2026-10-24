@@ -7,6 +7,7 @@ import * as buildMachines from '../offload/build-machines.ts';
 import {
   buildPlacementSettings,
   parseBuildMachineOption,
+  missingPackageManagerRemedy,
   podsFailedRemedy,
   workerFailureReason,
   requireConfiguredMachine,
@@ -969,6 +970,11 @@ describe('a worker that is not a Mac', () => {
     expect(toolchainMismatches(ANDROID, linux)).toEqual([]);
   });
 
+  it('suggests no CocoaPods install for a worker that cannot build iOS', () => {
+    expect(toolchainNotes(IOS, linux)).toEqual([]);
+    expect(machineNotes(offer({ toolchain: linux }), [IOS, ANDROID])).toEqual([]);
+  });
+
   it('is judged for doctor on the platforms it can build, naming the platform of each reason', () => {
     const offerFrom = (toolchain: Partial<BuildOffer['toolchain']>, capacityOver = {}) =>
       offer({ toolchain: { ...linux, ...toolchain }, capacity: capacity(capacityOver) });
@@ -1410,6 +1416,21 @@ describe('workerFailureReason', () => {
     expect(podsFailedRemedy('mini', workerFailureReason('pods-failed', POD_MISSING_REASON), null)).toContain(
       'brew install cocoapods',
     );
+  });
+});
+
+describe('missingPackageManagerRemedy', () => {
+  it('names the package manager a worker could not start, not build approval', () => {
+    const remedy = missingPackageManagerRemedy('linux-box', workerFailureReason('deps-failed', 'spawn pnpm ENOENT'));
+    expect(remedy).toContain('linux-box has no pnpm');
+    expect(remedy).toContain('sudo corepack enable pnpm');
+    expect(remedy).not.toMatch(/approv|doctor/i);
+    expect(missingPackageManagerRemedy('linux-box', 'deps-failed: spawn yarn ENOENT')).toContain('no yarn');
+  });
+
+  it('ignores other failures, including a package manager that ran and failed', () => {
+    expect(missingPackageManagerRemedy('m', 'deps-failed: pnpm install --frozen-lockfile exited with 1: x')).toBeUndefined();
+    expect(missingPackageManagerRemedy('m', 'deps-failed: spawn git ENOENT')).toBeUndefined();
   });
 });
 

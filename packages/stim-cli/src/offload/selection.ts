@@ -16,6 +16,19 @@ export function fingerprintMismatchRemedy(reason: string): string | undefined {
   return reason.startsWith('fingerprint-mismatch: the checkout there ') ? FINGERPRINT_MISMATCH_REMEDY : undefined;
 }
 
+const MISSING_PACKAGE_MANAGER = /^deps-failed: spawn (pnpm|yarn|npm) ENOENT/;
+
+/** The remedy for a worker whose dependency install could not start its package manager; undefined for any other reason. */
+export function missingPackageManagerRemedy(machine: string, reason: string): string | undefined {
+  const tool = MISSING_PACKAGE_MANAGER.exec(reason)?.[1];
+  if (!tool) return undefined;
+  const install =
+    tool === 'npm'
+      ? 'Reinstall Node there, which ships npm'
+      : `Install it with \`sudo corepack enable ${tool}\` or \`sudo npm install --global ${tool}\``;
+  return `${machine} has no ${tool} on the PATH of its stim-server service, and the app's lockfile needs it. ${install}, then run the same command again, or rerun with --remote-build auto or --remote-build local.`;
+}
+
 const PODS_FAILED_PREFIX = 'pod install failed: ';
 
 /** The reason a failed worker job is reported with: a `pods-failed` code reads as a failed pod install. */
