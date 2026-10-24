@@ -259,6 +259,15 @@ test('only a symbol one part of the app needs from another part of the same app 
     },
     {
       namespace: 'DYLD',
+      indicator: 'Symbol missing',
+      reasons: [
+        'Symbol not found: _foo',
+        `Referenced from: <0D5DABD8-59B5-36C0-B957-475A4985ECC3> ${bundle}/Frameworks/React.framework/React`,
+        'Expected in:     <22A8186E-E00E-32BB-A9FF-082E90BAEA6F> /Users/USER/Other/Plugin.app/Contents/Plugin',
+      ],
+    },
+    {
+      namespace: 'DYLD',
       indicator: 'Library missing',
       reasons: [
         'Library not loaded: /usr/lib/libSystem.B.dylib',
