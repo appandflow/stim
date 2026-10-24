@@ -814,7 +814,7 @@ test('a retry after a failed install runs it again instead of copying a half-ins
     },
   });
   const retried = await runWarm(target, '--refresh');
-  expect(retried.code).toBe(0);
+  expect({ code: retried.code, stderr: retried.stderr }).toMatchObject({ code: 0 });
   expect(retried.stderr).toContain('checkout    main up to date with origin/main');
   expect(retried.stderr).toContain(
     `deps        source ${root}: the last install of pnpm-lock.yaml did not finish -> pnpm install`,
