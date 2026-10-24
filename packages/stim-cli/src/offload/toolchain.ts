@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stimBuildDigest } from '@stim-cli/core/state';
 import { androidHome } from '../devices/android.ts';
@@ -704,7 +704,7 @@ function pickXcodeApp(
   );
 }
 
-const developerDirOf = (app: XcodeApp) => join(app.path, 'Contents', 'Developer');
+const developerDirOf = (app: XcodeApp) => posix.join(app.path, 'Contents', 'Developer');
 
 function selectXcode(
   app: XcodeApp,
