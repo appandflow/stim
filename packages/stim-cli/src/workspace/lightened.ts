@@ -142,7 +142,11 @@ function depsFailure(
   message: string,
   remedy = `Run \`stim worktree warm\` in ${root}, or install the project's dependencies, then retry.`,
 ): { code: string; message: string; remedy: string } {
-  return { code: 'STIM_DEPS_FAILED', message: `gc lightened this worktree, and ${message}`, remedy };
+  return {
+    code: 'STIM_DEPS_FAILED',
+    message: `gc lightened this worktree, and ${message}`,
+    remedy: `${remedy} If you installed them yourself, delete ${workspaceLightenedFile(root)} so Stim stops restoring them.`,
+  };
 }
 
 /**
