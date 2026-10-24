@@ -30,7 +30,9 @@ Branch on the code, never on the message.`,
   remote-only never runs here and never joins the local queue: it refuses
   with this code when no host could ever take the run, and waits for a host that
   is only full or loaded (see STIM_AT_CAPACITY).
-  Check stim-server and Tailscale there,
+  An unreachable host's message and remedy are the diagnosis stim doctor gives
+  (Tailscale off, Mac offline with last seen, serve route, stim-server), without
+  tailscale ping. Check stim-server and Tailscale there,
   then run stim doctor. Correct --device-type / --runtime for iOS or
   --system-image / --device-profile for Android when the offer names
   an unavailable choice. A session that exists stays recorded even if delivery
