@@ -1461,9 +1461,19 @@ export function parseAvdEmulatorProcesses(psOutput: string, avdName: string): nu
   return pids;
 }
 
+const PROCESS_TABLE_READ_TIMEOUTS_MS = [5000, 10_000, 20_000];
+
+function readProcessTable(args: string[]): string | null {
+  for (const timeoutMs of PROCESS_TABLE_READ_TIMEOUTS_MS) {
+    const out = getExecutor().runFileQuiet('ps', args, { timeoutMs });
+    if (out !== null) return out;
+  }
+  return null;
+}
+
 function listAvdEmulatorProcesses(avdName: string, platform: NodeJS.Platform): number[] | null {
   if (platform === 'win32') return [];
-  const out = getExecutor().runFileQuiet('ps', ['-axww', '-o', 'pid=,command='], { timeoutMs: 5000 });
+  const out = readProcessTable(['-axww', '-o', 'pid=,command=']);
   return out === null ? null : parseAvdEmulatorProcesses(out, avdName);
 }
 
@@ -1497,7 +1507,7 @@ function scanAvdEmulatorProcesses(
 function emulatorProcessRunning(pid: number): boolean {
   if (!pidExists(pid)) return false;
   if (process.platform === 'win32') return true;
-  const stat = getExecutor().runFileQuiet('ps', ['-o', 'stat=', '-p', String(pid)], { timeoutMs: 5000 });
+  const stat = readProcessTable(['-o', 'stat=', '-p', String(pid)]);
   return stat === null || !stat.trim().startsWith('Z');
 }
 

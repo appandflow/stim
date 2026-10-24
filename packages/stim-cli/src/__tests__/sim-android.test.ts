@@ -1193,6 +1193,52 @@ test('assertOwnedAvdStopped refuses an emulator process of the AVD that its proc
   ).toThrow(/Could not read the process table/);
 });
 
+describe('assertOwnedAvdStopped when the process table read is slow under load', () => {
+  const stoppedAvd = {
+    platform: 'darwin' as const,
+    resolveDirectory: () => '/avds/stim-app.avd',
+    readProcessId: () => null,
+  };
+
+  test('a timed-out first read is retried, so a stopped emulator is verified stopped', () => {
+    const timeouts: Array<number | undefined> = [];
+    setExecutor({
+      runFileQuiet: (_file, _args, opts) => {
+        timeouts.push(opts?.timeoutMs);
+        return timeouts.length === 1 ? null : '  1 /sbin/launchd\n  2 /usr/sbin/syslogd';
+      },
+    });
+
+    expect(() => assertOwnedAvdStopped('stim-app', stoppedAvd)).not.toThrow();
+    expect(timeouts).toEqual([5000, 10_000]);
+  });
+
+  test('a retried read still reports a live emulator process', () => {
+    let reads = 0;
+    setExecutor({
+      runFileQuiet: () =>
+        ++reads === 1 ? null : '  4242 /sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd stim-app',
+    });
+
+    expect(() => assertOwnedAvdStopped('stim-app', stoppedAvd)).toThrow(
+      'Owned AVD stim-app still has a live emulator process (4242).',
+    );
+  });
+
+  test('a table that never reads refuses after a bounded number of attempts', () => {
+    let reads = 0;
+    setExecutor({
+      runFileQuiet: () => {
+        reads += 1;
+        return null;
+      },
+    });
+
+    expect(() => assertOwnedAvdStopped('stim-app', stoppedAvd)).toThrow(/Could not read the process table/);
+    expect(reads).toBe(3);
+  });
+});
+
 describe('waitForAndroidEmulatorShutdown when the console kill has no effect', () => {
   function hungEmulator({
     pids,
