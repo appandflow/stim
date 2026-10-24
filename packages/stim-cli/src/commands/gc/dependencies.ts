@@ -41,11 +41,13 @@ export async function collectWorktreeDependencies({
     operation?.signal ?? new AbortController().signal,
     operation,
   );
-  const sources = new Map<string, string | null>();
+  const sources: Parameters<typeof restoreProblem>[1] = new Map();
   const candidates: ArtifactCandidate[] = [];
   const skips = [...found.skips];
   for (const candidate of found.candidates) {
-    const reason = workspaceKeys(candidate.keys).length ? restoreProblem(candidate, sources) : NO_RESTORE;
+    const reason = workspaceKeys(candidate.keys).length
+      ? await restoreProblem(candidate, sources, operation)
+      : NO_RESTORE;
     if (reason) skips.push({ target: candidate.path, reason });
     else candidates.push(candidate);
   }

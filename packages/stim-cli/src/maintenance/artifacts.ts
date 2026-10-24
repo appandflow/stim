@@ -318,12 +318,13 @@ export async function clearArtifact(
   const candidate = { worktree: worktree.path, path: action.target, keys: worktree.keys };
   const early = keptReason(candidate, kind, { ...options, now: Date.now() });
   if (early) return { status: 'kept', bytes: 0, detail: early };
+  const restorable = kind === 'dependencies' && !(await restoreProblem(candidate));
   const before = lowestFree(measureDisk());
   const [key] = candidate.keys;
   const remove = () => {
     const reason = keptReason(candidate, kind, { ...options, now: Date.now(), ...(key ? { locked: key } : {}) });
     if (reason) return reason;
-    if (kind === 'dependencies' && !restoreProblem(candidate)) recordLightened(candidate.keys, candidate.path);
+    if (restorable) recordLightened(candidate.keys, candidate.path);
     rmSync(candidate.path, { recursive: true, force: true });
     return null;
   };

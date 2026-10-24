@@ -163,6 +163,7 @@ function repoWithFeatureWorktree({ linkIos = false, nested = false }: { linkIos?
   mkdirSync(join(repo, 'android', 'build'), { recursive: true });
   writeFileSync(join(repo, 'android', 'build', 'tracked.txt'), 'tracked');
   writeFileSync(join(repo, 'package.json'), '{}');
+  writeFileSync(join(repo, '.gitignore'), 'node_modules/\n');
   git('add -A');
   git('commit -q -m init');
   const feature = nested ? join(repo, '.worktrees', 'feature') : join(projects, 'feature');

@@ -1114,13 +1114,15 @@ WORKTREE DEPENDENCIES
   or the stim on PATH runs from it, while a live process has its command
   line or working directory in it, and when the running processes cannot be
   listed (always on Windows). It also keeps them when \`stim worktree warm\`
-  could not put the same thing back: the source checkout has no such
-  directory, or the worktree's lockfile (or ios/Podfile.lock for Pods)
+  could not put the same thing back: warm would not copy that directory from
+  the source checkout (it is missing there, excluded by .worktreeexclude or
+  worktree.exclude, or inside a larger ignored directory such as a wholly
+  ignored ios/), or the worktree's lockfile (or ios/Podfile.lock for Pods)
   differs from the source checkout's. gc records what it deleted in the
   workspace's lightened.json; the next \`stim start\`, \`stim ios\` or
   \`stim android\` there runs \`stim worktree warm\` first to restore it, and
-  refuses with STIM_DEPS_FAILED when warm fails or leaves a directory
-  missing. Other commands, such as a test run, find the directory missing
+  refuses with STIM_DEPS_FAILED, keeping the record, when the lockfiles no
+  longer match, when warm fails, or when it leaves a directory missing. Other commands, such as a test run, find the directory missing
   until then. .pnpm-store stays: it is all clones and frees nothing.
 
 WORKSPACE LOGS

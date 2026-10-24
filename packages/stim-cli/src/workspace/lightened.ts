@@ -5,7 +5,9 @@ import { isJsonObject, readJsonObject, workspaceLightenedFile, workspaceMetadata
 import { phaseLine } from '../command-output.ts';
 import { warmWorktreeTarget } from '../commands/worktree.ts';
 import { withWorkspaceStateLock } from './workspace-state.ts';
-import { listWorktrees, sourceCheckoutOf } from './worktree.ts';
+import { listCarryableIgnoredEntries, readWorktreeExclude, warmWorktreePaths } from './worktree.ts';
+import { resolveSettings } from './settings.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 export function lightenedDirs(root: string): string[] {
   const record = readJsonObject(workspaceLightenedFile(root));
@@ -29,26 +31,56 @@ function readOrNull(path: string): Buffer | null {
   }
 }
 
-/** Why `worktree warm` could not put back what was deleted at `path`: it copies the source checkout's copy. */
-export function restoreProblem(
-  { worktree, path }: { worktree: string; path: string },
-  sources: Map<string, string | null> = new Map(),
-): string | null {
-  if (!sources.has(worktree)) {
-    const source = sourceCheckoutOf(listWorktrees(worktree));
-    sources.set(worktree, 'refusal' in source ? null : source.path);
+type SourceFacts = { source: string; carryable: Set<string> } | null;
+
+async function sourceFacts(worktree: string, operation?: StimContext): Promise<SourceFacts> {
+  try {
+    const { root: source, common } = await warmWorktreePaths(worktree, operation);
+    const settings = resolveSettings({ gitCommonDir: common, repoRoot: source }).worktree;
+    const configured =
+      isJsonObject(settings) && Array.isArray(settings.exclude)
+        ? settings.exclude.filter((entry): entry is string => typeof entry === 'string')
+        : [];
+    const patterns = readWorktreeExclude(source) ?? configured;
+    return {
+      source,
+      carryable: new Set(
+        await listCarryableIgnoredEntries(source, patterns, {
+          env: operation?.env,
+          signal: operation?.signal,
+          declareFor: operation,
+        }),
+      ),
+    };
+  } catch (error) {
+    operation?.signal.throwIfAborted();
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    return null;
   }
-  const source = sources.get(worktree);
-  if (!source) return 'its source checkout cannot be resolved, so worktree warm could not restore it';
+}
+
+/**
+ * Why `worktree warm` could not put back what is deleted at `path`, or null when it copies the same versions back: it
+ * carries that directory from the source checkout, and both hold the same lockfile.
+ */
+export async function restoreProblem(
+  { worktree, path }: { worktree: string; path: string },
+  cache: Map<string, Promise<SourceFacts>> = new Map(),
+  operation?: StimContext,
+): Promise<string | null> {
+  let pending = cache.get(worktree);
+  if (!pending) cache.set(worktree, (pending = sourceFacts(worktree, operation)));
+  const facts = await pending;
+  if (!facts) return 'its source checkout cannot be resolved, so worktree warm could not restore it';
   const rel = relative(worktree, path);
-  if (!existsSync(join(source, rel))) return `the source checkout has no ${rel} for worktree warm to copy back`;
+  if (!facts.carryable.has(rel)) return `worktree warm would not copy ${rel} back from the source checkout`;
   const pods = basename(rel) === 'Pods';
   const locks = pods
     ? [join(dirname(rel), 'Podfile.lock')]
     : [...new Set(['.', dirname(rel)])].flatMap((dir) => LOCKFILES.map((name) => join(dir, name)));
   const differs = locks.find((lock) => {
     const mine = readOrNull(join(worktree, lock));
-    const theirs = readOrNull(join(source, lock));
+    const theirs = readOrNull(join(facts.source, lock));
     return mine === null ? theirs !== null : theirs === null || !mine.equals(theirs);
   });
   return differs
@@ -69,6 +101,14 @@ export function recordLightened(keys: readonly string[], dir: string, now: Date 
     });
 }
 
+function depsFailure(
+  root: string,
+  message: string,
+  remedy = `Run \`stim worktree warm\` in ${root}, or install the project's dependencies, then retry.`,
+): { code: string; message: string; remedy: string } {
+  return { code: 'STIM_DEPS_FAILED', message: `gc lightened this worktree, and ${message}`, remedy };
+}
+
 /**
  * Restores the dependencies gc deleted from this workspace's worktree through `stim worktree warm`, or returns the
  * failure to report. A workspace gc never lightened is left alone.
@@ -81,18 +121,34 @@ export async function restoreLightenedDependencies(
   if (!dirs.length) return null;
   const missing = () => dirs.filter((dir) => !existsSync(dir));
   if (missing().length) {
+    const cache = new Map<string, Promise<SourceFacts>>();
+    const worktree = (await warmWorktreePaths(root, operation).catch(() => null))?.target;
+    for (const dir of missing()) {
+      const problem = worktree
+        ? await restoreProblem({ worktree, path: dir }, cache, operation)
+        : 'its worktree cannot be resolved';
+      if (problem)
+        return depsFailure(
+          root,
+          `${dir} cannot be restored by worktree warm: ${problem}.`,
+          `Install the project's dependencies in ${root} (for example \`pnpm install\` or \`pod install\`), then retry.`,
+        );
+    }
     operation.output(
       'stderr',
       `${phaseLine('deps', `gc lightened this worktree; restoring ${missing().join(', ')} with worktree warm`)}\n`,
     );
-    const { exitCode } = await warmWorktreeTarget({ cwd: root, operation });
+    let exitCode: number;
+    try {
+      ({ exitCode } = await warmWorktreeTarget({ cwd: root, operation }));
+    } catch (error) {
+      operation.signal.throwIfAborted();
+      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      return depsFailure(root, `worktree warm failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const left = missing();
     if (exitCode !== 0 || left.length)
-      return {
-        code: 'STIM_DEPS_FAILED',
-        message: `gc lightened this worktree, and worktree warm did not restore ${left.join(', ') || 'its dependencies'}.`,
-        remedy: `Run \`stim worktree warm\` in ${root}, or install the project's dependencies, then retry.`,
-      };
+      return depsFailure(root, `worktree warm did not restore ${left.join(', ') || 'its dependencies'}.`);
   }
   withWorkspaceStateLock(root, () => rmSync(workspaceLightenedFile(root), { force: true }));
   return null;

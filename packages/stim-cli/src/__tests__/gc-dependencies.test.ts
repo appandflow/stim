@@ -185,25 +185,35 @@ test.skipIf(process.platform === 'win32')(
   60_000,
 );
 
-test('a lightened workspace restores through worktree warm and forgets the record only once the directories are back', async () => {
-  const root = join(projects, 'app');
-  mkdirSync(root, { recursive: true });
-  ensureWorkspaceStorage(root);
-  const dir = join(root, 'node_modules');
-  const context = testContext({ cwd: root, projectRoot: root });
+test.skipIf(process.platform === 'win32')(
+  'a lightened workspace restores through worktree warm and forgets the record only once the directories are back',
+  async () => {
+    const root = idleRepo([{ name: 'feature', workspace: true }]).feature ?? '';
+    const dir = join(root, 'node_modules');
+    rmSync(dir, { recursive: true, force: true });
+    const context = testContext({ cwd: root, projectRoot: root });
 
-  expect(await restoreLightenedDependencies(root, context)).toBeNull();
-  expect(warm.calls).toEqual([]);
+    expect(await restoreLightenedDependencies(root, context)).toBeNull();
+    expect(warm.calls).toEqual([]);
 
-  recordLightened([root], dir);
-  warm.exitCode = 1;
-  expect(await restoreLightenedDependencies(root, context)).toMatchObject({ code: 'STIM_DEPS_FAILED' });
-  warm.exitCode = 0;
-  expect(await restoreLightenedDependencies(root, context)).toMatchObject({ code: 'STIM_DEPS_FAILED' });
-  expect(lightenedDirs(root)).toEqual([dir]);
+    recordLightened([root], dir);
+    warm.exitCode = 1;
+    expect(await restoreLightenedDependencies(root, context)).toMatchObject({ code: 'STIM_DEPS_FAILED' });
+    warm.exitCode = 0;
+    expect(await restoreLightenedDependencies(root, context)).toMatchObject({ code: 'STIM_DEPS_FAILED' });
+    expect(lightenedDirs(root)).toEqual([dir]);
 
-  warm.restores = [dir];
-  expect(await restoreLightenedDependencies(root, context)).toBeNull();
-  expect(warm.calls).toEqual([root, root, root]);
-  expect(lightenedDirs(root)).toEqual([]);
-});
+    writeFileSync(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\npackages: {}\n');
+    expect(await restoreLightenedDependencies(root, context)).toMatchObject({
+      message: expect.stringContaining('pnpm-lock.yaml differs'),
+    });
+    expect(warm.calls).toEqual([root, root]);
+    execSync('git checkout -- pnpm-lock.yaml', { cwd: root });
+
+    warm.restores = [dir];
+    expect(await restoreLightenedDependencies(root, context)).toBeNull();
+    expect(warm.calls).toEqual([root, root, root]);
+    expect(lightenedDirs(root)).toEqual([]);
+  },
+  60_000,
+);
