@@ -514,13 +514,14 @@ function workspaceOutputLines(outputs: WorkspaceOutputsReport, bytes: number): s
   const lines = [
     `  ${formatBytes(bytes).padStart(10)}  Workspace build outputs (detected)`,
     `              ${outputs.root}`,
-    `              ${WORKSPACE_OUTPUT_DIRS.join(', ')}, macOS Swift scratch and staged app bundles of each workspace; workspace.json, state.json, logs and device records stay`,
+    `              ${WORKSPACE_OUTPUT_DIRS.join(', ')}, macOS Swift scratch and staged app bundles of each workspace, and the git-ignored in-tree build directories of its project; workspace.json, state.json, logs and device records stay`,
     `              ${REBUILD_COST}`,
   ];
   for (const w of outputs.workspaces) {
     const idle = w.idleDays === null ? 'last use unknown' : `idle ${w.idleDays}d`;
     lines.push(`    ${sizeText(w.bytes).padStart(8)}  ${w.projectRoot ?? w.dir} (${idle})`);
-    lines.push(w.willClear ? '                would be CLEARED' : `                kept: ${w.keptReason}`);
+    if (w.inTreeDirs.length) lines.push(`                with ${w.inTreeDirs.join(', ')}`);
+    lines.push(w.willClear ? '                would be LIGHTENED' : `                kept: ${w.keptReason}`);
   }
   return lines;
 }
@@ -558,7 +559,7 @@ function cacheLines(caches: readonly GcCache[], workspaceOutputs: WorkspaceOutpu
     if (clearing.length) {
       const clearBytes = clearing.reduce((n, w) => n + (w.bytes ?? 0), 0);
       lines.push(
-        `  would clear the build outputs of ${clearing.length} workspace${clearing.length === 1 ? '' : 's'} (${formatBytes(clearBytes)})`,
+        `  would lighten ${clearing.length} workspace${clearing.length === 1 ? '' : 's'}, freeing ${formatBytes(clearBytes)} of build outputs`,
       );
     }
   }
@@ -767,6 +768,7 @@ export interface GcJsonSections {
   workspaceBuildOutputs: {
     dir: string;
     projectRoot: string | null;
+    inTreeDirs: string[];
     bytes: number | null;
     idleDays: number | null;
     willClear: boolean;
@@ -973,6 +975,7 @@ export function gcReportSections({
     workspaceBuildOutputs: (workspaceOutputs?.workspaces ?? []).map((w) => ({
       dir: w.dir,
       projectRoot: w.projectRoot,
+      inTreeDirs: w.inTreeDirs,
       bytes: w.bytes,
       idleDays: w.idleDays,
       willClear: w.willClear,

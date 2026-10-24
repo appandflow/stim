@@ -3,12 +3,14 @@ import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
 import { formatBytes, isOnMountedVolume, listMountedVolumes, measuredDirectorySizeAsync } from '../../fs-util.ts';
-import { isJsonObject, readJsonFile } from '@stim-cli/core/state';
+import { isJsonObject, lastNativeUseFrom, readJsonFile } from '@stim-cli/core/state';
 import { getConfigDir, isPathPrefix, loadConfig } from '../../workspace/config.ts';
 import { teardownOwnedBrowser } from '../../devices/teardown.ts';
 import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
-import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
+import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
+import { regenerableDirProblem, regenerableDirsOf } from '../../workspace/regenerable-dirs.ts';
+import { workspaceBuildInProgress } from './idle.ts';
 import { mapLimited, sizeConcurrency } from './limited.ts';
 import { canonicalPath } from './paths.ts';
 import type { GcSkip } from './types.ts';
@@ -231,6 +233,27 @@ export const REBUILD_COST: string =
   'compilation cache speeds the rebuild, but on React Native 0.86 Swift does not use it (explicit modules ' +
   'are off), so that build recompiles Swift. The next stim macos in a cleared workspace is a full Swift build.';
 
+/** How long after its last ios, android or macos run a workspace keeps its build outputs. */
+export const LIGHTEN_AFTER_MS: number = 15 * 60_000;
+
+const BUILD_CHECKS = { devServer: false, hosted: false, managedLocks: false } as const;
+const BUILD_IN_PROGRESS = 'a build is in progress';
+
+/** Why the build outputs of the workspace at `root` are in use: it is building or running a macOS app. */
+function workspaceBuildReasons(root: string): string[] {
+  const reasons = workspaceInUse(root, BUILD_CHECKS);
+  return workspaceBuildInProgress(root) ? [...reasons, BUILD_IN_PROGRESS] : reasons;
+}
+
+async function workspaceBuildReasonsAsync(
+  root: string,
+  signal: AbortSignal,
+  operation?: StimContext,
+): Promise<string[]> {
+  const reasons = await workspaceInUseAsync(root, BUILD_CHECKS, signal, operation);
+  return workspaceBuildInProgress(root) ? [...reasons, BUILD_IN_PROGRESS] : reasons;
+}
+
 export const WORKSPACE_OUTPUT_DIRS: readonly string[] = [
   'derived-data',
   'gradle-build',
@@ -245,6 +268,8 @@ export type WorkspaceKeptCode = 'unresolved' | 'in-use' | 'last-use-unknown' | '
 export interface WorkspaceOutputs {
   dir: string;
   projectRoot: string | null;
+  /** The project's own build directories (ios/build, android/app/build and the like) cleared with the outputs. */
+  inTreeDirs: string[];
   bytes: number | null;
   idleDays: number | null;
   willClear: boolean;
@@ -258,24 +283,32 @@ export interface WorkspaceOutputsReport {
 }
 
 export function planWorkspaceOutputs(
-  entries: readonly (WorkspaceDirEntry & { bytes: number | null; lastUsed: number; inUse: string[] })[],
+  entries: readonly (WorkspaceDirEntry & {
+    inTreeDirs?: string[];
+    bytes: number | null;
+    lastUsed: number;
+    nativeUsed: number;
+    inUse: string[];
+  })[],
   { olderThan, now }: { olderThan: number | null; now: number },
 ): WorkspaceOutputs[] {
-  return entries.map(({ dir, projectRoot, problem, bytes, lastUsed, inUse }) => {
+  return entries.map(({ dir, projectRoot, problem, inTreeDirs = [], bytes, lastUsed, nativeUsed, inUse }) => {
     const idleDays = Number.isFinite(lastUsed) ? Math.max(0, Math.floor((now - lastUsed) / DAY_MS)) : null;
     const [keptCode, keptReason]: [WorkspaceKeptCode | null, string | null] =
       projectRoot === null
         ? ['unresolved', `workspace directory not resolved: ${problem ?? 'unknown project root'}`]
         : inUse.length
           ? ['in-use', `in use: ${inUse.join('; ')}`]
-          : olderThan === null
-            ? [null, null]
-            : idleDays === null
-              ? ['last-use-unknown', 'its last use is unknown']
-              : idleDays < olderThan
-                ? ['recently-used', `used ${idleDays}d ago, within --older-than ${olderThan}`]
-                : [null, null];
-    return { dir, projectRoot, bytes, idleDays, willClear: keptCode === null, keptCode, keptReason };
+          : now - nativeUsed < LIGHTEN_AFTER_MS
+            ? ['recently-used', `ran ios, android or macos within the last ${LIGHTEN_AFTER_MS / 60_000} minutes`]
+            : olderThan === null
+              ? [null, null]
+              : idleDays === null
+                ? ['last-use-unknown', 'its last use is unknown']
+                : idleDays < olderThan
+                  ? ['recently-used', `used ${idleDays}d ago, within --older-than ${olderThan}`]
+                  : [null, null];
+    return { dir, projectRoot, inTreeDirs, bytes, idleDays, willClear: keptCode === null, keptCode, keptReason };
   });
 }
 
@@ -327,6 +360,11 @@ interface WorkspaceOutputsOptions {
   sizeTimeoutMs?: number;
   signal?: AbortSignal;
   operation?: StimContext;
+  /**
+   * Lighten workspaces for `gc --delete`: include the project's in-tree build directories, keep only a workspace
+   * that is building or ran a native command within LIGHTEN_AFTER_MS, and ignore its dev server and devices.
+   */
+  lighten?: boolean;
 }
 
 export function collectWorkspaceOutputs(
@@ -341,38 +379,45 @@ export function collectWorkspaceOutputs({
   sizeTimeoutMs = SIZE_TIMEOUT_MS,
   signal,
   operation,
+  lighten = false,
 }: WorkspaceOutputsOptions): WorkspaceOutputsReport | Promise<WorkspaceOutputsReport> {
   const mountedVolumes = listMountedVolumes();
   const outputEntries = (entries: WorkspaceDirEntry[]) =>
     entries
       .filter((entry) => !exclude.includes(entry.dir))
       .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
-      .map((entry) => Object.assign({}, entry, { paths: outputPaths(entry.dir) }))
+      .map((entry) => {
+        const inTreeDirs = lighten && entry.projectRoot !== null ? regenerableDirsOf(entry.projectRoot, 'build') : [];
+        return Object.assign({}, entry, { inTreeDirs, paths: [...outputPaths(entry.dir), ...inTreeDirs] });
+      })
       .filter((entry) => entry.paths.length > 0);
   const report = (
-    sizes: (WorkspaceDirEntry & { bytes: number | null; inUse: string[] })[],
+    sizes: (WorkspaceDirEntry & { inTreeDirs: string[]; bytes: number | null; inUse: string[] })[],
   ): WorkspaceOutputsReport => ({
     root: workspacesRoot(),
     workspaces: planWorkspaceOutputs(
       sizes.map((entry) =>
         Object.assign({}, entry, {
           lastUsed: entry.projectRoot === null ? NaN : workspaceLastUsed(entry.projectRoot),
+          nativeUsed:
+            lighten && entry.projectRoot !== null ? lastNativeUseFrom(readWorkspaceState(entry.projectRoot)) : NaN,
         }),
       ),
       { olderThan, now },
     ),
   });
+  const inUseOf = (root: string) => (lighten ? workspaceBuildReasons(root) : workspaceInUse(root));
   if (!measure && !signal)
     return report(
       outputEntries(listWorkspaceDirs()).map(({ paths: _paths, ...entry }) =>
         Object.assign({}, entry, {
           bytes: null,
-          inUse: entry.projectRoot === null ? [] : workspaceInUse(entry.projectRoot),
+          inUse: entry.projectRoot === null ? [] : inUseOf(entry.projectRoot),
         }),
       ),
     );
   return (async () => {
-    const sizes: (WorkspaceDirEntry & { bytes: number | null; inUse: string[] })[] = [];
+    const sizes: (WorkspaceDirEntry & { inTreeDirs: string[]; bytes: number | null; inUse: string[] })[] = [];
     const entries = outputEntries(await listWorkspaceDirsAsync(signal));
     const bytes = measure
       ? await outputBytes(
@@ -390,9 +435,11 @@ export function collectWorkspaceOutputs({
         inUse:
           entry.projectRoot === null
             ? []
-            : signal
-              ? await workspaceInUseAsync(entry.projectRoot, {}, signal, operation)
-              : workspaceInUse(entry.projectRoot),
+            : !signal
+              ? inUseOf(entry.projectRoot)
+              : lighten
+                ? await workspaceBuildReasonsAsync(entry.projectRoot, signal, operation)
+                : await workspaceInUseAsync(entry.projectRoot, {}, signal, operation),
       });
     }
     return report(sizes);
@@ -406,7 +453,8 @@ export async function clearWorkspaceOutputs(
     now = Date.now(),
     operation,
     signal = operation?.signal,
-  }: { olderThan: number | null; now?: number; signal?: AbortSignal; operation?: StimContext },
+    lighten = false,
+  }: { olderThan: number | null; now?: number; signal?: AbortSignal; operation?: StimContext; lighten?: boolean },
   { log, record }: GcOutput = GC_OUTPUT,
 ): Promise<{ failures: number; cleared: string[] }> {
   let failures = 0;
@@ -428,18 +476,34 @@ export async function clearWorkspaceOutputs(
         root,
         async () => {
           const [again] = planWorkspaceOutputs(
-            [{ ...entry, problem: null, lastUsed: workspaceLastUsed(root), inUse: [] }],
+            [
+              {
+                ...entry,
+                problem: null,
+                lastUsed: workspaceLastUsed(root),
+                nativeUsed: lighten ? lastNativeUseFrom(readWorkspaceState(root)) : NaN,
+                inUse: lighten && workspaceBuildInProgress(root) ? [BUILD_IN_PROGRESS] : [],
+              },
+            ],
             { olderThan, now },
           );
           if (again?.keptReason) return again.keptReason;
-          for (const path of outputPaths(entry.dir)) {
+          const inTree = (lighten ? regenerableDirsOf(root, 'build') : []).map((path) => ({
+            path,
+            problem: regenerableDirProblem(root, path),
+          }));
+          for (const path of [
+            ...outputPaths(entry.dir),
+            ...inTree.filter((dir) => !dir.problem).map((dir) => dir.path),
+          ]) {
             signal?.throwIfAborted();
             await rm(path, { recursive: true, force: true });
           }
           signal?.throwIfAborted();
+          for (const { path, problem } of inTree) if (problem) log(chalk.yellow(`Kept ${path}: ${problem}`));
           return null;
         },
-        { purpose: 'gc', signal, operation },
+        { purpose: 'gc', signal, operation, ...(lighten ? BUILD_CHECKS : {}) },
       );
     } catch (error) {
       if (error instanceof WorkspaceProcessCleanupError) throw error;
@@ -460,11 +524,22 @@ export async function clearWorkspaceOutputs(
     }
     cleared += entry.bytes ?? 0;
     clearedRoots.push(root);
-    log(chalk.green(`Cleared the build outputs of ${root} (${sizeText(entry.bytes)})`));
+    log(
+      chalk.green(
+        lighten
+          ? `Lightened ${root}: freed ${sizeText(entry.bytes)} of build outputs`
+          : `Cleared the build outputs of ${root} (${sizeText(entry.bytes)})`,
+      ),
+    );
     record('workspaceOutputs', 'done', root, { bytes: entry.bytes });
   }
   if (cleared) {
-    log(chalk.dim(`Cleared ${formatBytes(cleared)} of workspace build outputs. ${REBUILD_COST}`));
+    const count = `${clearedRoots.length} workspace${clearedRoots.length === 1 ? '' : 's'}`;
+    log(
+      chalk.dim(
+        `${lighten ? `Lightened ${count}, freeing` : 'Cleared'} ${formatBytes(cleared)} of workspace build outputs. ${REBUILD_COST}`,
+      ),
+    );
   }
   return { failures, cleared: clearedRoots };
 }

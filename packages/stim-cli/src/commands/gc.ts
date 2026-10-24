@@ -343,6 +343,7 @@ export async function collectGcReport(
             exclude: isWorkspacesScope(scope) ? await removedWholeWorkspaceDirs(operation) : [],
             signal: operation?.signal,
             operation,
+            lighten: true,
           })
         : null,
       workspaceLogs: [],
@@ -627,6 +628,7 @@ export async function collectGcReport(
       exclude: goneWorkspaceDirs,
       signal: operation?.signal,
       operation,
+      lighten: true,
     }),
     workspaceLogs: await collectWorkspaceLogs({ exclude: goneWorkspaceDirs, operation }),
     recordings: await collectRecordings({ whole: false, olderThan, now }, goneWorkspaceDirs, operation?.signal),
@@ -1165,8 +1167,13 @@ async function runGcCore(
   deleteFailures += await deleteArchives(report.archives, output, signal);
   throwIfCancelled(signal, 'GC');
   deleteFailures += report.workspaceOutputs
-    ? (await clearWorkspaceOutputs(report.workspaceOutputs, { olderThan, signal, operation: deps.operation }, output))
-        .failures
+    ? (
+        await clearWorkspaceOutputs(
+          report.workspaceOutputs,
+          { olderThan, signal, operation: deps.operation, lighten: true },
+          output,
+        )
+      ).failures
     : 0;
   throwIfCancelled(signal, 'GC');
   deleteFailures += await trimWorkspaceLogs(report.workspaceLogs, output, deps.operation);
@@ -1339,7 +1346,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--delete',
-      'actually prune the reported entries, reap the reported devices, clear the build outputs of every workspace not in use, and trim its Metro, client and device logs to their newest 8 MiB',
+      'actually prune the reported entries, reap the reported devices, lighten every workspace that is not building and ran no ios, android or macos command in the last 15 minutes by clearing its build outputs, a running dev server or booted device included, and trim its Metro, client and device logs to their newest 8 MiB',
     )
     .option(
       '--older-than <days>',

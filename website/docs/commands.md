@@ -1821,12 +1821,16 @@ that `worktree warm` wrote (its `trash.json` has `"kind": "warm"`) holds paths
 removed from a copy of a live worktree, so `--delete` deletes it once its claim
 is free, whether or not the worktree exists. See [remove a worktree](./worktrees.md#remove-a-worktree).
 
-`--delete` also clears the build outputs (`derived-data/`, `gradle-build/`,
-`android-cas/`, `cache-provider/`, `macos/build`, staged `macos/<Product>.app`
-and interrupted-build `macos/staging-*` directories) of every workspace that
-is not in use. A running, building, unverified or hosted macOS app keeps its
-workspace untouched. The workspace keeps its state, logs, devices, ports,
-`macos/runtime.lock` and its claim set; the project's own `.build` stays. See
+`--delete` also lightens every workspace that is not building and ran no
+`stim ios`, `stim android` or `stim macos` in the last 15 minutes, even with
+its dev server running or its simulator booted. It clears the build outputs
+(`derived-data/`, `gradle-build/`, `android-cas/`, `cache-provider/`,
+`macos/build`, staged `macos/<Product>.app` and interrupted-build
+`macos/staging-*` directories) and the project's git-ignored `ios/build`,
+`android/app/build`, `android/build`, `android/.gradle` and `.build`, and
+prints the bytes freed per workspace. A running, building, unverified or hosted
+macOS app keeps its workspace untouched. The workspace keeps its state, logs,
+devices, ports, `macos/runtime.lock` and its claim set. See
 [workspace build outputs](./build-caches.md#workspace-build-outputs).
 
 `gc` reports the size of each workspace's logs. The Metro, client and device
