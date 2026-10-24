@@ -1,3 +1,4 @@
+import { readJsonObject, workspaceLightenedFile } from '@stim-cli/core/state';
 import { execSync, spawn } from 'node:child_process';
 import {
   existsSync,
@@ -16,8 +17,12 @@ import { runGc } from '../commands/gc.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
-import { lightenedDirs, recordLightened, restoreLightenedDependencies } from '../workspace/lightened.ts';
+import { recordLightened, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { testContext } from './_context.ts';
+
+function recordedDirs(root: string): unknown {
+  return readJsonObject(workspaceLightenedFile(root))?.dirs ?? [];
+}
 
 const warm = vi.hoisted((): { exitCode: 0 | 1; calls: string[]; restores: string[] } => ({
   exitCode: 0,
@@ -173,7 +178,7 @@ test.skipIf(process.platform === 'win32')(
     }
 
     expect(existsSync(join(at('feature'), 'node_modules'))).toBe(false);
-    expect(lightenedDirs(at('feature'))).toEqual([join(at('feature'), 'node_modules')]);
+    expect(recordedDirs(at('feature'))).toEqual([join(at('feature'), 'node_modules')]);
     expect(report).toMatch(/Lightened .*feature: deleted .*node_modules/);
     for (const name of ['repo', 'busy', 'keyless', 'drifted'])
       expect(existsSync(join(at(name), 'node_modules', 'pkg', 'index.js'))).toBe(true);
@@ -209,7 +214,7 @@ test.skipIf(process.platform === 'win32')(
     expect(await restoreLightenedDependencies(root, context)).toMatchObject({ code: 'STIM_DEPS_FAILED' });
     warm.exitCode = 0;
     expect(await restoreLightenedDependencies(root, context)).toMatchObject({ code: 'STIM_DEPS_FAILED' });
-    expect(lightenedDirs(root)).toEqual([dir]);
+    expect(recordedDirs(root)).toEqual([dir]);
 
     writeFileSync(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9\npackages: {}\n');
     expect(await restoreLightenedDependencies(root, context)).toMatchObject({
@@ -227,7 +232,7 @@ test.skipIf(process.platform === 'win32')(
     warm.restores = [dir];
     expect(await restoreLightenedDependencies(root, context)).toBeNull();
     expect(warm.calls).toEqual([root, root, root]);
-    expect(lightenedDirs(root)).toEqual([]);
+    expect(recordedDirs(root)).toEqual([]);
 
     write(join(dir, 'partial'));
     recordLightened([root], dir);

@@ -26,10 +26,6 @@ function readRecord(root: string): { dirs: string[]; pending: string[] } {
     : { dirs: [], pending: [] };
 }
 
-export function lightenedDirs(root: string): string[] {
-  return readRecord(root).dirs;
-}
-
 /** The keys among `keys` that have a Stim workspace, which is what restores a lightened worktree. */
 export function workspaceKeys(keys: readonly string[]): string[] {
   return keys.filter((key) => existsSync(workspaceMetadataFile(key)));

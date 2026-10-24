@@ -18,7 +18,9 @@ import {
   maintenanceDir,
   maintenanceNdjsonFile,
   maintenanceStateFile,
+  readJsonObject,
   readMaintenanceState,
+  workspaceLightenedFile,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as measurements from '../maintenance/measure.ts';
@@ -33,7 +35,10 @@ import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import * as memory from '../commands/gc/memory.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
-import { lightenedDirs } from '../workspace/lightened.ts';
+
+function recordedDirs(root: string): unknown {
+  return readJsonObject(workspaceLightenedFile(root))?.dirs ?? [];
+}
 
 const GB = 1024;
 const MINUTE_MS = 60_000;
@@ -215,7 +220,7 @@ test('level 2 clears only untracked build directories of idle worktrees, and lev
 
   expect(existsSync(join(feature, 'node_modules'))).toBe(process.platform === 'win32');
   expect(existsSync(join(repo, 'node_modules'))).toBe(true);
-  expect(lightenedDirs(feature)).toEqual(process.platform === 'win32' ? [] : [join(feature, 'node_modules')]);
+  expect(recordedDirs(feature)).toEqual(process.platform === 'win32' ? [] : [join(feature, 'node_modules')]);
   expect(readMaintenanceState()?.lastPass?.blocked).toEqual(
     expect.arrayContaining([expect.stringContaining('disk pressure level 3')]),
   );
@@ -246,7 +251,7 @@ test.skipIf(process.platform === 'win32')(
     freeDisk(4);
     await pass();
     expect(existsSync(join(feature, 'node_modules'))).toBe(false);
-    expect(lightenedDirs(feature)).toEqual([]);
+    expect(recordedDirs(feature)).toEqual([]);
   },
   60_000,
 );
