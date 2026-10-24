@@ -1,6 +1,6 @@
 import { mkdtempSync, realpathSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join, parse } from 'node:path';
 import { readStatsReport } from '@stim-cli/core/state';
 import { workspaceId } from '@stim-cli/core';
 import {
@@ -152,7 +152,7 @@ test('admission lists simulators and emulators through the async executor', asyn
         throw new Error('a synchronous device listing blocks the event loop');
       },
       runFileAsync: async (file) => {
-        listed.push(basename(file));
+        listed.push(parse(file).name);
         return file === 'xcrun' ? '{"devices":{}}' : 'List of devices attached\nemulator-5554\tdevice\n';
       },
     }),
