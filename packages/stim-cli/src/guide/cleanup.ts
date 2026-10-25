@@ -152,7 +152,8 @@ DISK PRESSURE LEVELS
   lock or build and is not pinned, and, for the node_modules and ios/Pods of
   level 3, nothing under it, nor the worktree's git index, HEAD or Stim
   state, changed within the short window. A build directory of level 2 also
-  stays in a worktree where no Stim workspace has recorded any state. A dirty or
+  stays in a worktree where no Stim workspace has recorded any state; a build
+  that Stim did not run is not detected. A dirty or
   unpushed worktree can still be stopped and have these directories cleared;
   only its removal is refused. Caches of other tools (pnpm and npm stores,
   CocoaPods, SwiftPM, the shared Gradle caches) are never deleted.

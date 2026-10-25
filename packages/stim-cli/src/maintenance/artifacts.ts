@@ -371,9 +371,11 @@ export async function clearArtifact(
     return null;
   };
   const kept = key
-    ? await withIdleWorkspace(key, remove, { purpose: 'maintenance', supervisor: kind === 'dependencies' }).then(
-        (run) => (run.ran ? run.value : `in use: ${run.reasons.join('; ')}`),
-      )
+    ? await withIdleWorkspace(key, remove, {
+        purpose: 'maintenance',
+        supervisor: kind === 'dependencies',
+        ...(kind === 'build' ? { hosted: false, managedLocks: false } : {}),
+      }).then((run) => (run.ran ? run.value : `in use: ${run.reasons.join('; ')}`))
     : await remove();
   if (kept) return { status: 'kept', bytes: 0, detail: kept };
   const freed = Math.max(0, lowestFree(measureDisk()) - before);
