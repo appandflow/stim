@@ -648,8 +648,8 @@ ON FAILURE
   An \`ios\` or \`android\` run that \`stim stop\` or Ctrl-C interrupted
   reports STIM_CANCELLED and exits 130. A
   run that exits on the interrupt at once (a second Ctrl-C, or Ctrl-C with no
-  build tool, SimSlim or launch readiness wait to stop) exits 130 with no
-  payload.
+  build tool, SimSlim, launch readiness wait or hosted app delivery to stop)
+  exits 130 with no payload.
 
   \`stop --json\` prints { root, ok, supervisor, collectors, metro, device,
   port, metroTunnel, releasedLeases, macos? }. macos is { status: stopped | failed,
@@ -915,9 +915,9 @@ RULES
                               else null. buildState is { bytes, dirs:
                               { path, bytes } } for the in-tree build and
                               dependency directories automatic maintenance
-                              clears (ios/build, android/app/build,
-                              android/build, android/.gradle, .build,
-                              node_modules, ios/Pods, at the root, a
+                              clears (android/app/build, android/build,
+                              android/.gradle, .build, node_modules,
+                              ios/Pods, at the root, a
                               project root, or apps/* and packages/* for
                               build directories) and a root .pnpm-store,
                               paths relative to the worktree, largest

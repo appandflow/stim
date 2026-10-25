@@ -805,7 +805,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 10,
     env: 'STIM_MAINTENANCE_PRESSURE_PROTECT_MINUTES',
     description:
-      'Protection window, in minutes, that replaces maintenance.protectRecentHours at disk pressure levels 2 and 3',
+      'Protection window, in minutes, that replaces maintenance.protectRecentHours at disk pressure levels 2 and 3, except for workspace build outputs and build directories, which level 2 keeps for 15 minutes after the last ios, android or macos run',
   },
   {
     key: 'maintenance.gradleVersionIdleDays',

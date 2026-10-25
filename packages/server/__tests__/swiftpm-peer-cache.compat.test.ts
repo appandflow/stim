@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import { runArtifactQuery } from '../src/artifact-query.ts';
@@ -7,6 +7,7 @@ import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readPid } from './pid-file.ts';
 import { stimBuildDigest } from '@stim-cli/core/state';
 import { getExecutor } from '../../stim-cli/src/exec.ts';
 import { processContext } from '../../stim-cli/src/cli-operation.ts';
@@ -234,8 +235,7 @@ setInterval(() => {}, 1000);
   });
   let probe: { pid: number; processToken: string } | undefined;
   try {
-    await until(() => existsSync(marker));
-    const pid = Number(readFileSync(marker, 'utf8'));
+    const pid = await readPid(marker);
     const captured = captureProcessIdentity(pid);
     if (!captured.ok) throw new Error(captured.reason);
     probe = { pid, processToken: captured.token };
