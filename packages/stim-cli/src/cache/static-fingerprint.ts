@@ -432,7 +432,7 @@ export async function staticFingerprint(
   { env, signal }: { env: NodeJS.ProcessEnv; signal?: AbortSignal },
 ): Promise<StaticFingerprint> {
   try {
-    return { ...(await computeDigest(realpathSync(projectRoot), target, env, signal)), uncertain: null };
+    return { ...(await computeDigest(realpathSync.native(projectRoot), target, env, signal)), uncertain: null };
   } catch (error) {
     if (error instanceof Uncertain) return { digest: null, uncertain: error.message };
     throw error;
@@ -453,7 +453,7 @@ async function computeDigest(
     throw new Uncertain('the fingerprint preset hashes package files');
   let top: string;
   try {
-    top = realpathSync(await gitAsync(root, ['rev-parse', '--show-toplevel'], { signal }));
+    top = realpathSync.native(await gitAsync(root, ['rev-parse', '--show-toplevel'], { signal }));
   } catch {
     throw new Uncertain('the project is not in a git work tree');
   }

@@ -353,6 +353,16 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
     expect(full).toBe(1);
   });
 
+  test('an app reached through a path spelled differently from its real one hashes the same inputs', async (ctx) => {
+    const root = fixture('npm');
+    const respelled = join(base, 'REPO', 'APP');
+    if (!existsSync(respelled)) return ctx.skip();
+    const options = { env: { PATH: process.env.PATH } };
+    const canonical = await staticFingerprint(root, { platform: 'ios' }, options);
+    expect(canonical.uncertain).toBeNull();
+    expect(await staticFingerprint(respelled, { platform: 'ios' }, options)).toEqual(canonical);
+  });
+
   test('a file added to a directory the config names misses', async () => {
     app = fixture('npm');
     write(join(app, 'assets/fonts/A.ttf'), 'font a');
