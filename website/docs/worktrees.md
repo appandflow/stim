@@ -371,7 +371,7 @@ reported and the others still run. A worktree removed with
 plain `gc --delete` removes those.
 
 Each worktree line shows its in-tree build state: the size of `node_modules`,
-`ios/Pods`, `ios/build`, `android/app/build`, `.build` and the other
+`ios/Pods`, `android/app/build`, `.build` and the other
 directories automatic maintenance clears, plus a project-local `.pnpm-store`.
 A directory directly under a repository's `.worktrees/` that
 `git worktree list` no longer shows, and that no other repository claims, is listed with its size and the `rm -rf`

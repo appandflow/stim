@@ -5,9 +5,14 @@ import { gitQuietAsync } from './git.ts';
 
 export type ArtifactKind = 'build' | 'dependencies';
 
-/** Directories that hold only what a build or an install regenerates, relative to an app or package root. */
+/**
+ * Directories that hold only what a build or an install regenerates, relative to an app or package root. ios/build is
+ * not one: `pod install` writes the codegen output (build/generated/ios) and, on React Native 0.88, the podspec
+ * facades (scripts/cocoapods/rncore_facades.rb) there, the Pods project references them, and only `pod install`
+ * recreates them.
+ */
 export const ARTIFACT_DIRS: Record<ArtifactKind, readonly string[]> = {
-  build: ['ios/build', 'android/app/build', 'android/build', 'android/.gradle', '.build'],
+  build: ['android/app/build', 'android/build', 'android/.gradle', '.build'],
   dependencies: ['node_modules', 'ios/Pods'],
 };
 

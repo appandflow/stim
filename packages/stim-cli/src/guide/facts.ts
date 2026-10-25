@@ -915,9 +915,9 @@ RULES
                               else null. buildState is { bytes, dirs:
                               { path, bytes } } for the in-tree build and
                               dependency directories automatic maintenance
-                              clears (ios/build, android/app/build,
-                              android/build, android/.gradle, .build,
-                              node_modules, ios/Pods, at the root, a
+                              clears (android/app/build, android/build,
+                              android/.gradle, .build, node_modules,
+                              ios/Pods, at the root, a
                               project root, or apps/* and packages/* for
                               build directories) and a root .pnpm-store,
                               paths relative to the worktree, largest

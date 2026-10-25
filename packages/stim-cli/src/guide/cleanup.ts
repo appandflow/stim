@@ -105,14 +105,21 @@ DISK PRESSURE LEVELS
   level 2, which runs until free disk is back above the floor; level 3 runs
   only while free disk stays under the level 3 floor. At levels 2 and 3 the
   protection window is maintenance.pressureProtectMinutes (10) instead of
-  protectRecentHours. Each step re-measures first and stops once free disk is
-  back above its level's floor, cheapest to rebuild first.
+  protectRecentHours, except for the build outputs and build directories of
+  level 2, which follow the lightening rule of gc --delete (WORKSPACE BUILD
+  OUTPUTS): a running dev server, a booted or hosted device and a managed
+  tunnel do not keep them, a build or a running macOS app does, and they stay
+  for 15 minutes after the workspace's last ios, android or macos run.
+  Each step re-measures first and stops once free disk is back above its
+  level's floor, cheapest to rebuild first.
   Level 2:
-    1. build outputs of workspaces unused for the short window
+    1. build outputs of workspaces, with the lightening rule above
     2. parked simulators and emulators, deleted through centralized teardown
-    3. build directories of idle worktrees: ios/build, android/app/build,
-       android/build, android/.gradle and .build, at a project root, the
-       worktree root, or apps/* and packages/*
+    3. build directories of worktrees with a Stim workspace, by the same
+       rule: android/app/build, android/build, android/.gradle and .build, at
+       a project root, the worktree root, or apps/* and packages/*. ios/build
+       stays: React Native's pod install writes the codegen output and
+       podspec facades there that only pod install recreates
     4. owned simulators and emulators of workspaces idle for the short window
     5. Stim temp directories, xctrace recordings and SwiftPM temp directories
        in TMPDIR unmodified for 24 hours, with gc --delete's checks (see stim guide cleanup gc)
@@ -142,8 +149,10 @@ DISK PRESSURE LEVELS
        still keeps them
   A directory is cleared only when it is a real directory inside its
   worktree, git tracks nothing in it, its worktree is not in use, holds no
-  lock or build and is not pinned, and nothing under it, nor the worktree's
-  git index, HEAD or Stim state, changed within the short window. A dirty or
+  lock or build and is not pinned, and, for the node_modules and ios/Pods of
+  level 3, nothing under it, nor the worktree's git index, HEAD or Stim
+  state, changed within the short window. A build directory of level 2 also
+  stays in a worktree where no Stim workspace has recorded any state. A dirty or
   unpushed worktree can still be stopped and have these directories cleared;
   only its removal is refused. Caches of other tools (pnpm and npm stores,
   CocoaPods, SwiftPM, the shared Gradle caches) are never deleted.
@@ -1134,9 +1143,10 @@ WORKSPACE BUILD OUTPUTS
   orphaned directories); \`--cache all\` includes them. macos/ itself,
   macos/runtime.lock and its claim set, workspace.json, state.json, logs/,
   other macOS files, locks and device records stay. The workspace keeps its
-  devices, ports and running dev server. Automatic maintenance keeps its
-  own rules (DISK PRESSURE LEVELS) and does not use the 15-minute window. A running, building,
-  unverified or hosted macOS app keeps its workspace untouched.
+  devices, ports and running dev server. Automatic maintenance at disk
+  pressure level 2 clears them by the same rule (DISK PRESSURE LEVELS); level
+  1 keeps its own rules. A running, building, unverified or hosted macOS app
+  keeps its workspace untouched.
     stim gc --delete --cache workspaces --older-than 7
   Last use is the newest of the lastUsedAt that start, ios, android, reload
   and worktree warm record in state.json, lastBuild.startedAt,

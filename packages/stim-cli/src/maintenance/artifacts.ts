@@ -2,7 +2,7 @@ import { lstatSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { lstat, readdir, stat as pathStat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
-import type { MaintenanceAction } from '@stim-cli/core/state';
+import { lastNativeUseFrom, type MaintenanceAction } from '@stim-cli/core/state';
 import {
   candidateRoots,
   candidateRootsAsync,
@@ -10,10 +10,12 @@ import {
   worktreeActivityOfAsync,
 } from '../commands/gc/worktrees.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
+import { recentNativeUseReason, workspaceBuildReasons } from '../commands/gc/workspaces.ts';
 import { matchWorktreeEntry, reclaimKeys } from '../commands/worktree.ts';
 import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
 import { childEnvironment } from '../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { ARTIFACT_DIRS, type ArtifactKind } from '../workspace/regenerable-dirs.ts';
 import {
   readRunningProcesses,
@@ -51,6 +53,15 @@ export interface ArtifactCandidate {
 function isDirectory(path: string): boolean {
   try {
     return lstatSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function pathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
   } catch {
     return false;
   }
@@ -172,12 +183,22 @@ function keptReason(
   const tracked = reads ? reads.tracked : gitQuiet(worktree, ['ls-files', '--', relative(worktree, path)]);
   if (tracked === null) return 'git cannot tell whether it holds tracked files';
   if (tracked.trim()) return 'it holds files git tracks';
+  if (kind === 'build') return buildNativeUseReason(keys, now);
   const activity = reads ? reads.activity : worktreeActivityOf(worktree, keys);
   const written = reads ? reads.written : newestWrite(path, SCAN_DEPTH[kind]);
   if (!activity || written === null) return 'its last activity cannot be read';
   const last = Math.max(activity.at, written);
   if (now - last < windowMs) return `used within the last ${Math.round(windowMs / 60_000)} minutes`;
   return null;
+}
+
+function buildNativeUseReason(keys: readonly string[], now: number): string | null {
+  const states = keys.map((key) => readWorkspaceState(key)).filter((state) => state !== null);
+  if (!states.length) return 'no Stim workspace records when it last ran ios, android or macos';
+  return recentNativeUseReason(
+    Math.max(...states.map((state) => lastNativeUseFrom(state)).filter(Number.isFinite)),
+    now,
+  );
 }
 
 function artifactGuard(
@@ -189,6 +210,7 @@ function artifactGuard(
 ): string | null {
   const { worktree, path, keys } = candidate;
   if (keys.some(pinned)) return 'pinned by maintenance.keep';
+  if (!pathExists(path)) return 'it is already gone';
   let real: string;
   try {
     real = canonicalPath(path);
@@ -198,7 +220,9 @@ function artifactGuard(
   if (!isDirectory(path) || real !== join(canonicalPath(worktree), relative(worktree, path)))
     return 'it or a directory above it is a link, or it lies outside its worktree';
   const inUse = keys.flatMap((key) =>
-    workspaceInUse(key, { supervisor: kind === 'dependencies', nativeRun: key !== locked }),
+    kind === 'build'
+      ? workspaceBuildReasons(key, { nativeRun: key !== locked })
+      : workspaceInUse(key, { nativeRun: key !== locked }),
   );
   if (inUse.length) return `in use: ${inUse.join('; ')}`;
   if (kind === 'dependencies')
@@ -255,8 +279,9 @@ export async function collectArtifactsAsync(
             killSignal: 'SIGKILL',
           });
           const untracked = tracked !== null && !tracked.trim();
-          const activity = untracked ? await worktreeActivityOfAsync(worktree.path, worktree.keys, operation) : null;
-          const written = untracked ? await newestWriteAsync(path, SCAN_DEPTH[kind], signal) : null;
+          const windowed = untracked && kind === 'dependencies';
+          const activity = windowed ? await worktreeActivityOfAsync(worktree.path, worktree.keys, operation) : null;
+          const written = windowed ? await newestWriteAsync(path, SCAN_DEPTH[kind], signal) : null;
           reason = keptReason(candidate, kind, { ...options, running }, { tracked, activity, written });
         }
         if (reason) skips.push({ target: path, reason });
