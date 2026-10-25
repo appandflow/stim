@@ -1,6 +1,6 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { getExecutor, resetExecutor } from '../exec.ts';
 
@@ -49,9 +49,12 @@ test('every executor entry point writes one span per child, with secrets in argu
   const text = readFileSync(file, 'utf8');
   expect(text).not.toMatch(/sync-secret|async-secret|shell-secret|spawn-secret|exact-secret/);
   expect(spans()).toMatchObject([
-    { name: 'node', args: { ok: true, argv: [node, '-e', '0', '--', '--api-token', '[redacted]', 'plain-arg'] } },
+    {
+      name: basename(node),
+      args: { ok: true, argv: [node, '-e', '0', '--', '--api-token', '[redacted]', 'plain-arg'] },
+    },
     { args: { argv: [node, '-e', '0', '--', '--password=[redacted]', '***'] } },
-    { name: 'node', args: { command: expect.stringContaining('--token [redacted]') } },
+    { name: basename(node), args: { command: expect.stringContaining('--token [redacted]') } },
     { args: { spawned: true, ok: true, argv: [node, '-e', '0', '--', '--token=[redacted]'] } },
     { args: { ok: false, exit: 3 } },
   ]);

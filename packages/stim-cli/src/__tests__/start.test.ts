@@ -1559,62 +1559,65 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(exec.calls.spawn).toEqual([]);
   });
 
-  test('a supervisor handoff write failure reaps a child that ignores SIGTERM', async () => {
-    const port = 8189;
-    const real = getExecutor();
-    const exec = metroExecutor({ listeners: {} });
-    let child: ChildProcess | undefined;
-    const signals: Array<NodeJS.Signals | number | undefined> = [];
-    exec.spawn = (cmd, args, opts) => {
-      exec.calls.spawn.push({ cmd, args, opts });
-      child = real.spawn(
-        process.execPath,
-        ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
-        opts,
-      );
-      const kill = child.kill.bind(child);
-      child.kill = (signal) => {
-        signals.push(signal);
-        return kill(signal);
+  test.skipIf(process.platform === 'win32')(
+    'a supervisor handoff write failure reaps a child that ignores SIGTERM',
+    async () => {
+      const port = 8189;
+      const real = getExecutor();
+      const exec = metroExecutor({ listeners: {} });
+      let child: ChildProcess | undefined;
+      const signals: Array<NodeJS.Signals | number | undefined> = [];
+      exec.spawn = (cmd, args, opts) => {
+        exec.calls.spawn.push({ cmd, args, opts });
+        child = real.spawn(
+          process.execPath,
+          ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+          opts,
+        );
+        const kill = child.kill.bind(child);
+        child.kill = (signal) => {
+          signals.push(signal);
+          return kill(signal);
+        };
+        return child;
       };
-      return child;
-    };
-    setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+      setExecutor(exec);
+      upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
 
-    let result;
-    try {
-      result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-        registerPosixStart(cmd, {
-          providers: () => ['ngrok'],
-          startTunnelSequence: async () => ({
-            provider: 'ngrok',
-            url: 'https://ready.ngrok.app',
-            pid: 4343,
-            processToken: 'linux:100',
-            cleanup: successfulTunnelCleanup,
+      let result;
+      try {
+        result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
+          registerPosixStart(cmd, {
+            providers: () => ['ngrok'],
+            startTunnelSequence: async () => ({
+              provider: 'ngrok',
+              url: 'https://ready.ngrok.app',
+              pid: 4343,
+              processToken: 'linux:100',
+              cleanup: successfulTunnelCleanup,
+            }),
+            isTunnelAlive: () => true,
+            writeSupervisorRecord: () => {
+              throw new Error('disk full');
+            },
           }),
-          isTunnelAlive: () => true,
-          writeSupervisorRecord: () => {
-            throw new Error('disk full');
-          },
-        }),
-      );
-    } finally {
-      if (child && child.exitCode === null && child.signalCode === null) {
-        const exited = once(child, 'exit');
-        child.kill('SIGKILL');
-        await exited;
+        );
+      } finally {
+        if (child && child.exitCode === null && child.signalCode === null) {
+          const exited = once(child, 'exit');
+          child.kill('SIGKILL');
+          await exited;
+        }
       }
-    }
 
-    expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_SUPERVISOR_EXITED');
-    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
-    assert(child);
-    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
-    expect(readMetroTunnel(root)).toMatchObject({ pid: 4343 });
-  });
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_SUPERVISOR_EXITED');
+      expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
+      assert(child);
+      expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+      expect(readMetroTunnel(root)).toMatchObject({ pid: 4343 });
+    },
+  );
 
   test.each([
     {

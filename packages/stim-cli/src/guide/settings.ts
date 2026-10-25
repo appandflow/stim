@@ -1256,6 +1256,9 @@ be setup steps are supplied by Stim on the command lines it composes itself:
                SWIFT_OTHER_PREFIX_MAPPINGS on a Swift 6.4+ toolchain -- so no
                Podfile post_install block (Xcode 26+ only, and skipped when the
                project configured ccache, which defeats it)
+               Debug builds for the iOS simulator also get
+               DEBUG_INFORMATION_FORMAT=dwarf, which skips the dSYM bundle;
+               Release and device builds keep the project's setting
   gradlew      --build-cache -- so no org.gradle.caching=true in a committed
                gradle.properties. Debug builds add
                -PreactNativeArchitectures=<target ABI> when the owned

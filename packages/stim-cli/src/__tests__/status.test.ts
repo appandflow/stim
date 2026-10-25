@@ -38,6 +38,8 @@ const writeHostedAndroid = (root: string, slot: string, host: HostedAndroidPlace
 let tmpHome: string;
 const realExecutor = getExecutor();
 
+const initialCwd = process.cwd();
+
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
@@ -84,6 +86,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  process.chdir(initialCwd);
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
