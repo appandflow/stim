@@ -488,8 +488,8 @@ clears the outputs and nothing else, and `--cache all` includes them.
 parked simulators and emulators (see [owned devices](./owned-devices.md)). The
 workspace keeps its `workspace.json`, `state.json`, logs, devices, ports and
 running dev server, along with `macos/` itself, `macos/runtime.lock`, its claim
-set and other macOS files. Automatic maintenance keeps its own rules and does
-not use the 15-minute window.
+set and other macOS files. Automatic maintenance at disk pressure level 2
+clears them by the same rule; level 1 keeps its own rules.
 
 The next build of an unchanged app installs from the shared build cache. After
 a native change, the Xcode compilation cache speeds up the rebuild. On React
