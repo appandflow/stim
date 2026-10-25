@@ -8,6 +8,7 @@ export default defineConfig({
     globalSetup: [],
     include: ['packages/*/src/**/*.compat.test.ts', 'packages/*/__tests__/**/*.compat.test.ts'],
     exclude: [],
+    env: { npm_config_offline: 'false' },
     provide: {
       agentDeviceSource: process.env.STIM_AGENT_DEVICE_SOURCE ?? '',
       agentDeviceAndroidSerial: process.env.STIM_AGENT_DEVICE_ANDROID_SERIAL ?? '',

@@ -46,7 +46,7 @@ const TMP_KEYS = ['TMPDIR', 'TEMP', 'TMP'] as const;
 const realTmp = Object.fromEntries(TMP_KEYS.map((key) => [key, process.env[key]]));
 
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-')));
+  home = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-')));
   fakeTmp = join(home, 'tmp');
   outside = join(home, 'outside');
   mkdirSync(fakeTmp);
@@ -111,7 +111,7 @@ test('only recognized Stim temp directories and xctrace recordings idle for a da
   const unrelated = oldDir('stim-s3-test-abc123');
   const other = oldDir('metro-cache');
 
-  expect((await collectTempLeftovers())?.root).toBe(realpathSync(fakeTmp));
+  expect((await collectTempLeftovers())?.root).toBe(realpathSync.native(fakeTmp));
   expect((await leftovers()).map((entry) => [entry.path, entry.willDelete])).toEqual([
     [trace, true],
     [idle, true],
@@ -278,7 +278,7 @@ test("the caller's environment chooses the TMPDIR that is swept", async () => {
   const env = { TMPDIR: clientTmp, TEMP: clientTmp, TMP: clientTmp };
 
   expect(await collectTempLeftovers({ env })).toEqual(
-    expect.objectContaining({ root: realpathSync(clientTmp), entries: [] }),
+    expect.objectContaining({ root: realpathSync.native(clientTmp), entries: [] }),
   );
 });
 
@@ -305,7 +305,7 @@ test('maintenance at disk pressure level 2 plans and deletes the idle leftovers'
     now: Date.now(),
   });
   const action = planned.actions.find((entry) => entry.kind === 'would-delete-temp-leftovers');
-  expect(action).toEqual(expect.objectContaining({ target: realpathSync(fakeTmp), level: 2 }));
+  expect(action).toEqual(expect.objectContaining({ target: realpathSync.native(fakeTmp), level: 2 }));
   if (!action) return;
 
   const outcome = await executeAction(action, {

@@ -1453,6 +1453,21 @@ describe('verifyLaunch', () => {
     expect(result.waitedMs >= VERIFY_TIMEOUT_MS).toBeTruthy();
   });
 
+  test('an aborted run stops waiting with STIM_CANCELLED instead of waiting out the bundle deadline', async () => {
+    const controller = new AbortController();
+    const waiting = verifyLaunch({
+      since: Date.now(),
+      timeoutMs: 60_000,
+      pollMs: 10,
+      readRecords: () => [],
+      readDeviceRecords: () => [],
+      readClientRecords: () => [],
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 30);
+    await expect(waiting).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  });
+
   describe('manifest requests from an Expo dev client', () => {
     const manifest = (
       stage: 'started' | 'finished' | 'failed',

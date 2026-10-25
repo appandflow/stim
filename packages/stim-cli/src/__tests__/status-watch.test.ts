@@ -749,7 +749,7 @@ describe('stim status --watch --json', () => {
   );
 
   describe.skipIf(process.platform !== 'darwin')('machine usage on the light interval', () => {
-    async function settledWatch(cpuExpr: string) {
+    async function machineWatch(cpuExpr: string) {
       const udid = 'AAAAAAAA-0000-4000-8000-000000000001';
       saveConfig(
         makeConfig({
@@ -769,48 +769,45 @@ describe('stim status --watch --json', () => {
       });
       writeFileSync(join(bin, 'xcrun'), `#!/bin/sh\nprintf '%s' '${list}'\n`);
       const count = join(root, 'ps.count');
+      const moved = join(root, 'cpu.moved');
       writeFileSync(
         join(bin, 'ps'),
         [
           '#!/bin/sh',
+          `[ -f '${moved}' ] && up=1 || up=0`,
           `n=0; [ -f '${count}' ] && read n < '${count}'; n=$((n + 1)); echo $n > '${count}'`,
           `echo "100 1 1024 ${cpuExpr}.0 Sat Sep 26 15:33:49 2026 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist"`,
         ].join('\n'),
       );
       chmodSync(join(bin, 'xcrun'), 0o755);
       chmodSync(join(bin, 'ps'), 0o755);
-      const startedAt = Date.now();
       const { lines } = startWatch();
       await until(() => lines.length > 0);
-      let seen = 0;
-      while (seen !== lines.length) {
-        seen = lines.length;
-        await new Promise((resolve) => setTimeout(resolve, 6000));
-      }
       return {
         lines,
-        seen,
         cpu: (line: string) => JSON.parse(line).machine.owners[0].cpuPercent as number,
         reads: () => Number(readFileSync(count, 'utf-8')),
-        remainingMs: () => 28_000 - (Date.now() - startedAt),
+        moveCpu: () => writeFileSync(moved, ''),
       };
     }
 
     test('a CPU move past a step prints a new line without any state change; skipped off macOS, where no simulator runs', async () => {
-      const { lines, seen, cpu, remainingMs } = await settledWatch('$((n * 10))');
-      const before = cpu(lines.at(-1)!);
-      await until(() => lines.length > seen, remainingMs());
-      expect(cpu(lines.at(-1)!)).toBeGreaterThan(before);
+      const { lines, cpu, reads, moveCpu } = await machineWatch('$((up ? 20 : 10))');
+      const before = cpu(last(lines));
+      await until(() => reads() >= 2, 30_000);
+      moveCpu();
+      await until(() => cpu(last(lines)) > before, 25_000);
+      expect(cpu(last(lines))).toBe(20);
     }, 40_000);
 
     test('CPU jitter below a step prints no line even though the process table is read again', async () => {
-      const { lines, seen, cpu, reads, remainingMs } = await settledWatch('$((50 + n % 2))');
-      const before = cpu(lines.at(-1)!);
-      const readsBefore = reads();
-      await until(() => reads() > readsBefore, remainingMs());
+      const { lines, cpu, reads } = await machineWatch('$((50 + n % 2))');
+      const before = cpu(last(lines));
+      const seen = lines.length;
+      await until(() => reads() > 2, 30_000);
       await new Promise((resolve) => setTimeout(resolve, 1000));
       expect(lines).toHaveLength(seen);
-      expect(cpu(lines.at(-1)!)).toBe(before);
+      expect(cpu(last(lines))).toBe(before);
     }, 40_000);
   });
 

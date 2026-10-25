@@ -56,6 +56,7 @@ import {
 import { predictedRefusal, type pairedMachines } from '../../offload/build-machines.ts';
 import {
   fingerprintMismatchRemedy,
+  missingPackageManagerRemedy,
   automaticBuild,
   podsFailedRemedy,
   namedBuildMachine,
@@ -672,6 +673,7 @@ export async function acquireIosArtifact(
         remedy: outcome.ok
           ? undefined
           : (fingerprintMismatchRemedy(outcome.reason) ??
+            missingPackageManagerRemedy(choice.machine, outcome.reason) ??
             podsFailedRemedy(choice.machine, outcome.reason, localCocoapods)),
       });
       logWriter().write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });

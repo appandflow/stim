@@ -495,6 +495,33 @@ describe('ios: demoting device noise', () => {
     expect(mainThreadChecker.level).toBe('fatal');
   });
 
+  test('a SwiftUI Invalid Configuration fault is a warning, not an app error', () => {
+    const duplicateServer = event({
+      messageType: 'Fault',
+      subsystem: 'com.apple.SwiftUI',
+      category: 'Invalid Configuration',
+      eventMessage:
+        'ForEach<Array<DevServer>, DevServer, DevServerRow>: the ID DevServer(url: "http://169.254.136.94:8087", description: "Metro", source: Stim.DevServer.Source.recent) occurs multiple times within the collection, this will give undefined results!',
+    });
+    const record = parseLogStreamLine(JSON.stringify(duplicateServer));
+    assert(record);
+    expect(record.level).toBe('warn');
+    expect(isAppLaunchError({ ...record, platform: 'ios' })).toBe(false);
+
+    const lazyStack = parseLogStreamLine(
+      JSON.stringify({
+        ...duplicateServer,
+        eventMessage:
+          'LazyVStackLayout: the ID ViewList.ID.Canonical(explicitID: 1) is used by multiple child views, this will give undefined results!',
+      }),
+    );
+    assert(lazyStack);
+    expect(lazyStack.level).toBe('warn');
+
+    expect(levelForEvent({ ...duplicateServer, category: 'Other' })).toBe('fatal');
+    expect(levelForEvent({ ...duplicateServer, subsystem: 'com.example.app' })).toBe('fatal');
+  });
+
   test('the focus-cache rule requires the exact UIKit focus event', () => {
     const nearMisses = [
       event({ subsystem: 'com.apple.UIKit.child', category: 'UIFocus', eventMessage: focusCacheMessage }),

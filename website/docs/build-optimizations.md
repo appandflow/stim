@@ -89,6 +89,16 @@ not detected by this guard.
 | `swiftCompilationCache` | unset   | Unset turns Swift caching on, with Swift prefix mapping, when `xcrun swift` reports Swift 6.4 or newer (Xcode 27), where swift-frontend no longer crashes on prefix-mapped batches, and the project's `react-native` is 0.87 or newer. Earlier React Native sets `SWIFT_ENABLE_EXPLICIT_MODULES=NO` on every target for its prebuilt core, and Xcode refuses Swift caching without explicit modules, so those projects stay off; the cache line names which gate applied. `true` forces it on regardless, unmapped below Swift 6.4, so entries hit only within one checkout. `false` keeps it off. Requires `compilationCache: true`. The post-build cache line reports how many Swift targets Xcode still excluded. |
 | `prefixMapping`         | `true`  | Maps checkout and DerivedData paths to stable Clang paths for reuse across worktrees. Set to `false` to disable Stim's prefix mapping and clear its mappings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
+### Debug simulator builds
+
+Debug builds for the iOS simulator also pass `DEBUG_INFORMATION_FORMAT=dwarf`,
+so Xcode skips the dSYM bundle and the `dsymutil` step at the end of every link.
+The debug information stays in the object files under the workspace's
+DerivedData, where lldb and Xcode find it while those files exist. After
+`stim gc --delete` clears DerivedData, a rebuild restores it. Release builds and
+device builds keep the project's own setting, so Release still produces dSYMs
+for crash reporting. This has no option.
+
 ## Android options
 
 These keys are inside `optimizations.android`.

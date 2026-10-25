@@ -1419,6 +1419,47 @@ test.each([
   },
 );
 
+test('stop reports a busy agent-device daemon once although it checks before and after shutdown', async () => {
+  const repo = join(avdHome, 'repo');
+  mkdirSync(join(repo, 'app'), { recursive: true });
+  const exec = iosExecutor({ sims: [{ ...OWNED, state: 'Booted' }], shutdownSettles: true });
+  setExecutor({
+    ...exec,
+    findExecutable: () => '/bin/agent-device',
+    runFile: (file: string, args: string[] = []) => {
+      if (file === 'git' && args.includes('--show-toplevel')) return `${repo}\n`;
+      if (file !== 'agent-device') return exec.runFile(file, args);
+      throw Object.assign(new Error('Command failed: agent-device session list'), {
+        status: 1,
+        stdout: JSON.stringify({
+          success: false,
+          error: {
+            message: 'The running daemon is busy and was not replaced.',
+            details: { reason: 'daemon-busy', stateDir: "/h/it's here/.agent-device" },
+          },
+        }),
+        stderr: '',
+      });
+    },
+  });
+  const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  try {
+    const result = await teardownOwnedIosSim('U1', {
+      del: false,
+      workspace: join(repo, 'app'),
+      shutdownClock: fakeClock(),
+    });
+    expect(result.status).toBe('torn-down');
+    const lines = write.mock.calls
+      .map((call: unknown[]) => String(call[0]))
+      .filter((line: string) => line.includes('agent-device'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("agent-device daemon stop --state-dir '/h/it'\\''s here/.agent-device'");
+  } finally {
+    write.mockRestore();
+  }
+});
+
 test('device cleanup yields while checking the parent repository', async () => {
   const repo = join(avdHome, 'repo');
   const workspace = join(repo, 'app');

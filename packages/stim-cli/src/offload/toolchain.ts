@@ -636,6 +636,7 @@ export function cocoapodsDifference(
   worker: WorkerToolchain,
 ): OffloadProblem | null {
   if (target.native || target.cocoapodsPinned) return null;
+  if (worker.os !== undefined && worker.os !== 'darwin') return null;
   const here = target.local.cocoapods;
   if (!worker.cocoapods) {
     return { code: 'cocoapods', reason: versionMismatch('CocoaPods', null, here), ...cocoapodsInstall(here) };

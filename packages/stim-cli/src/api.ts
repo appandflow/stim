@@ -17,6 +17,7 @@ import {
 } from './workspace/project.ts';
 import { repoRootAsync } from './workspace/worktree.ts';
 import { recordWorkspaceUseAsync } from './workspace/workspace-state.ts';
+import { restoreLightenedDependencies } from './workspace/lightened.ts';
 import { readDoctorReport } from './commands/doctor.ts';
 import { recordDoctorCheck } from './guide-status.ts';
 import { executeGc, readGcReport, withGcMaintenanceClaim } from './commands/gc.ts';
@@ -671,6 +672,8 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
   }
   const root = findStartRoot(context.projectRoot);
   if (!root) throw new StimError(NO_PROJECT_REFUSAL);
+  const lightened = await restoreLightenedDependencies(root, context);
+  if (lightened) throw new StimError(lightened);
   const problem = projectProblem(root, 'dev-server');
   if (problem) throw new StimError({ code: 'STIM_NO_PROJECT', ...problem });
   options.beforeStart?.(root);

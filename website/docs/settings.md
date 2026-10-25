@@ -266,8 +266,9 @@ new devices wait in FIFO order across the Stim home for 600 seconds by default.
 Use `--wait <seconds>` to change the bound, or `--no-wait` / `--wait 0` to
 refuse immediately. A workspace's own live device bypasses the queue. Waiting
 prints holder names and elapsed time, followed by the queue position, head
-workspace name and `$STIM_HOME/device-waits` path. Timeout names the same head
-and path. `stim stop` cancels a queued run and releases its ticket without
+workspace name and `$STIM_HOME/device-waits` path. Workspaces that share a
+project name show the directory that tells them apart, as in
+`mobile (qa-b-p2)`. Timeout names the same head and path. `stim stop` cancels a queued run and releases its ticket without
 booting its device. Status adds `build.waitingFor`, and
 stats records `capacityWaits` and positive placement `deviceSlotWaitMs`.
 `0` or an unset cap means unlimited devices.
@@ -811,6 +812,13 @@ rotated generation, then build logs, then oldest other files; and removes the
 largest kind of the oldest archive while total caps are exceeded. Artifact
 expiry keeps records. Turning `recording.enabled` off at machine scope deletes
 archived recordings on the next retention pass.
+
+The same `archive.enabled`, `archive.maxAgeDays` and `archive.maxTotalGb` govern
+the uncommitted changes gc archives before it removes a dirty finished worktree
+([remove finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk)).
+Those archives have their own `archive.maxTotalGb` budget, so all archives
+together can take twice that, and `archive.enabled false` keeps such worktrees
+instead.
 
 <StimTabs code="stim settings set archive.enabled false --scope repo" />
 

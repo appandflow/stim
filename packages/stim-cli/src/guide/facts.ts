@@ -648,7 +648,8 @@ ON FAILURE
   An \`ios\` or \`android\` run that \`stim stop\` or Ctrl-C interrupted
   reports STIM_CANCELLED and exits 130. A
   run that exits on the interrupt at once (a second Ctrl-C, or Ctrl-C with no
-  build tool or SimSlim to stop) exits 130 with no payload.
+  build tool, SimSlim or launch readiness wait to stop) exits 130 with no
+  payload.
 
   \`stop --json\` prints { root, ok, supervisor, collectors, metro, device,
   port, metroTunnel, releasedLeases, macos? }. macos is { status: stopped | failed,
@@ -845,7 +846,8 @@ RULES
                   why) or "failed" (detail says why and what to retry).
                   kind: device, parkedDevice, parkedHostedDevice, idleDevice,
                   deviceRecord,
-                  workspaceOutputs, recording, workspaceDirectory, project,
+                  workspaceOutputs, worktreeDependencies, recording,
+                  workspaceDirectory, project,
                   buildLock, buildSlot, deviceLease, easSession, worktree,
                   cache, gradleVersion, tempLeftover (one "done" labelled
                   with the TMPDIR it cleared, plus a "kept" or "failed" per
@@ -1014,18 +1016,29 @@ RULES
                               Metro, client and device logs over twice the
                               8 MiB cap; willTrim marks the ones it would
                               trim
+    worktreeDependencies    { path, willDelete, detail }  node_modules and
+                              ios/Pods of linked worktrees; willDelete marks
+                              the ones --delete would lighten, and detail
+                              says why the others stay. Sizes are not
+                              measured: APFS clones make them misleading
     recordings              { dir, projectRoot, bytes, deleteBytes,
                               willDelete, withWorkspace, reason, detail }
                               recordings/ of each workspace; deleteBytes is
                               what --delete would remove; withWorkspace
                               marks those of a gone workspace, removed with
                               its workspace directory
-    workspaceBuildOutputs   { dir, projectRoot, bytes, idleDays, willClear,
-                              reason, detail }  derived-data, gradle-build,
-                              android-cas, cache-provider, macos/build,
-                              macos/<Product>.app and macos/staging-* of each
-                              workspace; willClear marks the ones --delete
-                              would clear; --cache workspaces omits the
+    workspaceBuildOutputs   { dir, projectRoot, inTreeDirs, bytes, idleDays,
+                              willClear, reason, detail }  derived-data,
+                              gradle-build, android-cas, cache-provider,
+                              macos/build, macos/<Product>.app and
+                              macos/staging-* of each workspace; inTreeDirs
+                              lists the project's android/app/build,
+                              android/build,
+                              android/.gradle and .build that --delete
+                              clears with them, every file in them
+                              ignored by git and none tracked, and
+                              bytes includes them; willClear marks the ones
+                              --delete would lighten; --cache workspaces omits the
                               directories that --delete removes whole (dead
                               projects and orphanedWorkspaces), and --cache
                               all does not

@@ -1120,8 +1120,8 @@ describe('buildIos with a mocked executor', () => {
     return spawnCalls;
   }
 
-  function makeProduct(derivedDataPath: string, name = 'App') {
-    const dir = productsDir(derivedDataPath);
+  function makeProduct(derivedDataPath: string, name = 'App', variant: { configuration?: string; sdk?: string } = {}) {
+    const dir = productsDir(derivedDataPath, variant);
     mkdirSync(dir, { recursive: true });
     mkdirSync(join(dir, `${name}.app`), { recursive: true });
     return join(dir, `${name}.app`);
@@ -1186,10 +1186,11 @@ describe('buildIos with a mocked executor', () => {
       compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES', `COMPILATION_CACHE_CAS_PATH=${join(tmp, 'cas')}`],
     });
     await child.started;
-    expect(spawnCalls[0]?.args?.slice(-3)).toEqual([
+    expect(spawnCalls[0]?.args?.slice(-4)).toEqual([
       'build',
       'COMPILATION_CACHE_ENABLE_CACHING=YES',
       `COMPILATION_CACHE_CAS_PATH=${join(tmp, 'cas')}`,
+      'DEBUG_INFORMATION_FORMAT=dwarf',
     ]);
     makeProduct(workspaceDerivedData(tmp));
     child.emit('close', 0, null);
@@ -1213,8 +1214,35 @@ describe('buildIos with a mocked executor', () => {
     await child.started;
     const args = spawnCalls[0]?.args ?? [];
     expect(args[args.indexOf('-destination') + 1]).toBe('generic/platform=iOS Simulator');
-    expect(args.slice(args.indexOf('build') + 1)).toEqual(['COMPILATION_CACHE_ENABLE_CACHING=YES', ...expected]);
+    expect(args.slice(args.indexOf('build') + 1)).toEqual([
+      'COMPILATION_CACHE_ENABLE_CACHING=YES',
+      'DEBUG_INFORMATION_FORMAT=dwarf',
+      ...expected,
+    ]);
     makeProduct(workspaceDerivedData(tmp));
+    child.emit('close', 0, null);
+    await promise;
+  });
+
+  test.each([
+    ['Debug', 'iphonesimulator', true],
+    ['Release', 'iphonesimulator', false],
+    ['Debug', 'iphoneos', false],
+  ])('%s on %s: DEBUG_INFORMATION_FORMAT=dwarf is passed: %s', async (configuration, sdk, expected) => {
+    const child = fakeChild();
+    const spawnCalls = harness(tmp, { child });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'BF2A-1111-2222',
+      configuration,
+      sdk,
+      logWriter: recordingWriter(),
+      compilationCache: null,
+    });
+    await child.started;
+    expect(spawnCalls[0]?.args?.includes('DEBUG_INFORMATION_FORMAT=dwarf')).toBe(expected);
+    makeProduct(workspaceDerivedData(tmp), 'App', { configuration, sdk });
     child.emit('close', 0, null);
     await promise;
   });
@@ -1230,7 +1258,7 @@ describe('buildIos with a mocked executor', () => {
       compilationCache: null,
     });
     await child.started;
-    expect(spawnCalls[0]?.args?.at(-1)).toBe('build');
+    expect(spawnCalls[0]?.args?.slice(-2)).toEqual(['build', 'DEBUG_INFORMATION_FORMAT=dwarf']);
     makeProduct(workspaceDerivedData(tmp));
     child.emit('close', 0, null);
     await promise;
@@ -1422,6 +1450,7 @@ describe('buildIos with a mocked executor', () => {
       '-derivedDataPath',
       dd,
       'build',
+      'DEBUG_INFORMATION_FORMAT=dwarf',
     ]);
     expect(opts.cwd).toBe(join(tmp, 'ios'));
     expect(opts.stdio).toEqual(['ignore', 'pipe', 'pipe']);
@@ -2107,6 +2136,7 @@ describe('buildXcode with explicit project inputs', () => {
       dd,
       'build',
       'SWIFT_ENABLE_COMPILE_CACHE=NO',
+      'DEBUG_INFORMATION_FORMAT=dwarf',
     ]);
   });
 

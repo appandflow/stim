@@ -44,6 +44,7 @@ import { liveClaimOwner, plantClaim } from './_factories.ts';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MB = 1024 * 1024;
 
+const initialCwd = process.cwd();
 let home: string;
 let projects: string;
 
@@ -79,6 +80,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  process.chdir(initialCwd);
   resetExecutor();
   rmSync(home, { recursive: true, force: true });
   rmSync(projects, { recursive: true, force: true });

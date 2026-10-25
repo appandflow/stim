@@ -14,7 +14,7 @@ import {
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { METRO_NAMED_CACHE_LAYOUT, withAmbientContext, withDirLockTransaction, type StimContext } from '@stim-cli/core';
 import {
   gcLogFile,
@@ -3922,6 +3922,7 @@ describe('gc --json', () => {
       'easSessionSweepNotices',
       'skipped',
       'workspaceLogs',
+      'worktreeDependencies',
       'recordings',
       'workspaceBuildOutputs',
       'caches',
@@ -5207,7 +5208,7 @@ describe('the gc log', () => {
       detail: 'permission denied',
       path: failed?.id,
     });
-    expect(failed?.path).toMatch(/^\//);
+    expect(isAbsolute(failed?.path ?? '')).toBe(true);
     expect(records.find((r) => r.kind === 'buildLock')).toMatchObject({ level: 'info', detail: 'builder unresolved' });
     expect(new Set(records.map((r) => r.runId)).size).toBe(1);
   });

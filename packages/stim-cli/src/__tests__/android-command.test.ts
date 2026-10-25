@@ -58,7 +58,14 @@ import {
   upsertProject,
   writeConfigSetting,
 } from '../workspace/config.ts';
-import { buildMachinesFile, openLogDir, queryLogs, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
+import {
+  buildMachinesFile,
+  openLogDir,
+  queryLogs,
+  readBuildHistory,
+  readBuildLedger,
+  readLastBuilds,
+} from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import {
   workspaceDir,
@@ -8131,6 +8138,30 @@ test('stop cancels a remote-only placement wait, which got the run signal and it
   expect(aborted).toBe(true);
   expect(result.error?.code).toBe('STIM_CANCELLED');
   expect(h.calls.build).toEqual([]);
+});
+
+test('Ctrl-C during the launch readiness wait ends the wait and records a cancelled run', async () => {
+  const controller = new AbortController();
+  const context = testContext({ signal: controller.signal });
+  const h = harness({
+    context,
+    json: true,
+    verifyLaunched: ({ signal }: Parameters<typeof verifyLaunch>[0] = {}) =>
+      new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        controller.abort('SIGINT');
+      }),
+  });
+  const result = await withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+    write: () => {},
+  });
+  expect(result.error?.code).toBe('STIM_CANCELLED');
+  expect(h.stdout.map((line) => JSON.parse(line))).toEqual([expect.objectContaining({ code: 'STIM_CANCELLED' })]);
+  expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({
+    status: 'failed',
+    errorCode: 'STIM_CANCELLED',
+  });
+  expect(readBuildLedger().at(-1)).toMatchObject({ platform: 'android', outcome: 'cancelled' });
 });
 
 test('stop cancels Android device preparation waiting for a slot before any build or boot', async () => {

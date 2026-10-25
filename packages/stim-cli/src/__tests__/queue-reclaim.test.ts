@@ -112,6 +112,17 @@ test('reclaims exactly the longest-idle eligible device across workspaces and re
   ]);
 });
 
+test('the reclaim line names which worktree held a device when projects share a name', async () => {
+  const victim = add('first', 25, join(home, 'trees', 'qa-b-p2', 'mobile'));
+  add('second', 5, join(home, 'trees', 'qa-b-p3', 'mobile'));
+  upsertProject(victim.project, { label: undefined });
+  upsertProject(join(home, 'trees', 'qa-b-p3', 'mobile'), { label: undefined });
+  await expect(reclaim()).resolves.toBe(1);
+  expect(out).toHaveBeenCalledWith(
+    'device      reclaimed iOS simulator stim-first (workspace mobile (qa-b-p2), idle 25m) for this waiting run',
+  );
+});
+
 test('driven, locked, building, viewed, recent and unavailable-workspace devices stay up', async () => {
   for (const basis of ['driver-process', 'device-lock', 'agent-device-lease']) {
     const device = add(basis, 90);

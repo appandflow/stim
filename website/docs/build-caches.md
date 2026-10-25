@@ -442,6 +442,15 @@ worker does the same for its own cache. A build sent there with
 `--remote-build <machine>` fails with that code; one placed there
 automatically builds here instead.
 
+A cached iOS simulator app can be damaged without failing to build. If a
+cache-hit app is killed at launch because dyld cannot bind a symbol that one
+part of the app needs from another part of the same app, Stim removes that
+entry from the shared cache and fails with `STIM_LAUNCH_FAILED` naming it. Run
+the command again to build the app fresh. A crash that the app's own bytes did
+not cause, such as a missing system library, leaves the entry alone, and so
+does an app built by the same run. A cache provider keeps its own copy of an
+entry; add `--no-build-cache` to skip it.
+
 Each iOS build holds a shared claim on the compilation cache while xcodebuild
 runs, in a `compilation-cache.claims` directory beside it. `gc --delete
 --cache`, automatic maintenance and the corruption check empty the cache only
@@ -462,18 +471,25 @@ stim gc --delete --older-than 7
 stim gc --delete --cache workspaces`}
 />
 
-Plain `gc --delete` clears the build outputs of every workspace that is not in
-use. A workspace is in use while its dev server runs, a `stim ios` or
-`stim android` run holds it, a build names it, or a tunnel or remote lock is
-held. A running, building, unverified or hosted macOS app also keeps its
-workspace untouched. `--older-than <days>` clears only workspaces no Stim
-command has used for that many days. `--cache workspaces` clears the outputs and nothing else, and
-`--cache all` includes them. `--cache parked` is the one reserved name that
-`all` leaves out: it erases parked simulators and emulators (see
-[owned devices](./owned-devices.md)). The workspace keeps its `workspace.json`,
-`state.json`, logs, devices and ports, along with `macos/` itself,
-`macos/runtime.lock`, its claim set and other macOS files. The project's own
-`.build` stays.
+Plain `gc --delete` lightens every workspace that is not building and did not
+run `stim ios`, `stim android` or `stim macos` in the last 15 minutes, and
+prints the bytes it freed for each. A running dev server, a booted or hosted
+simulator or emulator, or a tunnel no longer keeps the outputs. They stay while
+a `stim ios` or `stim android` run holds the workspace, a build names it, or its
+macOS app or build runs or cannot be verified. Lightening also clears the
+project's own `android/app/build`, `android/build`, `android/.gradle` and
+`.build` when git ignores every file in the directory and tracks none.
+`ios/build` stays, because React Native's `pod install` writes files there that
+only `pod install` recreates. The shared build cache, the Xcode compilation cache, the Gradle caches
+and the Metro cache are never touched. `--older-than <days>` clears only
+workspaces no Stim command has used for that many days. `--cache workspaces`
+clears the outputs and nothing else, and `--cache all` includes them.
+`--cache parked` is the one reserved name that `all` leaves out: it erases
+parked simulators and emulators (see [owned devices](./owned-devices.md)). The
+workspace keeps its `workspace.json`, `state.json`, logs, devices, ports and
+running dev server, along with `macos/` itself, `macos/runtime.lock`, its claim
+set and other macOS files. Automatic maintenance keeps its own rules and does
+not use the 15-minute window.
 
 The next build of an unchanged app installs from the shared build cache. After
 a native change, the Xcode compilation cache speeds up the rebuild. On React
@@ -481,6 +497,23 @@ Native 0.86, Swift does not use that cache because explicit modules are off,
 so the first iOS build after a native change recompiles Swift. The next
 `stim macos` recreates its scratch directory with a full Swift build and
 restages the app.
+
+### Worktree dependencies
+
+Plain `gc --delete` also lightens linked worktrees that have a Stim workspace:
+it deletes their `node_modules` and `ios/Pods`, never the source checkout's.
+A worktree keeps them while its dev server runs or a native run or build holds
+it, for 15 minutes after its last git, Stim or dependency activity, while git
+tracks a file in them, and while a stim-server service, the `stim` on your PATH
+or a running process (by command line or working directory) uses the worktree.
+It also keeps them when `stim worktree warm` could not restore the same
+versions: the source checkout lacks the directory, or the worktree's lockfile
+differs from the source checkout's. gc records what it deleted, and the next
+`stim start`, `stim ios` or `stim android` in that worktree runs
+`stim worktree warm` first to restore it. If that warm fails or leaves a
+directory missing, the command refuses with `STIM_DEPS_FAILED`. Other commands,
+such as a test run, find the directory missing until then. `.pnpm-store`
+stays, because it is all clones and deleting it frees nothing.
 
 ### Device recordings
 
@@ -552,13 +585,16 @@ stops the disk-driven ones once free space is back above the floor:
    on-disk content store, whose entries live inside shared database files, so
    Stim cannot remove only the entries a running build does not need.
 5. Linked worktrees whose branch or pull request finished, by the same rules as
-   `stim gc --delete` and `gc.worktreeGraceMinutes`. With
+   `stim gc --delete` and `gc.worktreeGraceMinutes`, a dirty finished one after
+   archiving its uncommitted files, and clean ones with no commits of their own
+   once idle ([worktrees](./worktrees.md#remove-finished-worktrees-in-bulk)). With
    `maintenance.removeIdleWorktrees true` (off by default), the daily sweep also
    removes clean, pushed linked worktrees unused for `maintenance.olderThanDays`,
-   as `stim gc --delete --worktrees --older-than <days>` removes them. A dirty
-   worktree, one with unpushed commits, the source checkout and one whose last
+   as `stim gc --delete --worktrees --older-than <days>` removes them. An
+   unfinished dirty worktree, one with unpushed commits, a locked one, the
+   source checkout, one holding the running or PATH `stim`, and one whose last
    use is unknown are never removed. `maintenance.removeFinishedWorktrees false`
-   turns off both.
+   turns off all of them.
 6. Parked simulators and emulators unused for `maintenance.olderThanDays` in the
    daily sweep, deleted through centralized teardown after their ownership is
    checked again.

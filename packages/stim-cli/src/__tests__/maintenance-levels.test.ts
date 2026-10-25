@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import {
   existsSync,
   symlinkSync,
@@ -18,7 +18,9 @@ import {
   maintenanceDir,
   maintenanceNdjsonFile,
   maintenanceStateFile,
+  readJsonObject,
   readMaintenanceState,
+  workspaceLightenedFile,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as measurements from '../maintenance/measure.ts';
@@ -33,6 +35,10 @@ import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import * as memory from '../commands/gc/memory.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
+
+function recordedDirs(root: string): unknown {
+  return readJsonObject(workspaceLightenedFile(root))?.dirs ?? [];
+}
 
 const GB = 1024;
 const MINUTE_MS = 60_000;
@@ -72,7 +78,8 @@ beforeEach(() => {
     run: () => '',
     runQuiet: () => null,
     runFile: (file, args, opts) => (file === 'du' || file === 'git' ? real.runFile(file, args, opts) : ''),
-    runFileQuiet: (file, args, opts) => (file === 'git' ? real.runFileQuiet(file, args, opts) : null),
+    runFileQuiet: (file, args, opts) =>
+      ['git', 'ps', 'lsof'].includes(file) ? real.runFileQuiet(file, args, opts) : null,
     findExecutable: (name) => (name === 'gh' ? null : real.findExecutable(name)),
     spawn: () => {
       throw new Error('unexpected spawn');
@@ -161,6 +168,7 @@ function repoWithFeatureWorktree({ linkIos = false, nested = false }: { linkIos?
   mkdirSync(join(repo, 'android', 'build'), { recursive: true });
   writeFileSync(join(repo, 'android', 'build', 'tracked.txt'), 'tracked');
   writeFileSync(join(repo, 'package.json'), '{}');
+  writeFileSync(join(repo, '.gitignore'), 'node_modules/\n');
   git('add -A');
   git('commit -q -m init');
   const feature = nested ? join(repo, '.worktrees', 'feature') : join(projects, 'feature');
@@ -210,12 +218,43 @@ test('level 2 clears only untracked build directories of idle worktrees, and lev
   freeDisk(4);
   await pass();
 
-  expect(existsSync(join(feature, 'node_modules'))).toBe(false);
+  expect(existsSync(join(feature, 'node_modules'))).toBe(process.platform === 'win32');
   expect(existsSync(join(repo, 'node_modules'))).toBe(true);
+  expect(recordedDirs(feature)).toEqual(process.platform === 'win32' ? [] : [join(feature, 'node_modules')]);
   expect(readMaintenanceState()?.lastPass?.blocked).toEqual(
     expect.arrayContaining([expect.stringContaining('disk pressure level 3')]),
   );
 }, 60_000);
+
+test.skipIf(process.platform === 'win32')(
+  'level 3 keeps the dependencies of a linked worktree a live process works in',
+  async () => {
+    const { feature } = repoWithFeatureWorktree();
+    const child = spawn('sleep', ['60'], { cwd: feature, stdio: 'ignore' });
+    try {
+      freeDisk(4);
+      await pass();
+      expect(existsSync(join(feature, 'node_modules', 'pkg', 'index.js'))).toBe(true);
+      expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain(`process ${child.pid} works in it`);
+    } finally {
+      child.kill('SIGKILL');
+    }
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'level 3 deletes the dependencies of a worktree whose lockfile drifted without promising a restore',
+  async () => {
+    const { feature } = repoWithFeatureWorktree();
+    writeFileSync(join(feature, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
+    freeDisk(4);
+    await pass();
+    expect(existsSync(join(feature, 'node_modules'))).toBe(false);
+    expect(recordedDirs(feature)).toEqual([]);
+  },
+  60_000,
+);
 
 test('a build directory reached through a linked parent is kept', async () => {
   const { feature } = repoWithFeatureWorktree({ linkIos: true });

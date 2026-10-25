@@ -15,7 +15,7 @@ import {
 } from '@stim-cli/core/state';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { BuildConnection } from '../offload/client.ts';
-import { resolveEndpoint, SERVER_OUTDATED } from '../offload/tailnet.ts';
+import { diagnoseConnectFailure, resolveEndpoint, SERVER_OUTDATED } from '../offload/tailnet.ts';
 import { configuredMachines } from './machines.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -123,17 +123,21 @@ export async function connectHost(
   if (signal?.aborted && opened instanceof BuildConnection) opened.close();
   signal?.throwIfAborted();
   if (!(opened instanceof BuildConnection)) {
+    const diagnosis =
+      opened.refused || opened.code === SERVER_OUTDATED ? null : await diagnoseConnectFailure(machine, opened, signal);
     throw Object.assign(
       new Error(
         opened.code === SERVER_OUTDATED
           ? `${machine} runs a stim-server that speaks an older protocol than this Stim. Run stim doctor for the command that updates it there, then retry.`
           : opened.refused
             ? `${machine} refused this machine: ${opened.failure.replace(/\.+$/, '')}. Run stim doctor.`
-            : `${machine} is unreachable: ${opened.failure}. Run stim doctor to see which layer failed.`,
+            : (diagnosis?.message ??
+              `${machine} is unreachable: ${opened.failure}. Run stim doctor to see which layer failed.`),
       ),
       {
         code: strict ? 'STIM_HOSTING_REFUSED' : opened.refused ? 'STIM_HOSTING_REFUSED' : (opened.code ?? 'closed'),
         hostCode: opened.code,
+        ...(diagnosis ? { remedy: diagnosis.remedy } : {}),
       },
     );
   }

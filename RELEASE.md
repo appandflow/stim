@@ -451,6 +451,12 @@ repeat the affected gate rather than waiving it.
    cd /tmp && npx -p "@stim-cli/ci@$version" stim-ci --version
    cd /tmp && npx -p "@stim-cli/server@$version" stim-server --version
    ```
+   Keep the `cd /tmp`. Inside this repository, `npx "stim@$version"` with the
+   workspace's own `stim` version does not download the release: npm treats
+   the workspace package as installed and runs whichever `stim` is first on
+   `PATH`, so the check can pass or fail against a different build. The same
+   holds for `npx -p`. The `smoke` job runs from a scratch directory for this
+   reason.
    The `npm pack` line lists the published tarball's README. Do not check
    `npm view "stim@$version" readme`: it prints the registry's package-level
    README, which is empty whenever the newest publish is not on `latest`, such
