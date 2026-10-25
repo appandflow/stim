@@ -322,7 +322,7 @@ export async function archiveWorktreeChanges({
       });
       await chmod(tarball, 0o600);
       const listed = (await getExecutor().runFileAsync('tar', ['-tf', tarball], { ...exec, untrimmed: true }))
-        .split('\n')
+        .split(/\r?\n/)
         .filter(Boolean)
         .toSorted();
       if (!sameList(listed, changes.untracked)) throw new Error('the untracked tarball does not list every file');

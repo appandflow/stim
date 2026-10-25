@@ -346,8 +346,8 @@ export async function gitignoredFingerprintInputs(
   if (sources.some((source) => source.type === 'contents' && source.id === 'expoConfig'))
     for (const name of expoEnvFiles(env))
       if (lstatSync(join(projectRoot, name), { throwIfNoEntry: false })?.isFile()) found.add(name);
-  const top = realpathSync(await gitAsync(projectRoot, ['rev-parse', '--show-toplevel'], { signal }));
-  const base = realpathSync(projectRoot);
+  const top = realpathSync.native(await gitAsync(projectRoot, ['rev-parse', '--show-toplevel'], { signal }));
+  const base = realpathSync.native(projectRoot);
   const pathspecs = sources.flatMap((source) => {
     if (source.type === 'contents' || inNodeModules(source.filePath)) return [];
     const inRepo = relative(top, resolvePath(base, source.filePath));
