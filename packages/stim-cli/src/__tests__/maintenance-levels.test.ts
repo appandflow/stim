@@ -32,7 +32,8 @@ import { liveClaimOwner, plantClaim } from './_factories.ts';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
-import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { workspaceInUse } from '../workspace/in-use.ts';
 import * as memory from '../commands/gc/memory.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
 
@@ -115,6 +116,17 @@ function ageTree(path: string, at: Date) {
   utimesSync(path, at, at);
 }
 
+function iosRan(minutesAgo: number) {
+  return {
+    lastIosBuild: {
+      platform: 'ios',
+      status: 'success',
+      startedAt: new Date(Date.now() - minutesAgo * MINUTE_MS).toISOString(),
+      durationMs: 0,
+    },
+  };
+}
+
 function outputsWorkspace(name: string, usedMinutesAgo: number) {
   const root = join(projects, name);
   mkdirSync(root, { recursive: true });
@@ -137,16 +149,29 @@ test('pressure levels follow the floors, and level 2 runs until free disk is bac
   expect(levelStillShort({ level: 3 }, 5.5 * GB, budget, settings)).toBe(true);
 });
 
-test('when level 1 cannot get back above the floor, level 2 clears outputs older than the short window', async () => {
-  const halfHour = outputsWorkspace('half-hour', 30);
-  const justNow = outputsWorkspace('just-now', 1);
+test('when level 1 cannot get back above the floor, level 2 clears outputs of workspaces that did not run ios, android or macos in the last 15 minutes, dev server or not', async () => {
+  const hourAgo = outputsWorkspace('hour-ago', 1);
+  writeWorkspaceState(hourAgo.root, { supervisor: { ...liveClaimOwner(), port: 8100 }, ...iosRan(60) });
+  expect(workspaceInUse(hourAgo.root).join('\n')).toMatch(/supervisor \(pid \d+\) is running/);
+  const twelveMinutes = outputsWorkspace('twelve-minutes', 30);
+  writeWorkspaceState(twelveMinutes.root, iosRan(12));
   freeDisk(15);
 
   await pass();
 
-  expect(existsSync(halfHour.outputs)).toBe(false);
-  expect(existsSync(justNow.outputs)).toBe(true);
+  expect(existsSync(hourAgo.outputs)).toBe(false);
+  expect(existsSync(twelveMinutes.outputs)).toBe(true);
   expect(readMaintenanceState()?.pressure?.diskLevel).toBe(1);
+});
+
+test('level 2 keeps the outputs of a workspace that is building', async () => {
+  const building = outputsWorkspace('building', 120);
+  plantClaim(join(workspaceDir(building.root), 'native-run.lock'), 'exclusive', liveClaimOwner());
+  freeDisk(15);
+
+  await pass();
+
+  expect(existsSync(building.outputs)).toBe(true);
 });
 
 test('level 2 actions stop once free disk is back above the floor', async () => {
@@ -158,7 +183,11 @@ test('level 2 actions stop once free disk is back above the floor', async () => 
   expect(existsSync(halfHour.outputs)).toBe(true);
 });
 
-function repoWithFeatureWorktree({ linkIos = false, nested = false }: { linkIos?: boolean; nested?: boolean } = {}) {
+function repoWithFeatureWorktree({
+  linkAndroid = false,
+  nested = false,
+  iosRanMinutesAgo,
+}: { linkAndroid?: boolean; nested?: boolean; iosRanMinutesAgo?: { repo?: number; feature?: number } } = {}) {
   const repo = join(projects, 'repo');
   mkdirSync(repo, { recursive: true });
   const git = (args: string, cwd = repo) => execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 }).trim();
@@ -178,15 +207,20 @@ function repoWithFeatureWorktree({ linkIos = false, nested = false }: { linkIos?
     write(join(base, 'node_modules', 'pkg', 'index.js'));
     write(join(base, 'apps', 'desktop', '.build', 'debug', 'binary'));
   }
-  if (linkIos) {
-    write(join(feature, 'shared', 'build', 'keep.txt'));
+  if (linkAndroid) {
+    write(join(feature, 'shared', 'app', 'build', 'keep.txt'));
     git('add shared', feature);
     git('commit -q -m shared', feature);
-    rmSync(join(feature, 'ios'), { recursive: true });
-    symlinkSync('shared', join(feature, 'ios'));
+    rmSync(join(feature, 'android'), { recursive: true });
+    symlinkSync('shared', join(feature, 'android'));
   }
   const roots = { repo: realpathSync.native(repo), feature: realpathSync.native(feature) };
   for (const root of Object.values(roots)) upsertProject(root, { metroPort: null });
+  const names: ('repo' | 'feature')[] = ['repo', 'feature'];
+  for (const name of names) {
+    const minutes = iosRanMinutesAgo?.[name];
+    if (minutes !== undefined) writeWorkspaceState(roots[name], iosRan(minutes));
+  }
   const yesterday = new Date(Date.now() - 24 * 60 * MINUTE_MS);
   for (const root of Object.values(roots)) {
     recordWorkspaceUse(root, yesterday);
@@ -200,20 +234,19 @@ function repoWithFeatureWorktree({ linkIos = false, nested = false }: { linkIos?
   return roots;
 }
 
-test('level 2 clears only untracked build directories of idle worktrees, and level 3 deletes linked dependencies', async () => {
-  const { repo, feature } = repoWithFeatureWorktree();
-  write(join(feature, 'android', 'app', 'build', 'fresh.dex'));
+test('level 2 clears untracked build directories of worktrees whose workspaces did not run native in 15 minutes, never ios/build, and level 3 deletes linked dependencies', async () => {
+  const { repo, feature } = repoWithFeatureWorktree({ iosRanMinutesAgo: { feature: 5 } });
   freeDisk(15);
 
   await pass();
 
   for (const root of [repo, feature]) {
-    expect(existsSync(join(root, 'ios', 'build'))).toBe(false);
-    expect(existsSync(join(root, 'apps', 'desktop', '.build'))).toBe(false);
+    expect(existsSync(join(root, 'ios', 'build', 'App.app', 'binary'))).toBe(true);
     expect(existsSync(join(root, 'node_modules'))).toBe(true);
   }
+  expect(existsSync(join(repo, 'apps', 'desktop', '.build'))).toBe(false);
   expect(existsSync(join(repo, 'android', 'build', 'tracked.txt'))).toBe(true);
-  expect(existsSync(join(feature, 'android', 'app', 'build', 'fresh.dex'))).toBe(true);
+  expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(true);
 
   freeDisk(4);
   await pass();
@@ -257,12 +290,12 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test('a build directory reached through a linked parent is kept', async () => {
-  const { feature } = repoWithFeatureWorktree({ linkIos: true });
+  const { feature } = repoWithFeatureWorktree({ linkAndroid: true });
   freeDisk(15);
 
   await pass();
 
-  expect(existsSync(join(feature, 'shared', 'build', 'keep.txt'))).toBe(true);
+  expect(existsSync(join(feature, 'shared', 'app', 'build', 'keep.txt'))).toBe(true);
   expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(false);
 }, 60_000);
 
@@ -273,8 +306,15 @@ test('a worktree nested inside another is judged from its own git checkout', asy
   await pass();
 
   expect(existsSync(join(feature, 'android', 'build', 'tracked.txt'))).toBe(true);
-  expect(existsSync(join(feature, 'ios', 'build'))).toBe(false);
+  expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(false);
 }, 60_000);
+
+const actContext = (feature: string) => ({
+  settings: resolveMaintenanceSettings(),
+  budget: { minFreeDiskMb: 20 * GB, hardFloorDiskMb: 5 * GB, maxCommittedMemoryMb: 0, maxLiveWorkspaces: 0 },
+  protectedRoot: '/nowhere',
+  worktrees: [{ path: feature, linked: true, keys: [feature] }],
+});
 
 test('a nested worktree holding its native-run lock keeps its build directory at execution', async () => {
   const { feature } = repoWithFeatureWorktree({ nested: true });
@@ -282,16 +322,54 @@ test('a nested worktree holding its native-run lock keeps its build directory at
   freeDisk(15);
 
   const outcome = await executeAction(
-    { kind: 'would-clear-build-dirs', target: join(feature, 'ios', 'build'), bytes: 0, reason: 'test', level: 2 },
     {
-      settings: resolveMaintenanceSettings(),
-      budget: { minFreeDiskMb: 20 * GB, hardFloorDiskMb: 5 * GB, maxCommittedMemoryMb: 0, maxLiveWorkspaces: 0 },
-      protectedRoot: '/nowhere',
+      kind: 'would-clear-build-dirs',
+      target: join(feature, 'apps', 'desktop', '.build'),
+      bytes: 0,
+      reason: 'test',
+      level: 2,
     },
+    actContext(feature),
   );
 
   expect(outcome.status).toBe('kept');
-  expect(existsSync(join(feature, 'ios', 'build'))).toBe(true);
+  expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(true);
+}, 60_000);
+
+test('level 2 keeps the build directory of a worktree that ran ios 5 minutes ago at execution, and ios/build whatever its age', async () => {
+  const { feature } = repoWithFeatureWorktree({ iosRanMinutesAgo: { feature: 5 } });
+  freeDisk(15);
+  const clear = (target: string) =>
+    executeAction({ kind: 'would-clear-build-dirs', target, bytes: 0, reason: 'test', level: 2 }, actContext(feature));
+
+  const recent = await clear(join(feature, 'apps', 'desktop', '.build'));
+  writeWorkspaceState(feature, iosRan(60));
+  const podInstallOutput = await clear(join(feature, 'ios', 'build'));
+
+  expect(recent.detail).toMatch(/ran ios, android or macos within the last 15 minutes/);
+  expect(podInstallOutput.status).toBe('kept');
+  expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(true);
+  expect(existsSync(join(feature, 'ios', 'build', 'App.app', 'binary'))).toBe(true);
+}, 60_000);
+
+test('level 2 keeps the build directories of a worktree with no Stim workspace state at execution', async () => {
+  const { feature } = repoWithFeatureWorktree();
+  rmSync(workspaceStateFile(feature), { force: true });
+  freeDisk(15);
+
+  const outcome = await executeAction(
+    {
+      kind: 'would-clear-build-dirs',
+      target: join(feature, 'apps', 'desktop', '.build'),
+      bytes: 0,
+      reason: 'test',
+      level: 2,
+    },
+    actContext(feature),
+  );
+
+  expect(outcome.status).toBe('kept');
+  expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(true);
 }, 60_000);
 
 function write(path: string) {

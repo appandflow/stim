@@ -240,8 +240,8 @@ const BUILD_CHECKS = { devServer: false, hosted: false, managedLocks: false } as
 const BUILD_IN_PROGRESS = 'a build is in progress';
 
 /** Why the build outputs of the workspace at `root` are in use: it is building or running a macOS app. */
-function workspaceBuildReasons(root: string): string[] {
-  const reasons = workspaceInUse(root, BUILD_CHECKS);
+export function workspaceBuildReasons(root: string, { nativeRun = true }: { nativeRun?: boolean } = {}): string[] {
+  const reasons = workspaceInUse(root, { ...BUILD_CHECKS, nativeRun });
   return workspaceBuildInProgress(root) ? [...reasons, BUILD_IN_PROGRESS] : reasons;
 }
 
@@ -254,13 +254,9 @@ async function workspaceBuildReasonsAsync(
   return workspaceBuildInProgress(root) ? [...reasons, BUILD_IN_PROGRESS] : reasons;
 }
 
-// React Native 0.88's `pod install` writes podspec facades and codegen output under ios/build that the Pods
-// project references (scripts/cocoapods/rncore_facades.rb), and only `pod install` recreates them.
-const IN_TREE_BUILD_DIRS = ARTIFACT_DIRS.build.filter((dir) => dir !== 'ios/build');
-
 async function inTreeBuildDirs(root: string, signal?: AbortSignal): Promise<string[]> {
   const dirs: string[] = [];
-  for (const path of existingDirsOf(root, IN_TREE_BUILD_DIRS))
+  for (const path of existingDirsOf(root, ARTIFACT_DIRS.build))
     if (!(await regenerableDirProblem(root, path, signal))) dirs.push(path);
   return dirs;
 }
@@ -271,6 +267,13 @@ export const WORKSPACE_OUTPUT_DIRS: readonly string[] = [
   'android-cas',
   'cache-provider',
 ];
+
+/** Why a workspace whose last ios, android or macos run was at `nativeUsed` keeps its build outputs, or null. */
+export function recentNativeUseReason(nativeUsed: number, now: number): string | null {
+  return now - nativeUsed < LIGHTEN_AFTER_MS
+    ? `ran ios, android or macos within the last ${LIGHTEN_AFTER_MS / 60_000} minutes`
+    : null;
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -304,14 +307,15 @@ export function planWorkspaceOutputs(
   { olderThan, now }: { olderThan: number | null; now: number },
 ): WorkspaceOutputs[] {
   return entries.map(({ dir, projectRoot, problem, inTreeDirs = [], bytes, lastUsed, nativeUsed, inUse }) => {
+    const recentNative = recentNativeUseReason(nativeUsed, now);
     const idleDays = Number.isFinite(lastUsed) ? Math.max(0, Math.floor((now - lastUsed) / DAY_MS)) : null;
     const [keptCode, keptReason]: [WorkspaceKeptCode | null, string | null] =
       projectRoot === null
         ? ['unresolved', `workspace directory not resolved: ${problem ?? 'unknown project root'}`]
         : inUse.length
           ? ['in-use', `in use: ${inUse.join('; ')}`]
-          : now - nativeUsed < LIGHTEN_AFTER_MS
-            ? ['recently-used', `ran ios, android or macos within the last ${LIGHTEN_AFTER_MS / 60_000} minutes`]
+          : recentNative
+            ? ['recently-used', recentNative]
             : olderThan === null
               ? [null, null]
               : idleDays === null
@@ -505,7 +509,7 @@ export async function clearWorkspaceOutputs(
           );
           if (again?.keptReason) return again.keptReason;
           const inTree: { path: string; problem: string | null }[] = [];
-          for (const path of lighten ? existingDirsOf(root, IN_TREE_BUILD_DIRS) : [])
+          for (const path of lighten ? existingDirsOf(root, ARTIFACT_DIRS.build) : [])
             inTree.push({ path, problem: await regenerableDirProblem(root, path, signal) });
           for (const path of [
             ...outputPaths(entry.dir),
