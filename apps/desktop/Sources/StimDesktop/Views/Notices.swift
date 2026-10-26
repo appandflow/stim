@@ -144,14 +144,39 @@ private struct NoticeCard: View {
   @ObservedObject var center: NoticeCenter
 
   var body: some View {
-    Banner(tone: notice.tone, icon: notice.icon, style: .floating, onDismiss: { center.dismiss(notice.id) }) {
-      stepper
-      Text(notice.title).font(.stim(.headline)).lineLimit(2, reservesSpace: true)
-      Text(notice.detail ?? " ")
-        .foregroundStyle(Palette.secondary).lineLimit(1, reservesSpace: true).truncationMode(.middle)
-        .accessibilityHidden(notice.detail == nil)
+    VStack(alignment: .leading, spacing: Space.md) {
+      HStack(spacing: Space.sm) {
+        Image(systemName: notice.icon).iconFont(IconSize.large).foregroundStyle(Color(notice.tone))
+        Text(notice.key == "stim-update" ? "Update available" : "Notification")
+          .textStyle(.caption, weight: .semibold)
+          .foregroundStyle(Palette.secondary)
+        Spacer(minLength: Space.sm)
+        Button {
+          center.dismiss(notice.id)
+        } label: {
+          Image(systemName: "xmark").iconFont(IconSize.compact, weight: .semibold)
+            .foregroundStyle(Palette.tertiary)
+        }
+        .buttonStyle(.hoverRow(outset: Space.xs))
+        .help("Dismiss")
+        .accessibilityLabel("Dismiss")
+      }
+      if center.notices.count > 1 {
+        stepper
+      }
+      VStack(alignment: .leading, spacing: Space.xs) {
+        Text(notice.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
+        if let detail = notice.detail {
+          Text(detail).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+      }
       actions
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
+    .padding(Space.lg + Space.xxs)
+    .background(RoundedRectangle(cornerRadius: Radius.card).fill(.regularMaterial))
+    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+    .shadow(color: .black.opacity(0.28), radius: 20, y: 6)
     .accessibilityElement(children: .contain)
   }
 
