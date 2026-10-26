@@ -418,25 +418,34 @@ test('gc --delete stops idle workspaces only while maintenance is not off, and c
   expect(record).toHaveBeenCalledWith('devServer', 'failed', root, expect.anything());
 });
 
-test('a running dev server is kept while an emulator adb lists gives no AVD name', async () => {
-  const root = serving('unnamed', 8100);
-  upsertProject(root, { platforms: { android: { avdName: 'stim-unnamed', owned: true } } });
+test.each([
+  ['a running dev server', 'emulator-5554\tdevice', true],
+  ['a booted simulator with no dev server', 'emulator-5556\toffline', false],
+])('%s is kept while an emulator adb lists gives no AVD name', async (_, line, withServer) => {
+  const booted = withServer ? null : bootedWorkspace('unnamed', 7 * HOUR_MS);
+  const root = booted?.root ?? serving('unnamed', 8100);
+  upsertProject(root, {
+    platforms: {
+      ...(booted ? { ios: { deviceUdid: booted.udid, owned: true } } : {}),
+      android: { avdName: 'stim-unnamed', owned: true },
+    },
+  });
   appendLog(root, 'metro.ndjson', [{ ts: Date.now() - 7 * HOUR_MS, src: 'metro', event: 'expo_stdout', msg: 'x' }]);
   const real = getExecutor();
   setExecutor({
     ...real,
     runFile: (file, args, options) => {
       if (file.endsWith('emulator')) return 'stim-unnamed\n';
-      if (file.endsWith('adb') && args[0] === 'devices') return 'List of devices attached\nemulator-5554\tdevice\n';
+      if (file.endsWith('adb') && args[0] === 'devices') return `List of devices attached\n${line}\n`;
       return real.runFile(file, args, options);
     },
   });
 
-  const { actions, skips } = await plan(() => []);
+  const { actions, skips } = await plan();
 
   expect(actions).toEqual([]);
   expect(skips).toEqual([
-    expect.objectContaining({ target: root, reason: expect.stringMatching(/emulator-5554 gave no AVD name/) }),
+    expect.objectContaining({ target: root, reason: expect.stringMatching(/emulator-555\d gave no AVD name/) }),
   ]);
 });
 

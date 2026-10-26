@@ -303,10 +303,10 @@ async function emulatorListError(avdNames: readonly string[], operation?: StimCo
     let unseen = false;
     for (const name of avdNames) if ((await resolve(name)).notRunning) unseen = true;
     if (!unseen) return null;
-    const { emulators } = operation
+    const adb = operation
       ? await listAdbDevicesAsync({ timeoutMs: 5000, signal, operation })
       : listAdbDevices({ timeoutMs: 5000 });
-    for (const { serial } of emulators) {
+    for (const { serial } of [...adb.emulators, ...adb.unhealthy.filter((entry) => entry.kind === 'emulator')]) {
       const name = operation
         ? await getAvdNameForSerialAsync(serial, { timeoutMs: 5000, signal, operation })
         : getAvdNameForSerial(serial, { timeoutMs: 5000 });
@@ -362,10 +362,9 @@ async function candidate(
   const avdNames = slots.flatMap(({ platforms }) =>
     platforms.android?.owned && platforms.android.avdName ? [platforms.android.avdName] : [],
   );
-  const emulators =
-    supervisor.status === 'ours' && avdNames.length ? await emulatorListError(avdNames, operation) : null;
-  if (emulators) return { skip: emulators };
   if (supervisor.status !== 'ours' && booted.length === 0) return null;
+  const emulators = avdNames.length ? await emulatorListError(avdNames, operation) : null;
+  if (emulators) return { skip: emulators };
   return { path, hours: setting.hours, serving: supervisor.status === 'ours', devices: booted };
 }
 
