@@ -510,6 +510,16 @@ sessions. `click <ref> --button secondary` reaches agent-device, but its native
 macOS backend, which the lease requires, answers `UNSUPPORTED_OPERATION`, so a
 hosted macOS app has no right click or context menu yet.
 
+On macOS 27, `agent-device screenshot` of a hosted app can return an image of the
+window-sharing indicator (66x20 points, 132x40 pixels) instead of the app window.
+macOS adds that small window to the app while something captures the app, and
+agent-device picks it as the front window
+([callstack/agent-device#3961](https://github.com/callstack/agent-device/issues/3961)).
+`snapshot -i` lists it as an `axdialog` named "Window" with a
+`WindowSharingSessionButton` before the real window. Read the UI with `snapshot`
+until agent-device selects the app's main window. Commands that use the front
+window's frame, such as `scroll`, may also target the indicator.
+
 Copy this prompt:
 
 > Run my Swift Package app on janics-mac-mini with `stim macos --remote`. Confirm
