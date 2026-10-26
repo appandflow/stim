@@ -4143,7 +4143,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       const answer = hostedDevices.metroLink(session.id, raw, link);
       if ('error' in answer) return send(socket, { id, error: answer.error });
-      metroLink = link;
+      if (!metroStream) metroLink = link;
       send(socket, { id, result: answer.result });
     }
 
