@@ -574,15 +574,17 @@ finished, stop its named port with stim ports stop web.
 ## Metro for hosted iOS
 
 `stim ios --remote <machine>` keeps Metro here and needs no `stim start --remote`.
-Hosted Debug runs require a supervisor with private gateway support before
-reserving the simulator. `--no-metro-check` refuses; restart a missing or older
-supervisor with `stim stop; stim start`.
-The supervisor binds a private gateway only to this machine's own Tailscale address,
-pins the hosting peer and requires a per-session secret. The host's bridge listens
-only on loopback. Gateway data stays in private workspace state; status and logs
-do not print it. `metro.tunnel` and `metro.publicUrl` are ignored. Non-Debug runs
+Hosted Debug runs require a supervisor and a host stim-server that support
+client-opened Metro links before reserving the simulator. `--no-metro-check`
+refuses; restart a missing or older supervisor with `stim stop; stim start`.
+The supervisor keeps a few authenticated connections open to the host for each
+session. The host's bridge listens only on loopback and pairs each connection
+the simulator makes with one of them, which the supervisor forwards to this
+Metro. The host never connects back to this machine, so a host shared into your
+tailnet, or one your ACLs only let you reach on its stim-server port, works.
+`metro.tunnel` and `metro.publicUrl` are ignored. Non-Debug runs
 skip Metro. A recorded hosted session prevents idle stop; stop or a stopped host
-session closes its gateway. Native device records are pulled by `stim logs` and
+session closes its links. Native device records are pulled by `stim logs` and
 `stim logs --errors` from adaptive, bounded host queries. Followers share a
 throttled collection without blocking app delivery, view or control. Stop limits each log drain
 to 30 seconds with progress on stderr and a no-progress guard. The host

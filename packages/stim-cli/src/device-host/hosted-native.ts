@@ -46,7 +46,7 @@ import {
   type HostConnection,
   type HostedSession,
 } from './hosted-client.ts';
-import { requestHostedMetro, closeHostedMetro, requireHostedMetro } from './metro-gateway.ts';
+import { requestHostedMetro, closeHostedMetro, requireHostedMetro } from './metro-request.ts';
 import { writeHostedNative } from './ios-state.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { cancellableSleep } from '../cancellation.ts';
@@ -314,6 +314,11 @@ async function placeHostedNativeOnce(
     host = await connectHost(host.machine, undefined, true, signal);
     target.host = host;
     requireHostedAppMode(host, platform, mode);
+    if (mode === 'development' && !host.connection.supports('hosted-metro-link'))
+      throw Object.assign(new Error(`${host.machine} runs a stim-server that cannot link Metro.`), {
+        code: 'STIM_HOSTING_REFUSED',
+        remedy: `Update stim-server on ${host.machine}, then retry.`,
+      });
     let session =
       (target.session ? await attach(host, target.session.id, undefined, platform) : null) ??
       (await reserveHostedNative(
@@ -367,10 +372,9 @@ async function placeHostedNativeOnce(
     placement = { ...placement, device };
     await reserved(placement);
     if (mode === 'development') {
-      const gateway = await metro(root, session.id, host.credential);
+      await metro(root, session.id, host.credential);
       await call(host, 'device-host.metro.open', {
         session: session.id,
-        ...gateway,
         ...(platform === 'android' || devClientScheme ? { clientMetroPort: metroPort } : {}),
       }).catch((error: unknown) => {
         if (platform === 'ios' && devClientScheme && (error as { code?: unknown }).code === 'device-busy')

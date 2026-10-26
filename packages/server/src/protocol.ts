@@ -1452,14 +1452,7 @@ export function protocolJsonSchema(): JsonSchema {
           ),
           request(
             'device-host.metro.open',
-            session(
-              {
-                gatewayPort: { type: 'integer', minimum: 1, maximum: 65535 },
-                clientMetroPort: { type: 'integer', minimum: 1, maximum: 65535 },
-                secret: { type: 'string', pattern: '^[a-f0-9]{64}$' },
-              },
-              ['gatewayPort', 'secret'],
-            ),
+            session({ clientMetroPort: { type: 'integer', minimum: 1, maximum: 65535 } }),
           ),
           request('device-host.metro.ports', {
             type: 'object',
@@ -1470,6 +1463,7 @@ export function protocolJsonSchema(): JsonSchema {
             },
           }),
           request('device-host.metro.close', session({})),
+          request('device-host.metro.link', session({})),
           request(
             'device-host.frames.subscribe',
             session({

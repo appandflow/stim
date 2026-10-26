@@ -22,7 +22,7 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createHttpServer, get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
 import { createHash, createHmac } from 'node:crypto';
-import { createServer as createNetServer } from 'node:net';
+import { connect as connectNet, createServer as createNetServer } from 'node:net';
 import { homedir, tmpdir, totalmem } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1237,6 +1237,7 @@ describe('pairing', () => {
           'hosted-android-data',
           'hosted-android-process',
           'hosted-metro-ports',
+          'hosted-metro-link',
           'server-update',
           'build-compat',
           'build-jdk',
@@ -1832,14 +1833,41 @@ describe('hosted device sessions', () => {
         'ready',
       );
       expect(await next.request('stats.get')).toHaveProperty('error.code', 'forbidden');
-      expect(
-        await next.request('device-host.metro.open', { session: id, gatewayPort: 0, secret: 'bad' }),
-      ).toHaveProperty('error.code', 'bad-request');
-      const metro = { session: id, gatewayPort: 65530, secret: 'a'.repeat(64) };
+      expect(await next.request('device-host.metro.open', { session: id, clientMetroPort: 0 })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      const metro = { session: id };
       const opened = await next.request('device-host.metro.open', metro);
       const metroPort = (opened as { result: { port: number } }).result.port;
       expect(metroPort).toBeGreaterThan(0);
       expect(readHostedSessions()[0]?.metroPort).toBe(metroPort);
+
+      const carrier = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
+      expect(await carrier.request('device-host.metro.link', { session: 'other' })).toHaveProperty(
+        'error.code',
+        'unknown-session',
+      );
+      expect(await carrier.request('device-host.metro.link', { session: id })).toHaveProperty('result', {});
+      expect(await carrier.request('device-host.metro.link', { session: id })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      const device = connectNet(metroPort, '127.0.0.1');
+      const answered = new Promise<string>((resolve) => device.once('data', (data) => resolve(data.toString())));
+      device.write('GET /index.bundle HTTP/1.1\r\n\r\n');
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
+      expect(((await carrier.next()) as unknown as { binary: Buffer }).binary.toString()).toBe(
+        'GET /index.bundle HTTP/1.1\r\n\r\n',
+      );
+      expect(await carrier.request('device-host.metro.link', { session: id })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      carrier.socket.send(Buffer.from('HTTP/1.1 200 OK\r\n\r\nbundle'));
+      expect(await answered).toBe('HTTP/1.1 200 OK\r\n\r\nbundle');
+      device.destroy();
+      expect(await carrier.closed).toBe(1000);
 
       const content = Buffer.alloc(40000, 65);
       const digest = createHash('sha256').update(content).digest('hex');
@@ -1901,6 +1929,135 @@ describe('hosted device sessions', () => {
       expect(await reattached.closed).toBe(4401);
       await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('stopped'));
       await expect(fetch(`http://127.0.0.1:${metroPort}/status`)).rejects.toThrow('fetch failed');
+    },
+  );
+
+  /** A client with an approved device-host key, its ready iOS session, and that session's Metro bridge port. */
+  async function linkedSession(port: number) {
+    writeFileSync(
+      join(root, 'device-host-worker.mjs'),
+      `
+      import { writeFileSync } from 'node:fs';
+      import { join } from 'node:path';
+      const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);
+      const input=JSON.parse(Buffer.concat(chunks));
+      const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
+      writeFileSync(join(process.env.STIM_HOME,'hosted-device.json'),JSON.stringify(device));
+      writeFileSync(join(process.env.STIM_HOME,'created-devices.json'),JSON.stringify({version:1,ios:input.mode==='prepare'?[device.udid]:[],android:[],web:[]}));
+      process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
+    `,
+    );
+    const pending = setupClient(['device-host'], 'Client');
+    const client = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
+    const params = { workspace: '/client/app', slot: 'default', platform: 'ios', attempt: 'metro-links' };
+    const reserved = await client.request('device-host.reserve', params);
+    if (!('result' in reserved)) throw new Error(JSON.stringify(reserved));
+    const id = (reserved.result as { id: string }).id;
+    await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('ready'));
+    const opened = await client.request('device-host.metro.open', { session: id });
+    if (!('result' in opened)) throw new Error(JSON.stringify(opened));
+    const link = async () => {
+      const carrier = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
+      expect(await carrier.request('device-host.metro.link', { session: id })).toHaveProperty('result', {});
+      return carrier;
+    };
+    return { client, id, metroPort: (opened.result as { port: number }).port, link };
+  }
+
+  test.skipIf(!fakeTailscale)(
+    'Metro links refuse an older client and another client, hold back a device that stops reading, and report a reset',
+    async () => {
+      const port = await start();
+      const { client, id, metroPort, link } = await linkedSession(port);
+      expect(
+        await client.request('device-host.metro.open', { session: id, gatewayPort: 65530, secret: 'a'.repeat(64) }),
+      ).toMatchObject({
+        error: { code: 'protocol-unsupported', message: expect.stringContaining('Update stim on this machine') },
+      });
+      const other = setupClient(['device-host'], 'Other client');
+      const foreign = await returning(port, other.keyPair, '100.64.0.3', 'device-host');
+      expect(await foreign.request('device-host.metro.link', { session: id })).toHaveProperty(
+        'error.code',
+        'unknown-session',
+      );
+
+      const carrier = await link();
+      const device = connectNet(metroPort, '127.0.0.1');
+      device.pause();
+      let received = 0;
+      device.on('data', (chunk: Buffer) => (received += chunk.length));
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
+      const frame = Buffer.alloc(32 * 1024, 5);
+      const total = 48 * 1024 * 1024;
+      for (let sent = 0; sent < total; sent += frame.length) carrier.socket.send(frame);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(carrier.socket.bufferedAmount).toBeGreaterThan(16 * 1024 * 1024);
+      device.resume();
+      await vi.waitFor(() => expect(received).toBe(total), { timeout: 20_000 });
+      expect(carrier.socket.bufferedAmount).toBe(0);
+      device.resetAndDestroy();
+      expect(await carrier.closed).toBe(4410);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'a clean link close still delivers what a slow device has not read, and a link that stops reading holds the device back',
+    async () => {
+      const port = await start();
+      const { metroPort, link } = await linkedSession(port);
+      const carrier = await link();
+      const device = connectNet(metroPort, '127.0.0.1');
+      let received = 0;
+      device.on('data', (chunk: Buffer) => {
+        received += chunk.length;
+        device.pause();
+        setTimeout(() => device.resume(), 2);
+      });
+      const ended = new Promise<void>((resolve) => device.once('end', () => resolve()));
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
+      const frame = Buffer.alloc(32 * 1024, 6);
+      const total = 4 * 1024 * 1024;
+      for (let sent = 0; sent < total; sent += frame.length) carrier.socket.send(frame);
+      carrier.socket.close(1000);
+      await ended;
+      expect(received).toBe(total);
+
+      const reader = await link();
+      let read = 0;
+      reader.socket.on('message', (data, isBinary) => {
+        if (isBinary) read += data.length;
+      });
+      const uploader = connectNet(metroPort, '127.0.0.1');
+      uploader.on('error', () => {});
+      expect(await reader.next()).toEqual({ event: 'device-host.metro.link.open' });
+      reader.socket.pause?.();
+      const upload = 48 * 1024 * 1024;
+      for (let sent = 0; sent < upload; sent += frame.length) uploader.write(frame);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(uploader.writableLength).toBeGreaterThan(16 * 1024 * 1024);
+      reader.socket.resume?.();
+      await vi.waitFor(() => expect(read).toBe(upload), { timeout: 20_000 });
+      uploader.destroy();
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'stopping a hosted session closes its idle Metro links and the streams they carry',
+    async () => {
+      const port = await start();
+      const { client, id, metroPort, link } = await linkedSession(port);
+      const idle = await link();
+      const carrier = await link();
+      const device = connectNet(metroPort, '127.0.0.1');
+      const deviceClosed = new Promise<void>((resolve) => device.once('close', () => resolve()));
+      device.on('error', () => {});
+      device.write('GET /index.bundle HTTP/1.1\r\n\r\n');
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
+      expect(await carrier.next()).toEqual({ binary: Buffer.from('GET /index.bundle HTTP/1.1\r\n\r\n') });
+      expect(await client.request('device-host.stop', { session: id })).toHaveProperty('result.state', 'stopping');
+      expect(await idle.closed).toBe(1000);
+      expect(await carrier.closed).toBe(1000);
+      await deviceClosed;
     },
   );
 

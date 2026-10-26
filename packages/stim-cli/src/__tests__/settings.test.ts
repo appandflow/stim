@@ -44,7 +44,7 @@ import {
   deviceReclaimIdleMinutesSetting,
   unknownSettingKeys,
 } from '../workspace/settings.ts';
-import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
+import { hostedMetroSettings } from '../device-host/metro-request.ts';
 import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
 import { saveConfig, upsertProject, writeConfigSetting, type Config } from '../workspace/config.ts';
 import { findProjectRoot } from '../workspace/project.ts';

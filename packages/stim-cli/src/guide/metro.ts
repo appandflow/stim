@@ -24,19 +24,19 @@ comes from \`start --remote\`, eas/proxy in \`ios.remote\`, or \`android.remote\
 
 HOSTED IOS METRO
   ios --remote <machine> keeps Metro local and needs no start --remote.
-  The supervisor watches private gateway requests in workspace state, binds
-  only this machine's Tailscale address and accepts only the pinned hosting peer
-  with a per-session secret. The host's bridge is loopback-only. For an Expo
-  dev client it listens on this machine's Metro port, which the dev server
+  The supervisor watches hosted Metro requests in workspace state and keeps a
+  few authenticated connections open to the host for each session. The host
+  pairs one with each connection the device makes to its loopback-only bridge,
+  and the supervisor forwards it to this Metro, so the host never connects back
+  to this machine and a shared or ACL-restricted host works. For an Expo
+  dev client the bridge listens on this machine's Metro port, which the dev server
   writes into the manifest. ios --remote starts Metro on a port free on both
   Macs; a running Metro or a pin on a port the host uses refuses the run before
-  the build. Port and secret
-  stay in 0600 workspace state and never appear in status, JSON or logs.
-  metro.tunnel and metro.publicUrl are ignored. Supervisor restart recreates
-  the recorded gateway; stop or a stopped hosted session closes it. A recorded
+  the build. metro.tunnel and metro.publicUrl are ignored. Supervisor restart
+  reopens the recorded links; stop or a stopped hosted session closes them. A recorded
   hosted session prevents Metro idle stop. Release runs skip the bridge.
-  Hosted Debug runs require the supervisor's private gateway support before
-  reservation. --no-metro-check refuses; restart a missing or older supervisor
+  Hosted Debug runs require a supervisor and a stim-server that support these
+  links before reservation. --no-metro-check refuses; restart a missing or older supervisor
   with stim stop; stim start.
   Native iOS and Android logs are pulled from the host by stim logs, including --errors;
   JavaScript logs still arrive through Metro. Stop pulls native logs before
@@ -98,8 +98,8 @@ BUNDLE WARMUP
   device logs may prove a request, but bundle completion may stay unverified.
 
 HOSTED ANDROID
-  android --remote <machine> keeps Metro here through the private tailnet
-  gateway. The host reverses the client Metro port into its loopback bridge
+  android --remote <machine> keeps Metro here through the same client-opened
+  links as hosted iOS. The host reverses the client Metro port into its loopback bridge
   on the exact owned emulator. Each run and reload restores that reverse;
   no adb command for the host serial runs here. metro.tunnel and metro.publicUrl
   are ignored. See guide lifecycle hosted-android.

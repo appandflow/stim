@@ -132,8 +132,8 @@ Desktop control connection. Stop uses the existing cleanup path; remote
 clients keep their own-session-only `device-host.stop` access.
 
 The host boots its owned simulator headless. Debug keeps Metro on this machine
-and connects it through a private tailnet bridge; no `stim start --remote` is
-needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.
+and carries it over connections this machine opens to the host, so the host
+never needs to reach this machine; no `stim start --remote` is needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.
 `--remote-build` independently selects a compatible worker for a Debug cache
 miss. Named hosting has no local fallback. Stop the slot with `stim stop` before
 moving it between local and hosted devices or between hosts.
@@ -254,7 +254,7 @@ use `--remote auto`, which skips it.
 
 The owned emulator boots headless and is parked on stop within the host's
 `pool.androidParkedMax` limit, or deleted when ineligible. Debug keeps Metro
-here through a private tailnet bridge; `metro.publicUrl`, `metro.tunnel` and
+here over connections this machine opens to the host; `metro.publicUrl`, `metro.tunnel` and
 `androidEmulatorApp` are ignored. Each run and reload restores the host's adb
 reverse, including after an adb server restart. Release variants skip Metro.
 Status reports `android.host` per slot with a profile and API name, keeping the

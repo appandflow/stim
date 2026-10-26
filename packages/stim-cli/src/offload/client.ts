@@ -386,7 +386,10 @@ export class BuildConnection {
   private readonly writeWaiters = new Set<() => void>();
   private progress: ((event: ProgressEvent) => void) | null = null;
   private binary: ((frame: Buffer) => void) | null = null;
+  private event: ((event: Record<string, unknown>) => void) | null = null;
+  private dropped: ((code: number) => void) | null = null;
   private closed: string | null = null;
+  private lastWrite: Promise<void> = Promise.resolve();
   private heard = Date.now();
   private watched = false;
   private ended = false;
@@ -419,6 +422,7 @@ export class BuildConnection {
       }
       if (!isJsonObject(message)) return;
       if (message.event === 'build.progress') return this.progress?.(message as unknown as ProgressEvent);
+      if (typeof message.event === 'string') return this.event?.(message);
       const resolve = typeof message.id === 'number' ? this.pending.get(message.id) : undefined;
       if (resolve) {
         this.pending.delete(message.id as number);
@@ -433,6 +437,7 @@ export class BuildConnection {
       this.pending.clear();
       const dropped = code === CLOSE_ABNORMAL;
       this.progress?.({ job: '', outcome: { ok: false, code: dropped ? 'dropped' : 'closed', message: this.closed } });
+      this.dropped?.(code);
     });
     socket.on('error', () => {});
   }
@@ -546,8 +551,11 @@ export class BuildConnection {
     if (this.closed) return;
     let completed = false;
     let resume: (() => void) | undefined;
+    let written: (() => void) | undefined;
+    this.lastWrite = new Promise((resolve) => (written = resolve));
     this.socket.send(frame, { binary: true }, () => {
       completed = true;
+      written?.();
       resume?.();
     });
     if (completed || this.closed || this.socket.bufferedAmount <= MAX_BUFFERED) return;
@@ -561,12 +569,36 @@ export class BuildConnection {
     });
   }
 
+  /** Resolves once the last binary frame left this process, or at once when the connection has ended. */
+  flushed(): Promise<void> {
+    return this.closed ? Promise.resolve() : this.lastWrite;
+  }
+
+  /** Stops reading frames from the machine until `resume()`, so the machine's sends wait on the network. */
+  pause(): void {
+    this.socket.pause();
+  }
+
+  resume(): void {
+    this.socket.resume();
+  }
+
   onProgress(listener: ((event: ProgressEvent) => void) | null): void {
     this.progress = listener;
   }
 
   onBinary(listener: ((frame: Buffer) => void) | null): void {
     this.binary = listener;
+  }
+
+  /** Server events other than `build.progress`, such as `device-host.metro.link.open`. */
+  onEvent(listener: ((event: Record<string, unknown>) => void) | null): void {
+    this.event = listener;
+  }
+
+  /** Called once with the close code when the machine or the network ends the connection; never after `close()` or `drop()`. */
+  onDropped(listener: ((code: number) => void) | null): void {
+    this.dropped = listener;
   }
 
   get failure(): string | null {
@@ -582,14 +614,19 @@ export class BuildConnection {
     this.watched = true;
   }
 
+  /** Stops treating silence as a dropped connection, as before `watch()`. */
+  unwatch(): void {
+    this.watched = false;
+  }
+
   /** Closes with a close frame, which tells the machine to cancel this connection's jobs. */
-  close(): void {
+  close(code = 1000): void {
     if (this.ended) return;
     this.forget();
     if (this.socket.readyState === WebSocket.CLOSED) return;
     const timer = setTimeout(() => this.socket.terminate(), CLOSE_TIMEOUT_MS);
     this.socket.once('close', () => clearTimeout(timer));
-    this.socket.close(1000);
+    this.socket.close(code);
   }
 
   /** Ends the connection without a close frame, which leaves its jobs on the machine for a new connection. */
@@ -607,6 +644,8 @@ export class BuildConnection {
     this.pending.clear();
     this.progress = null;
     this.binary = null;
+    this.event = null;
+    this.dropped = null;
     clearInterval(this.keepalive);
     this.socket.removeAllListeners('close');
     this.unregisterExitCleanup?.();
