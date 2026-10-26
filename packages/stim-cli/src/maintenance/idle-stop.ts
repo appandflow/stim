@@ -25,7 +25,7 @@ import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { MODE_COMMAND, readRemoteSession } from '../supervisor/state.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../workspace/in-use.ts';
-import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { resolveProjectSettings, settingValueAt } from '../workspace/settings.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
@@ -129,7 +129,7 @@ function agentSessionsActedAt(root: string): number {
   return latest;
 }
 
-function metroRequestAt(root: string, since: number): number | string {
+function metroRequestAt(root: string, since: number, serving: boolean): number | string {
   const file = join(workspaceLogsDir(root), 'metro.ndjson');
   const rotated = rotatedLogPath(file);
   const records = [];
@@ -151,6 +151,7 @@ function metroRequestAt(root: string, since: number): number | string {
   }
   if (!Number.isFinite(latest) && earliest > since && existsSync(rotated))
     return `its rotated Metro log does not reach back ${SETTING}`;
+  if (serving && earliest === Infinity) return 'its dev server runs but its Metro log is missing or empty';
   return latest;
 }
 
@@ -171,9 +172,11 @@ async function keepReasons(
   if (workspaceBuildInProgress(root)) keep.push('a build is in progress');
   if (readRemoteSession(root)) keep.push('it has a remote device session');
   const holder = canonicalPath(root);
-  for (const { lease } of listLeaseFiles())
-    if (lease && !leaseIsExpired(lease, now) && canonicalPath(lease.holder) === holder)
+  for (const { lease, path } of listLeaseFiles()) {
+    if (!lease) keep.push(`the device lease ${path} cannot be read`);
+    else if (!leaseIsExpired(lease, now) && canonicalPath(lease.holder) === holder)
       keep.push(`it holds the ${lease.platform} device lease on ${lease.deviceName ?? lease.id}`);
+  }
   const browser = webFacts(readWebRecord(root));
   if (browser && browser.status !== 'stopped') keep.push(`its owned Chrome is ${browser.status}`);
   for (const device of devices) {
@@ -191,12 +194,21 @@ async function idleStopEvidence(
     idleMs,
     platform = process.platform,
     locked = false,
+    serving = false,
     operation,
-  }: { now: number; idleMs: number; platform?: NodeJS.Platform; locked?: boolean; operation?: StimContext },
+  }: {
+    now: number;
+    idleMs: number;
+    platform?: NodeJS.Platform;
+    locked?: boolean;
+    serving?: boolean;
+    operation?: StimContext;
+  },
 ): Promise<IdleStopEvidence> {
   const keep = await keepReasons(root, devices, { now, platform, locked, operation });
   if (keep.length) return { activity: [], keep };
   const state = readWorkspaceState(root);
+  if (!state && existsSync(workspaceStateFile(root))) return { activity: [], keep: ['its state.json cannot be read'] };
   const build = state?.lastBuild;
   const builtAt =
     Date.parse(String(build?.startedAt ?? '')) + (typeof build?.durationMs === 'number' ? build.durationMs : 0);
@@ -210,7 +222,7 @@ async function idleStopEvidence(
     ]),
   ].filter(({ at }) => Number.isFinite(at));
   if (activity.some(({ at }) => now - at < idleMs)) return { activity, keep };
-  const metro = metroRequestAt(root, now - idleMs);
+  const metro = metroRequestAt(root, now - idleMs, serving);
   if (typeof metro === 'string') return { activity, keep: [metro] };
   if (Number.isFinite(metro)) activity.push({ basis: 'Metro request', at: metro });
   return { activity, keep };
@@ -219,6 +231,7 @@ async function idleStopEvidence(
 interface IdleStopCandidate {
   path: string;
   hours: number;
+  serving: boolean;
   devices: OwnedDeviceActivity[];
 }
 
@@ -238,9 +251,6 @@ async function candidate(
 ): Promise<IdleStopCandidate | { skip: string } | null> {
   const project = loadConfig()?.projects?.[path];
   if (!project) return null;
-  const setting = idleStopHours(path, env);
-  if ('invalid' in setting) return { skip: setting.invalid };
-  if (setting.hours === 0) return null;
   const supervisor = resolveSupervisorTarget({
     state: readWorkspaceState(path)?.supervisor,
     record: project.supervisor,
@@ -249,6 +259,10 @@ async function candidate(
   const slots = projectDeviceSlots(project);
   const ownsIos = slots.some(({ platforms }) => platforms.ios?.owned === true);
   const owns = ownsIos || slots.some(({ platforms }) => platforms.android?.owned === true);
+  if (!owns && (supervisor.status === 'none' || supervisor.status === 'stale')) return null;
+  const setting = idleStopHours(path, env);
+  if ('invalid' in setting) return { skip: setting.invalid };
+  if (setting.hours === 0) return null;
   let booted: OwnedDeviceActivity[] = [];
   if (owns) {
     try {
@@ -265,7 +279,7 @@ async function candidate(
   if (supervisor.status === 'ours' && readWorkspaceState(path)?.supervisor?.mode === MODE_COMMAND)
     return { skip: 'its dev server runs metro.command, whose bundle and HMR requests Stim cannot see' };
   if (supervisor.status !== 'ours' && booted.length === 0) return null;
-  return { path, hours: setting.hours, devices: booted };
+  return { path, hours: setting.hours, serving: supervisor.status === 'ours', devices: booted };
 }
 
 /**
@@ -300,7 +314,13 @@ export async function planIdleStop({
       continue;
     }
     const idleMs = found.hours * HOUR_MS;
-    const evidence = await idleStopEvidence(path, found.devices, { now, idleMs, platform, operation });
+    const evidence = await idleStopEvidence(path, found.devices, {
+      now,
+      idleMs,
+      platform,
+      serving: found.serving,
+      operation,
+    });
     const decision = decideIdleStop(evidence, { idleMs, now });
     if (!decision.stop) {
       plan.skips.push({ target: root, reason: decision.reason, workspace: root });
@@ -349,7 +369,13 @@ export async function stopIdleWorkspace(
     if (!found) return 'nothing of it runs any more';
     if ('skip' in found) return found.skip;
     const idleMs = found.hours * HOUR_MS;
-    const evidence = await idleStopEvidence(path, found.devices, { now, idleMs, locked: true, operation });
+    const evidence = await idleStopEvidence(path, found.devices, {
+      now,
+      idleMs,
+      locked: true,
+      serving: found.serving,
+      operation,
+    });
     const decision = decideIdleStop(evidence, { idleMs, now });
     return decision.stop ? null : decision.reason;
   };

@@ -9,11 +9,17 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { deviceViewersDir, type DeviceActivity } from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { collectOwnedDeviceActivity, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
+import * as ios from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
+import { resolveBudget } from '../budget.ts';
+import { stopIdleWorkspaces } from '../commands/gc/idle-workspaces.ts';
+import type { GcOutput } from '../commands/gc/results.ts';
+import { executeAction } from '../maintenance/act.ts';
+import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -350,5 +356,69 @@ test('an unreadable Metro log keeps the workspace', async () => {
   expect(actions).toEqual([]);
   expect(skips).toEqual([
     expect.objectContaining({ target: root, reason: expect.stringMatching(/Metro log cannot be read/) }),
+  ]);
+});
+
+test('a maintenance pass routes a planned idle stop to the stim stop path', async () => {
+  const { udid } = bootedWorkspace('routed', 7 * HOUR_MS);
+  const shutdown = vi.spyOn(teardown, 'teardownOwnedIosSim').mockResolvedValue({ status: 'torn-down' });
+  vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
+  const { actions } = await plan();
+  const context = { settings: resolveMaintenanceSettings(), budget: resolveBudget().budget, protectedRoot: PROTECTED };
+
+  const outcomes = await Promise.all(actions.map((action) => executeAction(action, context)));
+
+  expect(outcomes).toEqual([expect.objectContaining({ status: 'done' })]);
+  expect(shutdown.mock.calls).toEqual([[udid, expect.not.objectContaining({ del: true })]]);
+});
+
+test('a failed idle stop in gc --delete is counted and recorded, and gc goes on', async () => {
+  const { root } = bootedWorkspace('failing', 7 * HOUR_MS);
+  vi.spyOn(teardown, 'teardownOwnedIosSim').mockRejectedValue(new Error('simctl refused'));
+  vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
+  const record = vi.fn<GcOutput['record']>();
+  const output = { log: () => {}, error: () => {}, record, fail: () => {} };
+
+  expect(await stopIdleWorkspaces(output)).toBe(1);
+  expect(record).toHaveBeenCalledWith('devServer', 'failed', root, expect.anything());
+});
+
+test.each<[string, (root: string) => void]>([
+  [
+    'an unreadable state.json',
+    (root) => {
+      const session = join(workspaceAgentDeviceDir(root), 'sessions', 'cwd_old_default');
+      mkdirSync(session, { recursive: true });
+      writeFileSync(join(session, 'events.ndjson'), '{}\n');
+      const old = new Date(Date.now() - 7 * HOUR_MS);
+      utimesSync(join(session, 'events.ndjson'), old, old);
+      writeFileSync(join(workspaceDir(root), 'state.json'), '{ not json');
+    },
+  ],
+  [
+    'an unreadable device lease file',
+    () => {
+      mkdirSync(dirname(deviceLeasePath('ios', 'PHONE-9')), { recursive: true });
+      writeFileSync(deviceLeasePath('ios', 'PHONE-9'), '{ not json');
+    },
+  ],
+])('%s keeps the workspace', async (_, act) => {
+  const { root } = bootedWorkspace('unknown', 7 * HOUR_MS);
+  act(root);
+
+  const { actions, skips } = await plan();
+
+  expect(actions).toEqual([]);
+  expect(skips).toEqual([expect.objectContaining({ target: root })]);
+});
+
+test('a running dev server with no Metro log keeps the workspace', async () => {
+  const root = serving('silent', 8100);
+
+  const { actions, skips } = await plan();
+
+  expect(actions).toEqual([]);
+  expect(skips).toEqual([
+    expect.objectContaining({ target: root, reason: expect.stringMatching(/Metro log is missing/) }),
   ]);
 });

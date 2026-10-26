@@ -1245,7 +1245,7 @@ scope, so it needs no --scope. Run it from the workspace:
 
 \`stim status --json\` then reports hidden: true on that environment, and
 clients that read it list the workspace under Hidden. The next start, ios,
-android, web, macos, reload or worktree warm in the workspace clears it, so
+android, web, macos, reload, logs or worktree warm in the workspace clears it, so
 a workspace in use is never hidden. \`worktree remove\` drops it with the
 workspace.
 

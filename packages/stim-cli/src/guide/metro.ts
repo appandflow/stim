@@ -241,8 +241,9 @@ WHAT THE SUPERVISOR IS
   own stops show only in the log).
     requested      a Stim command stopped it and says which: stim stop,
                    stim worktree remove, stim gc --delete, stim start
-                   --reset-cache, or budget reclaim (with the workspace whose
-                   ios, android or start run reclaimed it)
+                   --reset-cache, budget reclaim (with the workspace whose
+                   ios, android or start run reclaimed it), or automatic
+                   maintenance with its idle reason (guide cleanup, IDLE STOP)
     signal         a SIGTERM or SIGINT with no Stim stop request recorded,
                    so it likely came from outside Stim (level warn)
     server-exited  the dev server exited on its own (level error). Expo CLI

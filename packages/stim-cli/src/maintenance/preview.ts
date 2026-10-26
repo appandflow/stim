@@ -139,7 +139,8 @@ export async function plannedMaintenance(
           (entry) =>
             entry.kind === action.kind &&
             entry.target === action.target &&
-            (entry.level === action.level || action.kind === 'would-delete-devices'),
+            (entry.level === action.level || action.kind === 'would-delete-devices') &&
+            (action.check !== 'idle' || entry.check === 'idle'),
         )
       )
         result.actions.push(action);

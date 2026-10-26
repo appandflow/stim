@@ -14,7 +14,18 @@ export async function stopIdleWorkspaces(output: GcOutput, operation?: StimConte
     return operation ? cachedDeviceActivityAsync(now, env, operation.signal, operation) : cachedDeviceActivity(now);
   };
   const protectedRoot = triggeringRoot(operation);
-  const plan = await planIdleStop({ protectedRoot, now: Date.now(), env, devices: devices(), operation });
+  let plan;
+  try {
+    plan = await planIdleStop({ protectedRoot, now: Date.now(), env, devices: devices(), operation });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
+    output.log(
+      chalk.red(`Could not plan idle workspace stops: ${error instanceof Error ? error.message : String(error)}`),
+    );
+    return 1;
+  }
   let failures = 0;
   for (const action of plan.actions) {
     operation?.signal.throwIfAborted();

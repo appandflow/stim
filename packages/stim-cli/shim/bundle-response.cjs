@@ -12,7 +12,7 @@ const observedServers = new WeakSet();
 // Metro's HmrServer reports no reporter event when it pushes a change: it sends `update-start` with
 // `isInitialUpdate: false` over the `/hot` websocket, and `isInitialUpdate: true` when a client registers.
 // https://github.com/facebook/metro/blob/main/packages/metro/src/HmrServer.js (`_handleFileChange`)
-const HMR_UPDATE = '"type":"update-start","body":{"isInitialUpdate":false}';
+const HMR_UPDATE = ['"type":"update-start"', '"isInitialUpdate":false'];
 const HMR_UPDATE_INTERVAL_MS = 60_000;
 const hmrServers = new WeakSet();
 
@@ -102,7 +102,7 @@ function observeHmrUpdates(server, write) {
       if (
         now - recordedAt >= HMR_UPDATE_INTERVAL_MS &&
         (typeof chunk === 'string' || Buffer.isBuffer(chunk)) &&
-        chunk.includes(HMR_UPDATE)
+        HMR_UPDATE.every((part) => chunk.includes(part))
       ) {
         recordedAt = now;
         try {
