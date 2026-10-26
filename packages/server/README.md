@@ -525,12 +525,15 @@ addresses it listens on as `lan: { addresses, port }`.
 
 A local network connection is plain WebSocket on the server's own port. Every
 connection runs the Noise handshake before any request, so it needs no TLS and
-the address never identifies a client. Before a client authenticates, the
-listener holds at most 64 connections, 16 from one address; it closes a
+the address never identifies a client. Before a client authenticates, each
+network listener holds at most 64 connections, 16 from one address; it closes a
 connection that sends no request within 10 seconds or does not finish the
 handshake within 5, and turns an address away for a minute after 5 failed
-handshakes. `/health` tells a peer only the version, and `/setup/<journal>`
-serves only setup progress.
+handshakes or 60 first contacts naming a pairing token or setup ticket it does
+not hold. `/health` tells a peer only the version, and `/setup/<journal>`
+serves only setup progress, never a secret. Prefer addresses to interface names
+on a machine that moves between networks: an interface name follows it onto
+any private network it joins.
 
 When `server.lanAddresses` is set, `stim-server setup` waits up to 15 seconds for the local network
 listener, and skips the tailnet route only when Tailscale is not running. It prints its endpoints and this server's key fingerprint, and warns when

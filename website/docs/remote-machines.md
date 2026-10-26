@@ -836,9 +836,12 @@ On the worker, first choose where stim-server listens. `server.lanAddresses`
 takes network interface names, such as `en0`, or private IPv4 addresses. It is
 empty by default, which listens on no local network address, and refuses
 `0.0.0.0`, loopback, public and IPv6 addresses. A running server applies a
-change within a few seconds:
+change within a few seconds. An interface name follows the interface onto any
+private network it joins, such as a coffee shop's, so on a laptop or any machine
+that moves between networks, name its address instead; use an interface name
+only on a worker that stays on one network:
 
-<StimTabs code={`stim settings set server.lanAddresses '["en0"]'`} />
+<StimTabs code={`stim settings set server.lanAddresses '["10.0.0.92"]'`} />
 
 On this machine, add the worker and ask for access:
 
@@ -865,6 +868,14 @@ address can be taken over. The setup ticket already keeps a machine without it
 from completing the handshake, and the fingerprint check also catches a ticket
 that reached the wrong machine. When the fingerprints differ, do not confirm;
 check the address in `remote.machines`.
+
+The setup command doctor prints carries the ticket in `STIM_SETUP_TICKET`, and
+the ticket is a credential: once setup stores it, the first machine to spend it
+gets the approval. On a tailnet that machine also had to be in your tailnet; on
+a local network it only needs the ticket and a route to the worker. Copy the
+command only to the worker, and check the requesting machine's name and address
+in setup's approval line or in `stim-server devices`. The ticket also lands in
+the worker's shell history; it stops working when it expires, within two hours.
 
 On a Mac with the macOS firewall on, setup warns that macOS asks whether the
 stim-server's `node` may accept incoming connections. Choose **Allow**, or allow
@@ -1027,11 +1038,15 @@ neither is build output the fingerprint ignores, such as `ios/Pods` or
 
 A worker on the local network listens only on the private addresses
 `server.lanAddresses` names. Before a client authenticates, it answers only the
-handshake, its version on `/health`, and setup journals named by a ticket. It
-holds at most 64 unauthenticated connections, 16 from one address, closes one
-that sends no request within 10 seconds or does not finish the handshake within
-5, and turns an address away for a minute after 5 failed handshakes. An address
-never authenticates anyone or names a client's records.
+handshake, its version on `/health`, and setup journals named by a ticket. A
+setup journal, at `/setup/<journal>`, shows setup's progress, such as its steps,
+endpoints and grant ids, but never a ticket or secret, and its name derives from
+the ticket, so a peer cannot guess it. Each listening address holds at most 64
+unauthenticated connections, 16 from one address, closes one that sends no
+request within 10 seconds or does not finish the handshake within 5, and turns
+an address away for a minute after 5 failed handshakes or 60 first contacts
+naming a ticket it does not hold. An address never authenticates anyone or names
+a client's records.
 
 Build approval permits the client's project code, including config plugins,
 CocoaPods hooks, Xcode script phases and Gradle plugins, to run as the server

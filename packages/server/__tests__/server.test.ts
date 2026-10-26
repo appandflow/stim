@@ -439,6 +439,7 @@ async function start(
     authTimeoutMs?: number;
     maxAuthFailures?: number;
     pendingConnections?: ServerOptions['pendingConnections'];
+    maxUnknownSecrets?: number;
     headersTimeoutMs?: number;
     env?: Record<string, string>;
     logLimits?: ServerOptions['logLimits'];
@@ -506,6 +507,7 @@ async function start(
     authTimeoutMs: overrides.authTimeoutMs,
     maxAuthFailures: overrides.maxAuthFailures,
     pendingConnections: overrides.pendingConnections,
+    maxUnknownSecrets: overrides.maxUnknownSecrets,
     headersTimeoutMs: overrides.headersTimeoutMs,
     logLimits: overrides.logLimits,
     commandLimits: overrides.commandLimits,
@@ -3457,6 +3459,18 @@ describe('unauthenticated connections', () => {
     ]);
   });
 
+  it('turns away an address that names unknown setup tickets far faster than any requester polls', async () => {
+    const port = await start({ maxUnknownSecrets: 3 });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await expect(connect(port, '100.64.0.2', { secret: newSecret() })).rejects.toMatchObject({
+        code: 'unknown-secret',
+      });
+    }
+    await expect(openPlain(port, '100.64.0.2')).rejects.toThrow('HTTP 429');
+    const otherPeer = await openPlain(port, '100.64.0.3');
+    expect(otherPeer.socket.readyState).toBe(WebSocket.OPEN);
+  });
+
   it('refuses a web page before it can spend the failed-attempt budget of this machine', async () => {
     const port = await start({ authTimeoutMs: 100, maxAuthFailures: 2 });
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -3510,6 +3524,33 @@ describe.skipIf(!lanIp)('the local network listener', () => {
     const over = await raw(port);
     await over.closed;
     phone.socket.close();
+  });
+
+  const second = Object.values(networkInterfaces())
+    .flat()
+    .find((info) => info?.family === 'IPv4' && !info.internal && info.address !== lanIp)?.address;
+
+  it('keeps a flood on one network address from starving connections to another', async ({ skip }) => {
+    if (!second) return skip('this machine has one private network address');
+    const other = second;
+    const both: Transport = {
+      id: 'both',
+      traits: { privateNetwork: false, tls: 'none', peerIdentity: false },
+      bindAddresses: () => [host, other],
+    };
+    const port = await start({ transports: [both], pendingConnections: { max: 2, perPeer: 2 } });
+    await raw(port);
+    await raw(port);
+    const refused = await raw(port);
+    await refused.closed;
+    const elsewhere = await new Promise<{ socket: Socket; closed: Promise<void> }>((resolve, reject) => {
+      const socket = connectNet(port, other);
+      sockets.push(socket);
+      const closed = once(socket, 'close').then(() => undefined);
+      socket.once('connect', () => resolve({ socket, closed }));
+      socket.once('error', reject);
+    });
+    expect(await stillOpen(elsewhere.closed)).toBe(true);
   });
 
   it('closes a connection that sends no request in time', async () => {

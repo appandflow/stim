@@ -275,8 +275,10 @@ export interface ServerOptions {
   authTimeoutMs?: number;
   maxAuthFailures?: number;
   failureWindowMs?: number;
-  /** Unauthenticated connections to a network address the server holds at once, overall and per source address. */
+  /** Unauthenticated connections each network listener holds at once, overall and per source address. */
   pendingConnections?: { max: number; perPeer: number };
+  /** First contacts naming an unknown secret that one address may make per failure window. */
+  maxUnknownSecrets?: number;
   /** How long a connection to a network address has to send its request headers. */
   headersTimeoutMs?: number;
   requestLog?: RequestLog;
@@ -939,6 +941,8 @@ export function upgradeFromWebPage(headers: IncomingHttpHeaders, via: Arrival): 
 
 const MAX_PENDING_CONNECTIONS = 64;
 const MAX_PENDING_PER_PEER = 16;
+/** First contacts naming a secret this server does not hold, per address and minute, before it turns the address away. */
+const MAX_UNKNOWN_SECRETS = 60;
 const HEADERS_TIMEOUT_MS = 10_000;
 
 /** How many peers a failure limiter remembers; past it, the peer seen longest ago is forgotten first. */
@@ -975,9 +979,9 @@ class FailureLimiter {
 }
 
 /**
- * Connections to a network address that have not authenticated yet, bounded overall and per source address, so a peer
- * on the local network cannot hold the server's sockets open without a key. Loopback connections, which include every
- * `tailscale serve` peer, are not counted.
+ * Connections to one network listener that have not authenticated yet, bounded overall and per source address, so a
+ * peer cannot hold the server's sockets open without a key, and a flood on one listener leaves the others alone.
+ * Loopback connections, which include every `tailscale serve` peer, are not counted.
  */
 class PendingConnections {
   private readonly peers = new Map<Socket, string>();
@@ -1188,10 +1192,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const requestLog = options.requestLog ?? createRequestLog();
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
-  const unauthenticated = new PendingConnections(
-    options.pendingConnections?.max ?? MAX_PENDING_CONNECTIONS,
-    options.pendingConnections?.perPeer ?? MAX_PENDING_PER_PEER,
+  const unknownSecrets = new FailureLimiter(
+    options.maxUnknownSecrets ?? MAX_UNKNOWN_SECRETS,
+    options.failureWindowMs ?? 60_000,
   );
+  const pendingPools = new WeakMap<Socket, PendingConnections>();
   const feeds = new FeedPool(options.stimCli, options.env);
   const statusFeed = new StatusFeed({
     worker: join(dirname(options.stimCli), 'status-worker.mjs'),
@@ -4485,7 +4490,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
-    if (limiter.blocked(peer ?? 'local')) {
+    if (limiter.blocked(peer ?? 'local') || unknownSecrets.blocked(peer ?? 'local')) {
       socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
@@ -4517,10 +4522,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const limitKey = peer ?? 'local';
     /**
      * `unknown-secret` is not a failure: a requester polls with its setup ticket until `stim-server setup` stores it,
-     * and a 16-byte lookup reveals nothing without the PSK.
+     * and a 16-byte lookup reveals nothing without the PSK. It has its own, far higher, limit per address.
      */
     const refuse = (code: string) => {
-      if (code !== 'unknown-secret') limiter.record(limitKey);
+      (code === 'unknown-secret' ? unknownSecrets : limiter).record(limitKey);
       if (ws.readyState === ws.OPEN) ws.close(CLOSE_REFUSED, code);
     };
     try {
@@ -4537,7 +4542,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         timeoutMs: authTimeoutMs,
       });
     } catch (error) {
-      if (!(error instanceof HandshakeRefusal && error.code === 'unknown-secret')) limiter.record(limitKey);
+      (error instanceof HandshakeRefusal && error.code === 'unknown-secret' ? unknownSecrets : limiter).record(
+        limitKey,
+      );
       return;
     }
     const publicKey = accepted.clientKey.toString('base64url');
@@ -4560,7 +4567,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
     }
     if (ws.readyState !== ws.OPEN) return;
-    unauthenticated.settle(request.socket);
+    pendingPools.get(request.socket)?.settle(request.socket);
     const host = records['device-host'];
     if (host) {
       const node = peer ? await peerNode(request, peer) : null;
@@ -4683,6 +4690,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           connectionsCheckingInterval: Math.min(1000, headersTimeout),
         }
       : {};
+    const pending = network
+      ? new PendingConnections(
+          options.pendingConnections?.max ?? MAX_PENDING_CONNECTIONS,
+          options.pendingConnections?.perPeer ?? MAX_PENDING_PER_PEER,
+        )
+      : null;
     const server = createServer(limits, (request, response) => {
       if (options.loopbackOnly && peerAddress(request) !== null) {
         response.writeHead(403, { 'content-type': 'text/plain' }).end('This stim-server serves this machine only.\n');
@@ -4738,8 +4751,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     server.on('upgrade', upgrade);
     const sockets = new Set<Socket>();
     server.on('connection', (socket) => {
-      if (network) {
-        if (!unauthenticated.admit(socket)) return void socket.destroy();
+      if (pending) {
+        if (!pending.admit(socket)) return void socket.destroy();
+        pendingPools.set(socket, pending);
         socket.setTimeout(headersTimeout, () => socket.destroy());
       }
       sockets.add(socket);

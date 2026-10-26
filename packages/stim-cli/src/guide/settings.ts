@@ -813,9 +813,12 @@ stim-server listens with the machine setting \`server.lanAddresses\`, a list of
 network interface names or private IPv4 addresses. It defaults to [], which
 listens on no local network address; wildcard, loopback, public and IPv6
 addresses are refused, and the running server applies a change within seconds.
-Then the person runs the setup command \`stim doctor --fix\` prints here:
+An interface name follows the interface onto whatever private network it
+joins, so name the address on a machine that moves between networks, and an
+interface only on a worker that stays put. Then the person runs the setup
+command \`stim doctor --fix\` prints here:
 
-  stim settings set server.lanAddresses '["en0"]'           # on the worker
+  stim settings set server.lanAddresses '["10.0.0.92"]'     # on the worker
   stim settings set remote.machines '["local:10.0.0.92"]'   # on this machine
   stim doctor --fix
 
@@ -825,7 +828,11 @@ vouches for the worker's key, so \`stim-server setup\` prints the worker's serve
 key fingerprint and \`stim doctor --fix\`, run by a person in a terminal, shows
 the fingerprint the worker answered with and pins the key only after they
 confirm it matches. Until then the entry reports key-unconfirmed and is not
-used. Agents never answer that question. Offloaded builds and Release runs on
+used. Agents never answer that question. The printed setup command carries the
+ticket, which is a credential: whoever spends it first, after setup stores it,
+gets the approval, and on a local network that takes only the ticket and a
+route to the worker, not tailnet membership. Agents show it only to the user.
+Offloaded builds and Release runs on
 hosted devices work there; hosted Debug runs and agent control of hosted apps
 need a tailnet machine, so automatic placement skips a local: machine for them.
 \`stim-server pair\` puts \`ws://<address>:<port>\` in the phone pairing code
