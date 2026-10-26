@@ -167,8 +167,9 @@ included; a pass that a dev server supervisor or `stim status --watch` starts on
 its timer can stop its own workspace.
 
 A dev server started through `metro.command` is always kept, because Stim sees
-none of its bundle or HMR requests, and so is one an older Stim started, until
-`stim stop` and `stim start` restart it. A Metro log that cannot be read, or that
+none of its bundle or HMR requests. So is an Expo project before SDK 54, which
+cannot load Stim's Metro config adapter, and a dev server an older Stim started,
+until `stim stop` and `stim start` restart it. A Metro log that cannot be read, or that
 rotated within the window, and agent-device sessions, a `state.json` or a
 stim-server viewer record that cannot be read or verified keep the workspace too. A home redirected with
 `STIM_HOME` never stops idle workspaces, because simulators and emulators are

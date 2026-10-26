@@ -77,8 +77,10 @@ with the reason, and status shows the dev server as stopped by automatic
 maintenance. The next start, ios or android starts it
 again. An owned emulator the activity check missed keeps the workspace while
 adb lists it, and so does any emulator adb lists without an AVD name, such as
-a stale offline entry that adb kill-server clears. A dev server started by an older Stim, which did not record HMR
-updates, is kept until stim stop and stim start restart it. Unlike the other actions, it can stop the workspace whose dev server
+a stale offline entry that adb kill-server clears. A dev server whose requests Stim does not record is
+kept: an Expo project before SDK 54, which cannot load Stim's Metro config
+adapter, or a dev server an older Stim started, until stim stop and stim start
+restart it. Unlike the other actions, it can stop the workspace whose dev server
 supervisor or status --watch timer started the pass; a pass a command starts,
 gc --delete included, never stops the command's own workspace.
 A dev server run through metro.command is kept: Stim sees none of its

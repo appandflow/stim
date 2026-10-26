@@ -350,7 +350,7 @@ async function candidate(
     return { skip: 'its dev server runs metro.command, whose bundle and HMR requests Stim cannot see' };
   if (supervisor.status === 'ours' && readWorkspaceState(path)?.supervisor?.hmrUpdates !== true)
     return {
-      skip: 'its dev server started before Stim recorded HMR updates; stim stop, then stim start, to enable idle stop',
+      skip: 'its dev server does not report HMR updates to Stim: an Expo SDK before 54, or a server an older Stim started, which stim stop and stim start restart',
     };
   const avdNames = slots.flatMap(({ platforms }) =>
     platforms.android?.owned && platforms.android.avdName ? [platforms.android.avdName] : [],

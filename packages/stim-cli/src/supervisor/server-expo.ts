@@ -342,7 +342,7 @@ export async function startExpoServer({
   });
 
   let tunnelUrlSeen = false;
-  return superviseChildServer({
+  const handle = superviseChildServer({
     mode: 'expo-child',
     child,
     log,
@@ -358,4 +358,6 @@ export async function startExpoServer({
       }
     },
   });
+  handle.observesRequests = storeEnv !== null;
+  return handle;
 }

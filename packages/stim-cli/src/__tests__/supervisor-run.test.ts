@@ -384,10 +384,25 @@ describe('runSupervisor', () => {
     expect(seenAtStart.pid).toBe(process.pid);
     expect(startState.supervisor.port).toBe(8091);
     expect(startState.supervisor.mode).toBe(MODE_BARE);
-    expect(startState.supervisor.hmrUpdates).toBe(true);
     expect(startConfig.pid).toBe(process.pid);
     expect(startConfig.port).toBe(8091);
     expect(typeof startState.supervisor.startedAt).toBe('string');
+  });
+
+  test.each([
+    [true, true],
+    [false, undefined],
+  ])('a server that loads the request shim (%s) is recorded as reporting HMR updates', async (observes, recorded) => {
+    const server = fakeServer({ observesRequests: observes });
+    await runSupervisor({
+      root,
+      port: 8091,
+      isExpo: () => false,
+      attachSignals: false,
+      onExit: () => {},
+      startBare: async () => server.handle,
+    });
+    expect(readWorkspaceState(root)?.supervisor?.hmrUpdates).toBe(recorded);
   });
 
   test('a new supervisor clears a stale Expo tunnel before it starts the server', async () => {

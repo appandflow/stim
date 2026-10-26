@@ -159,7 +159,7 @@ test('a running dev server whose only recent records are its own output is stopp
       reason: expect.stringMatching(/^its dev server supervisor cannot be verified/),
     }),
     expect.objectContaining({ target: command, reason: expect.stringMatching(/metro\.command/) }),
-    expect.objectContaining({ target: older, reason: expect.stringMatching(/before Stim recorded HMR updates/) }),
+    expect.objectContaining({ target: older, reason: expect.stringMatching(/does not report HMR updates to Stim/) }),
   ]);
 });
 
