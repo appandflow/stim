@@ -532,9 +532,8 @@ handshake within 5, and turns an address away for a minute after 5 failed
 handshakes. `/health` tells a peer only the version, and `/setup/<journal>`
 serves only setup progress.
 
-On a machine without Tailscale and with `server.lanAddresses` set, `stim-server
-setup` skips the tailnet route, waits up to 15 seconds for the local network
-listener, prints its endpoints and this server's key fingerprint, and warns when
+When `server.lanAddresses` is set, `stim-server setup` waits up to 15 seconds for the local network
+listener, and skips the tailnet route only when Tailscale is not running. It prints its endpoints and this server's key fingerprint, and warns when
 the macOS application firewall is on, since other machines cannot connect until
 a person allows stim-server's `node` there. Setup never changes the firewall.
 The requesting machine pins the worker's key only after a person confirms that

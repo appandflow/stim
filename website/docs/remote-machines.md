@@ -847,10 +847,11 @@ code={`stim settings set remote.machines '["local:10.0.0.92"]'
 stim doctor --fix`}
 />
 
-On the worker, run the `stim-server setup` command doctor printed. Without
-Tailscale, setup skips the tailnet route. It checks that stim-server listens on
-the local network, prints the endpoints and the worker's **server key
-fingerprint**, and waits for this machine.
+On the worker, run the `stim-server setup` command doctor printed; on a Linux or
+Windows worker, which takes builds only, leave out `--device-host`. Setup checks
+that stim-server listens on the local network, and skips the tailnet route when
+Tailscale is not running there. It prints the endpoints and the worker's
+**server key fingerprint**, and waits for this machine.
 
 Then run `stim doctor --fix` again on this machine, **in a terminal**. It shows
 the fingerprint the worker answered with and asks whether it matches the one

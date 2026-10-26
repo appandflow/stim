@@ -480,10 +480,30 @@ test('a local network setup whose server listens on no local address refuses bef
   const f = fixture({ preflight: async () => ({ dnsName: null, lan: true }) });
   expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(1);
   expect(f.stored).toEqual([]);
-  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'route')).toMatchObject({
+  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'lan')).toMatchObject({
     state: 'failed',
     detail: expect.stringContaining('server.lanAddresses'),
   });
+});
+
+test('a worker with Tailscale and a local network listener checks both, so tailnet clients keep their route', async () => {
+  const reused = fixture().deps.health;
+  const f = fixture({
+    preflight: async () => ({ dnsName: 'worker.ts.net', lan: true }),
+    health: async (port) => {
+      const found = await reused(port);
+      return found && { ...found, lan: { addresses: ['10.0.0.92'], port: 7787 } };
+    },
+  });
+  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
+  expect(JSON.parse(f.stdout.join('\n'))).toMatchObject({
+    route: { state: 'routed', dnsName: 'worker.ts.net', port: 7447 },
+    lan: ['ws://10.0.0.92:7787'],
+  });
+  expect(readSetupJournal(options.journal)?.steps.filter((s) => s.id === 'lan' || s.id === 'route')).toEqual([
+    expect.objectContaining({ id: 'lan', state: 'ok' }),
+    expect.objectContaining({ id: 'route', state: 'ok' }),
+  ]);
 });
 
 test('journals precede server work, include every completed step, and JSON stdout holds only the final payload', async () => {

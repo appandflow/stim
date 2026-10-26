@@ -21,7 +21,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createHttpServer, get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { connect as connectNet, createServer as createNetServer, type Socket } from 'node:net';
 import { homedir, networkInterfaces, tmpdir, totalmem } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
@@ -95,6 +95,7 @@ import {
 } from './noise-client.ts';
 import { watchTailscale, type TailscaleState } from '@stim-cli/transport-tailscale';
 import { localTransport } from '@stim-cli/transport-local';
+import type { Transport } from '@stim-cli/transport';
 import { createRequestLog } from '../src/request-log.ts';
 import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceName, workspaceStateDir } from '@stim-cli/core';
@@ -3517,6 +3518,24 @@ describe.skipIf(!lanIp)('the local network listener', () => {
     await expect(silent.closed).resolves.toBeUndefined();
   });
 
+  it('turns agent control requests away before any transport identifies the peer', async () => {
+    let identified = 0;
+    const counting: Transport = {
+      id: 'counting',
+      traits: { privateNetwork: true, tls: 'end-to-end', peerIdentity: true },
+      identify: async () => {
+        identified++;
+        return null;
+      },
+    };
+    const port = await start({ transports: [...lan(), counting] });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const response = await fetch(`http://${host}:${port}/device-host/agent/${randomUUID()}/status`);
+      expect(response.status).toBe(404);
+    }
+    expect(identified).toBe(0);
+  });
+
   it('refuses a key it has no record for, and tells a peer only its version', async () => {
     const port = await start({ transports: lan() });
     const stranger = await noiseConnect(`ws://${host}:${port}`);
@@ -3573,6 +3592,12 @@ describe('upgradeFromWebPage', () => {
       true,
     ],
     ['the CLI on a local network address', 'direct', { host: '10.0.0.92:7787' }, false],
+    [
+      'a phone straight to a tailnet address',
+      'direct',
+      { host: '100.64.0.1:7787', origin: 'http://100.64.0.1:7787' },
+      false,
+    ],
     [
       'a phone on a local network address',
       'direct',

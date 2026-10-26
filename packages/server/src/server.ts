@@ -4718,6 +4718,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return;
       }
       const agent = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/.exec(request.url ?? '');
+      if (agent && arrival(request) === 'direct') {
+        response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
+        return;
+      }
       if (agent && startup.state !== 'ready') {
         response.writeHead(503, { 'content-type': 'text/plain' }).end('stim-server is not ready.\n');
         return;

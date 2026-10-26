@@ -102,7 +102,7 @@ export async function hostingMachines(status?: () => unknown, signal?: AbortSign
   } catch {
     candidates = configured;
   }
-  if (!candidates.length) return candidates;
+  if (!candidates.some((machine) => parseMachine(machine)?.transport === 'tailscale')) return candidates;
   const current = await (status ? status() : tailscaleStatusAsync(signal));
   signal?.throwIfAborted();
   return candidates.filter((machine) => !cannotHost(current, machine));

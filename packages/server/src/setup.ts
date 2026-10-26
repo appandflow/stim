@@ -239,8 +239,8 @@ export interface SetupDeps {
   confirm(question: string, timeoutMs: number): Promise<boolean>;
   permissionWait(ms: number): Promise<boolean>;
   /**
-   * The tailnet name, null without Tailscale, and whether `server.lanAddresses` is set: a local network worker, whose
-   * setup checks that listener instead of a tailnet route.
+   * The tailnet name, null without Tailscale, and whether `server.lanAddresses` is set. Setup checks the local network
+   * listener when it is, and the tailnet route while Tailscale runs.
    */
   preflight(options: SetupOptions): Promise<{ dnsName: string | null; lan?: boolean }>;
   /** This server's key fingerprint. */
@@ -970,20 +970,22 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       );
     });
     if (preflight.lan) {
-      step('route', 'running', 'Local network', undefined, undefined, {
+      step('lan', 'running', 'Local network', undefined, undefined, {
         running: 'Checking the local network listener',
       });
       const lan = await localNetwork(deps, opts, desktop, wait);
-      output.route.state = 'local-network';
       output.lan = lan.endpoints;
-      step('route', 'ok', 'Local network', lan.endpoints.join(', '), undefined, {
-        text: `local network ${lan.endpoints.join(', ')} (no Tailscale)`,
+      step('lan', 'ok', 'Local network', lan.endpoints.join(', '), undefined, {
+        text: `local network ${lan.endpoints.join(', ')}`,
       });
       for (const warning of lan.warnings) {
         output.warnings.push(warning);
         printer.clear();
         log(warning);
       }
+    }
+    if (preflight.dnsName === null) {
+      output.route.state = 'local-network';
     } else {
       const previous = desktop ? null : await wait(deps.installed(opts.label));
       step('route', 'running', 'Tailnet route', undefined, undefined, { running: 'Checking the tailnet route' });
@@ -1099,7 +1101,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         deps.storeSecret(opts.ticket, approved, opts.expiresAt, deps.now());
         secretStored = true;
         const waiting = preflight.lan
-          ? `Waiting for the requesting machine to reconnect. Run \`stim doctor --fix\` in a terminal on that machine: it shows this machine's server key fingerprint, ${output.fingerprint}, and pins the key only after you confirm it matches.`
+          ? `Waiting for the requesting machine to reconnect. Run \`stim doctor --fix\` in a terminal on that machine: when it names this one by its local network address, it shows this machine's server key fingerprint, ${output.fingerprint}, and pins the key only after you confirm it matches.`
           : deps.fromDoctor
             ? 'Waiting for the requesting machine to reconnect. Run `stim doctor` on that machine to finish.'
             : 'Waiting for the requesting machine to connect. Stim Desktop sends this automatically.';
