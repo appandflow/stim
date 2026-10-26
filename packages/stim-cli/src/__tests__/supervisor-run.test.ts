@@ -384,6 +384,7 @@ describe('runSupervisor', () => {
     expect(seenAtStart.pid).toBe(process.pid);
     expect(startState.supervisor.port).toBe(8091);
     expect(startState.supervisor.mode).toBe(MODE_BARE);
+    expect(startState.supervisor.hmrUpdates).toBe(true);
     expect(startConfig.pid).toBe(process.pid);
     expect(startConfig.port).toBe(8091);
     expect(typeof startState.supervisor.startedAt).toBe('string');
@@ -463,6 +464,7 @@ describe('runSupervisor', () => {
     expect(received).toEqual(command);
     expect(receivedSettings).toMatchObject({ metro: { command } });
     expect(readWorkspaceState(root)?.supervisor?.mode).toBe(MODE_COMMAND);
+    expect(readWorkspaceState(root)?.supervisor?.hmrUpdates).toBeUndefined();
   });
 
   test('records the Expo child with a process token that proves it after the supervisor is gone', async () => {

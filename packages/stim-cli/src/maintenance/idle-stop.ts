@@ -308,8 +308,8 @@ async function emulatorListError(avdNames: readonly string[], operation?: StimCo
       : listAdbDevices({ timeoutMs: 5000 });
     for (const { serial } of emulators) {
       const name = operation
-        ? await getAvdNameForSerialAsync(serial, { signal, operation })
-        : getAvdNameForSerial(serial);
+        ? await getAvdNameForSerialAsync(serial, { timeoutMs: 5000, signal, operation })
+        : getAvdNameForSerial(serial, { timeoutMs: 5000 });
       if (name === null) return `its emulators cannot be identified to prove them idle (${serial} gave no AVD name)`;
     }
     return null;
@@ -353,16 +353,18 @@ async function candidate(
   }
   if (supervisor.status === 'unverified')
     return { skip: `its dev server supervisor cannot be verified: ${supervisor.reason ?? 'unknown identity'}` };
+  if (supervisor.status === 'ours' && readWorkspaceState(path)?.supervisor?.mode === MODE_COMMAND)
+    return { skip: 'its dev server runs metro.command, whose bundle and HMR requests Stim cannot see' };
+  if (supervisor.status === 'ours' && readWorkspaceState(path)?.supervisor?.hmrUpdates !== true)
+    return {
+      skip: 'its dev server started before Stim recorded HMR updates; stim stop, then stim start, to enable idle stop',
+    };
   const avdNames = slots.flatMap(({ platforms }) =>
     platforms.android?.owned && platforms.android.avdName ? [platforms.android.avdName] : [],
   );
   const emulators =
     supervisor.status === 'ours' && avdNames.length ? await emulatorListError(avdNames, operation) : null;
   if (emulators) return { skip: emulators };
-  if (supervisor.status === 'ours' && readWorkspaceState(path)?.supervisor?.mode === MODE_COMMAND)
-    return { skip: 'its dev server runs metro.command, whose bundle and HMR requests Stim cannot see' };
-  if (supervisor.status === 'ours' && readWorkspaceState(path)?.supervisor?.hmrUpdates !== true)
-    return { skip: 'its dev server started before Stim recorded HMR updates; stim start again to enable idle stop' };
   if (supervisor.status !== 'ours' && booted.length === 0) return null;
   return { path, hours: setting.hours, serving: supervisor.status === 'ours', devices: booted };
 }

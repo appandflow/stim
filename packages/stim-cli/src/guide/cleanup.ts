@@ -76,7 +76,7 @@ as the requester), each workspace kept past the window a maintenance_skip line
 with the reason, and status shows the dev server as stopped by automatic
 maintenance. The next start, ios or android starts it
 again. A dev server started by an older Stim, which did not record HMR
-updates, is kept until the next start. Unlike the other actions, it can stop the workspace whose dev server
+updates, is kept until stim stop and stim start restart it. Unlike the other actions, it can stop the workspace whose dev server
 supervisor or status --watch timer started the pass; a pass a command starts,
 gc --delete included, never stops the command's own workspace.
 A dev server run through metro.command is kept: Stim sees none of its
@@ -132,7 +132,7 @@ live build lock, or in a Metro store with a running or unverifiable dev
 server. Anything the pass cannot verify is kept. A device is deleted only when
 its workspace is idle: no dev server, native run, build, lease, managed lock,
 driven or busy device, and no recorded use within the window. Below disk
-pressure level 3 a pass stops a dev server only by IDLE STOP below and never
+pressure level 3 a pass stops a dev server only by IDLE STOP above and never
 stops watchman; removing a
 finished worktree or orphaned directory does tear down that workspace's own
 dev server, owned devices and Chrome profile, as gc --delete does. ccache evicts by itself under
