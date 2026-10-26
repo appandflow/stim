@@ -873,8 +873,9 @@ The setup command doctor prints carries the ticket in `STIM_SETUP_TICKET`, and
 the ticket is a credential: once setup stores it, the first machine to spend it
 gets the approval. On a tailnet that machine also had to be in your tailnet; on
 a local network it only needs the ticket and a route to the worker. Copy the
-command only to the worker, and check the requesting machine's name and address
-in setup's approval line or in `stim-server devices`. The ticket also lands in
+command only to the worker. Afterward, `stim-server devices` on the worker lists
+the address each approved machine connected from; the name in setup's approval
+line is the one the requesting machine chose. The ticket also lands in
 the worker's shell history; it stops working when it expires, within two hours.
 
 On a Mac with the macOS firewall on, setup warns that macOS asks whether the
