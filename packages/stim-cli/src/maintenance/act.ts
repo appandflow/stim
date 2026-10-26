@@ -68,6 +68,7 @@ export interface ActContext {
   settings: MaintenanceSettings;
   budget: Budget;
   protectedRoot: string;
+  background?: boolean;
   worktreeSweep?: WorktreeSweep;
   pressureSweep?: WorktreeSweep;
   protect?: (entry: string) => string | null;
@@ -485,7 +486,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
       if (action.level === 3) return stopWorkspace(action, context);
       return action.check === 'idle'
         ? stopIdleWorkspace(action, {
-            protectedRoot: context.protectedRoot,
+            protectedRoot: context.background ? '' : context.protectedRoot,
             devices: () => cachedDeviceActivity(Date.now()),
           })
         : kept(

@@ -182,6 +182,8 @@ const stableText = (text: string) => text.replace(/\d+(?:\.\d+)?/g, '#');
 const sameSet = (before: Set<string>, after: Set<string>) =>
   before.size === after.size && [...before].every((key) => after.has(key));
 
+const BACKGROUND_TRIGGERS = new Set(['supervisor', 'status-watch']);
+
 export async function runMaintenance(trigger: string): Promise<void> {
   const startedAt = Date.now();
   let claim: ClaimHandle | undefined;
@@ -208,6 +210,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
     };
     const checks = due(state, settings, startedAt);
     if (checks.length === 0) return;
+    const background = BACKGROUND_TRIGGERS.has(trigger);
     let writeError: string | null = null;
     const noteWriteError = (error: unknown) => {
       writeError ??= error instanceof Error ? error.message : String(error);
@@ -335,6 +338,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
         sweep: ran.has('sweep'),
         worktrees: plannedWorktrees,
         idle: ran.has('idle'),
+        background,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -352,6 +356,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
       const context = {
         settings,
         budget,
+        background,
         protectedRoot: triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
         pressureSweep: result.pressureSweep,

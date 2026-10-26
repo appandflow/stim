@@ -47,6 +47,7 @@ export async function plannedMaintenance(
     worktrees = false,
     idle = false,
     refresh = true,
+    background = false,
     operation,
   }: {
     devices?: boolean;
@@ -54,6 +55,7 @@ export async function plannedMaintenance(
     worktrees?: boolean;
     idle?: boolean;
     refresh?: boolean;
+    background?: boolean;
     operation?: StimContext;
   } = {},
 ): Promise<PlannedMaintenance> {
@@ -169,7 +171,7 @@ export async function plannedMaintenance(
     try {
       merge(
         await planIdleStop({
-          protectedRoot: root,
+          protectedRoot: background ? '' : root,
           now,
           env,
           operation,

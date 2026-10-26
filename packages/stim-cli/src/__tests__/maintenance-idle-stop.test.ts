@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { deviceViewersDir, type DeviceActivity } from '@stim-cli/core/state';
+import { deviceViewersDir, readMaintenanceState, type DeviceActivity } from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { collectOwnedDeviceActivity, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import * as ios from '../devices/ios.ts';
@@ -19,6 +19,7 @@ import { resolveBudget } from '../budget.ts';
 import { stopIdleWorkspaces } from '../commands/gc/idle-workspaces.ts';
 import type { GcOutput } from '../commands/gc/results.ts';
 import { executeAction } from '../maintenance/act.ts';
+import { runMaintenance } from '../maintenance/run.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
@@ -511,4 +512,24 @@ test('a stray file in the agent-device sessions directory does not keep the work
   writeFileSync(join(sessions, '.DS_Store'), '');
 
   expect((await plan()).actions.map((action) => action.target)).toEqual([root]);
+});
+
+test.each([
+  ['supervisor', true],
+  ['command', false],
+])('a %s-triggered pass in an idle workspace plans its stop: %s', async (trigger, planned) => {
+  const { root } = bootedWorkspace('self', 7 * HOUR_MS);
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'self' }));
+  vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
+  vi.stubEnv('STIM_MAINTENANCE', 'report');
+  const cwd = process.cwd();
+  process.chdir(root);
+  try {
+    await runMaintenance(trigger);
+  } finally {
+    process.chdir(cwd);
+  }
+
+  const stops = (readMaintenanceState()?.plan ?? []).filter((action) => action.check === 'idle');
+  expect(stops.map((action) => action.target)).toEqual(planned ? [root] : []);
 });
