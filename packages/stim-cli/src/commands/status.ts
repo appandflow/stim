@@ -208,6 +208,8 @@ function renderStatus(
       if (pool.line) out.push(chalk.dim(pool.line));
     }
     for (const line of deviceLeaseLines(leases, leaseNow)) out.push(line);
+    out.push(chalk.dim(loadLine(cap.load)));
+    for (const line of slotUsageLines(cap)) out.push(chalk.dim(line));
     return out;
   }
 

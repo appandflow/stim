@@ -32,6 +32,7 @@ import { detectTutorial, findServerWorkspace, readAppJson } from './workspace/pr
 import { listAllIosSimsAsync, parseSimctlList } from './devices/ios.ts';
 import {
   listAdbDevices,
+  listAdbDevicesAsync,
   ownedAvdDeviceProfile,
   ownedAvdSerialResolver,
   type AdbDevices,
@@ -281,10 +282,12 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   const simsByUdid: Record<string, IosSimRecord> = {};
   let simsAvailable = true;
   let simctlError: string | null = null;
+  let simctlFailure: unknown = null;
   try {
     for (const sim of await simsRead) simsByUdid[sim.udid] = sim;
   } catch (e) {
     simsAvailable = false;
+    simctlFailure = e;
     simctlError = String((e as Error)?.message || e).split('\n')[0] ?? '';
   }
   const running = await processes;
@@ -479,11 +482,15 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
       ? {
           devices: await deviceSlotUsage(maxDevices, {
             config: cfg,
-            sims: simsAvailable
-              ? sims
-              : () => {
-                  throw new Error(`simctl could not be read (${simctlError})`);
-                },
+            sims:
+              process.platform !== 'darwin'
+                ? []
+                : simsAvailable
+                  ? sims
+                  : () => {
+                      throw simctlFailure;
+                    },
+            adb: () => listAdbDevicesAsync({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS }),
           }),
         }
       : {}),

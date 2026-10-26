@@ -205,6 +205,47 @@ test('status reports simctl as unreadable instead of warning that every sim is g
   expect(logs.some((l) => /ios:.*unknown/.test(l))).toBeTruthy();
 });
 
+test('plain status shows the load and a set cap even with no projects registered', async () => {
+  saveConfig(makeConfig({ concurrency: { maxBuilds: 2 } }));
+  const logs = await runStatus();
+  expect(logs.some((l) => /No projects registered/.test(l))).toBe(true);
+  expect(logs.some((l) => /load [\d.]+\/core \(busy at 2\)/.test(l))).toBe(true);
+  expect(logs.some((l) => /builds 0\/2 \(concurrency\.maxBuilds\)/.test(l))).toBe(true);
+});
+
+test.skipIf(process.platform !== 'darwin')(
+  'device slot usage is unknown when simctl fails, and counts no simulators when simctl is absent, as admission does',
+  async () => {
+    const usageWhen = async (failure: Error) => {
+      setExecutor({
+        runFile: () => '',
+        async runFileAsync(_file, args = []) {
+          if (args.join(' ').includes('simctl list devices --json')) throw failure;
+          return '';
+        },
+        runQuiet: () => null,
+        runFileQuiet: () => null,
+        spawn() {
+          throw new Error('spawn should not be called from status');
+        },
+      });
+      return (await runStatusJson()).capacity.devices;
+    };
+    saveConfig(makeConfig({ concurrency: { maxDevices: 2 } }));
+
+    expect(await usageWhen(new Error('simctl timed out'))).toMatchObject({
+      max: 2,
+      inUse: null,
+      unknown: expect.stringContaining('simctl timed out'),
+    });
+    expect(await usageWhen(Object.assign(new Error('spawn xcrun ENOENT'), { code: 'ENOENT' }))).toEqual({
+      max: 2,
+      inUse: 0,
+      holders: [],
+    });
+  },
+);
+
 test('status still warns about a recorded sim missing from a readable listing', async () => {
   saveConfig(
     makeConfig({
