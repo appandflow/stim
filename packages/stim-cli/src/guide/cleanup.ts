@@ -56,8 +56,8 @@ layers; STIM_MAINTENANCE_IDLE_STOP_HOURS overrides; fractions work). Six hours
 outlasts a lunch break, a meeting or an agent's pause between tasks, and still
 frees the memory overnight. Real activity is the newest of: a Stim command in
 the workspace (start, ios, android, macos, web, reload, logs, worktree warm),
-the end of its last native build, a Metro bundle, manifest or HMR update
-request in metro.ndjson, an agent-device command in the workspace's
+the end of its last native build, the start, progress or end of a Metro
+bundle or manifest request, or an HMR update, in metro.ndjson, an agent-device command in the workspace's
 agent-device sessions, and an open stim-server live view of its device.
 Device and system log lines, in-app console logs, dev server output,
 collector writes and maintenance's own records never count, and an app that

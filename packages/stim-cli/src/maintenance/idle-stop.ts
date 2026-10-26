@@ -45,8 +45,15 @@ const HOUR_MS = 3_600_000;
 const SETTING = 'maintenance.idleStopHours';
 const METRO_REQUESTS = new Set([
   'bundle_response_started',
+  'bundle_response_progress',
+  'bundle_response_finished',
+  'bundle_response_failed',
   'bundle_build_started',
+  'bundle_build_done',
+  'bundle_build_failed',
   'manifest_request_started',
+  'manifest_request_finished',
+  'manifest_request_failed',
   'hmr_update',
 ]);
 const STIM_SESSION = 'stim-teardown-inventory';

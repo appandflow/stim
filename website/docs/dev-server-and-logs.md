@@ -141,7 +141,8 @@ Real activity is the newest of:
 - a Stim command in the workspace: `start`, `ios`, `android`, `macos`, `web`,
   `reload`, `logs` or `worktree warm`;
 - the end of the workspace's last native build;
-- a Metro bundle, Expo manifest or HMR update request;
+- the start, progress or end of a Metro bundle or Expo manifest request, or an
+  HMR update;
 - an agent-device command in the workspace's agent-device sessions;
 - an open live view of the device through stim-server, from Stim Desktop or
   the phone app.

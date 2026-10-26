@@ -222,6 +222,27 @@ test.each<[string, (root: string) => void]>([
       ]),
   ],
   [
+    'a long bundle that finished within the window',
+    (root) =>
+      appendLog(root, 'metro.ndjson', [
+        {
+          ts: Date.now() - 8 * HOUR_MS,
+          src: 'metro',
+          event: 'bundle_response_started',
+          platform: 'ios',
+          requestId: 'r2',
+        },
+        {
+          ts: Date.now() - 7 * HOUR_MS,
+          src: 'metro',
+          event: 'bundle_response_progress',
+          platform: 'ios',
+          requestId: 'r2',
+        },
+        { ts: recent, src: 'metro', event: 'bundle_response_finished', platform: 'ios', requestId: 'r2' },
+      ]),
+  ],
+  [
     'an HMR update',
     (root) => appendLog(root, 'metro.ndjson', [{ ts: recent, src: 'metro', event: 'hmr_update', msg: 'HMR update' }]),
   ],
