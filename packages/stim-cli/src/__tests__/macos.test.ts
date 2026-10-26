@@ -250,8 +250,8 @@ test('bundle instances are the executables of app bundles directly in the worksp
 });
 
 describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned bundle', () => {
-  function bundleCopy(script: string): ChildProcess {
-    const executable = join(macosDir(root), 'Sample.app', 'Contents', 'MacOS', 'Sample');
+  function bundleCopy(script: string, directory = macosDir(root)): ChildProcess {
+    const executable = join(directory, 'Sample.app', 'Contents', 'MacOS', 'Sample');
     mkdirSync(join(executable, '..'), { recursive: true });
     if (!existsSync(executable)) copyFileSync(process.execPath, executable, constants.COPYFILE_FICLONE);
     const child = getExecutor().spawn(
@@ -307,6 +307,17 @@ describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned b
     expect(inspectProcessIdentity(stubborn)).toBe('gone');
     expect(inspectProcessIdentity(bystander)).toBe('same');
     expect(workspaceInUse(root)).toEqual([]);
+  }, 20_000);
+
+  test('a hosted session stop ends a LaunchServices copy of an earlier attempt and spares other processes', async () => {
+    const attempts = join(dir, 'session', 'apps');
+    const earlier = await started(bundleCopy("process.on('SIGTERM', () => {})", join(attempts, 'earlier')));
+    const current = await started(bundleCopy('', join(attempts, 'current')));
+    const bystander = await ownedProcess();
+    await stopping.stopHostedBundleInstances(realpathSync(join(dir, 'session')));
+    expect(inspectProcessIdentity(earlier)).toBe('gone');
+    expect(inspectProcessIdentity(current)).toBe('gone');
+    expect(inspectProcessIdentity(bystander)).toBe('same');
   }, 20_000);
 
   test('workspace removal stops an unrecorded copy before emptying the workspace', async () => {
