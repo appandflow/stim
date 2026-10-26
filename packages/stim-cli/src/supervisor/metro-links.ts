@@ -127,6 +127,7 @@ export function openMetroLinks({
       each.onEvent((event) => {
         if (event.event !== 'device-host.metro.link.open' || paired || closed) return;
         paired = true;
+        each.unwatch();
         waiting.delete(each);
         carry(each, () => {
           ended = true;
@@ -149,8 +150,10 @@ export function openMetroLinks({
       if (ended || each.failure) return void live.delete(each);
       registered = true;
       linked.add(each);
-      if (!paired) waiting.add(each);
-      each.watch();
+      if (!paired) {
+        waiting.add(each);
+        each.watch();
+      }
       failures = 0;
       clearTimeout(retry);
       retry = undefined;

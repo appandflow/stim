@@ -30,6 +30,7 @@ interface FakeLink {
   sent: Buffer[];
   closed: boolean;
   closeCode: number | null;
+  watched: boolean;
   paused: boolean;
   resumed: number;
   open: () => void;
@@ -59,6 +60,7 @@ function fakeLink(): FakeLink {
     sent: [],
     closed: false,
     closeCode: null,
+    watched: false,
     paused: false,
     resumed: 0,
     open: () => event?.({ event: 'device-host.metro.link.open' }),
@@ -84,7 +86,8 @@ function fakeLink(): FakeLink {
         onDropped: (listener: typeof dropped) => (dropped = listener),
         sendBinary: async (frame: Buffer) => void link.sent.push(Buffer.from(frame)),
         flushed: async () => {},
-        watch: () => {},
+        watch: () => (link.watched = true),
+        unwatch: () => (link.watched = false),
         pause: () => (link.paused = true),
         resume: () => {
           link.paused = false;
@@ -203,6 +206,15 @@ test('a paired link carries its stream to loopback Metro in client-sized frames 
   expect(link.closeCode).toBe(1000);
   expect(links.slice(1).every((each) => !each.closed)).toBe(true);
   expect(lost).toBe(0);
+});
+
+test('idle links drop on silence, but a carrying link does not, since its own queued sends delay the pongs', async () => {
+  start();
+  await vi.waitFor(() => expect(ready).toBe(1));
+  expect(links.every((link) => link.watched)).toBe(true);
+  links[0]?.open();
+  await vi.waitFor(() => expect(links).toHaveLength(5));
+  await vi.waitFor(() => expect(links.map((link) => link.watched)).toEqual([false, true, true, true, true]));
 });
 
 test('refills links the host opened before their registration reply arrived', async () => {

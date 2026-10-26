@@ -614,6 +614,11 @@ export class BuildConnection {
     this.watched = true;
   }
 
+  /** Stops treating silence as a dropped connection, such as while this side's own sends delay the pongs. */
+  unwatch(): void {
+    this.watched = false;
+  }
+
   /** Closes with a close frame, which tells the machine to cancel this connection's jobs. */
   close(code = 1000): void {
     if (this.ended) return;
