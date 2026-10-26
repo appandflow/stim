@@ -5,6 +5,7 @@ import { hostConnector } from '../device-host/hosted-client.ts';
 const IDLE_LINKS = 4;
 const FRAME_BYTES = 32 * 1024;
 const RETRY_MS = [500, 1000, 2000, 5000, 10_000];
+const METRO_RESET = 4410;
 
 export interface MetroLinkPool {
   close: () => void;
@@ -14,7 +15,8 @@ export interface MetroLinkPool {
  * Keeps `IDLE_LINKS` authenticated connections open to `machine`, each offered to `session`'s Metro bridge there. The
  * host pairs one with each connection the hosted device makes; this side then pipes it to loopback `metroPort` and
  * opens a replacement. `onReady` runs when the host holds a link after holding none, and `onLost` when no linked
- * connection to the host is left.
+ * connection to the host is left. Failures that a retry can fix are retried; a refusal before the host holds a link
+ * calls `onError` and stops the pool.
  */
 export function openMetroLinks({
   machine,
@@ -38,7 +40,6 @@ export function openMetroLinks({
   const streams = new Set<Socket>();
   let opening = 0;
   let failures = 0;
-  let misses = 0;
   let ready = false;
   let closed = false;
   let retry: NodeJS.Timeout | undefined;
@@ -61,8 +62,11 @@ export function openMetroLinks({
 
   const failed = (message: string, refused: boolean) => {
     if (closed) return;
-    misses++;
-    if (!ready && (refused || misses >= IDLE_LINKS)) onError(message);
+    if (refused && !ready) {
+      stop();
+      onError(message);
+      return;
+    }
     if (retry) return;
     retry = setTimeout(
       () => {
@@ -78,12 +82,12 @@ export function openMetroLinks({
     const metro = connectSocket({ host: '127.0.0.1', port: metroPort });
     streams.add(metro);
     metro.on('error', () => metro.destroy());
-    metro.once('close', () => {
+    metro.once('close', (hadError) => {
       streams.delete(metro);
       ended();
-      void connection.flushed().then(() => connection.close());
+      void connection.flushed().then(() => connection.close(hadError ? METRO_RESET : 1000));
     });
-    connection.onDropped((code) => (code === 1000 ? metro.end() : metro.destroy()));
+    connection.onDropped((code) => (code === 1000 ? metro.end() : metro.resetAndDestroy()));
     let paused = false;
     connection.onBinary((frame) => {
       if (metro.write(frame) || paused) return;
@@ -146,7 +150,6 @@ export function openMetroLinks({
       if (!paired) waiting.add(each);
       each.watch();
       failures = 0;
-      misses = 0;
       if (!ready) {
         ready = true;
         onReady();
@@ -167,16 +170,16 @@ export function openMetroLinks({
     }
   };
 
+  function stop() {
+    closed = true;
+    clearTimeout(retry);
+    for (const connection of live) connection.close();
+    for (const stream of streams) stream.destroy();
+    live.clear();
+    linked.clear();
+    waiting.clear();
+  }
+
   fill();
-  return {
-    close: () => {
-      closed = true;
-      clearTimeout(retry);
-      for (const connection of live) connection.close();
-      for (const stream of streams) stream.destroy();
-      live.clear();
-      linked.clear();
-      waiting.clear();
-    },
-  };
+  return { close: stop };
 }

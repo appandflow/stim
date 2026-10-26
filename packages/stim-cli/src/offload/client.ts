@@ -615,13 +615,13 @@ export class BuildConnection {
   }
 
   /** Closes with a close frame, which tells the machine to cancel this connection's jobs. */
-  close(): void {
+  close(code = 1000): void {
     if (this.ended) return;
     this.forget();
     if (this.socket.readyState === WebSocket.CLOSED) return;
     const timer = setTimeout(() => this.socket.terminate(), CLOSE_TIMEOUT_MS);
     this.socket.once('close', () => clearTimeout(timer));
-    this.socket.close(1000);
+    this.socket.close(code);
   }
 
   /** Ends the connection without a close frame, which leaves its jobs on the machine for a new connection. */

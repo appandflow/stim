@@ -2001,6 +2001,47 @@ describe('hosted device sessions', () => {
   );
 
   test.skipIf(!fakeTailscale)(
+    'a clean link close still delivers what a slow device has not read, and a link that stops reading holds the device back',
+    async () => {
+      const port = await start();
+      const { metroPort, link } = await linkedSession(port);
+      const carrier = await link();
+      const device = connectNet(metroPort, '127.0.0.1');
+      let received = 0;
+      device.on('data', (chunk: Buffer) => {
+        received += chunk.length;
+        device.pause();
+        setTimeout(() => device.resume(), 2);
+      });
+      const ended = new Promise<void>((resolve) => device.once('end', () => resolve()));
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
+      const frame = Buffer.alloc(32 * 1024, 6);
+      const total = 4 * 1024 * 1024;
+      for (let sent = 0; sent < total; sent += frame.length) carrier.socket.send(frame);
+      carrier.socket.close(1000);
+      await ended;
+      expect(received).toBe(total);
+
+      const reader = await link();
+      let read = 0;
+      reader.socket.on('message', (data, isBinary) => {
+        if (isBinary) read += data.length;
+      });
+      const uploader = connectNet(metroPort, '127.0.0.1');
+      uploader.on('error', () => {});
+      expect(await reader.next()).toEqual({ event: 'device-host.metro.link.open' });
+      reader.socket.pause?.();
+      const upload = 48 * 1024 * 1024;
+      for (let sent = 0; sent < upload; sent += frame.length) uploader.write(frame);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(uploader.writableLength).toBeGreaterThan(16 * 1024 * 1024);
+      reader.socket.resume?.();
+      await vi.waitFor(() => expect(read).toBe(upload), { timeout: 20_000 });
+      uploader.destroy();
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
     'stopping a hosted session closes its idle Metro links and the streams they carry',
     async () => {
       const port = await start();

@@ -29,6 +29,7 @@ interface FakeLink {
   requests: { method: string; params: unknown }[];
   sent: Buffer[];
   closed: boolean;
+  closeCode: number | null;
   paused: boolean;
   resumed: number;
   open: () => void;
@@ -57,6 +58,7 @@ function fakeLink(): FakeLink {
     requests: [],
     sent: [],
     closed: false,
+    closeCode: null,
     paused: false,
     resumed: 0,
     open: () => event?.({ event: 'device-host.metro.link.open' }),
@@ -88,7 +90,10 @@ function fakeLink(): FakeLink {
           link.paused = false;
           link.resumed++;
         },
-        close: () => (link.closed = true),
+        close: (code = 1000) => {
+          link.closed = true;
+          link.closeCode ??= code;
+        },
         get failure() {
           return link.closed ? 'closed' : null;
         },
@@ -195,6 +200,7 @@ test('a paired link carries its stream to loopback Metro in client-sized frames 
   expect(response.toString('latin1')).toMatch(/^HTTP\/1\.1 200 OK/);
   expect(response.subarray(response.indexOf('\r\n\r\n') + 4).equals(Buffer.alloc(200 * 1024, 7))).toBe(true);
   expect(Math.max(...link.sent.map((frame) => frame.length))).toBeLessThanOrEqual(32 * 1024);
+  expect(link.closeCode).toBe(1000);
   expect(links.slice(1).every((each) => !each.closed)).toBe(true);
   expect(lost).toBe(0);
 });
@@ -215,23 +221,25 @@ test('retries a connect that timed out without reporting it or diagnosing the ne
   expect(tailscale.filter((args) => args[0] !== 'status')).toEqual([]);
 });
 
-test('reports a host it cannot reach once every first link failed', async () => {
+test('keeps retrying when every first link times out, and links once the host answers', async () => {
   connectOutcomes = [SILENT, SILENT, SILENT, SILENT];
   start();
-  await vi.waitFor(() => expect(errors).toHaveLength(1));
-  expect(errors[0]).toBe(
-    'mini is unreachable: Opening handshake has timed out. Run stim doctor to see which layer failed.',
-  );
-  expect(ready).toBe(0);
+  await vi.waitFor(() => expect(ready).toBe(1), { timeout: 3000 });
+  expect(errors).toEqual([]);
 });
 
-test('reports a hosting refusal at once instead of waiting for every link to fail', async () => {
+test('reports a hosting refusal at once and stops opening links', async () => {
   connectOutcomes = [
     { failure: 'This machine has not approved this client for device-host.', refused: true, code: 'forbidden' },
   ];
   start();
   await vi.waitFor(() => expect(errors).toHaveLength(1));
   expect(errors[0]).toContain('mini refused this machine: This machine has not approved this client for device-host');
+  await vi.waitFor(() => expect(links.every((link) => link.closed)).toBe(true));
+  const opened = vi.mocked(BuildConnection.open).mock.calls.length;
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  expect(vi.mocked(BuildConnection.open).mock.calls.length).toBe(opened);
+  expect(ready).toBe(0);
 });
 
 test('reports a refusal before any link is ready and offers no link', async () => {
@@ -290,6 +298,44 @@ test('stops reading the link while loopback Metro is not reading, and resumes wh
     for (const socket of accepted) socket.destroy();
     await new Promise<void>((resolve) => slow.close(() => resolve()));
   }
+});
+
+test('a Metro connection that fails resets the link, and a link the host resets resets Metro', async () => {
+  const ends: string[] = [];
+  const recorder = createNetServer((socket) => {
+    socket.once('end', () => ends.push('end'));
+    socket.once('error', (error: NodeJS.ErrnoException) => ends.push(error.code ?? 'error'));
+  });
+  await new Promise<void>((resolve) => recorder.listen(0, '127.0.0.1', resolve));
+  metroPort = (recorder.address() as AddressInfo).port;
+  try {
+    start();
+    await vi.waitFor(() => expect(ready).toBe(1));
+    const [clean, reset] = links;
+    assert(clean && reset);
+    clean.open();
+    reset.open();
+    await vi.waitFor(() => expect(links).toHaveLength(6));
+    clean.drop(1000);
+    reset.drop(4410);
+    await vi.waitFor(() => expect(ends.toSorted()).toEqual(['ECONNRESET', 'end']));
+  } finally {
+    pool?.close();
+    await new Promise<void>((resolve) => recorder.close(() => resolve()));
+  }
+});
+
+test('a link whose loopback Metro refuses the connection closes with a reset code', async () => {
+  const closedPort = createNetServer();
+  await new Promise<void>((resolve) => closedPort.listen(0, '127.0.0.1', resolve));
+  metroPort = (closedPort.address() as AddressInfo).port;
+  await new Promise<void>((resolve) => closedPort.close(() => resolve()));
+  start();
+  await vi.waitFor(() => expect(ready).toBe(1));
+  const [link] = links;
+  assert(link);
+  link.open();
+  await vi.waitFor(() => expect(link.closeCode).toBe(4410));
 });
 
 test('closing the pool ends idle and carrying links', async () => {

@@ -391,6 +391,8 @@ const LOCAL_DEVICE: PairedDevice = {
 type ServerSocket = WebSocket | NoiseSocket;
 const CLOSE_AUTH_TIMEOUT = 4408;
 const CLOSE_METRO_RESET = 4410;
+const METRO_LINK_PING_MS = 15_000;
+const METRO_END_MS = 30_000;
 const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
 const METRO_LINK_BUFFERED_BYTES = 1024 * 1024;
@@ -1582,7 +1584,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     let buildSession: BuildSession | null = null;
     let metroLink: MetroLink | null = null;
     let metroStream: Socket | null = null;
-    let metroDrain: (() => void) | null = null;
+    let metroPing: NodeJS.Timeout | undefined;
     let queue = Promise.resolve();
     let archiveReads = Promise.resolve();
     const relay = new HostedRelay(
@@ -4098,17 +4100,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (metroStream) {
         const stream = metroStream;
         if (stream.destroyed || stream.write(frame)) return;
-        if (socket.readyState !== socket.OPEN) return void stream.destroy();
         socket.pause();
         return new Promise<void>((resolve) => {
           const resume = () => {
-            metroDrain = null;
             stream.off('drain', resume);
             stream.off('close', resume);
             socket.resume();
             resolve();
           };
-          metroDrain = resume;
           stream.on('drain', resume);
           stream.on('close', resume);
         });
@@ -4126,6 +4125,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const link: MetroLink = {
         open: (stream) => {
           if (socket.readyState !== socket.OPEN) return false;
+          clearInterval(metroPing);
           metroLink = null;
           metroStream = stream;
           stream.once('close', (hadError) => socket.close(hadError ? CLOSE_METRO_RESET : 1000));
@@ -4143,8 +4143,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       const answer = hostedDevices.metroLink(session.id, raw, link);
       if ('error' in answer) return send(socket, { id, error: answer.error });
-      if (!metroStream) metroLink = link;
       send(socket, { id, result: answer.result });
+      if (metroStream) return;
+      metroLink = link;
+      let heard = true;
+      socket.on('pong', () => (heard = true));
+      metroPing = setInterval(() => {
+        if (!heard) return void socket.terminate();
+        heard = false;
+        socket.ping();
+      }, METRO_LINK_PING_MS);
+      metroPing.unref();
     }
 
     async function hostedMethod(id: RequestId, method: string, raw: unknown, session: PairedDevice): Promise<void> {
@@ -4426,10 +4435,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       queue = queue.then(() => handle(raw)).catch(() => socket.close(1011, 'internal error'));
     });
     socket.on('close', (code) => {
+      clearInterval(metroPing);
       if (metroLink) hostedDevices.metroUnlink(metroLink);
       const stream = metroStream;
-      if (stream && code === 1000 && !metroDrain) queue = queue.then(() => void stream.end());
-      else stream?.destroy();
+      if (stream && code === 1000) {
+        queue = queue.then(() => void stream.end());
+        const ending = setTimeout(() => stream.destroy(), METRO_END_MS);
+        ending.unref();
+        stream.once('close', () => clearTimeout(ending));
+      } else if (stream && !stream.destroyed) stream.resetAndDestroy();
       relay.close();
       relays.delete(socket);
       clearTimeout(timer);
