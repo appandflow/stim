@@ -155,8 +155,9 @@ The stop is the one `stim stop` makes: the dev server stops, owned devices shut
 down (never deleted), the port is released, and device leases stay. A build, a
 running `stim ios`, `android`, `stop` or `start`, a running macOS app, a hosted
 or remote session, an unexpired device lease, a managed tunnel, a running owned
-Chrome, a device driver other than agent-device, or device activity Stim cannot
-read keeps the workspace. Maintenance logs each stop with the idle time and
+Chrome, a device driver other than agent-device, a live agent-device claim whose
+session activity Stim cannot find, or device activity Stim cannot read keeps the
+workspace. Maintenance logs each stop with the idle time and
 each workspace kept past the window with its reason (`stim logs --source maintenance`), and
 `stim status` shows the dev server stopped by automatic maintenance. The next
 `stim start`, `stim ios` or `stim android` starts it again.

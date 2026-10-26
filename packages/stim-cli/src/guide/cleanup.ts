@@ -67,7 +67,8 @@ server stops, the owned devices shut down through centralized teardown
 held native-run or metro-start lock, a build lock or slot, a running macOS
 app, a hosted or remote session, an unexpired device lease, a managed tunnel
 or remote lock, a running owned Chrome, a device driver other than
-agent-device, device activity or an emulator list that cannot be read keeps
+agent-device, a live agent-device claim with no session activity to judge,
+device activity or an emulator list that cannot be read keeps
 the workspace;
 the check decides again under the native-run and metro-start locks. Each stop
 is a maintenance_action line naming the idle time (gc --delete records itself
