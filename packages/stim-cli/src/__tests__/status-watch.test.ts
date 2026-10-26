@@ -285,6 +285,16 @@ describe('watchPayload', () => {
     expect(capacity(301, true)).toMatchObject({ committedMb: 301, overCapacity: true });
   });
 
+  test('a slot usage change prints while the memory sum is held', () => {
+    const devices = (inUse: number) => ({ max: 2, inUse, holders: [] });
+    const previous = watchPayload(null, payload({ capacity: { ...payload().capacity, devices: devices(1) } }));
+    const next = watchPayload(
+      previous,
+      payload({ capacity: { ...payload().capacity, committedMb: 310, devices: devices(2) } }),
+    );
+    expect(next.capacity).toMatchObject({ committedMb: 300, devices: { inUse: 2 } });
+  });
+
   test('a new, gone or changed-ownership owner prints the current rows', () => {
     const previous = watchPayload(null, payload());
     const rows = (owners: MachineOwner[]) =>

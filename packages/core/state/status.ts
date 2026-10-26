@@ -712,6 +712,49 @@ export interface StatusCapacity {
   committedMb: number;
   totalMemoryMb: number;
   overCapacity: boolean;
+  /** `concurrency.maxBuilds` usage; present only while that cap is set. */
+  builds?: StatusBuildSlots;
+  /** `concurrency.maxDevices` usage; present only while that cap is set. */
+  devices?: StatusDeviceSlots;
+}
+
+/**
+ * A held build slot. `workspace` is the root of the local build holding it, `client` the device id of the client
+ * whose offloaded build this machine runs in it; both are null for a slot whose holder Stim cannot read.
+ */
+export interface StatusBuildSlotHolder {
+  slot: number;
+  workspace: string | null;
+  client: string | null;
+  since: string | null;
+  unresolved?: true;
+}
+
+/** `inUse` counts the slots below `max` that a live or unresolved claim holds, which a new build cannot take. */
+export interface StatusBuildSlots {
+  max: number;
+  inUse: number;
+  holders: StatusBuildSlotHolder[];
+}
+
+/**
+ * An owned device counted against `concurrency.maxDevices`. `label` is the label of the workspace that records it, or
+ * the device's name when no workspace does; `workspace` and `slot` are null then.
+ */
+export interface StatusDeviceSlotHolder {
+  platform: 'ios' | 'android';
+  label: string;
+  workspace: string | null;
+  slot: string | null;
+  booting?: true;
+}
+
+/** `inUse` is null, with `unknown` saying why, when Stim cannot count the owned devices. */
+export interface StatusDeviceSlots {
+  max: number;
+  inUse: number | null;
+  unknown?: string;
+  holders: StatusDeviceSlotHolder[];
 }
 
 export interface DeviceLeaseState {

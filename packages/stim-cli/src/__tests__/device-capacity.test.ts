@@ -9,6 +9,7 @@ import {
   deviceSlotWaitingLine,
   countLiveOwnedDevices,
   countLiveOwnedDevicesFrom,
+  deviceSlotUsage,
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
@@ -716,6 +717,41 @@ test('the non-binding slot peek reports a live owned slot and FIFO waiters witho
   } finally {
     releaseClaim(ticket);
   }
+});
+
+test('status slot usage names the workspace and slot of each counted device and reports an uncountable inventory', async () => {
+  const sims = [
+    makeIosSim({ udid: 'held', name: 'stim-held', state: 'Booted' }),
+    makeIosSim({ udid: 'loose', name: 'stim-loose', state: 'Booted' }),
+    makeIosSim({ udid: 'mine', name: 'iPhone 17', state: 'Booted' }),
+  ];
+  const config = makeConfig({
+    projects: { '/work/app': { label: 'app', deviceSlots: { two: { ios: { deviceUdid: 'held', owned: true } } } } },
+  });
+  expect(
+    await deviceSlotUsage(3, {
+      ...empty,
+      sims,
+      config,
+      booting: [{ platform: 'android', key: 'stim-new', displayName: 'other' }],
+    }),
+  ).toEqual({
+    max: 3,
+    inUse: 3,
+    holders: [
+      { platform: 'ios', label: 'app', workspace: '/work/app', slot: 'two' },
+      { platform: 'android', label: 'other', workspace: null, slot: null, booting: true },
+      { platform: 'ios', label: 'stim-loose', workspace: null, slot: null },
+    ],
+  });
+  expect(
+    await deviceSlotUsage(3, {
+      ...empty,
+      sims: () => {
+        throw new Error('simctl timed out');
+      },
+    }),
+  ).toMatchObject({ max: 3, inUse: null, unknown: expect.stringContaining('simctl timed out'), holders: [] });
 });
 
 test('the non-binding peek preserves an unknown count for the binding boot admission', () => {

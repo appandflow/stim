@@ -37,7 +37,7 @@ import { deviceReclaimIdleMinutesSetting } from '../workspace/settings.ts';
 import { workspaceDisplayLabel, workspaceLabels } from '../workspace/display-label.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
 import type { StimContext } from '@stim-cli/core';
-import type { BuildWaitingFor, SettingScope } from '@stim-cli/core/state';
+import type { BuildWaitingFor, SettingScope, StatusDeviceSlotHolder, StatusDeviceSlots } from '@stim-cli/core/state';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
 type DeviceTypeInfo = ReturnType<typeof listIosDeviceTypes>[number];
@@ -507,26 +507,62 @@ export function deviceSlotWaitingLine({
   return `${'device'.padEnd(11)} waiting for a device slot (${count}/${max} in use${holders.length ? `: ${holders.join(', ')}` : ''}), ${formatElapsed(elapsedMs)} elapsed -- stim guide lifecycle concurrency${queue ? `; ${queue}` : ''}`;
 }
 
-function deviceHolders(inventory: DeviceInventory, keys: Set<string>): string[] {
-  const names = new Map<string, string>();
+function unrecordedHolder(label: string): { label: string; workspace: null; slot: null } {
+  return { label, workspace: null, slot: null };
+}
+
+function slotHolders(inventory: DeviceInventory, keys: Set<string>): StatusDeviceSlotHolder[] {
+  const owners = new Map<string, { label: string; workspace: string | null; slot: string | null }>();
   const projects = Object.entries(inventory.config?.projects ?? {});
   const labels = workspaceLabels(projects.map(([root, project]) => ({ root, label: project.label })));
   for (const [root, project] of projects) {
     const label = labels.get(root) ?? basename(root);
-    for (const { platforms } of projectDeviceSlots(project)) {
-      if (platforms.ios?.deviceUdid) names.set(deviceKey('ios', platforms.ios.deviceUdid), label);
-      if (platforms.android?.avdName) names.set(deviceKey('android', platforms.android.avdName), label);
+    for (const { slot, platforms } of projectDeviceSlots(project)) {
+      if (platforms.ios?.deviceUdid)
+        owners.set(deviceKey('ios', platforms.ios.deviceUdid), { label, workspace: root, slot });
+      if (platforms.android?.avdName)
+        owners.set(deviceKey('android', platforms.android.avdName), { label, workspace: root, slot });
     }
   }
   for (const sim of inventory.sims) {
     const key = deviceKey('ios', sim.udid);
-    if (!names.has(key)) names.set(key, sim.name);
+    if (!owners.has(key)) owners.set(key, unrecordedHolder(sim.name));
   }
+  const booting = new Set<string>();
   for (const device of inventory.booting) {
     const key = deviceKey(device.platform, device.key);
-    if (!names.has(key)) names.set(key, device.displayName ?? device.key);
+    booting.add(key);
+    if (!owners.has(key)) owners.set(key, unrecordedHolder(device.displayName ?? device.key));
   }
-  return [...new Set([...keys].map((key) => names.get(key) ?? key.slice(key.indexOf(':') + 1)))].toSorted();
+  return [...keys]
+    .map((key): StatusDeviceSlotHolder => {
+      const { label, workspace, slot } = owners.get(key) ?? unrecordedHolder(key.slice(key.indexOf(':') + 1));
+      const platform = key.startsWith('android:') ? 'android' : 'ios';
+      return booting.has(key)
+        ? { platform, label, workspace, slot, booting: true }
+        : { platform, label, workspace, slot };
+    })
+    .toSorted((a, b) => a.label.localeCompare(b.label) || a.platform.localeCompare(b.platform));
+}
+
+function deviceHolders(inventory: DeviceInventory, keys: Set<string>): string[] {
+  return [...new Set(slotHolders(inventory, keys).map((holder) => holder.label))].toSorted();
+}
+
+/**
+ * `concurrency.maxDevices` usage for status: the owned devices the cap counts and who holds each. `sims` is the
+ * listing status already read; an unknown count reports why instead of failing.
+ */
+export async function deviceSlotUsage(max: number, sources: AsyncInventorySources = {}): Promise<StatusDeviceSlots> {
+  try {
+    const inventory = await readInventoryAsync(sources);
+    if ('code' in inventory) return { max, inUse: null, unknown: inventory.message, holders: [] };
+    const keys = inventoryKeys(inventory);
+    return { max, inUse: keys.size, holders: slotHolders(inventory, keys) };
+  } catch (error) {
+    if (isClaimRefusal(error)) return { max, inUse: null, unknown: error.message, holders: [] };
+    throw error;
+  }
 }
 
 function liveWaiters(): ClaimHolder[] {

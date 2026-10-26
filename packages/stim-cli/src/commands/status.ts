@@ -49,6 +49,7 @@ import {
   parseDfFree,
   poolLine,
   remoteDeviceLine,
+  slotUsageLines,
   tightVolumes,
 } from '../status.ts';
 import { createStatusMeasurer, type StatusMeasurer } from '../status-measures.ts';
@@ -156,6 +157,7 @@ function renderStatus(
     simctlError,
     cwdRoot,
     machine,
+    slotUsage,
   }: StatusSnapshot,
   json: boolean,
   settle: (payload: StatusPayload) => StatusPayload = (payload) => payload,
@@ -163,7 +165,7 @@ function renderStatus(
 ): string[] {
   const out: string[] = [];
   const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
-  const cap = capacity(states, totalMemoryMb);
+  const cap = { ...capacity(states, totalMemoryMb), ...slotUsage };
   const pools = (['ios', 'android'] as const).map((platform) => {
     const { max, error } = parkedMaxSetting(platform);
     return { error, line: poolLine({ platform, parked: readParked(platform).length, max }) };
@@ -310,6 +312,7 @@ function renderStatus(
         : `\n${cap.liveCount} active environment(s), roughly ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)} committed.`,
     ),
   );
+  for (const line of slotUsageLines(cap)) out.push(chalk.dim(line));
   const volumes = readVolumes(cwdRoot || cwd);
   const line = diskLine(volumes);
   if (line) {

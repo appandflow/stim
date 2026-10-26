@@ -6,7 +6,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claimRemoveCommand } from '../ownership-claim.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
-import { acquireBuildSlot, listBuildSlots, releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
+import {
+  acquireBuildSlot,
+  buildSlotUsage,
+  listBuildSlots,
+  releaseBuildSlot,
+  tryAcquireBuildSlot,
+} from '../engine/build-slots.ts';
 
 let tmpHome: string;
 
@@ -208,6 +214,27 @@ describe('listBuildSlots', () => {
     expect(byIndex[1].alive).toBe(false);
     expect(byIndex[1].projectRoot).toBe('/w/dead');
   });
+});
+
+test('status slot usage counts the live and unresolved slots a build could take, with each holder', () => {
+  plantClaim(buildSlotPath(0), 'exclusive', liveClaimOwner(), { details: { index: 0, projectRoot: '/w/a' } });
+  plantClaim(buildSlotPath(1), 'exclusive', goneClaimOwner(), { details: { index: 1, projectRoot: '/w/gone' } });
+  plantClaim(buildSlotPath(2), 'exclusive', liveClaimOwner(), {
+    details: { index: 2, offloaded: true, client: 'dev-1', repo: 'r', job: 'j' },
+  });
+  plantClaim(buildSlotPath(3), 'exclusive', { pid: 4242, processToken: 'nonsense' }, { details: { index: 3 } });
+  plantClaim(buildSlotPath(4), 'exclusive', liveClaimOwner(), { details: { index: 4, projectRoot: '/w/over' } });
+  const usage = buildSlotUsage(4);
+  expect(usage).toMatchObject({
+    max: 4,
+    inUse: 3,
+    holders: [
+      { slot: 0, workspace: '/w/a', client: null },
+      { slot: 2, workspace: null, client: 'dev-1' },
+      { slot: 3, workspace: null, client: null, since: null, unresolved: true },
+    ],
+  });
+  expect(usage.holders[0]?.since).toEqual(expect.any(String));
 });
 
 describe('waitForFile', () => {

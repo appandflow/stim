@@ -552,6 +552,39 @@ export function capacity(states: EnvironmentState[], totalMemoryMb: number): Sta
   };
 }
 
+/** The plain status lines for the `concurrency.maxBuilds` and `concurrency.maxDevices` caps that are set. */
+export function slotUsageLines({ builds, devices }: Pick<StatusCapacity, 'builds' | 'devices'>): string[] {
+  const lines: string[] = [];
+  if (builds) {
+    const holders = builds.holders.map((holder) =>
+      holder.unresolved
+        ? `slot ${holder.slot} unresolved`
+        : holder.client
+          ? `offloaded for ${holder.client}`
+          : holder.workspace
+            ? basename(holder.workspace)
+            : `slot ${holder.slot}`,
+    );
+    lines.push(
+      `builds ${builds.inUse}/${builds.max} (concurrency.maxBuilds)${holders.length ? `: ${holders.join(', ')}` : ''}`,
+    );
+  }
+  if (devices) {
+    if (devices.inUse === null) {
+      lines.push(`devices ?/${devices.max} (concurrency.maxDevices): ${devices.unknown ?? 'not counted'}`);
+    } else {
+      const holders = devices.holders.map(
+        (holder) =>
+          `${holder.label} ${holder.platform}${holder.slot && holder.slot !== 'default' ? ` [${holder.slot}]` : ''}${holder.booting ? ' (booting)' : ''}`,
+      );
+      lines.push(
+        `devices ${devices.inUse}/${devices.max} (concurrency.maxDevices)${holders.length ? `: ${holders.join(', ')}` : ''}`,
+      );
+    }
+  }
+  return lines;
+}
+
 export function parseDfFree(output: unknown): DiskInfo | null {
   const lines = String(output || '')
     .trim()

@@ -1340,6 +1340,15 @@ nothing runs and `machine` is `null`, it is the fixed estimate the memory
 budget uses, with `memorySource: "estimate"`. `stim guide facts status`
 lists every field.
 
+While `concurrency.maxBuilds` or `concurrency.maxDevices` is set, status shows
+how many of those slots are in use and who holds them, as a `builds 1/2` or
+`devices 6/6` line, and in `--json` as `capacity.builds` and
+`capacity.devices`: `max`, `inUse` and `holders`. A build slot's holder names
+the workspace building in it, or the client whose offloaded build this Mac
+runs; a device's holder names the workspace label and device slot that record
+it. `capacity.devices.inUse` is `null`, with `unknown` saying why, when the
+devices could not be listed. With neither cap set, neither field appears.
+
 `--watch` keeps running and prints the status again each time it changes.
 With `--json` it prints one complete payload per line: one immediately, then
 one per change, never two identical payloads in a row. In a watch line, a CPU or memory figure keeps

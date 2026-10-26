@@ -537,7 +537,7 @@ export function watchPayload(previous: StatusPayload | null, next: StatusPayload
     capacity.totalMemoryMb === next.capacity.totalMemoryMb &&
     Math.abs(next.capacity.committedMb - capacity.committedMb) < WATCH_MEMORY_STEP_MB
   ) {
-    payload.capacity = capacity;
+    payload.capacity = { ...next.capacity, committedMb: capacity.committedMb };
   }
   return payload;
 }
