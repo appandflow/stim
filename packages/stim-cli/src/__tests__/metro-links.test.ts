@@ -20,6 +20,7 @@ let metroPort: number;
 let links: FakeLink[];
 let pool: MetroLinkPool | undefined;
 let refusal: string | null;
+let openOnRequest: number;
 let ready: number;
 let errors: string[];
 
@@ -36,6 +37,10 @@ function fakeLink(): FakeLink {
       supports: (feature: string) => feature === 'hosted-metro-link',
       request: async (method: string, params: unknown) => {
         link.requests.push({ method, params });
+        if (openOnRequest > 0) {
+          openOnRequest--;
+          link.open();
+        }
         return refusal ? { error: { code: 'forbidden', message: refusal } } : { result: {} };
       },
       onEvent: (listener: typeof event) => (event = listener),
@@ -69,6 +74,7 @@ function start(): void {
 beforeEach(async () => {
   links = [];
   refusal = null;
+  openOnRequest = 0;
   ready = 0;
   errors = [];
   metro = createServer((request, response) => {
@@ -107,6 +113,13 @@ test('a paired link carries its stream to loopback Metro in client-sized frames 
   expect(response.subarray(response.indexOf('\r\n\r\n') + 4).equals(Buffer.alloc(200 * 1024, 7))).toBe(true);
   expect(Math.max(...link.sent.map((frame) => frame.length))).toBeLessThanOrEqual(32 * 1024);
   expect(links.slice(1).every((each) => !each.closed)).toBe(true);
+});
+
+test('refills links the host opened before their registration reply arrived', async () => {
+  openOnRequest = 4;
+  start();
+  await vi.waitFor(() => expect(links).toHaveLength(8));
+  expect(links.slice(4).every((link) => link.requests.length === 1 && !link.closed)).toBe(true);
 });
 
 test('reports a refusal before any link is ready and offers no link', async () => {

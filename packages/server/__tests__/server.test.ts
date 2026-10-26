@@ -1860,6 +1860,10 @@ describe('hosted device sessions', () => {
       expect(((await carrier.next()) as unknown as { binary: Buffer }).binary.toString()).toBe(
         'GET /index.bundle HTTP/1.1\r\n\r\n',
       );
+      expect(await carrier.request('device-host.metro.link', { session: id })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
       carrier.socket.send(Buffer.from('HTTP/1.1 200 OK\r\n\r\nbundle'));
       expect(await answered).toBe('HTTP/1.1 200 OK\r\n\r\nbundle');
       device.destroy();

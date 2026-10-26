@@ -7,8 +7,11 @@ export interface MetroBridge {
 
 /** A client-initiated connection waiting to carry one Metro TCP stream. */
 export interface MetroLink {
-  /** Takes over the accepted worker socket, which is paused, and owns it until either side closes. */
-  open: (socket: Socket) => void;
+  /**
+   * Takes over the accepted worker socket, which is paused, and owns it until either side closes. False when the link
+   * is already closing; the socket is untouched and the bridge tries another link.
+   */
+  open: (socket: Socket) => boolean;
   /** Ends a link that never carried a stream. */
   close: () => void;
 }
@@ -83,10 +86,13 @@ export function createMetroBridge(
     socket.on('error', () => socket.destroy());
     socket.pause();
     void (async () => {
-      const link = await links.take(waitMs);
-      if (!link) return void socket.destroy();
-      if (socket.destroyed) return void (links.add(link) || link.close());
-      link.open(socket);
+      const deadline = Date.now() + waitMs;
+      for (;;) {
+        const link = await links.take(Math.max(0, deadline - Date.now()));
+        if (!link) return void socket.destroy();
+        if (socket.destroyed) return void (links.add(link) || link.close());
+        if (link.open(socket)) return;
+      }
     })();
   });
   return {

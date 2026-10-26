@@ -52,14 +52,17 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
     }
     return cached;
   };
-  const publish = (session: string, links: HostedMetroLinks | null) =>
-    updateWorkspaceState(root, (state) => {
-      const published = { ...hostedMetroLinks(state) };
-      if (state.supervisor?.processToken !== processToken) return state;
-      if (links) published[session] = links;
-      else delete published[session];
-      return { ...state, [HOSTED_METRO_LINKS_KEY]: published };
-    });
+  const publish = (session: string, links: HostedMetroLinks | null) => {
+    try {
+      updateWorkspaceState(root, (state) => {
+        const published = { ...hostedMetroLinks(state) };
+        if (state.supervisor?.processToken !== processToken) return state;
+        if (links) published[session] = links;
+        else delete published[session];
+        return { ...state, [HOSTED_METRO_LINKS_KEY]: published };
+      });
+    } catch {}
+  };
   const reconcile = async () => {
     if (closed) return;
     observer.refresh();

@@ -85,9 +85,12 @@ export async function requestHostedMetro(
 ): Promise<void> {
   throwIfCancelled(signal, 'hosted Metro link');
   requireHostedMetro(root);
-  const previous = hostedMetroRequests(readWorkspaceState(root))[session];
+  const recorded = readWorkspaceState(root);
+  const previous = hostedMetroRequests(recorded)[session];
   const request: HostedMetroRequest =
-    previous?.machine === credential.machine ? previous : { id: randomUUID(), machine: credential.machine };
+    previous?.machine === credential.machine && !hostedMetroLinks(recorded)[session]?.error
+      ? previous
+      : { id: randomUUID(), machine: credential.machine };
   await updateWorkspaceStateAsync(
     root,
     (state) => ({

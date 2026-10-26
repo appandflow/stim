@@ -275,6 +275,7 @@ function linkMetro(session: string, metroPort: number): void {
       upstream.once('close', () => socket.destroy());
       socket.pipe(upstream).pipe(socket);
       socket.resume();
+      return true;
     },
     close: () => {},
   };

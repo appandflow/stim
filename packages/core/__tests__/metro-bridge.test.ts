@@ -25,6 +25,7 @@ function link(closed: string[] = []): MetroLink {
       upstream.once('close', () => socket.destroy());
       socket.pipe(upstream).pipe(socket);
       socket.resume();
+      return true;
     },
     close: () => closed.push('closed'),
   };
@@ -87,6 +88,15 @@ test('holds a connection that arrives before any link until the client opens one
   expect(reads).toEqual([]);
   links.add(link());
   expect(await answered).toBe('answered');
+  expect(reads).toEqual(['/status']);
+});
+
+test('skips a link that is already closing and serves the connection over the next one', async () => {
+  const { links, port } = await bridge();
+  const closing: MetroLink = { open: () => false, close: () => {} };
+  links.add(closing);
+  links.add(link());
+  expect(await failure('/status', port)).toBe('answered');
   expect(reads).toEqual(['/status']);
 });
 

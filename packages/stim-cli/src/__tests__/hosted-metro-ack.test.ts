@@ -187,3 +187,19 @@ test.each(['error', 'timeout'])('open preserves the %s refusal and releases obse
   expect(watches.closed).toBe(watches.opened);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+test('a retry after a link error asks the supervisor again under a new request', async () => {
+  const state = readWorkspaceState(root);
+  assert(state?.supervisor?.processToken);
+  writeWorkspaceState(root, {
+    hostedMetroLinks: {
+      [session]: { id: 'request', processToken: state.supervisor.processToken, error: 'link closed' },
+    },
+  });
+  const pending = requestHostedMetro(root, session, credential, abort.signal).catch((error: unknown) => error);
+  await vi.waitFor(() => expect(hostedMetroRequests(readWorkspaceState(root))[session]?.id).not.toBe('request'), {
+    interval: 1,
+  });
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(await pending).toMatchObject({ message: expect.stringContaining('did not link Metro') });
+});

@@ -35,6 +35,7 @@ export function openMetroLinks({
   const streams = new Set<Socket>();
   let opening = 0;
   let failures = 0;
+  let misses = 0;
   let ready = false;
   let closed = false;
   let retry: NodeJS.Timeout | undefined;
@@ -47,9 +48,10 @@ export function openMetroLinks({
     }
   };
 
-  const failed = (message: string) => {
+  const failed = (message: string, refused: boolean) => {
     if (closed) return;
-    if (!ready) onError(message);
+    misses++;
+    if (!ready && (refused || misses >= IDLE_LINKS)) onError(message);
     if (retry) return;
     retry = setTimeout(
       () => {
@@ -70,7 +72,7 @@ export function openMetroLinks({
       live.delete(connection);
       connection.close();
     });
-    connection.onDropped(() => metro.destroy());
+    connection.onDropped((code) => (code === 1000 ? metro.end() : metro.destroy()));
     connection.onBinary((frame) => metro.write(frame));
     metro.on('data', (chunk: Buffer) => {
       metro.pause();
@@ -89,7 +91,10 @@ export function openMetroLinks({
       if (closed) return void connection.close();
       live.add(connection);
       if (!connection.supports('hosted-metro-link'))
-        throw new Error(`${machine} runs a stim-server that cannot link Metro. Update stim-server there, then retry.`);
+        throw Object.assign(
+          new Error(`${machine} runs a stim-server that cannot link Metro. Update stim-server there, then retry.`),
+          { refused: true },
+        );
       const linked = connection;
       let opened = false;
       linked.onEvent((event) => {
@@ -103,13 +108,17 @@ export function openMetroLinks({
         if (opened) return;
         live.delete(linked);
         waiting.delete(linked);
-        failed(`The link to ${machine} closed.`);
+        failed(`The link to ${machine} closed.`, false);
       });
       const reply = await linked.request('device-host.metro.link', { session });
-      if ('error' in reply) throw new Error(`${machine} refused the Metro link: ${reply.error.message}`);
+      if ('error' in reply)
+        throw Object.assign(new Error(`${machine} refused the Metro link: ${reply.error.message}`), {
+          refused: reply.error.code !== 'closed' && reply.error.code !== 'timeout',
+        });
       if (closed || linked.failure) return void linked.close();
       if (!opened) waiting.add(linked);
       failures = 0;
+      misses = 0;
       if (!ready) {
         ready = true;
         onReady();
@@ -117,9 +126,13 @@ export function openMetroLinks({
     } catch (error) {
       if (connection) live.delete(connection);
       connection?.close();
-      failed(error instanceof Error ? error.message : String(error));
+      failed(
+        error instanceof Error ? error.message : String(error),
+        typeof error === 'object' && error !== null && 'refused' in error && error.refused === true,
+      );
     } finally {
       opening--;
+      fill();
     }
   };
 

@@ -387,7 +387,7 @@ export class BuildConnection {
   private progress: ((event: ProgressEvent) => void) | null = null;
   private binary: ((frame: Buffer) => void) | null = null;
   private event: ((event: Record<string, unknown>) => void) | null = null;
-  private dropped: (() => void) | null = null;
+  private dropped: ((code: number) => void) | null = null;
   private closed: string | null = null;
   private heard = Date.now();
   private watched = false;
@@ -436,7 +436,7 @@ export class BuildConnection {
       this.pending.clear();
       const dropped = code === CLOSE_ABNORMAL;
       this.progress?.({ job: '', outcome: { ok: false, code: dropped ? 'dropped' : 'closed', message: this.closed } });
-      this.dropped?.();
+      this.dropped?.(code);
     });
     socket.on('error', () => {});
   }
@@ -578,8 +578,8 @@ export class BuildConnection {
     this.event = listener;
   }
 
-  /** Called once when the machine or the network ends the connection; never after `close()` or `drop()`. */
-  onDropped(listener: (() => void) | null): void {
+  /** Called once with the close code when the machine or the network ends the connection; never after `close()` or `drop()`. */
+  onDropped(listener: ((code: number) => void) | null): void {
     this.dropped = listener;
   }
 
