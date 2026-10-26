@@ -1,7 +1,7 @@
 import { type FSWatcher, existsSync, readdirSync, statSync, watch } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import { basename, dirname, join } from 'node:path';
-import type { MachineOwner, StatusPayload } from '@stim-cli/core/state';
+import type { MachineOwner, StatusCapacityLoad, StatusPayload } from '@stim-cli/core/state';
 import { getExecutor } from './exec.ts';
 import { androidToolPath } from './devices/android.ts';
 import { easMachineStateRoot } from './engine/eas-session-ledger.ts';
@@ -16,6 +16,7 @@ export const WATCH_MACHINE_INTERVAL_MS = 15_000;
 const WATCH_PROCESS_INTERVAL_MS = 2_000;
 export const WATCH_MEMORY_STEP_MB = 16;
 export const WATCH_CPU_STEP_PERCENT = 5;
+export const WATCH_LOAD_STEP_PER_CORE = 1;
 const WATCH_SIMCTL_INTERVAL_MS = 30_000;
 const ADB_RESTART_MIN_MS = 1_000;
 const ADB_RESTART_MAX_MS = 60_000;
@@ -502,9 +503,20 @@ function ownerSteady(before: MachineOwner, after: MachineOwner): boolean {
   );
 }
 
+function loadSteady(before: StatusCapacityLoad, after: StatusCapacityLoad): boolean {
+  return (
+    before.state === after.state &&
+    before.limit === after.limit &&
+    before.busyAt === after.busyAt &&
+    before.cpus === after.cpus &&
+    Math.abs(Math.round((after.loadPerCore - before.loadPerCore) * 10)) < WATCH_LOAD_STEP_PER_CORE * 10
+  );
+}
+
 /**
  * The payload `status --watch --json` prints. A usage figure keeps its value from the `previous` printed payload until it moves by a step: an owner's `cpuPercent`
- * and `memoryMb`, an environment's `memoryMb` and `capacity.committedMb`. An owner's row is kept whole, `residentMb`
+ * and `memoryMb`, an environment's `memoryMb`, `capacity.committedMb`, and `capacity.load` while its `state`, `limit`,
+ * `busyAt` and `cpus` stay the same and its `loadPerCore` moves less than a step. An owner's row is kept whole, `residentMb`
  * and `processes` included, until one of its two figures moves, so a machine whose processes only jitter prints no new line.
  */
 export function watchPayload(previous: StatusPayload | null, next: StatusPayload): StatusPayload {
@@ -537,7 +549,10 @@ export function watchPayload(previous: StatusPayload | null, next: StatusPayload
     capacity.totalMemoryMb === next.capacity.totalMemoryMb &&
     Math.abs(next.capacity.committedMb - capacity.committedMb) < WATCH_MEMORY_STEP_MB
   ) {
-    payload.capacity = { ...next.capacity, committedMb: capacity.committedMb };
+    payload.capacity = { ...payload.capacity, committedMb: capacity.committedMb };
+  }
+  if (capacity.load && next.capacity.load && loadSteady(capacity.load, next.capacity.load)) {
+    payload.capacity = { ...payload.capacity, load: capacity.load };
   }
   return payload;
 }

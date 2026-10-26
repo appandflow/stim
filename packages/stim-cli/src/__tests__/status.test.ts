@@ -5,7 +5,7 @@ import * as hostedClient from '../device-host/hosted-client.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { tmpdir } from 'os';
+import { availableParallelism, loadavg, tmpdir } from 'os';
 import { join } from 'path';
 import { createServer } from 'http';
 import { Command } from 'commander';
@@ -354,6 +354,21 @@ test('status --json sets memoryMb from the footprint helper, compiling it once i
   await runStatusJson();
   expect(calls.filter((call) => call === 'swiftc')).toHaveLength(1);
   expect(calls.filter((call) => call === 'stim-footprint')).toHaveLength(2);
+});
+
+test('status --json reports the machine load against server.maxLoadPerCore, and slot usage only for a set cap', async () => {
+  saveConfig(makeConfig({ concurrency: { maxBuilds: 2 }, server: { maxLoadPerCore: 1.5 } }));
+  const cpus = availableParallelism();
+  const before = (loadavg()[1] ?? 0) / cpus;
+  const { capacity } = await runStatusJson();
+  const after = (loadavg()[1] ?? 0) / cpus;
+
+  expect(capacity.load).toMatchObject({ cpus, busyAt: 1.5, limit: null });
+  expect(capacity.load.loadPerCore).toBeGreaterThanOrEqual(Math.floor(Math.min(before, after) * 10) / 10);
+  expect(capacity.load.loadPerCore).toBeLessThanOrEqual(Math.ceil(Math.max(before, after) * 10) / 10);
+  expect(capacity.load.state).toBe(capacity.load.loadPerCore >= 1.5 ? 'busy' : 'free');
+  expect(capacity.builds).toEqual({ max: 2, inUse: 0, holders: [] });
+  expect(capacity).not.toHaveProperty('devices');
 });
 
 test('without the helper, owners carry RSS and environments keep the estimate', async () => {

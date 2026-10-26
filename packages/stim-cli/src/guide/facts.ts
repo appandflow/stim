@@ -1790,9 +1790,16 @@ RULES
   figure, including an environment's memoryMb, is held on its own (see
   \`guide lifecycle\`), so the sums can differ from what they sum.
 
-  capacity.builds is present only while concurrency.maxBuilds is set, and
-  capacity.devices only while concurrency.maxDevices is set (see \`guide
-  lifecycle concurrency\`):
+  capacity.load is always present. capacity.builds is present only while
+  concurrency.maxBuilds is set, and capacity.devices only while
+  concurrency.maxDevices is set (see \`guide lifecycle concurrency\`):
+
+  load     { cpus, loadPerCore, busyAt, limit, state }. loadPerCore is the
+           5-minute load average divided by cpus, to one decimal. busyAt is
+           server.maxLoadPerCore (\`guide settings\`). state is free under
+           busyAt, busy at or over it, where automatic placement prefers
+           another machine, or holding at or over limit. limit is null
+           because no setting sets it yet, so state is never holding.
 
   builds   { max, inUse, holders: [{ slot, workspace, client, since,
            unresolved? }] }. inUse counts the slots below max that a new

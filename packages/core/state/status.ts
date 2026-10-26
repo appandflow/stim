@@ -716,6 +716,26 @@ export interface StatusCapacity {
   builds?: StatusBuildSlots;
   /** `concurrency.maxDevices` usage; present only while that cap is set. */
   devices?: StatusDeviceSlots;
+  /** This machine's load. Optional only so payloads from releases that predate it still decode. */
+  load?: StatusCapacityLoad;
+}
+
+/**
+ * `free` is under `busyAt` (`server.maxLoadPerCore`), where placement keeps work on this machine; `busy` is at or over
+ * it, where placement prefers another machine; `holding` is at or over `limit`, where new local native work waits.
+ */
+export type LoadState = 'free' | 'busy' | 'holding';
+
+/**
+ * `loadPerCore` is the 5-minute load average divided by `cpus`, rounded to one decimal. `limit` is the load per core at
+ * which new local native work waits, null while no limit is configured.
+ */
+export interface StatusCapacityLoad {
+  cpus: number;
+  loadPerCore: number;
+  busyAt: number;
+  limit: number | null;
+  state: LoadState;
 }
 
 /**

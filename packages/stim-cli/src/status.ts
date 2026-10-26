@@ -18,6 +18,7 @@ import type {
   MetroLastStop,
   RemoteDeviceState,
   StatusCapacity,
+  StatusCapacityLoad,
   StatusIssue,
   StatusIssueCode,
   WebBrowserState,
@@ -26,7 +27,7 @@ import type {
 } from '@stim-cli/core/state';
 import { workspaceAgentDeviceDir } from './workspace/paths.ts';
 import { getExecutor } from './exec.ts';
-import { ACTIVITY_RECENCY_BASES } from '@stim-cli/core/state';
+import { ACTIVITY_RECENCY_BASES, loadState } from '@stim-cli/core/state';
 
 export type {
   AndroidRuntimeFacts,
@@ -550,6 +551,19 @@ export function capacity(states: EnvironmentState[], totalMemoryMb: number): Sta
     totalMemoryMb,
     overCapacity: Boolean(totalMemoryMb && committedMb > totalMemoryMb * 0.6),
   };
+}
+
+/** `capacity.load` from a load reading, the `server.maxLoadPerCore` it is busy at, and the configured limit. */
+export function capacityLoad(
+  { cpus, loadPerCore }: { cpus: number; loadPerCore: number },
+  busyAt: number,
+  limit: number | null,
+): StatusCapacityLoad {
+  return { cpus, loadPerCore, busyAt, limit, state: loadState(loadPerCore, busyAt, limit) };
+}
+
+export function loadLine({ loadPerCore, busyAt, limit }: StatusCapacityLoad): string {
+  return `load ${loadPerCore}/core (busy at ${busyAt}${limit === null ? '' : `, holding at ${limit}`})`;
 }
 
 /** The plain status lines for the `concurrency.maxBuilds` and `concurrency.maxDevices` caps that are set. */

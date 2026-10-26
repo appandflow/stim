@@ -38,11 +38,15 @@ import {
   readArchives,
   type ArchivedWorkspace,
   DEVICE_RECLAIM_REASON,
+  loadPerCore,
+  maxLoadPerCore,
 } from '@stim-cli/core/state';
 import { type DeviceActivity } from '../devices/activity.ts';
 import {
   activityLabel,
   capacity,
+  capacityLoad,
+  loadLine,
   deviceLeaseLines,
   diskLine,
   gitSummaryText,
@@ -165,7 +169,11 @@ function renderStatus(
 ): string[] {
   const out: string[] = [];
   const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
-  const cap = { ...capacity(states, totalMemoryMb), ...slotUsage };
+  const cap = {
+    ...capacity(states, totalMemoryMb),
+    ...slotUsage,
+    load: capacityLoad(loadPerCore(), maxLoadPerCore(), null),
+  };
   const pools = (['ios', 'android'] as const).map((platform) => {
     const { max, error } = parkedMaxSetting(platform);
     return { error, line: poolLine({ platform, parked: readParked(platform).length, max }) };
@@ -312,6 +320,7 @@ function renderStatus(
         : `\n${cap.liveCount} active environment(s), roughly ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)} committed.`,
     ),
   );
+  out.push(chalk.dim(loadLine(cap.load)));
   for (const line of slotUsageLines(cap)) out.push(chalk.dim(line));
   const volumes = readVolumes(cwdRoot || cwd);
   const line = diskLine(volumes);

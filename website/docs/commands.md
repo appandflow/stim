@@ -1340,6 +1340,14 @@ nothing runs and `machine` is `null`, it is the fixed estimate the memory
 budget uses, with `memorySource: "estimate"`. `stim guide facts status`
 lists every field.
 
+Status always shows this Mac's load, as a `load 17.6/core (busy at 2)` line and
+in `--json` as `capacity.load`: `cpus`, `loadPerCore` (the 5-minute load
+average divided by `cpus`), `busyAt` (`server.maxLoadPerCore`, the load at
+which automatic placement prefers another machine), `limit` and `state`.
+`state` is `free` under `busyAt`, `busy` at or over it, or `holding` at or
+over `limit`. No setting sets `limit` yet, so it is `null` and `state` is
+never `holding`.
+
 While `concurrency.maxBuilds` or `concurrency.maxDevices` is set, status shows
 how many of those slots are in use and who holds them, as a `builds 1/2` or
 `devices 6/6` line, and in `--json` as `capacity.builds` and
@@ -1354,6 +1362,7 @@ With `--json` it prints one complete payload per line: one immediately, then
 one per change, never two identical payloads in a row. In a watch line, a CPU or memory figure keeps
 its value from the previous line until it moves by 5 percentage points or 16 MB;
 resident memory and process counts follow their owner's row, and `capacity.committedMb` is held on its own, so it can differ from the sum of the environments' `memoryMb`.
+`capacity.load` keeps its value until its `loadPerCore` moves by 1 per core or its `state` changes.
 A change in only a bookkeeping timestamp (each `pullRequest.checkedAt`, `maintenance.lastChecks`, `maintenance.lastPass.startedAt` and `durationMs`, `maintenance.running.startedAt`) prints no line; a line that prints carries the current values.
 It reacts to changes in
 `$STIM_HOME` state and the EAS session ledger, git HEAD, index and ref changes
