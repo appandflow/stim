@@ -188,12 +188,15 @@ test.each(['error', 'timeout'])('open preserves the %s refusal and releases obse
   expect(vi.getTimerCount()).toBe(0);
 });
 
-test('a retry after a link error asks the supervisor again under a new request', async () => {
+test.each([
+  ['a link error', { error: 'link closed' }],
+  ['lost links', {}],
+])('a retry after %s asks the supervisor again under a new request', async (_name, outcome) => {
   const state = readWorkspaceState(root);
   assert(state?.supervisor?.processToken);
   writeWorkspaceState(root, {
     hostedMetroLinks: {
-      [session]: { id: 'request', processToken: state.supervisor.processToken, error: 'link closed' },
+      [session]: { id: 'request', processToken: state.supervisor.processToken, ...outcome },
     },
   });
   const pending = requestHostedMetro(root, session, credential, abort.signal).catch((error: unknown) => error);
@@ -202,4 +205,10 @@ test('a retry after a link error asks the supervisor again under a new request',
   });
   await vi.advanceTimersByTimeAsync(15_000);
   expect(await pending).toMatchObject({ message: expect.stringContaining('did not link Metro') });
+});
+
+test('a run while the links are ready keeps the request, so the supervisor keeps its links', async () => {
+  expect(await requestHostedMetro(root, session, credential, abort.signal)).toBeUndefined();
+  expect(hostedMetroRequests(readWorkspaceState(root))[session]?.id).toBe('request');
+  expect(watches.closed).toBe(watches.opened);
 });

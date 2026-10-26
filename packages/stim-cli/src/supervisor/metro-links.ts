@@ -1,10 +1,10 @@
 import { connect as connectSocket, type Socket } from 'node:net';
 import type { BuildConnection } from '../offload/client.ts';
-import { connectHost } from '../device-host/hosted-client.ts';
+import { hostConnector } from '../device-host/hosted-client.ts';
 
 const IDLE_LINKS = 4;
 const FRAME_BYTES = 32 * 1024;
-const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
+const RETRY_MS = [500, 1000, 2000, 5000, 10_000];
 
 export interface MetroLinkPool {
   close: () => void;
@@ -13,24 +13,27 @@ export interface MetroLinkPool {
 /**
  * Keeps `IDLE_LINKS` authenticated connections open to `machine`, each offered to `session`'s Metro bridge there. The
  * host pairs one with each connection the hosted device makes; this side then pipes it to loopback `metroPort` and
- * opens a replacement.
+ * opens a replacement. `onReady` runs when the host holds a link after holding none, and `onLost` when no linked
+ * connection to the host is left.
  */
 export function openMetroLinks({
   machine,
   session,
   metroPort,
   onReady,
+  onLost,
   onError,
-  connect = async (name) => (await connectHost(name, undefined, true)).connection,
 }: {
   machine: string;
   session: string;
   metroPort: number;
   onReady: () => void;
+  onLost: () => void;
   onError: (message: string) => void;
-  connect?: (machine: string) => Promise<BuildConnection>;
 }): MetroLinkPool {
+  const connect = hostConnector(machine);
   const live = new Set<BuildConnection>();
+  const linked = new Set<BuildConnection>();
   const waiting = new Set<BuildConnection>();
   const streams = new Set<Socket>();
   let opening = 0;
@@ -48,6 +51,14 @@ export function openMetroLinks({
     }
   };
 
+  const gone = (connection: BuildConnection) => {
+    live.delete(connection);
+    waiting.delete(connection);
+    if (!linked.delete(connection) || closed || !ready || linked.size > 0) return;
+    ready = false;
+    onLost();
+  };
+
   const failed = (message: string, refused: boolean) => {
     if (closed) return;
     misses++;
@@ -63,19 +74,26 @@ export function openMetroLinks({
     retry.unref();
   };
 
-  const carry = (connection: BuildConnection) => {
+  const carry = (connection: BuildConnection, ended: () => void) => {
     const metro = connectSocket({ host: '127.0.0.1', port: metroPort });
     streams.add(metro);
     metro.on('error', () => metro.destroy());
     metro.once('close', () => {
       streams.delete(metro);
-      void connection.flushed().then(() => {
-        live.delete(connection);
-        return connection.close();
-      });
+      ended();
+      void connection.flushed().then(() => connection.close());
     });
     connection.onDropped((code) => (code === 1000 ? metro.end() : metro.destroy()));
-    connection.onBinary((frame) => metro.write(frame));
+    let paused = false;
+    connection.onBinary((frame) => {
+      if (metro.write(frame) || paused) return;
+      paused = true;
+      connection.pause();
+      metro.once('drain', () => {
+        paused = false;
+        connection.resume();
+      });
+    });
     metro.on('data', (chunk: Buffer) => {
       metro.pause();
       void (async () => {
@@ -89,7 +107,7 @@ export function openMetroLinks({
   const link = async () => {
     let connection: BuildConnection | undefined;
     try {
-      connection = await connect(machine);
+      connection = await connect();
       if (closed) return void connection.close();
       live.add(connection);
       if (!connection.supports('hosted-metro-link'))
@@ -97,30 +115,36 @@ export function openMetroLinks({
           new Error(`${machine} runs a stim-server that cannot link Metro. Update stim-server there, then retry.`),
           { refused: true },
         );
-      const linked = connection;
-      let opened = false;
-      linked.onEvent((event) => {
-        if (event.event !== 'device-host.metro.link.open' || opened || closed) return;
-        opened = true;
-        waiting.delete(linked);
-        carry(linked);
+      const each = connection;
+      let paired = false;
+      let ended = false;
+      each.onEvent((event) => {
+        if (event.event !== 'device-host.metro.link.open' || paired || closed) return;
+        paired = true;
+        waiting.delete(each);
+        carry(each, () => {
+          ended = true;
+          gone(each);
+        });
         fill();
       });
       let registered = false;
-      linked.onDropped(() => {
-        if (opened || !registered) return;
-        live.delete(linked);
-        waiting.delete(linked);
-        failed(`The link to ${machine} closed.`, false);
+      each.onDropped(() => {
+        if (paired || !registered) return;
+        gone(each);
+        fill();
       });
-      const reply = await linked.request('device-host.metro.link', { session });
-      registered = true;
+      const reply = await each.request('device-host.metro.link', { session });
       if ('error' in reply)
         throw Object.assign(new Error(`${machine} refused the Metro link: ${reply.error.message}`), {
           refused: reply.error.code !== 'closed' && reply.error.code !== 'timeout',
         });
-      if (closed || linked.failure) return void linked.close();
-      if (!opened) waiting.add(linked);
+      if (closed) return void each.close();
+      if (ended || each.failure) return void live.delete(each);
+      registered = true;
+      linked.add(each);
+      if (!paired) waiting.add(each);
+      each.watch();
       failures = 0;
       misses = 0;
       if (!ready) {
@@ -135,7 +159,7 @@ export function openMetroLinks({
         typeof error === 'object' &&
           error !== null &&
           (('refused' in error && error.refused === true) ||
-            ('code' in error && error.code === 'STIM_HOSTING_REFUSED')),
+            ('code' in error && typeof error.code === 'string' && error.code.startsWith('STIM_'))),
       );
     } finally {
       opening--;
@@ -151,6 +175,7 @@ export function openMetroLinks({
       for (const connection of live) connection.close();
       for (const stream of streams) stream.destroy();
       live.clear();
+      linked.clear();
       waiting.clear();
     },
   };

@@ -1,59 +1,99 @@
 import assert from 'node:assert';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import type { BuildConnection } from '../offload/client.ts';
+import { createServer as createNetServer, type AddressInfo, type Socket } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
+import { deviceHostMachinesFile } from '@stim-cli/core/state';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { BuildConnection } from '../offload/client.ts';
+import type { ConnectFailure } from '../offload/tailnet.ts';
 import { openMetroLinks, type MetroLinkPool } from '../supervisor/metro-links.ts';
+import { getConfigPath } from '../workspace/config.ts';
+import { FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 
 const session = '12345678-1234-1234-1234-123456789abc';
+const TAILSCALE_STATUS = JSON.stringify({
+  BackendState: 'Running',
+  Peer: { nMini: { ID: 'nMini', DNSName: 'mini.tail1.ts.net.', TailscaleIPs: ['100.64.0.7'] } },
+});
+const SILENT: ConnectFailure = {
+  failure: 'Opening handshake has timed out',
+  refused: false,
+  transport: { kind: 'silent' },
+};
 
 interface FakeLink {
   connection: BuildConnection;
   requests: { method: string; params: unknown }[];
   sent: Buffer[];
   closed: boolean;
+  paused: boolean;
+  resumed: number;
   open: () => void;
   receive: (frame: Buffer) => void;
+  drop: (code: number) => void;
 }
 
+let dir: string;
 let metro: Server;
 let metroPort: number;
 let links: FakeLink[];
 let pool: MetroLinkPool | undefined;
 let refusal: string | null;
 let openOnRequest: number;
-let connectFailures: Error[];
+let connectOutcomes: ConnectFailure[];
+let tailscale: string[][];
 let ready: number;
+let lost: number;
 let errors: string[];
 
 function fakeLink(): FakeLink {
   let event: ((message: Record<string, unknown>) => void) | null = null;
   let binary: ((frame: Buffer) => void) | null = null;
+  let dropped: ((code: number) => void) | null = null;
   const link: FakeLink = {
     requests: [],
     sent: [],
     closed: false,
+    paused: false,
+    resumed: 0,
     open: () => event?.({ event: 'device-host.metro.link.open' }),
     receive: (frame) => binary?.(frame),
-    connection: {
-      supports: (feature: string) => feature === 'hosted-metro-link',
-      request: async (method: string, params: unknown) => {
-        link.requests.push({ method, params });
-        if (openOnRequest > 0) {
-          openOnRequest--;
-          link.open();
-        }
-        return refusal ? { error: { code: 'forbidden', message: refusal } } : { result: {} };
-      },
-      onEvent: (listener: typeof event) => (event = listener),
-      onBinary: (listener: typeof binary) => (binary = listener),
-      onDropped: () => {},
-      sendBinary: async (frame: Buffer) => void link.sent.push(Buffer.from(frame)),
-      flushed: async () => {},
-      close: () => (link.closed = true),
-      get failure() {
-        return link.closed ? 'closed' : null;
-      },
-    } as unknown as BuildConnection,
+    drop: (code) => {
+      link.closed = true;
+      dropped?.(code);
+    },
+    connection: Object.create(
+      BuildConnection.prototype,
+      Object.getOwnPropertyDescriptors({
+        supports: (feature: string) => feature === 'hosted-metro-link',
+        request: async (method: string, params: unknown) => {
+          link.requests.push({ method, params });
+          if (openOnRequest > 0) {
+            openOnRequest--;
+            link.open();
+          }
+          return refusal ? { error: { code: 'forbidden', message: refusal } } : { result: {} };
+        },
+        onEvent: (listener: typeof event) => (event = listener),
+        onBinary: (listener: typeof binary) => (binary = listener),
+        onDropped: (listener: typeof dropped) => (dropped = listener),
+        sendBinary: async (frame: Buffer) => void link.sent.push(Buffer.from(frame)),
+        flushed: async () => {},
+        watch: () => {},
+        pause: () => (link.paused = true),
+        resume: () => {
+          link.paused = false;
+          link.resumed++;
+        },
+        close: () => (link.closed = true),
+        get failure() {
+          return link.closed ? 'closed' : null;
+        },
+      }),
+    ) as BuildConnection,
   };
   return link;
 }
@@ -64,24 +104,55 @@ function start(): void {
     session,
     metroPort,
     onReady: () => ready++,
+    onLost: () => lost++,
     onError: (message) => errors.push(message),
-    connect: async () => {
-      const failure = connectFailures.shift();
-      if (failure) throw failure;
-      const link = fakeLink();
-      links.push(link);
-      return link.connection;
-    },
   });
 }
 
 beforeEach(async () => {
+  dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-links-')));
+  process.env.STIM_HOME = join(dir, 'home');
+  mkdirSync(process.env.STIM_HOME);
+  writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'] } }));
+  writeFileSync(
+    deviceHostMachinesFile(),
+    JSON.stringify({
+      version: 2,
+      machines: [
+        {
+          machine: 'mini',
+          transport: 'tailscale',
+          address: 'mini.tail1.ts.net',
+          deviceId: 'client1',
+          serverKey: FAKE_SERVER_PUBLIC,
+          state: 'approved',
+          requestedAt: 'now',
+        },
+      ],
+    }),
+  );
   links = [];
   refusal = null;
   openOnRequest = 0;
-  connectFailures = [];
+  connectOutcomes = [];
+  tailscale = [];
   ready = 0;
+  lost = 0;
   errors = [];
+  setExecutor({
+    ...getExecutor(),
+    runFileAsync: async (_file: string, args: string[]) => {
+      tailscale.push(args);
+      return TAILSCALE_STATUS;
+    },
+  });
+  vi.spyOn(BuildConnection, 'open').mockImplementation(async () => {
+    const outcome = connectOutcomes.shift();
+    if (outcome) return outcome;
+    const link = fakeLink();
+    links.push(link);
+    return link.connection;
+  });
   metro = createServer((request, response) => {
     response.setHeader('connection', 'close');
     response.end(request.url === '/large' ? Buffer.alloc(200 * 1024, 7) : `served ${request.url}`);
@@ -92,15 +163,22 @@ beforeEach(async () => {
 afterEach(async () => {
   pool?.close();
   pool = undefined;
+  vi.restoreAllMocks();
+  resetExecutor();
   metro.closeAllConnections();
   await new Promise<void>((resolve) => metro.close(() => resolve()));
+  delete process.env.STIM_HOME;
+  rmSync(dir, { recursive: true, force: true });
 });
 
-test('offers four idle links for the session and reports ready once the host holds one', async () => {
+test('offers four idle links for the session, reports ready once the host holds one, and reads Tailscale once', async () => {
   start();
   await vi.waitFor(() => expect(ready).toBe(1));
   expect(links).toHaveLength(4);
   for (const link of links) expect(link.requests).toEqual([{ method: 'device-host.metro.link', params: { session } }]);
+  links[0]?.open();
+  await vi.waitFor(() => expect(links).toHaveLength(5));
+  expect(tailscale).toEqual([['status', '--json']]);
   expect(errors).toEqual([]);
 });
 
@@ -118,6 +196,7 @@ test('a paired link carries its stream to loopback Metro in client-sized frames 
   expect(response.subarray(response.indexOf('\r\n\r\n') + 4).equals(Buffer.alloc(200 * 1024, 7))).toBe(true);
   expect(Math.max(...link.sent.map((frame) => frame.length))).toBeLessThanOrEqual(32 * 1024);
   expect(links.slice(1).every((each) => !each.closed)).toBe(true);
+  expect(lost).toBe(0);
 });
 
 test('refills links the host opened before their registration reply arrived', async () => {
@@ -127,20 +206,32 @@ test('refills links the host opened before their registration reply arrived', as
   expect(links.slice(4).every((link) => link.requests.length === 1 && !link.closed)).toBe(true);
 });
 
-test('does not report one transient connect failure while the other links come up', async () => {
-  connectFailures = [new Error('connect ETIMEDOUT')];
+test('retries a connect that timed out without reporting it or diagnosing the network', async () => {
+  connectOutcomes = [SILENT];
   start();
   await vi.waitFor(() => expect(ready).toBe(1));
   expect(errors).toEqual([]);
+  await vi.waitFor(() => expect(links).toHaveLength(4), { timeout: 3000 });
+  expect(tailscale.filter((args) => args[0] !== 'status')).toEqual([]);
+});
+
+test('reports a host it cannot reach once every first link failed', async () => {
+  connectOutcomes = [SILENT, SILENT, SILENT, SILENT];
+  start();
+  await vi.waitFor(() => expect(errors).toHaveLength(1));
+  expect(errors[0]).toBe(
+    'mini is unreachable: Opening handshake has timed out. Run stim doctor to see which layer failed.',
+  );
+  expect(ready).toBe(0);
 });
 
 test('reports a hosting refusal at once instead of waiting for every link to fail', async () => {
-  connectFailures = [
-    Object.assign(new Error('mini has not confirmed hosting access'), { code: 'STIM_HOSTING_REFUSED' }),
+  connectOutcomes = [
+    { failure: 'This machine has not approved this client for device-host.', refused: true, code: 'forbidden' },
   ];
   start();
   await vi.waitFor(() => expect(errors).toHaveLength(1));
-  expect(errors[0]).toContain('has not confirmed hosting access');
+  expect(errors[0]).toContain('mini refused this machine: This machine has not approved this client for device-host');
 });
 
 test('reports a refusal before any link is ready and offers no link', async () => {
@@ -152,11 +243,60 @@ test('reports a refusal before any link is ready and offers no link', async () =
   expect(links.every((link) => link.closed)).toBe(true);
 });
 
+test('reports the links lost when the host drops all of them, then ready again once it takes new ones', async () => {
+  start();
+  await vi.waitFor(() => expect(ready).toBe(1));
+  connectOutcomes = [
+    { failure: 'connect ECONNREFUSED 100.64.0.7:7443', refused: false, transport: { kind: 'refused' } },
+  ];
+  for (const link of links.slice(0, 4)) link.drop(1006);
+  expect(lost).toBe(1);
+  await vi.waitFor(() => expect(ready).toBe(2), { timeout: 3000 });
+  await vi.waitFor(() => expect(links.slice(4).filter((link) => !link.closed)).toHaveLength(4), { timeout: 3000 });
+  expect(errors).toEqual([]);
+});
+
+test('stops reading the link while loopback Metro is not reading, and resumes when it drains', async () => {
+  const received: Buffer[] = [];
+  const accepted: Socket[] = [];
+  const slow = createNetServer((socket) => {
+    accepted.push(socket);
+    socket.pause();
+    socket.on('data', (chunk: Buffer) => received.push(chunk));
+  });
+  await new Promise<void>((resolve) => slow.listen(0, '127.0.0.1', resolve));
+  metroPort = (slow.address() as AddressInfo).port;
+  try {
+    start();
+    await vi.waitFor(() => expect(ready).toBe(1));
+    const [link] = links;
+    assert(link);
+    link.open();
+    await vi.waitFor(() => expect(accepted).toHaveLength(1));
+    const frame = Buffer.alloc(32 * 1024, 9);
+    let fed = 0;
+    while (!link.paused && fed < 64 * 1024 * 1024) {
+      link.receive(frame);
+      fed += frame.length;
+      await setImmediate();
+    }
+    expect(link.paused).toBe(true);
+    expect(fed).toBeLessThan(16 * 1024 * 1024);
+    accepted[0]?.resume();
+    await vi.waitFor(() => expect(link.resumed).toBe(1));
+    await vi.waitFor(() => expect(Buffer.concat(received).length).toBe(fed));
+  } finally {
+    pool?.close();
+    for (const socket of accepted) socket.destroy();
+    await new Promise<void>((resolve) => slow.close(() => resolve()));
+  }
+});
+
 test('closing the pool ends idle and carrying links', async () => {
   start();
   await vi.waitFor(() => expect(ready).toBe(1));
   links[0]?.open();
   await vi.waitFor(() => expect(links).toHaveLength(5));
   pool?.close();
-  expect(links.every((link) => link.closed)).toBe(true);
+  await vi.waitFor(() => expect(links.every((link) => link.closed)).toBe(true));
 });

@@ -15,7 +15,13 @@ import {
 } from '@stim-cli/core/state';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { BuildConnection } from '../offload/client.ts';
-import { diagnoseConnectFailure, resolveEndpoint, SERVER_OUTDATED } from '../offload/tailnet.ts';
+import {
+  diagnoseConnectFailure,
+  resolveEndpoint,
+  SERVER_OUTDATED,
+  type ConnectFailure,
+  type Endpoint,
+} from '../offload/tailnet.ts';
 import { configuredMachines } from './machines.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -97,6 +103,13 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
   return credential;
 }
 
+function turnedAway(machine: string, opened: ConnectFailure): string | null {
+  if (opened.code === SERVER_OUTDATED)
+    return `${machine} runs a stim-server that speaks an older protocol than this Stim. Run stim doctor for the command that updates it there, then retry.`;
+  if (opened.refused) return `${machine} refused this machine: ${opened.failure.replace(/\.+$/, '')}. Run stim doctor.`;
+  return null;
+}
+
 /** Connects only to the stim-server that proves it holds the approved machine's pinned key, and only for `device-host`. */
 export async function connectHost(
   machine: string,
@@ -123,16 +136,13 @@ export async function connectHost(
   if (signal?.aborted && opened instanceof BuildConnection) opened.close();
   signal?.throwIfAborted();
   if (!(opened instanceof BuildConnection)) {
-    const diagnosis =
-      opened.refused || opened.code === SERVER_OUTDATED ? null : await diagnoseConnectFailure(machine, opened, signal);
+    const refusal = turnedAway(machine, opened);
+    const diagnosis = refusal === null ? await diagnoseConnectFailure(machine, opened, signal) : null;
     throw Object.assign(
       new Error(
-        opened.code === SERVER_OUTDATED
-          ? `${machine} runs a stim-server that speaks an older protocol than this Stim. Run stim doctor for the command that updates it there, then retry.`
-          : opened.refused
-            ? `${machine} refused this machine: ${opened.failure.replace(/\.+$/, '')}. Run stim doctor.`
-            : (diagnosis?.message ??
-              `${machine} is unreachable: ${opened.failure}. Run stim doctor to see which layer failed.`),
+        refusal ??
+          diagnosis?.message ??
+          `${machine} is unreachable: ${opened.failure}. Run stim doctor to see which layer failed.`,
       ),
       {
         code: strict ? 'STIM_HOSTING_REFUSED' : opened.refused ? 'STIM_HOSTING_REFUSED' : (opened.code ?? 'closed'),
@@ -142,6 +152,41 @@ export async function connectHost(
     );
   }
   return { machine, credential, connection: opened };
+}
+
+/**
+ * Opens `device-host` connections to `machine` for a caller that retries on its own, as `connectHost` does but without
+ * diagnosing failures, resolving the machine's address again only after one fails. Only a failure a retry cannot fix,
+ * such as a refusal or a missing approval, carries a `STIM_` code.
+ */
+export function hostConnector(machine: string): () => Promise<BuildConnection> {
+  let resolving: Promise<Endpoint | string> | undefined;
+  return async () => {
+    const credential = hostingCredential(machine);
+    const pending = (resolving ??= resolveEndpoint(credential));
+    const target = await pending.catch((error: unknown) => {
+      if (resolving === pending) resolving = undefined;
+      throw error;
+    });
+    if (typeof target === 'string') {
+      if (resolving === pending) resolving = undefined;
+      throw credentialRefusal(`Stim does not connect to ${machine}: ${target}.`);
+    }
+    const opened = await BuildConnection.open(target, credential.serverKey!, CONNECT_TIMEOUT_MS, 'device-host').catch(
+      (error: unknown): ConnectFailure => ({
+        failure: error instanceof Error ? error.message : String(error),
+        refused: false,
+      }),
+    );
+    if (opened instanceof BuildConnection) return opened;
+    const refusal = turnedAway(machine, opened);
+    if (refusal !== null) throw credentialRefusal(refusal);
+    if (resolving === pending) resolving = undefined;
+    throw Object.assign(
+      new Error(`${machine} is unreachable: ${opened.failure}. Run stim doctor to see which layer failed.`),
+      { code: opened.code ?? 'closed' },
+    );
+  };
 }
 
 export function requireHostedAppMode(

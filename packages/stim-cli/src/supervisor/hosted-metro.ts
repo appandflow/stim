@@ -113,6 +113,9 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
           onReady: () => {
             if (active[session] === request) publish(session, { id: request.id, processToken, ready: true });
           },
+          onLost: () => {
+            if (active[session] === request) publish(session, { id: request.id, processToken });
+          },
           onError: (message) => {
             if (active[session] === request) publish(session, { id: request.id, processToken, error: message });
           },

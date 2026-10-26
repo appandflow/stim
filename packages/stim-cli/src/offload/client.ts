@@ -574,6 +574,15 @@ export class BuildConnection {
     return this.closed ? Promise.resolve() : this.lastWrite;
   }
 
+  /** Stops reading frames from the machine until `resume()`, so the machine's sends wait on the network. */
+  pause(): void {
+    this.socket.pause();
+  }
+
+  resume(): void {
+    this.socket.resume();
+  }
+
   onProgress(listener: ((event: ProgressEvent) => void) | null): void {
     this.progress = listener;
   }

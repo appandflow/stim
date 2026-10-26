@@ -10,7 +10,7 @@ export interface HostedMetroRequest {
   machine: string;
 }
 
-/** The supervisor's answer to a request: `ready` once the host holds one of its idle links. */
+/** The supervisor's answer to a request: `ready` while the host holds one of its links, `error` when it cannot link. */
 export interface HostedMetroLinks {
   id: string;
   processToken: string;
