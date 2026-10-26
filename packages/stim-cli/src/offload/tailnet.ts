@@ -16,6 +16,7 @@ import {
 } from '@stim-cli/core/noise-session';
 import {
   clientIdentity,
+  DEFAULT_SERVER_PORT,
   endpoint,
   findPeer,
   isJsonObject,
@@ -585,8 +586,10 @@ export function setupRemedy(entry: string, command: string | null): string {
     : `A person on ${entry} runs the \`stim-server setup\` command Stim Desktop showed for this machine.`;
 }
 
-function setupCommand(ticket: string, expiresAt: string, flags: Access[], version: string): string {
-  return `STIM_SETUP_TICKET=${ticket} STIM_SETUP_ORIGIN=doctor npx --yes --package @stim-cli/server@${version} stim-server setup --expires ${expiresAt} ${flags.map((flag) => `--${flag}`).join(' ')}`;
+function setupCommand(machine: string, ticket: string, expiresAt: string, flags: Access[], version: string): string {
+  const parsed = parseMachine(machine);
+  const port = parsed?.transport === 'local' && parsed.port !== DEFAULT_SERVER_PORT ? ` --port ${parsed.port}` : '';
+  return `STIM_SETUP_TICKET=${ticket} STIM_SETUP_ORIGIN=doctor npx --yes --package @stim-cli/server@${version} stim-server setup --expires ${expiresAt} ${flags.map((flag) => `--${flag}`).join(' ')}${port}`;
 }
 
 function transportOf(machine: string): MachineTransport {
@@ -682,7 +685,7 @@ export async function reachMachine(input: AccessInput): Promise<AccessOutcome> {
       return approved(input, reply, pending.requestedAt);
     }
     const command = pending.expiresAt
-      ? setupCommand(pending.ticket!, pending.expiresAt, input.setupFlags, input.serverVersion)
+      ? setupCommand(input.machine, pending.ticket!, pending.expiresAt, input.setupFlags, input.serverVersion)
       : null;
     if ('error' in reply && reply.error.code === SERVER_OUTDATED)
       return { state: 'outdated', credential: pending, command };

@@ -2,7 +2,7 @@ import { isJsonObject } from './json-file.ts';
 
 const DEFAULT_SERVE_PORT = 7443;
 /** stim-server's own port, which a machine on the local network connects to directly. */
-const DEFAULT_SERVER_PORT = 7787;
+export const DEFAULT_SERVER_PORT = 7787;
 const LOCAL_PREFIX = 'local:';
 
 /**

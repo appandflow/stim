@@ -252,6 +252,13 @@ describe('inspectBuildMachines', () => {
       expect(readBuildMachines()[0]).toMatchObject({ machine: LAN, transport: 'local', address: '10.0.0.92' });
     });
 
+    it('prints a setup command for the port the entry names, which is the server port there', async () => {
+      const { findings } = await inspectBuildMachines({ fix: true, version: '9.9.9' }, noTailscale([notYet]).io, [
+        'local:10.0.0.92:7799',
+      ]);
+      expect(findings[0]?.fix).toMatch(/stim-server setup --expires \S+ --build --device-host --port 7799\n/);
+    });
+
     it('never pins the key its ticket authenticated until a person confirms the fingerprint', async () => {
       await inspectBuildMachines({ fix: true, version: '9.9.9' }, noTailscale([notYet]).io, [LAN]);
       const declined = confirming(false);
