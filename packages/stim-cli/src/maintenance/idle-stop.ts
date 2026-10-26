@@ -16,7 +16,14 @@ import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { runStop } from '../commands/stop.ts';
-import { ownedAvdSerialResolver, ownedAvdSerialResolverAsync } from '../devices/android.ts';
+import {
+  getAvdNameForSerial,
+  getAvdNameForSerialAsync,
+  listAdbDevices,
+  listAdbDevicesAsync,
+  ownedAvdSerialResolver,
+  ownedAvdSerialResolverAsync,
+} from '../devices/android.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { leaseIsExpired, listLeaseFiles } from '../engine/device-lease.ts';
 import {
@@ -289,12 +296,21 @@ function rethrowCleanup(error: unknown, signal: AbortSignal | undefined): void {
 
 async function emulatorListError(avdNames: readonly string[], operation?: StimContext): Promise<string | null> {
   try {
-    if (operation) {
-      const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal: operation.signal, operation });
-      for (const name of avdNames) await resolve(name);
-    } else {
-      const resolve = ownedAvdSerialResolver({ timeoutMs: 5000 });
-      for (const name of avdNames) resolve(name);
+    const signal = operation?.signal;
+    const resolve = operation
+      ? ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal, operation })
+      : ownedAvdSerialResolver({ timeoutMs: 5000 });
+    let unseen = false;
+    for (const name of avdNames) if ((await resolve(name)).notRunning) unseen = true;
+    if (!unseen) return null;
+    const { emulators } = operation
+      ? await listAdbDevicesAsync({ timeoutMs: 5000, signal, operation })
+      : listAdbDevices({ timeoutMs: 5000 });
+    for (const { serial } of emulators) {
+      const name = operation
+        ? await getAvdNameForSerialAsync(serial, { signal, operation })
+        : getAvdNameForSerial(serial);
+      if (name === null) return `its emulators cannot be identified to prove them idle (${serial} gave no AVD name)`;
     }
     return null;
   } catch (error) {
@@ -345,6 +361,8 @@ async function candidate(
   if (emulators) return { skip: emulators };
   if (supervisor.status === 'ours' && readWorkspaceState(path)?.supervisor?.mode === MODE_COMMAND)
     return { skip: 'its dev server runs metro.command, whose bundle and HMR requests Stim cannot see' };
+  if (supervisor.status === 'ours' && readWorkspaceState(path)?.supervisor?.hmrUpdates !== true)
+    return { skip: 'its dev server started before Stim recorded HMR updates; stim start again to enable idle stop' };
   if (supervisor.status !== 'ours' && booted.length === 0) return null;
   return { path, hours: setting.hours, serving: supervisor.status === 'ours', devices: booted };
 }

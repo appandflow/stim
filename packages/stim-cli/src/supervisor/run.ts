@@ -201,7 +201,7 @@ export async function runSupervisor({
     onExit(1);
     return null;
   }
-  const record = { pid: process.pid, processToken, port, mode, startedAt };
+  const record = { pid: process.pid, processToken, port, mode, startedAt, ...(command ? {} : { hmrUpdates: true }) };
   const vanished = vanishedSupervisorMessage(readWorkspaceState(root)?.supervisor);
   if (vanished) writer.write({ src: 'metro', level: 'warn', event: 'supervisor_vanished', msg: vanished });
 

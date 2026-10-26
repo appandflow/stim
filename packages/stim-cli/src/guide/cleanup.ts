@@ -68,14 +68,15 @@ held native-run or metro-start lock, a build lock or slot, a running macOS
 app, a hosted or remote session, an unexpired device lease, a managed tunnel
 or remote lock, a running owned Chrome, a device driver other than
 agent-device, a live agent-device claim with no session activity to judge,
-device activity or an emulator list that cannot be read keeps
+device activity, an emulator list or an emulator's AVD name that cannot be read keeps
 the workspace;
 the check decides again under the native-run and metro-start locks. Each stop
 is a maintenance_action line naming the idle time (gc --delete records itself
 as the requester), each workspace kept past the window a maintenance_skip line
 with the reason, and status shows the dev server as stopped by automatic
 maintenance. The next start, ios or android starts it
-again. Unlike the other actions, it can stop the workspace whose dev server
+again. A dev server started by an older Stim, which did not record HMR
+updates, is kept until the next start. Unlike the other actions, it can stop the workspace whose dev server
 supervisor or status --watch timer started the pass; a pass a command starts,
 gc --delete included, never stops the command's own workspace.
 A dev server run through metro.command is kept: Stim sees none of its

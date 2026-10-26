@@ -131,13 +131,13 @@ test('device, app and dev server log lines alone do not keep a workspace past ma
   ]);
 });
 
-function serving(name: string, port: number, mode = 'expo-child') {
+function serving(name: string, port: number, mode = 'expo-child', hmrUpdates = true) {
   const root = join(projects, name);
   mkdirSync(root, { recursive: true });
   ensureWorkspaceStorage(root);
   upsertProject(root, { metroPort: 8100, platforms: {} });
   recordWorkspaceUse(root, new Date(Date.now() - 7 * HOUR_MS));
-  writeWorkspaceState(root, { supervisor: { ...liveClaimOwner(), port, mode } });
+  writeWorkspaceState(root, { supervisor: { ...liveClaimOwner(), port, mode, ...(hmrUpdates ? { hmrUpdates } : {}) } });
   return root;
 }
 
@@ -148,6 +148,7 @@ test('a running dev server whose only recent records are its own output is stopp
   ]);
   const unverified = serving('unverified', 9999);
   const command = serving('command', 8100, 'command-child');
+  const older = serving('older', 8100, 'expo-child', false);
 
   const { actions, skips } = await plan();
 
@@ -158,6 +159,7 @@ test('a running dev server whose only recent records are its own output is stopp
       reason: expect.stringMatching(/^its dev server supervisor cannot be verified/),
     }),
     expect.objectContaining({ target: command, reason: expect.stringMatching(/metro\.command/) }),
+    expect.objectContaining({ target: older, reason: expect.stringMatching(/before Stim recorded HMR updates/) }),
   ]);
 });
 
@@ -414,6 +416,28 @@ test('gc --delete stops idle workspaces only while maintenance is not off, and c
   vi.stubEnv('STIM_MAINTENANCE', 'on');
   expect(await stopIdleWorkspaces(output)).toBe(1);
   expect(record).toHaveBeenCalledWith('devServer', 'failed', root, expect.anything());
+});
+
+test('a running dev server is kept while an emulator adb lists gives no AVD name', async () => {
+  const root = serving('unnamed', 8100);
+  upsertProject(root, { platforms: { android: { avdName: 'stim-unnamed', owned: true } } });
+  appendLog(root, 'metro.ndjson', [{ ts: Date.now() - 7 * HOUR_MS, src: 'metro', event: 'expo_stdout', msg: 'x' }]);
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFile: (file, args, options) => {
+      if (file.endsWith('emulator')) return 'stim-unnamed\n';
+      if (file.endsWith('adb') && args[0] === 'devices') return 'List of devices attached\nemulator-5554\tdevice\n';
+      return real.runFile(file, args, options);
+    },
+  });
+
+  const { actions, skips } = await plan(() => []);
+
+  expect(actions).toEqual([]);
+  expect(skips).toEqual([
+    expect.objectContaining({ target: root, reason: expect.stringMatching(/emulator-5554 gave no AVD name/) }),
+  ]);
 });
 
 test('a running dev server whose emulators cannot be listed is kept', async () => {
