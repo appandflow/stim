@@ -399,7 +399,7 @@ build can compile on a paired remote machine instead: see `remote.build` in
   be combined with `--scheme`, `--configuration`, or `--no-build-cache`.
 - `--no-metro-check` skips the Debug dev-server check and does not start the
   dev server. Hosted Debug iOS refuses this flag with `STIM_BAD_ARG`; it requires
-  the local supervisor's private gateway support.
+  the local supervisor, which carries Metro to the host.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--plan` predicts the next build instead of running it. See
   [Predict the next build](#predict-the-next-build).
@@ -1305,7 +1305,7 @@ its git worktree root. The watcher finds running Claude Code sessions in
 `~/.claude/sessions` and Codex threads updated in the last 30 minutes in
 `~/.codex`, at most every 15 seconds, and one-shot `stim status` reads what it
 found for 2 minutes. These are the tools' own internal files, so Stim reads them
-best-effort. `start`, `ios`, `android`, `web`, `reload` and `worktree warm` also
+best-effort. `start`, `ios`, `android`, `web`, `reload`, `logs` and `worktree warm` also
 record the `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` of the shell that ran
 them, which names the session exactly. `title` is the short name the tool keeps
 for the session; Stim reads no prompts or conversation. `openUrl` opens the
@@ -1571,7 +1571,7 @@ Each booted simulator and detected emulator also shows who is using it:
 ```
 
 In `--json`, those devices carry
-`activity: { state, driver?, lastActivityAt?, basis }`. `state` is `driven`
+`activity: { state, driver?, lastActivityAt?, basis, unknown? }`, where `unknown` lists the checks a `driven` device could not read. `state` is `driven`
 when a tool holds the device now, `active` when it had activity in the last 10
 minutes, `idle` otherwise, and `unknown` when a claim or driver check could not
 be read. Stim counts as drivers a live agent-device session (its recorded
@@ -1804,6 +1804,12 @@ a worktree with `git worktree remove` or `rm -rf` leaves one behind. A
 directory without a readable `workspace.json` is reported and never deleted.
 Nothing deletes a workspace that is in use: a running dev server, a `stim ios`
 or `stim android` run, a live build, or a held tunnel or remote lock.
+
+Unless `maintenance.mode` is `off`, `--delete` also stops each workspace, other than the one it runs in, that has had no real activity for
+[`maintenance.idleStopHours`](./dev-server-and-logs.md#idle-workspace-stop)
+(6 by default), as `stim stop` does: its dev server stops and its owned
+devices shut down, never deleted. The dry run lists those stops in its
+maintenance plan.
 
 `stim status` caches each folder's size and each worktree's pull request under
 `$STIM_HOME/disk-usage` and `$STIM_HOME/pull-requests`. `worktree remove` drops

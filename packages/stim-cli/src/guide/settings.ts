@@ -631,6 +631,8 @@ floors below; report measures and plans and deletes nothing; off disables it.
 STIM_HOME and CI make the mode off unless STIM_MAINTENANCE is set.
 maintenance.keep is a project setting: pin a workspace so a pass never clears
 its build outputs or removes its worktree.
+maintenance.idleStopHours takes machine or project layers, so one workspace can
+stop sooner, later or never.
 See \`guide cleanup\` for checks, plans and log paths.
 
 ${SETTINGS.filter((setting) => setting.key.startsWith('maintenance.') || /^caches\..*MaxGb$/.test(setting.key))
@@ -832,9 +834,8 @@ used. Agents never answer that question. The printed setup command carries the
 ticket, which is a credential: whoever spends it first, after setup stores it,
 gets the approval, and on a local network that takes only the ticket and a
 route to the worker, not tailnet membership. Agents show it only to the user.
-Offloaded builds and Release runs on
-hosted devices work there; hosted Debug runs and agent control of hosted apps
-need a tailnet machine, so automatic placement skips a local: machine for them.
+Offloaded builds and hosted Debug and
+Release runs work there; agent control of hosted apps needs a tailnet machine.
 \`stim-server pair\` puts \`ws://<address>:<port>\` in the phone pairing code
 when Tailscale is not running and \`server.lanAddresses\` is set.
 
@@ -1276,7 +1277,7 @@ scope, so it needs no --scope. Run it from the workspace:
 
 \`stim status --json\` then reports hidden: true on that environment, and
 clients that read it list the workspace under Hidden. The next start, ios,
-android, web, macos, reload or worktree warm in the workspace clears it, so
+android, web, macos, reload, logs or worktree warm in the workspace clears it, so
 a workspace in use is never hidden. \`worktree remove\` drops it with the
 workspace.
 

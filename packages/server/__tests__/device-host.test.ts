@@ -16,9 +16,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { connect, type AddressInfo } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
-import { workspaceName, createMetroGateway } from '@stim-cli/core';
+import { workspaceName, type MetroLink } from '@stim-cli/core';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -264,6 +264,24 @@ async function state(id: string, wanted: string, timeout = 5000) {
   return readHostedSessions().find((record) => record.id === id)!;
 }
 
+/** Offers links the way a client's Metro supervisor does: one idle link at a time, replaced as each one opens. */
+function linkMetro(session: string, metroPort: number): void {
+  const link: MetroLink = {
+    open: (socket) => {
+      linkMetro(session, metroPort);
+      const upstream = connect(metroPort, '127.0.0.1');
+      upstream.on('error', () => upstream.destroy());
+      socket.once('close', () => upstream.destroy());
+      upstream.once('close', () => socket.destroy());
+      socket.pipe(upstream).pipe(socket);
+      socket.resume();
+      return true;
+    },
+    close: () => {},
+  };
+  host.metroLink('client', { session }, link);
+}
+
 test('keeps HTTP and WebSocket Metro on the owned session port across reconnect and closes it on revocation', async () => {
   const first = await reserve();
   await state(first.id, 'ready');
@@ -271,24 +289,23 @@ test('keeps HTTP and WebSocket Metro on the owned session port across reconnect 
   const messages = new WebSocketServer({ server: metro });
   messages.on('connection', (socket) => socket.on('message', (message) => socket.send(message)));
   await new Promise<void>((resolve) => metro.listen(0, '127.0.0.1', resolve));
-  const secret = 'a'.repeat(64);
-  const gateway = createMetroGateway({ metroPort: (metro.address() as AddressInfo).port, peer: '127.0.0.1', secret });
-  await new Promise<void>((resolve) => gateway.server.listen(0, '127.0.0.1', resolve));
-  const params = { session: first.id, gatewayPort: (gateway.server.address() as AddressInfo).port, secret };
+  const metroPort = (metro.address() as AddressInfo).port;
+  const params = { session: first.id };
   let client: WebSocket | undefined;
   try {
-    expect(await host.metroOpen('other', params, '127.0.0.1')).toHaveProperty('error');
-    expect(await host.metroOpen('client', params, null)).toHaveProperty('error.code', 'bad-request');
-    const opened = await host.metroOpen('client', params, '127.0.0.1');
+    linkMetro(first.id, metroPort);
+    expect(await host.metroOpen('other', params)).toHaveProperty('error');
+    const opened = await host.metroOpen('client', params);
     if ('error' in opened) throw new Error(opened.error.message);
     const port = opened.result.port;
     expect(await (await fetch(`http://127.0.0.1:${port}/index.bundle`)).text()).toBe('workspace bundle');
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', port);
-    expect(await host.metroOpen('client', { ...params, secret: 'b'.repeat(64) }, '127.0.0.1')).toHaveProperty('error');
+    expect(await host.metroOpen('client', params)).toHaveProperty('result.port', port);
+    expect(await host.metroOpen('client', { ...params, clientMetroPort: 8082 })).toHaveProperty('error');
     expect(await host.metroClose('other', params)).toHaveProperty('error.code', 'unknown-session');
     expect(await host.metroClose('client', params)).toHaveProperty('result.port', null);
     await expect(fetch(`http://127.0.0.1:${port}/status`)).rejects.toThrow('fetch failed');
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', port);
+    expect(await host.metroOpen('client', params)).toHaveProperty('result.port', port);
+    linkMetro(first.id, metroPort);
     client = new WebSocket(`ws://127.0.0.1:${port}/message`);
     await new Promise<void>((resolve, reject) => {
       client!.once('open', resolve);
@@ -321,7 +338,6 @@ test('keeps HTTP and WebSocket Metro on the owned session port across reconnect 
     );
   } finally {
     client?.terminate();
-    await gateway.close();
     messages.close();
     metro.closeAllConnections();
     await new Promise<void>((resolve) => metro.close(() => resolve()));
@@ -339,23 +355,16 @@ test('serves an Expo dev-client session on the client Metro port and refuses one
   await state(first.id, 'ready');
   const metro = createServer((_request, response) => response.end('workspace bundle'));
   await new Promise<void>((resolve) => metro.listen(0, '127.0.0.1', resolve));
-  const secret = 'a'.repeat(64);
-  const gateway = createMetroGateway({ metroPort: boundPort(metro), peer: '127.0.0.1', secret });
-  await new Promise<void>((resolve) => gateway.server.listen(0, '127.0.0.1', resolve));
+  linkMetro(first.id, boundPort(metro));
   const holder = createServer((_request, response) => response.end('host workspace bundle'));
   await new Promise<void>((resolve) => holder.listen(0, '::', resolve));
   const clientMetroPort = boundPort(holder);
-  const params = {
-    session: first.id,
-    gatewayPort: boundPort(gateway.server),
-    secret,
-    clientMetroPort,
-  };
+  const params = { session: first.id, clientMetroPort };
   try {
     expect(await host.metroPorts('client', { ports: [clientMetroPort, boundPort(metro)] })).toEqual({
       result: { busy: [clientMetroPort, boundPort(metro)].toSorted((a, b) => a - b) },
     });
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toMatchObject({
+    expect(await host.metroOpen('client', params)).toMatchObject({
       error: { code: 'device-busy', message: expect.stringContaining(`Port ${clientMetroPort} is in use`) },
     });
     expect(await (await fetch(`http://127.0.0.1:${clientMetroPort}/index.bundle`)).text()).toBe(
@@ -363,7 +372,7 @@ test('serves an Expo dev-client session on the client Metro port and refuses one
     );
     holder.closeAllConnections();
     await new Promise<void>((resolve) => holder.close(() => resolve()));
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', clientMetroPort);
+    expect(await host.metroOpen('client', params)).toHaveProperty('result.port', clientMetroPort);
     expect(await (await fetch(`http://127.0.0.1:${clientMetroPort}/index.bundle`)).text()).toBe('workspace bundle');
     expect(await host.metroPorts('client', { ports: [clientMetroPort] })).toEqual({ result: { busy: [] } });
     allowed.add('other');
@@ -373,7 +382,6 @@ test('serves an Expo dev-client session on the client Metro port and refuses one
   } finally {
     await host.metroClose('client', params);
     if (holder.listening) await new Promise<void>((resolve) => holder.close(() => resolve()));
-    await gateway.close();
     metro.closeAllConnections();
     await new Promise<void>((resolve) => metro.close(() => resolve()));
   }
@@ -387,21 +395,11 @@ for (const ending of ['revocation', 'server close', 'revocation with an unwritab
       await state(first.id, 'ready');
       const metro = createServer((_request, response) => response.end('private workspace bundle'));
       await new Promise<void>((resolve) => metro.listen(0, '127.0.0.1', resolve));
-      const secret = 'a'.repeat(64);
-      const gateway = createMetroGateway({
-        metroPort: (metro.address() as AddressInfo).port,
-        peer: '127.0.0.1',
-        secret,
-      });
-      await new Promise<void>((resolve) => gateway.server.listen(0, '127.0.0.1', resolve));
+      linkMetro(first.id, (metro.address() as AddressInfo).port);
       const journal = join(deviceHostRoot(), 'sessions.json');
       const original = readFileSync(journal, 'utf8');
       try {
-        const opened = await host.metroOpen(
-          'client',
-          { session: first.id, gatewayPort: (gateway.server.address() as AddressInfo).port, secret },
-          '127.0.0.1',
-        );
+        const opened = await host.metroOpen('client', { session: first.id });
         if ('error' in opened) throw new Error(opened.error.message);
         const url = `http://127.0.0.1:${opened.result.port}/index.bundle`;
         expect(await (await fetch(url)).text()).toBe('private workspace bundle');
@@ -417,7 +415,6 @@ for (const ending of ['revocation', 'server close', 'revocation with an unwritab
       } finally {
         chmodSync(deviceHostRoot(), 0o700);
         writeFileSync(journal, original);
-        await gateway.close();
         metro.closeAllConnections();
         await new Promise<void>((resolve) => metro.close(() => resolve()));
       }
@@ -1588,9 +1585,10 @@ test('Android reservations keep distinct ports and platform slots and reconnect 
   expect((await reserve(androidRequest)).id).toBe(android.id);
   const journal = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
   expect(() => host.viewTarget('other', android.id)).toThrow('Only a ready session');
-  expect(
-    await host.metroOpen('client', { session: android.id, gatewayPort: 12345, secret: 'a'.repeat(64) }, '127.0.0.1'),
-  ).toHaveProperty('error.message', 'Android Metro needs the client Metro port.');
+  expect(await host.metroOpen('client', { session: android.id })).toHaveProperty(
+    'error.message',
+    'Android Metro needs the client Metro port.',
+  );
   expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
   expect(host.stop('other', { session: android.id })).toHaveProperty('error.code', 'unknown-session');
   host.stop('client', { session: android.id });
@@ -1920,9 +1918,10 @@ test('macOS reservations isolate concurrent clients, validate on the wire and re
     'device-busy',
   );
   expect(() => host.viewTarget('client', first.id)).toThrow('not running');
-  expect(
-    await host.metroOpen('client', { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64) }, '127.0.0.1'),
-  ).toHaveProperty('error.message', 'Hosted Metro supports iOS and Android sessions only.');
+  expect(await host.metroOpen('client', { session: first.id })).toHaveProperty(
+    'error.message',
+    'Hosted Metro supports iOS and Android sessions only.',
+  );
   host.stop('client', { session: first.id });
   await state(first.id, 'stopped');
   expect((await reserve({ ...params, attempt: 'replacement' })).appSlot).toBe(1);
@@ -2838,14 +2837,14 @@ test('close waits for an in-flight retirement and prevents further reconciliatio
 test('Android Metro validates the client port and restores the installed mapping on each attach', async () => {
   const first = await reserve({ platform: 'android', attempt: 'android-metro' });
   await state(first.id, 'ready');
-  const params = { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64), clientMetroPort: 8082 };
+  const params = { session: first.id, clientMetroPort: 8082 };
   for (const port of [0, 65536, 1.5, '8082'])
-    expect(await host.metroOpen('client', { ...params, clientMetroPort: port }, '127.0.0.1')).toHaveProperty(
+    expect(await host.metroOpen('client', { ...params, clientMetroPort: port })).toHaveProperty(
       'error.code',
       'bad-request',
     );
-  expect(await host.metroOpen('other', params, '127.0.0.1')).toHaveProperty('error');
-  const opened = await host.metroOpen('client', params, '127.0.0.1');
+  expect(await host.metroOpen('other', params)).toHaveProperty('error');
+  const opened = await host.metroOpen('client', params);
   if ('error' in opened) throw new Error(opened.error.message);
   expect(readHostedSessions().find((entry) => entry.id === first.id)?.clientMetroPort).toBe(8082);
   const app = appOffer(first.id, 'android-dev', 'android');
@@ -2865,7 +2864,7 @@ test('Android Metro validates the client port and restores the installed mapping
   expect(readFileSync(join(workerHome, 'install-metro-port'), 'utf8')).toBe(String(opened.result.port));
   for (let i = 0; i < 2; i++) {
     expect(host.attach('client', { session: first.id })).toHaveProperty('result.state', 'ready');
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', opened.result.port);
+    expect(await host.metroOpen('client', params)).toHaveProperty('result.port', opened.result.port);
   }
   expect(
     readFileSync(join(workerHome, 'reversed'), 'utf8')
@@ -2875,7 +2874,7 @@ test('Android Metro validates the client port and restores the installed mapping
   ).toEqual(Array.from({ length: 2 }, () => ({ port: opened.result.port, clientPort: 8082, attempt: 'android-dev' })));
   host.stop('client', { session: first.id });
   await state(first.id, 'stopped');
-  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error');
+  expect(await host.metroOpen('client', params)).toHaveProperty('error');
 });
 
 // The worker's process group is signaled, which Node does not support on Windows (nodejs.org/api/process.html#processkillpid-signal).
@@ -2888,8 +2887,8 @@ test.skipIf(process.platform === 'win32')(
       deviceProfile: 'delayed-reverse',
     });
     await state(first.id, 'ready');
-    const params = { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64), clientMetroPort: 8082 };
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port');
+    const params = { session: first.id, clientMetroPort: 8082 };
+    expect(await host.metroOpen('client', params)).toHaveProperty('result.port');
     const app = appOffer(first.id, 'android-dev', 'android');
     app.params.mode = 'development';
     host.appOffer('client', app.params);
@@ -2903,10 +2902,10 @@ test.skipIf(process.platform === 'win32')(
     });
     host.appLaunch('client', app.params);
     await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
-    const restoring = host.metroOpen('client', params, '127.0.0.1');
+    const restoring = host.metroOpen('client', params);
     await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'reversed'))).toBe(true));
     expect(host.appOffer('client', appOffer(first.id, 'next', 'android').params)).toHaveProperty('error');
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error');
+    expect(await host.metroOpen('client', params)).toHaveProperty('error');
     expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live[0]?.child).toBeDefined();
     host.stop('client', { session: first.id });
     expect(await restoring).toHaveProperty('error');
@@ -2916,23 +2915,20 @@ test.skipIf(process.platform === 'win32')(
 
 test('Android Metro refuses missing or invalid ports, unapproved clients and non-ready owners before native work', async () => {
   const first = await reserve({ platform: 'android', attempt: 'android-metro-validation' });
-  const params = { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64) };
-  expect(await host.metroOpen('client', { ...params, clientMetroPort: 8082 }, '127.0.0.1')).toHaveProperty('error');
+  const params = { session: first.id };
+  expect(await host.metroOpen('client', { ...params, clientMetroPort: 8082 })).toHaveProperty('error');
   await state(first.id, 'ready');
-  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error.code', 'bad-request');
+  expect(await host.metroOpen('client', params)).toHaveProperty('error.code', 'bad-request');
   for (const clientMetroPort of [0, 65536, 1.5, '8082']) {
-    expect(await host.metroOpen('client', { ...params, clientMetroPort }, '127.0.0.1')).toHaveProperty(
-      'error.code',
-      'bad-request',
-    );
+    expect(await host.metroOpen('client', { ...params, clientMetroPort })).toHaveProperty('error.code', 'bad-request');
   }
   allowed.delete('client');
-  expect(await host.metroOpen('client', { ...params, clientMetroPort: 8082 }, '127.0.0.1')).toHaveProperty(
+  expect(await host.metroOpen('client', { ...params, clientMetroPort: 8082 })).toHaveProperty(
     'error.code',
     'forbidden',
   );
   allowed.add('client');
-  expect(await host.metroOpen('other', { ...params, clientMetroPort: 8082 }, '127.0.0.1')).toHaveProperty('error');
+  expect(await host.metroOpen('other', { ...params, clientMetroPort: 8082 })).toHaveProperty('error');
   expect(existsSync(join(deviceHostArea(first.id), 'home', 'reversed'))).toBe(false);
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
@@ -2952,8 +2948,8 @@ test('a failed Android Metro restore is refused and leaves the session ready for
     deviceProfile: 'failing-reverse',
   });
   await state(first.id, 'ready');
-  const params = { session: first.id, gatewayPort: 12345, secret: 'b'.repeat(64), clientMetroPort: 8082 };
-  const opened = await host.metroOpen('client', params, '127.0.0.1');
+  const params = { session: first.id, clientMetroPort: 8082 };
+  const opened = await host.metroOpen('client', params);
   if ('error' in opened) throw new Error(opened.error.message);
   const app = appOffer(first.id, 'android-dev', 'android');
   app.params.mode = 'development';
@@ -2970,10 +2966,10 @@ test('a failed Android Metro restore is refused and leaves the session ready for
   await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
   const workerHome = join(deviceHostArea(first.id), 'home');
   writeFileSync(join(workerHome, 'fail-reverse'), '1');
-  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error.code', 'action-failed');
+  expect(await host.metroOpen('client', params)).toHaveProperty('error.code', 'action-failed');
   expect(readHostedSessions().find((entry) => entry.id === first.id)?.state).toBe('ready');
   rmSync(join(workerHome, 'fail-reverse'));
-  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', opened.result.port);
+  expect(await host.metroOpen('client', params)).toHaveProperty('result.port', opened.result.port);
 });
 test('Android native followers coalesce under a child-aware claim and retain collected logs after stop', async () => {
   const session = await reserve({ platform: 'android', deviceProfile: 'logs-delayed' });

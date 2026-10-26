@@ -19,6 +19,7 @@ import {
   dropSetupSecret,
   spendSecret,
   storeSetupSecret,
+  touchDevice,
 } from '../src/registry.ts';
 
 let home: string;
@@ -168,6 +169,19 @@ describe('registries', () => {
     expect(readDevices()[0]!.capabilities).toEqual(['read', 'control']);
     expect(readBuildClients()[0]!.capabilities).toEqual(['build']);
     expect(readDeviceHostClients()[0]!.capabilities).toEqual(['device-host']);
+  });
+
+  it('rewrites a client registry for a hello at most once a minute, so each Metro link costs no write', () => {
+    const { ticket, key } = setup(['device-host']);
+    const paired = Date.parse('2026-10-26T00:00:00.000Z');
+    const client = spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net', paired)?.['device-host'];
+    if (!client) throw new Error('the setup ticket was not spent');
+    const file = join(home, 'server', 'device-host-clients.json');
+    const written = readFileSync(file, 'utf8');
+    touchDevice(client.id, paired + 59_000);
+    expect(readFileSync(file, 'utf8')).toBe(written);
+    touchDevice(client.id, paired + 61_000);
+    expect(readDeviceHostClients()[0]?.lastSeenAt).toBe('2026-10-26T00:01:01.000Z');
   });
 
   it('revokes a record from whichever registry holds it and leaves the others', () => {

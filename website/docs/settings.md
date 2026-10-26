@@ -763,8 +763,8 @@ stim settings set workspace.hidden true
 
 `workspace.hidden` is false by default and lives only in the workspace layer, so
 it takes no `--scope`. `stim status --json` reports `hidden: true` on that
-environment. The next `start`, `ios`, `android`, `web`, `macos`, `reload` or
-`worktree warm` in the workspace clears it, so a workspace in use is never
+environment. The next `start`, `ios`, `android`, `web`, `macos`, `reload`, `logs`
+or `worktree warm` in the workspace clears it, so a workspace in use is never
 hidden. `stim settings unset workspace.hidden` shows it again, and
 `worktree remove` drops it with the workspace.
 
@@ -838,7 +838,9 @@ measures, plans and logs and deletes nothing, and `off` disables passes.
 `STIM_HOME` and `CI` make the mode `off` unless `STIM_MAINTENANCE` is set.
 All of these settings have machine scope except `maintenance.keep`, a project
 setting that pins a workspace: automatic passes never clear its build outputs,
-delete its owned devices or remove its worktree. GB and MB below mean GiB and MiB.
+delete its owned devices or remove its worktree. `maintenance.idleStopHours`
+takes machine and project layers; see
+[idle workspace stop](./dev-server-and-logs.md#idle-workspace-stop). GB and MB below mean GiB and MiB.
 
 <MaintenanceSettings />
 
@@ -861,7 +863,7 @@ worktrees (only with `maintenance.removeIdleWorktrees`, off by default); `mainte
 before that sweep deletes its owned simulators and emulators (0 turns it off);
 `maintenance.gradleVersionIdleDays` (7) sets how long a Gradle version no project pins stays unmodified before level 3 stops the idle Gradle and Kotlin daemons that keep it and deletes it (0 turns that off);
 `maintenance.removeFinishedWorktrees` controls the worktree
-check. Memory pressure is recorded; below disk pressure level 3 a pass never stops a dev server (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
+check. Memory pressure is recorded; below disk pressure level 3 a pass stops a dev server only after `maintenance.idleStopHours` without real activity (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
 
 ## Debug logs

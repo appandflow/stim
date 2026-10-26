@@ -4,19 +4,13 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
-import { closeHostedMetro, requestHostedMetro } from '../device-host/metro-gateway.ts';
+import { closeHostedMetro, requestHostedMetro } from '../device-host/metro-request.ts';
 import { hostedMetroRequests, type DeviceHostMachineCredential } from '@stim-cli/core/state';
 import { captureProcessToken } from '../process-identity.ts';
 import { workspaceStateFile } from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 const watches = vi.hoisted(() => ({ callbacks: new Map<string, () => void>(), opened: 0, closed: 0 }));
-vi.mock('../offload/tailnet.ts', () => ({
-  tailscaleStatusAsync: async () => ({
-    Self: { TailscaleIPs: ['100.64.0.2'] },
-    Peer: { mini: { ID: 'nMini', DNSName: 'mini.tail.ts.net.', TailscaleIPs: ['100.64.0.7'] } },
-  }),
-}));
 vi.mock('node:fs', async (original) => ({
   ...(await original<typeof import('node:fs')>()),
   watch: (file: string, _options: unknown, changed: () => void) => {
@@ -50,7 +44,7 @@ const credential: DeviceHostMachineCredential = {
 };
 
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-gateway-ack-')));
+  home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-ack-')));
   process.env.STIM_HOME = join(home, 'stim');
   root = join(home, 'app');
   watches.callbacks.clear();
@@ -59,14 +53,14 @@ beforeEach(() => {
   const processToken = captureProcessToken(process.pid);
   assert(processToken);
   writeWorkspaceState(root, {
-    supervisor: { pid: process.pid, processToken, hostedMetro: true },
+    supervisor: { pid: process.pid, processToken, hostedMetroLinks: true },
     hostedMetroRequests: {
-      [session]: { id: 'request', machine: 'mini', address: '100.64.0.2', peer: '100.64.0.7', secret: 'a'.repeat(64) },
+      [session]: { id: 'request', machine: 'mini' },
     },
   });
   writeWorkspaceState(root, {
-    hostedMetroGateways: {
-      [session]: { id: 'request', processToken, port: 7443 },
+    hostedMetroLinks: {
+      [session]: { id: 'request', processToken, ready: true },
     },
   });
   vi.useFakeTimers();
@@ -98,7 +92,7 @@ async function closing() {
 
 test('a matching close acknowledgement wakes before the old 100ms scan', async () => {
   const state = await closing();
-  writeWorkspaceState(root, { hostedMetroGateways: {} });
+  writeWorkspaceState(root, { hostedMetroLinks: {} });
   watches.callbacks.get(workspaceStateFile(root))?.();
   await vi.advanceTimersByTimeAsync(1);
   expect(state.settled()).toBe(true);
@@ -107,16 +101,10 @@ test('a matching close acknowledgement wakes before the old 100ms scan', async (
   expect(vi.getTimerCount()).toBe(0);
 });
 
-test('a stale request or supervisor token cannot acknowledge a new gateway', async () => {
-  writeWorkspaceState(root, { hostedMetroRequests: {}, hostedMetroGateways: {} });
-  let result: unknown;
-  const pending = requestHostedMetro(root, session, credential, abort.signal).then(
-    (value) => {
-      result = value;
-      return value;
-    },
-    () => null,
-  );
+test('a stale request or supervisor token cannot acknowledge new links', async () => {
+  writeWorkspaceState(root, { hostedMetroRequests: {}, hostedMetroLinks: {} });
+  let linked = false;
+  const pending = requestHostedMetro(root, session, credential, abort.signal).then(() => (linked = true));
   await vi.waitFor(() => expect(readWorkspaceState(root)?.hostedMetroRequests).toHaveProperty(session), {
     interval: 1,
   });
@@ -126,21 +114,22 @@ test('a stale request or supervisor token cannot acknowledge a new gateway', asy
   const request = hostedMetroRequests(state)[session];
   assert(request);
   const token = state.supervisor.processToken;
-  for (const gateway of [
-    { id: 'stale', processToken: token, port: 7443 },
-    { id: request.id, processToken: 'stale', port: 7443 },
+  for (const links of [
+    { id: 'stale', processToken: token, ready: true },
+    { id: request.id, processToken: 'stale', ready: true },
   ]) {
-    writeWorkspaceState(root, { hostedMetroGateways: { [session]: gateway } });
+    writeWorkspaceState(root, { hostedMetroLinks: { [session]: links } });
     watches.callbacks.get(workspaceStateFile(root))?.();
     await vi.advanceTimersByTimeAsync(1);
-    expect(result).toBeUndefined();
+    expect(linked).toBe(false);
   }
   writeWorkspaceState(root, {
-    hostedMetroGateways: { [session]: { id: request.id, processToken: token, port: 7444 } },
+    hostedMetroLinks: { [session]: { id: request.id, processToken: token, ready: true } },
   });
   watches.callbacks.get(workspaceStateFile(root))?.();
   await vi.advanceTimersByTimeAsync(1);
-  expect(await pending).toEqual({ gatewayPort: 7444, secret: request.secret });
+  await pending;
+  expect(linked).toBe(true);
   expect(watches.closed).toBe(watches.opened);
   expect(vi.getTimerCount()).toBe(0);
 });
@@ -148,7 +137,7 @@ test('a stale request or supervisor token cannot acknowledge a new gateway', asy
 test('a dropped close hint is repaired and all observers are released', async () => {
   const state = await closing();
   await vi.advanceTimersByTimeAsync(600);
-  writeWorkspaceState(root, { hostedMetroGateways: {} });
+  writeWorkspaceState(root, { hostedMetroLinks: {} });
   await vi.advanceTimersByTimeAsync(1000);
   expect(await state.pending).toBe(true);
   expect(watches.closed).toBe(watches.opened);
@@ -163,17 +152,17 @@ test('abort cancels the wait without waiting for a state hint or repair', async 
   expect(vi.getTimerCount()).toBe(0);
 });
 
-test('close refuses after its original five-second budget with the gateway still recorded', async () => {
+test('close refuses after its original five-second budget with the links still recorded', async () => {
   const state = await closing();
   await vi.advanceTimersByTimeAsync(5000);
   expect(await state.pending).toBe(false);
-  expect(readWorkspaceState(root)?.hostedMetroGateways).toHaveProperty(session);
+  expect(readWorkspaceState(root)?.hostedMetroLinks).toHaveProperty(session);
   expect(watches.closed).toBe(watches.opened);
   expect(vi.getTimerCount()).toBe(0);
 });
 
 test.each(['error', 'timeout'])('open preserves the %s refusal and releases observation', async (outcome) => {
-  writeWorkspaceState(root, { hostedMetroRequests: {}, hostedMetroGateways: {} });
+  writeWorkspaceState(root, { hostedMetroRequests: {}, hostedMetroLinks: {} });
   const pending = requestHostedMetro(root, session, credential, abort.signal).catch((error: unknown) => error);
   await vi.waitFor(() => expect(readWorkspaceState(root)?.hostedMetroRequests).toHaveProperty(session), {
     interval: 1,
@@ -185,16 +174,41 @@ test.each(['error', 'timeout'])('open preserves the %s refusal and releases obse
     const request = hostedMetroRequests(state)[session];
     assert(request);
     writeWorkspaceState(root, {
-      hostedMetroGateways: {
-        [session]: { id: request.id, processToken: state.supervisor.processToken, error: 'bind refused' },
+      hostedMetroLinks: {
+        [session]: { id: request.id, processToken: state.supervisor.processToken, error: 'link refused' },
       },
     });
     watches.callbacks.get(workspaceStateFile(root))?.();
   }
   await vi.advanceTimersByTimeAsync(outcome === 'error' ? 1 : 15_000);
   expect(await pending).toMatchObject({
-    message: expect.stringContaining(outcome === 'error' ? 'bind refused' : 'did not open a private gateway'),
+    message: expect.stringContaining(outcome === 'error' ? 'link refused' : 'did not link Metro'),
   });
   expect(watches.closed).toBe(watches.opened);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+test.each([
+  ['a link error', { error: 'link closed' }],
+  ['lost links', {}],
+])('a retry after %s asks the supervisor again under a new request', async (_name, outcome) => {
+  const state = readWorkspaceState(root);
+  assert(state?.supervisor?.processToken);
+  writeWorkspaceState(root, {
+    hostedMetroLinks: {
+      [session]: { id: 'request', processToken: state.supervisor.processToken, ...outcome },
+    },
+  });
+  const pending = requestHostedMetro(root, session, credential, abort.signal).catch((error: unknown) => error);
+  await vi.waitFor(() => expect(hostedMetroRequests(readWorkspaceState(root))[session]?.id).not.toBe('request'), {
+    interval: 1,
+  });
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(await pending).toMatchObject({ message: expect.stringContaining('did not link Metro') });
+});
+
+test('a run while the links are ready keeps the request, so the supervisor keeps its links', async () => {
+  expect(await requestHostedMetro(root, session, credential, abort.signal)).toBeUndefined();
+  expect(hostedMetroRequests(readWorkspaceState(root))[session]?.id).toBe('request');
+  expect(watches.closed).toBe(watches.opened);
 });

@@ -1361,7 +1361,7 @@ RULES
   Each booted simulator and detected emulator in environments (and in
   slots) carries activity; a shut-down or physical device has none:
 
-  activity  { state, driver?, lastActivityAt?, recent?, basis }
+  activity  { state, driver?, lastActivityAt?, recent?, basis, unknown? }
 
   state            "driven"   a live claim or driver holds the device now
                    "active"   no driver, but activity in the last 10 minutes
@@ -1384,6 +1384,8 @@ RULES
                    workspace-use, supervisor-start, page-log or viewer, each
                    rounded down to the minute. viewer is now while a
                    stim-server client streams the device's frames
+  unknown          for "driven" only: the checks that could not be read, in
+                   basis's vocabulary; absent when every check was read
   basis            the evidence behind state, strongest first:
                    agent-device-claim, agent-device-lease  agent-device state,
                      read only; live only when every recorded process is alive
@@ -1765,8 +1767,8 @@ RULES
   minutes. It caches them in $STIM_HOME/agent-sessions.json, which one-shot
   status reads and ignores once it is 2 minutes old. Both sources are other
   tools' internal files; a missing or changed one only drops its sessions.
-  \`start\`, \`ios\`, \`android\`, \`web\`, \`reload\` and \`worktree warm\`
-  also record the CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID of the shell
+  \`start\`, \`ios\`, \`android\`, \`web\`, \`reload\`, \`logs\` and
+  \`worktree warm\` also record the CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID of the shell
   that ran them, so that session is listed for 30 minutes after the command
   even when status cannot see it, and for as long as it runs.
 

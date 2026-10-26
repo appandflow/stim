@@ -3,7 +3,7 @@ import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { selectAndroidPlacement } from './android/remote.ts';
 import { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-android.ts';
 import { readHostedAndroid, writeDevicePlacementAsync, writeHostedAndroidAsync } from '../device-host/ios-state.ts';
-import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
+import { hostedMetroSettings } from '../device-host/metro-request.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
 import { followHostedLaunchLogs } from '../device-host/hosted-logs-sync.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
@@ -973,7 +973,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     if (appMode === 'development' && (publicUrlSetting(settings) || tunnelModeSetting(settings)))
       phase(
         'metro',
-        'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses the private tailnet bridge.',
+        'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses links this machine opens to the host.',
       );
   }
   reclaimed = budget.reclaimed;
@@ -1353,6 +1353,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     if (hostedTarget)
       return finishHostedAndroidRun({
+        operation: context,
         target: hostedTarget,
         artifact,
         root,

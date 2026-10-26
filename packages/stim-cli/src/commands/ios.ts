@@ -3,7 +3,7 @@ import { simulatorRuntime } from '../offload/client.ts';
 import type { RuntimePreparationError, RuntimePreparationResult } from '../engine/runtime-plan.ts';
 import { writeDevicePlacementAsync } from '../device-host/ios-state.ts';
 import type { DevicePlacement } from '@stim-cli/core/state';
-import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
+import { hostedMetroSettings } from '../device-host/metro-request.ts';
 import { devClientPortBusy } from '../device-host/hosted-native.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
@@ -1182,6 +1182,7 @@ async function runIos(
       compilationCache = artifact.cache.compilation;
       if (hostedTarget)
         return await finishHostedIosRun({
+          operation: context,
           output: context.output,
           target: hostedTarget,
           projectBundleId: integration.bundleId,

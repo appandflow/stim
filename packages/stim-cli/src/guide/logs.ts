@@ -443,7 +443,9 @@ WHAT WRITES WHAT
                        and, on Expo, one per dev-client manifest
                        request (manifest_request_started, _finished,
                        _failed: debug level, with platform and requestId;
-                       launch verification reads them as progress)
+                       launch verification reads them as progress), and
+                       an hmr_update debug record, at most once a minute,
+                       when Metro pushes a Fast Refresh change to the app
   client.ndjson        in-app console logs and redboxes -- BARE PROJECTS ONLY.
                        In expo-child and command-child mode everything the
                        dev server prints lands in metro.ndjson with raw: true,

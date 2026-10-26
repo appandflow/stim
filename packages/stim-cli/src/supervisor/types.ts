@@ -12,6 +12,7 @@ export interface ServerHandle {
   close(): Promise<void> | void;
   onExit?(cb: (info?: ServerExitInfo | null) => void): void;
   serverPid?: number | null;
+  observesRequests?: boolean;
 }
 
 export type ServerStarter = (opts: {

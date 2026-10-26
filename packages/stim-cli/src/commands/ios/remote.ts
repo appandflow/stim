@@ -329,7 +329,7 @@ export function hostedIosMetroNote(
       chalk.dim(
         phaseLine(
           'metro',
-          'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses the private tailnet bridge.',
+          'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses links this machine opens to the host.',
         ),
       ),
     );

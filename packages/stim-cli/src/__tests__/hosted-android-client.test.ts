@@ -219,7 +219,7 @@ test('offers before reserving, records the owner, and sends one APK and the clie
     metroPort: 8082,
     reserved: (value) => writeHostedAndroid(root, 'tablet', value),
     note: () => {},
-    metro: async () => ({ gatewayPort: 9090, secret: 'a'.repeat(64) }),
+    metro: async () => {},
   });
   expect(run.launched).toBe('unverified');
   expect(methods.find((entry) => entry.method === 'device-host.reserve')?.params).toMatchObject({
@@ -234,10 +234,9 @@ test('offers before reserving, records the owner, and sends one APK and the clie
   expect(JSON.parse(manifest.toString())).toEqual([
     { path: 'App.apk', kind: 'file', size: 11, sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
   ]);
-  expect(methods.find((entry) => entry.method === 'device-host.metro.open')?.params).toMatchObject({
+  expect(methods.find((entry) => entry.method === 'device-host.metro.open')?.params).toEqual({
     session,
     clientMetroPort: 8082,
-    gatewayPort: 9090,
   });
   expect(readHostedAndroid(root, 'tablet').tablet?.session).toBe(session);
   expect(getProject(root)?.platforms?.android).toBeUndefined();
@@ -670,7 +669,7 @@ test.each([true, 'unverified'] as const)(
     writeHostedAndroid(root, 'default', placement);
     writeWorkspaceState(root, {
       hostedMetroRequests: {
-        [session]: { id: session, machine: 'mini', address: '100.64.0.2', peer: '100.64.0.7', secret: 'a'.repeat(64) },
+        [session]: { id: session, machine: 'mini' },
       },
     });
     const result = await deliver(undefined, () => {}, 'process');

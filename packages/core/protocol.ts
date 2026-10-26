@@ -61,6 +61,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
  * `hosted-android-data` is Android APK build handoff and native log queries, persisted before device deletion.
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
+ * `hosted-metro-link` carries hosted Metro over `device-host.metro.link` connections the client opens, so the host never
+ * connects to the client.
  * `hosted-metro-ports` is `device-host.metro.ports`, which names the listed ports that already accept loopback
  * connections on the host, apart from the requesting client's own dev-client bridges.
  * `native-xcode-build` accepts native Xcode provider requests with a separate source-transfer identity.
@@ -130,6 +132,7 @@ export const FEATURES = [
   'hosted-android-data',
   'hosted-android-process',
   'hosted-metro-ports',
+  'hosted-metro-link',
   'server-update',
   'build-compat',
   'build-jdk',
@@ -241,6 +244,7 @@ export const METHODS = [
   'device-host.metro.open',
   'device-host.metro.ports',
   'device-host.metro.close',
+  'device-host.metro.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
@@ -296,6 +300,7 @@ export const DEVICE_HOST_METHODS = [
   'device-host.metro.open',
   'device-host.metro.ports',
   'device-host.metro.close',
+  'device-host.metro.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
@@ -1621,11 +1626,12 @@ export interface Methods {
   'device-host.app.attach': { params: { session: string; attempt: string }; result: HostedAppLaunch };
   'device-host.logs.query': { params: { session: string; cursor?: HostedLogsCursor }; result: HostedLogsPage };
   'device-host.metro.open': {
-    params: { session: string; gatewayPort: number; secret: string; clientMetroPort?: number };
+    params: { session: string; clientMetroPort?: number };
     result: { port: number };
   };
   'device-host.metro.ports': { params: { ports: number[] }; result: { busy: number[] } };
   'device-host.metro.close': { params: { session: string }; result: { port: null } };
+  'device-host.metro.link': { params: { session: string }; result: Record<string, never> };
   'device-host.frames.subscribe': {
     params: { session: string; fps?: number; maxEdge?: number; video?: string[] };
     result: FramesSubscribeResult;
@@ -2140,6 +2146,14 @@ export interface DesktopMachineAccessEndedEvent {
   exitCode: 0 | 1;
   stdout: string;
   message: string;
+}
+
+/**
+ * Sent on a `device-host.metro.link` connection when the host pairs it with one Metro stream; binary frames follow.
+ * Only device-host links receive it, so it is not a `ServerEvent`.
+ */
+export interface MetroLinkOpenEvent {
+  event: 'device-host.metro.link.open';
 }
 
 export type ServerEvent =

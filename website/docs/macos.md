@@ -83,7 +83,9 @@ LaunchServices with `open` or `agent-device open`. `stim macos`, `stim stop`,
 `stim worktree remove` and `stim gc --delete` stop all of them: SIGTERM, up to
 5 seconds, then SIGKILL. Stop reports success only after each copy has exited;
 when one cannot be verified or does not exit, it reports the failure and removal
-keeps the workspace. It does not start Metro. Local `stim macos` starts the app in
+keeps the workspace. For a hosted session the same rule covers every app bundle the
+session received, so stop and a replacement launch also end a copy that LaunchServices
+started from an earlier attempt. It does not start Metro. Local `stim macos` starts the app in
 the background without activating it or changing focus: it sets
 `STIM_BACKGROUND_LAUNCH=1` in the app's environment, which Stim Desktop honors, including for reopen events from `open -g`.
 An app that activates itself at launch or on reopen still takes focus. Hosted launches
@@ -501,6 +503,22 @@ A request outside the allowed commands, or a method the relay does not forward,
 is refused with an agent-device `UNAUTHORIZED` error whose `details.reason` is
 `STIM_AGENT_REQUEST_REFUSED` and whose message names the refused command or
 method; do not retry it.
+
+`longpress`, `swipe`, `back` and the other gestures are not allowed; the `longpress`
+and `swipe` that `stim guide lifecycle` lists belong to hosted Android and iOS
+sessions. `click <ref> --button secondary` reaches agent-device, but its native
+macOS backend, which the lease requires, answers `UNSUPPORTED_OPERATION`, so a
+hosted macOS app has no right click or context menu yet.
+
+On macOS 27, `agent-device screenshot` of a hosted app can return an image of the
+window-sharing indicator (66x20 points, 132x40 pixels) instead of the app window.
+macOS adds that small window to the app while something captures the app, and
+agent-device picks it as the front window
+([callstack/agent-device#3961](https://github.com/callstack/agent-device/issues/3961)).
+`snapshot -i` lists it as an `axdialog` named "Window" with a
+`WindowSharingSessionButton` before the real window. Read the UI with `snapshot`
+until agent-device selects the app's main window. Commands that use the front
+window's frame, such as `scroll`, may also target the indicator.
 
 Copy this prompt:
 

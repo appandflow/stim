@@ -125,6 +125,7 @@ import { collectInventory, type GcInventory } from './gc/inventory.ts';
 import { collectParkedHostedDevices, deleteParkedHostedDevices } from './gc/hosted-devices.ts';
 import { collectFinishedDevices, deleteFinishedDevices, ownedDeviceDisk } from './gc/finished-devices.ts';
 import { ownedDeviceUsage } from '../maintenance/devices.ts';
+import { stopIdleWorkspaces } from './gc/idle-workspaces.ts';
 import {
   collectMemoryReport,
   GRADLE_DAEMONS_KIND,
@@ -1167,6 +1168,8 @@ async function runGcCore(
 
   let deleteFailures = idleFailures;
   throwIfCancelled(signal, 'GC');
+  if (cache === null) deleteFailures += await stopIdleWorkspaces(output, deps.operation);
+  throwIfCancelled(signal, 'GC');
   deleteFailures += await deleteArchives(report.archives, output, signal);
   throwIfCancelled(signal, 'GC');
   deleteFailures += report.workspaceOutputs
@@ -1351,7 +1354,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--delete',
-      'actually prune the reported entries, reap the reported devices, lighten every workspace that is not building and ran no ios, android or macos command in the last 15 minutes by clearing its build outputs, a running dev server or booted device included, and trim its Metro, client and device logs to their newest 8 MiB',
+      'actually prune the reported entries, reap the reported devices, lighten every workspace that is not building and ran no ios, android or macos command in the last 15 minutes by clearing its build outputs, a running dev server or booted device included, trim its Metro, client and device logs to their newest 8 MiB, and, unless maintenance.mode is off, stop each workspace idle past maintenance.idleStopHours as stim stop does',
     )
     .option(
       '--older-than <days>',
