@@ -116,8 +116,10 @@ function deviceKeepReason(device: OwnedDeviceActivity, platform: NodeJS.Platform
     return `${what} has a live agent-device claim whose session activity cannot be found`;
   // The host driver probe runs `ps -axww`, which Windows lacks. Stim drives only Android there, and Android
   // drivers run on-device instrumentation the adb probe reads.
-  const unknown = platform === 'win32' ? activity.basis.filter((basis) => basis !== 'driver-process') : activity.basis;
-  if (activity.state === 'unknown' && unknown.length) return `${what} has unknown activity (${unknown.join(', ')})`;
+  const probed =
+    activity.state === 'driven' ? (activity.unknown ?? []) : activity.state === 'unknown' ? activity.basis : [];
+  const unknown = platform === 'win32' ? probed.filter((basis) => basis !== 'driver-process') : probed;
+  if (unknown.length) return `${what} has unknown activity (${unknown.join(', ')})`;
   return null;
 }
 

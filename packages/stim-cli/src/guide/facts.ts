@@ -1349,7 +1349,7 @@ RULES
   Each booted simulator and detected emulator in environments (and in
   slots) carries activity; a shut-down or physical device has none:
 
-  activity  { state, driver?, lastActivityAt?, recent?, basis }
+  activity  { state, driver?, lastActivityAt?, recent?, basis, unknown? }
 
   state            "driven"   a live claim or driver holds the device now
                    "active"   no driver, but activity in the last 10 minutes
@@ -1372,6 +1372,8 @@ RULES
                    workspace-use, supervisor-start, page-log or viewer, each
                    rounded down to the minute. viewer is now while a
                    stim-server client streams the device's frames
+  unknown          for "driven" only: the checks that could not be read, in
+                   basis's vocabulary; absent when every check was read
   basis            the evidence behind state, strongest first:
                    agent-device-claim, agent-device-lease  agent-device state,
                      read only; live only when every recorded process is alive

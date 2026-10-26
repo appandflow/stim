@@ -318,6 +318,9 @@ test('an automation driver keeps the workspace, an agent-device session left ope
   const old = new Date(Date.now() - 7 * HOUR_MS).toISOString();
   const agent = await plan(device({ ...claimed, recent: { 'agent-action': old } }));
   expect(agent.actions.map((action) => action.target)).toEqual([root]);
+
+  const unprobed = await plan(device({ ...claimed, recent: { 'agent-action': old }, unknown: ['driver-process'] }));
+  expect(unprobed.skips).toEqual([expect.objectContaining({ reason: expect.stringMatching(/unknown activity/) })]);
 });
 
 test('the stop shuts the idle simulator down without deleting it and leaves device leases alone', async () => {

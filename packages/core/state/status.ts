@@ -304,6 +304,8 @@ export interface DeviceActivity {
   /** The newest time of each kind of evidence behind `lastActivityAt`, so a reader can leave out app log chatter. */
   recent?: Partial<Record<ActivityRecencyBasis, string>>;
   basis: string[];
+  /** For a driven device, the probes that could not be read, which `basis` leaves out. */
+  unknown?: string[];
 }
 
 /** Every state a device's app process can report. */

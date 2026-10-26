@@ -48,6 +48,7 @@ export function classifyActivity(evidence: ActivityEvidence, now: number): Devic
       driver,
       ...lastActivityAt,
       basis: [...new Set(evidence.drivers.map((entry) => entry.basis))],
+      ...(evidence.unknown.length ? { unknown: [...new Set(evidence.unknown)] } : {}),
     };
   }
   if (evidence.unknown.length) return { state: 'unknown', ...lastActivityAt, basis: [...new Set(evidence.unknown)] };
