@@ -64,7 +64,10 @@ owned app, including copies opened through LaunchServices (open, agent-device
 open). stim macos, stim stop, stim worktree remove and stim gc --delete stop all
 of them: SIGTERM, up to 5 s, then SIGKILL, and success only once each has
 exited. When an app cannot be verified or does not exit, stop reports
-STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace.
+STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace. For
+a hosted session the same rule covers every app bundle the session received, so
+stop and a replacement launch also end a copy that LaunchServices started from
+an earlier attempt.
 Local stim macos starts the app in the background without activating it or
 changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
 Stim Desktop honors, including for reopen events from open -g. An app that
@@ -454,6 +457,12 @@ method the relay does not forward, is refused with an agent-device UNAUTHORIZED
 error whose details.reason is STIM_AGENT_REQUEST_REFUSED and whose message names
 the refused command or method; do not retry it.
 
+longpress, swipe, back and the other gestures are not in that list; the
+longpress and swipe that stim guide lifecycle lists belong to hosted Android and
+iOS sessions. click <ref> --button secondary reaches agent-device, but its native
+macOS backend, which the lease requires, answers UNSUPPORTED_OPERATION, so a
+hosted macOS app has no right click or context menu yet.
+
 Agents that built, launched and drove test copies on another Mac with an SSH
 script such as mini-desktop.sh use these instead:
 
@@ -462,7 +471,8 @@ script such as mini-desktop.sh use these instead:
   launch                     the same command; the host launches it under the
                              session's own home
   shot <out.png>             agent-device screenshot --remote-config <path>
-  click, rclick, key, type   agent-device click, press or type --remote-config <path>
+  click, key, type           agent-device click, press or type --remote-config <path>
+  rclick                     unavailable: secondary click is not supported
   quit                       stim stop (verified stop; the host frees the slot
                              and removes the app's defaults)
   clean                      stim worktree remove
