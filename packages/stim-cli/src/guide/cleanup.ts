@@ -70,12 +70,14 @@ or remote lock, a running owned Chrome, a device driver other than
 agent-device, device activity or an emulator list that cannot be read keeps
 the workspace;
 the check decides again under the native-run and metro-start locks. Each stop
-is a maintenance_action line naming the idle time, each kept workspace a
-maintenance_skip line with the reason, and status shows the dev server as
-stopped by automatic maintenance. The next start, ios or android starts it
+is a maintenance_action line naming the idle time (gc --delete records itself
+as the requester), each workspace kept past the window a maintenance_skip line
+with the reason, and status shows the dev server as stopped by automatic
+maintenance. The next start, ios or android starts it
 again. A dev server run through metro.command is kept: Stim sees none of its
 bundle or HMR requests. A Metro log that cannot be read, or that rotated
-within the window, keeps the workspace too. A STIM_HOME-scoped home never
+within the window, and agent-device sessions or a state.json that cannot be
+read keep the workspace too. A STIM_HOME-scoped home never
 idle-stops, because its devices are machine-wide. maintenance.keep does not keep a workspace from idle
 stop, which deletes nothing; set maintenance.idleStopHours 0 at workspace
 scope instead.

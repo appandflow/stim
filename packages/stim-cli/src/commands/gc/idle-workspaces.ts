@@ -36,7 +36,7 @@ export async function stopIdleWorkspaces(output: GcOutput, operation?: StimConte
     operation?.signal.throwIfAborted();
     let outcome: IdleStopOutcome;
     try {
-      outcome = await stopIdleWorkspace(action, { protectedRoot, devices, operation });
+      outcome = await stopIdleWorkspace(action, { protectedRoot, devices, operation, by: 'stim gc --delete' });
     } catch (error) {
       if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
         throw error;

@@ -230,23 +230,18 @@ test.each<[string, (root: string) => void]>([
       utimesSync(join(dir, 'events.ndjson'), new Date(recent), new Date(recent));
     },
   ],
-])('%s within maintenance.idleStopHours keeps the workspace', async (_, act) => {
+])('%s within maintenance.idleStopHours keeps the workspace without a skip record', async (_, act) => {
   const { root } = bootedWorkspace('active', 7 * HOUR_MS);
   act(root);
 
   const { actions, skips } = await plan();
 
   expect(actions).toEqual([]);
-  expect(skips).toEqual([
-    expect.objectContaining({
-      target: root,
-      reason: expect.stringMatching(/^its last .+ was 1h ago, within maintenance\.idleStopHours$/),
-    }),
-  ]);
+  expect(skips).toEqual([]);
 });
 
 test('a stim-server viewer streaming the simulator keeps the workspace', async () => {
-  const { root, udid } = bootedWorkspace('watched', 7 * HOUR_MS);
+  const { udid } = bootedWorkspace('watched', 7 * HOUR_MS);
   mkdirSync(deviceViewersDir(), { recursive: true });
   writeFileSync(
     join(deviceViewersDir(), 'server.json'),
@@ -256,7 +251,7 @@ test('a stim-server viewer streaming the simulator keeps the workspace', async (
   const { actions, skips } = await plan();
 
   expect(actions).toEqual([]);
-  expect(skips).toEqual([expect.objectContaining({ target: root, reason: expect.stringMatching(/live view/) })]);
+  expect(skips).toEqual([]);
 });
 
 test('a held native-run claim keeps an idle workspace', async () => {
@@ -281,10 +276,19 @@ test('maintenance.idleStopHours 0 turns idle stop off, and a machine value of 1 
   expect(hourly.actions).toEqual([
     expect.objectContaining({ target: late, reason: expect.stringMatching(/over maintenance\.idleStopHours 1$/) }),
   ]);
-  expect(hourly.skips.map((skip) => skip.target)).toEqual([early]);
+  expect(hourly.skips).toEqual([]);
+  expect(early).not.toBe(late);
 
   vi.stubEnv('STIM_MAINTENANCE_IDLE_STOP_HOURS', '0');
   expect(await plan()).toEqual({ actions: [], blocked: [], skips: [] });
+
+  vi.stubEnv('STIM_MAINTENANCE_IDLE_STOP_HOURS', '-1');
+  const invalid = await plan();
+  expect(invalid.actions).toEqual([]);
+  expect(invalid.skips.map((skip) => skip.reason)).toEqual([
+    'STIM_MAINTENANCE_IDLE_STOP_HOURS is invalid: expected a number, 0 or more',
+    'STIM_MAINTENANCE_IDLE_STOP_HOURS is invalid: expected a number, 0 or more',
+  ]);
 });
 
 const activity = (state: DeviceActivity['state'], basis: string[], tool: string): DeviceActivity => ({
@@ -445,5 +449,23 @@ test('a running dev server with no Metro log keeps the workspace', async () => {
   expect(actions).toEqual([]);
   expect(skips).toEqual([
     expect.objectContaining({ target: root, reason: expect.stringMatching(/Metro log is missing/) }),
+  ]);
+});
+
+test('agent-device sessions that cannot be read keep the workspace', async () => {
+  const { root } = bootedWorkspace('sessions', 7 * HOUR_MS);
+  const sessions = join(workspaceAgentDeviceDir(root), 'sessions');
+  mkdirSync(join(sessions, 'cwd_1234_default'), { recursive: true });
+  chmodSync(sessions, 0o000);
+  let result;
+  try {
+    result = await plan();
+  } finally {
+    chmodSync(sessions, 0o700);
+  }
+
+  expect(result.actions).toEqual([]);
+  expect(result.skips).toEqual([
+    expect.objectContaining({ target: root, reason: expect.stringMatching(/agent-device sessions cannot be read/) }),
   ]);
 });

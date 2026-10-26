@@ -50,27 +50,28 @@ interface IdleStopEvidence {
   keep: string[];
 }
 
-type IdleStopDecision = { stop: true; idleMs: number } | { stop: false; reason: string };
+type IdleStopDecision = { stop: true; idleMs: number } | { stop: false; reason: string; active?: true };
 
 function decideIdleStop(
   evidence: IdleStopEvidence,
   { idleMs, now }: { idleMs: number; now: number },
 ): IdleStopDecision {
   if (!(idleMs > 0)) return { stop: false, reason: `${SETTING} is 0` };
-  if (evidence.keep.length) return { stop: false, reason: evidence.keep.join('; ') };
   const last = evidence.activity
     .filter(({ at }) => Number.isFinite(at))
     .reduce<IdleStopEvidence['activity'][number] | null>(
       (best, entry) => (!best || entry.at > best.at ? entry : best),
       null,
     );
-  if (!last) return { stop: false, reason: 'its last activity is unknown' };
-  const idle = now - last.at;
-  if (idle < idleMs)
+  const idle = last ? now - last.at : NaN;
+  if (last && idle < idleMs)
     return {
       stop: false,
+      active: true,
       reason: `its last ${last.basis} was ${formatLongDuration(Math.max(0, idle))} ago, within ${SETTING}`,
     };
+  if (evidence.keep.length) return { stop: false, reason: evidence.keep.join('; ') };
+  if (!last) return { stop: false, reason: 'its last activity is unknown' };
   return { stop: true, idleMs: idle };
 }
 
@@ -111,13 +112,16 @@ function recentAt(activity: DeviceActivity, basis: 'agent-action' | 'viewer'): n
   return Date.parse(activity.recent?.[basis] ?? '');
 }
 
-function agentSessionsActedAt(root: string): number {
+const missing = (error: unknown) => error instanceof Error && 'code' in error && error.code === 'ENOENT';
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+function agentSessionsActedAt(root: string): number | string {
   const dir = join(workspaceAgentDeviceDir(root), 'sessions');
   let names: string[];
   try {
     names = readdirSync(dir);
-  } catch {
-    return NaN;
+  } catch (error) {
+    return missing(error) ? NaN : `its agent-device sessions cannot be read (${message(error)})`;
   }
   let latest = NaN;
   for (const name of names) {
@@ -125,7 +129,9 @@ function agentSessionsActedAt(root: string): number {
     try {
       const at = statSync(join(dir, name, 'events.ndjson')).mtimeMs;
       if (!(at <= latest)) latest = at;
-    } catch {}
+    } catch (error) {
+      if (!missing(error)) return `its agent-device session ${name} cannot be read (${message(error)})`;
+    }
   }
   return latest;
 }
@@ -206,23 +212,25 @@ async function idleStopEvidence(
     operation?: StimContext;
   },
 ): Promise<IdleStopEvidence> {
-  const keep = await keepReasons(root, devices, { now, platform, locked, operation });
-  if (keep.length) return { activity: [], keep };
   const state = readWorkspaceState(root);
   if (!state && existsSync(workspaceStateFile(root))) return { activity: [], keep: ['its state.json cannot be read'] };
+  const sessions = agentSessionsActedAt(root);
+  if (typeof sessions === 'string') return { activity: [], keep: [sessions] };
   const build = state?.lastBuild;
   const builtAt =
     Date.parse(String(build?.startedAt ?? '')) + (typeof build?.durationMs === 'number' ? build.durationMs : 0);
   const activity: IdleStopEvidence['activity'] = [
     { basis: 'stim command' as const, at: Date.parse(String(state?.lastUsedAt ?? '')) },
     { basis: 'native run' as const, at: builtAt },
-    { basis: 'agent-device command' as const, at: agentSessionsActedAt(root) },
+    { basis: 'agent-device command' as const, at: typeof sessions === 'number' ? sessions : NaN },
     ...devices.flatMap(({ activity: device }) => [
       { basis: 'agent-device command' as const, at: recentAt(device, 'agent-action') },
       { basis: 'live view' as const, at: recentAt(device, 'viewer') },
     ]),
   ].filter(({ at }) => Number.isFinite(at));
-  if (activity.some(({ at }) => now - at < idleMs)) return { activity, keep };
+  if (activity.some(({ at }) => now - at < idleMs)) return { activity, keep: [] };
+  const keep = await keepReasons(root, devices, { now, platform, locked, operation });
+  if (keep.length) return { activity, keep };
   const metro = metroRequestAt(root, now - idleMs, serving);
   if (typeof metro === 'string') return { activity, keep: [metro] };
   if (Number.isFinite(metro)) activity.push({ basis: 'Metro request', at: metro });
@@ -297,8 +305,9 @@ async function candidate(
   const avdNames = slots.flatMap(({ platforms }) =>
     platforms.android?.owned && platforms.android.avdName ? [platforms.android.avdName] : [],
   );
-  const emulators = avdNames.length ? await emulatorListError(avdNames, operation) : null;
-  if (emulators) return supervisor.status === 'ours' ? { skip: emulators } : null;
+  const emulators =
+    supervisor.status === 'ours' && avdNames.length ? await emulatorListError(avdNames, operation) : null;
+  if (emulators) return { skip: emulators };
   if (supervisor.status === 'ours' && readWorkspaceState(path)?.supervisor?.mode === MODE_COMMAND)
     return { skip: 'its dev server runs metro.command, whose bundle and HMR requests Stim cannot see' };
   if (supervisor.status !== 'ours' && booted.length === 0) return null;
@@ -346,7 +355,7 @@ export async function planIdleStop({
     });
     const decision = decideIdleStop(evidence, { idleMs, now });
     if (!decision.stop) {
-      plan.skips.push({ target: root, reason: decision.reason, workspace: root });
+      if (!decision.active) plan.skips.push({ target: root, reason: decision.reason, workspace: root });
       continue;
     }
     plan.actions.push({
@@ -380,7 +389,14 @@ export async function stopIdleWorkspace(
     devices,
     operation,
     env = operation?.env ?? process.env,
-  }: { protectedRoot: string; devices: () => DeviceReader; operation?: StimContext; env?: NodeJS.ProcessEnv },
+    by = 'automatic maintenance',
+  }: {
+    protectedRoot: string;
+    devices: () => DeviceReader;
+    operation?: StimContext;
+    env?: NodeJS.ProcessEnv;
+    by?: string;
+  },
 ): Promise<IdleStopOutcome> {
   const root = action.workspace ?? action.target;
   if (root === protectedRoot) return kept('the command that started this pass runs in it');
@@ -413,12 +429,11 @@ export async function stopIdleWorkspace(
           async () => {
             const active = await stillIdle();
             if (active) return kept(active);
-            const lines: string[] = [];
             const stopped = await runStop({
               root: path,
               operation,
-              report: (line) => lines.push(line),
-              requester: { by: `automatic maintenance (${action.reason})` },
+              report: () => {},
+              requester: { by: `${by} (${action.reason})` },
               releaseLeases: () => [],
             });
             return stopped.ok

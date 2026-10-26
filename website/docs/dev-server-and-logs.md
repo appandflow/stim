@@ -157,13 +157,14 @@ running `stim ios`, `android`, `stop` or `start`, a running macOS app, a hosted
 or remote session, an unexpired device lease, a managed tunnel, a running owned
 Chrome, a device driver other than agent-device, or device activity Stim cannot
 read keeps the workspace. Maintenance logs each stop with the idle time and
-each kept workspace with its reason (`stim logs --source maintenance`), and
+each workspace kept past the window with its reason (`stim logs --source maintenance`), and
 `stim status` shows the dev server stopped by automatic maintenance. The next
 `stim start`, `stim ios` or `stim android` starts it again.
 
 A dev server started through `metro.command` is always kept, because Stim sees
 none of its bundle or HMR requests. A Metro log that cannot be read, or that
-rotated within the window, keeps the workspace too. A home redirected with
+rotated within the window, and agent-device sessions or a `state.json` that
+cannot be read keep the workspace too. A home redirected with
 `STIM_HOME` never stops idle workspaces, because simulators and emulators are
 machine-wide. `maintenance.keep` does not keep a
 workspace from this stop, which deletes nothing; set `maintenance.idleStopHours`
