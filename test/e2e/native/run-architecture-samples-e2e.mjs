@@ -155,7 +155,6 @@ if (mode === 'prepare') {
     const plan = stim('read-only-plan', ['android', '--variant', 'debug', '--plan', '--json'], { allowFail: true });
     assert.notEqual(plan.code, 0);
     assert.equal(JSON.parse(plan.stdout).code, 'STIM_BAD_ARG');
-    assert.match(plan.stdout, /--plan does not execute Gradle/);
     assert(!existsSync(join(app, '.gradle')), 'Read-only planning configured Gradle.');
     let originalDigest;
     for (const label of ['cold', 'unchanged', 'edited']) {

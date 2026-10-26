@@ -44,12 +44,17 @@ type Step =
 async function pairAndSave(payload: PairingPayload): Promise<{ id: string; name: string }> {
   const paired = await pair(
     payload.endpoint,
-    payload.pairingToken,
+    { pairingToken: payload.pairingToken, ...(payload.fingerprint ? { fingerprint: payload.fingerprint } : {}) },
     Constants.deviceName ?? FALLBACK_DEVICE_NAME,
     CLIENT,
   );
   const name = payload.name || paired.serverName;
-  const mac = await saveMac({ name, endpoint: payload.endpoint }, paired.deviceToken);
+  const mac = await saveMac({
+    name,
+    endpoint: payload.endpoint,
+    serverKey: paired.serverKey,
+    ...(paired.serverId ? { serverId: paired.serverId } : {}),
+  });
   return { id: mac.id, name };
 }
 
@@ -125,7 +130,11 @@ export function Pair() {
           ),
         }}
       />
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={styles.container}
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
+      >
         {step.kind === 'scan' ? <Scanner onScanned={step.paused ? undefined : onScanned} /> : null}
         {step.kind === 'manual' ? (
           <View style={styles.form}>

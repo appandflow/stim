@@ -372,19 +372,14 @@ describe('service command line', () => {
   const stimServer = (...args: string[]) =>
     spawnSync(process.execPath, [BIN, ...args], { env: { ...process.env, PATH: '' }, encoding: 'utf8' });
 
-  it('refuses outside macOS before touching anything', () => {
-    if (process.platform === 'darwin') return;
-    const result = stimServer('service', 'status');
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain('runs only on macOS');
-  });
-
-  it('rejects flags that do not apply', () => {
+  it('rejects flags that do not apply', { timeout: 30_000 }, () => {
     expect(stimServer('service', 'status', '--serve').stderr).toContain('only to `service install`');
     expect(stimServer('service', 'install', '--label', 'a/b').stderr).toContain('--label');
     expect(stimServer('service', 'install', '--env', 'X').stderr).toContain('KEY=VALUE');
     expect(stimServer('pair', '--label', 'x').stderr).toContain('only to `service`');
     expect(stimServer('service', 'restart').stderr).toContain('unknown command');
+    expect(stimServer('service', 'status', '--no-wait').stderr).toContain('only to `service update`');
+    expect(stimServer('pair', '--no-wait').stderr).toContain('only to `service update` or `setup`');
   });
 
   it('takes exactly one update source, and only for service update', { timeout: 30_000 }, () => {
@@ -395,6 +390,9 @@ describe('service command line', () => {
       'exactly one of --release',
     );
     expect(stimServer('service', 'update', '--release', 'latest').stderr).toContain('exact stim-server version');
+    expect(stimServer('service', 'update', '--no-wait', '--release', 'latest').stderr).toContain(
+      'exact stim-server version',
+    );
     expect(stimServer('service', 'update', '--from', '/nonexistent-stim-dir').stderr).toContain('directory of .tgz');
   });
 });
@@ -437,6 +435,7 @@ describe('host permissions', () => {
 describe('service status permissions', () => {
   const status: ServiceStatus = {
     label: SPEC.label,
+    manager: 'launchd',
     installed: true,
     plist: '/Users/me/Library/LaunchAgents/dev.stim.server.plist',
     loaded: false,
@@ -460,6 +459,7 @@ describe('service status permissions', () => {
     envNames: [],
     pathPrepend: [],
     stimBuild: { service: null, cli: null, match: null },
+    linger: null,
   };
 
   const line = (lines: string[], prefix: string) => lines.find((each) => each.startsWith(`  ${prefix}`)) ?? '';

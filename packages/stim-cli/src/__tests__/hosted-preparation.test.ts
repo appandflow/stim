@@ -1,17 +1,39 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type {
-  HostedMacosPlacement,
-  HostedNativePlacement,
-  HostedIosDevice,
-  HostedAndroidDevice,
+import {
+  DEVICE_HOST_LIMITS,
+  HOSTED_PARKED_CANDIDATES,
+  type HostedMacosPlacement,
+  type HostedNativePlacement,
+  type HostedIosDevice,
+  type HostedAndroidDevice,
 } from '@stim-cli/core/state';
-import { connectHost, type HostConnection } from '../device-host/hosted-client.ts';
+import {
+  connectHost,
+  settle,
+  HOSTED_POLL_MARGIN_MS,
+  HOSTED_REQUEST_MARGIN_MS,
+  INSTALL_TIMEOUT_MS,
+  OFFER_TIMEOUT_MS,
+  RESERVE_TIMEOUT_MS,
+  POLL_MS,
+  PREPARE_TIMEOUT_MS,
+  SESSION_TIMEOUT_MS,
+  type HostConnection,
+} from '../device-host/hosted-client.ts';
 import { placeHostedMacos } from '../device-host/hosted-macos.ts';
 import { placeHostedNative, prepareHostedNative } from '../device-host/hosted-native.ts';
 import { BuildConnection } from '../offload/client.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
 
+const run = vi.hoisted((): { signal?: AbortSignal } => ({}));
+vi.mock('../engine/native-run.ts', async (original) => ({
+  ...(await original<typeof import('../engine/native-run.ts')>()),
+  runCancellationSignal: () => run.signal,
+}));
 vi.mock('../device-host/hosted-client.ts', async (original) => ({
   ...(await original<typeof import('../device-host/hosted-client.ts')>()),
   connectHost: vi.fn<typeof connectHost>(),
@@ -48,6 +70,8 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
   let pendingState: string;
   let readyAt: number;
   let readyDevice: unknown;
+  let installing: boolean;
+  let notice: string | undefined;
   let recorded: Placement | undefined;
 
   beforeEach(() => {
@@ -61,6 +85,9 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     pendingState = 'preparing';
     readyAt = 240_000;
     readyDevice = devices[platform];
+    installing = false;
+    run.signal = undefined;
+    notice = undefined;
     recorded = undefined;
     const connection = Object.create(BuildConnection.prototype) as BuildConnection;
     connection.close = vi.fn<() => void>();
@@ -86,22 +113,30 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
       if (method === 'device-host.reserve' || method === 'device-host.attach') {
         const state = Date.now() >= readyAt ? 'ready' : pendingState;
         return {
-          result: { id: session, platform, appSlot: 1, state, device: state === 'ready' ? readyDevice : null },
+          result: {
+            id: session,
+            platform,
+            appSlot: 1,
+            state,
+            device: state === 'ready' ? readyDevice : null,
+            ...(notice ? { notice } : {}),
+          },
         };
       }
       if (method === 'device-host.metro.close') return { result: {} };
       if (method === 'device-host.app.offer') return { result: { missing: [] } };
-      if (method === 'device-host.app.launch') return { result: { state: 'installed', launched: true } };
+      if (method === 'device-host.app.launch' || method === 'device-host.app.attach')
+        return { result: installing ? { state: 'installing' } : { state: 'installed', launched: true } };
       throw new Error(`Unexpected fixture request ${method}`);
     };
     host = {
       machine: 'mini',
       credential: {
         machine: 'mini',
-        nodeId: 'host',
-        dnsName: 'mini.tail.ts.net',
+        transport: 'tailscale',
+        address: 'mini.tail.ts.net',
         deviceId: 'client',
-        deviceToken: 'fixture-token',
+        serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
         state: 'approved',
         requestedAt: '2026-10-09T00:00:00Z',
       },
@@ -211,7 +246,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     pendingState = 'stopping';
     readyAt = Infinity;
     const result = place().catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(181_000);
+    await vi.advanceTimersByTimeAsync(SESSION_TIMEOUT_MS + 1000);
     expect(String(await result)).toContain('stayed stopping');
     expect(recorded?.session).toBe(session);
     expect(
@@ -230,7 +265,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
       settled = true;
       return error;
     });
-    await vi.advanceTimersByTimeAsync(420_000);
+    await vi.advanceTimersByTimeAsync(240_000 + SESSION_TIMEOUT_MS);
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1000);
     expect(String(await result)).toContain('stayed stopping');
@@ -238,6 +273,68 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     expect(
       methods.some(({ method }) => method === 'device-host.reserve' || method.startsWith('device-host.app.')),
     ).toBe(false);
+  });
+
+  test('stops waiting for the app installation when the run is cancelled', async () => {
+    readyAt = 0;
+    installing = true;
+    const controller = new AbortController();
+    run.signal = controller.signal;
+    let outcome: string | undefined;
+    void place().then(
+      () => (outcome = 'placed'),
+      (error: unknown) => (outcome = String(error)),
+    );
+    await vi.advanceTimersByTimeAsync(10 * POLL_MS);
+    expect(outcome).toBeUndefined();
+    expect(methods.some(({ method }) => method === 'device-host.app.attach')).toBe(true);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(outcome).toContain('hosted app installation was cancelled');
+  });
+
+  test.skipIf(platform === 'macos')(
+    'Ctrl-C while the app is delivered drains the run and closes the host connection',
+    async () => {
+      readyAt = 0;
+      const runAbort = new AbortController();
+      run.signal = runAbort.signal;
+      const context = testContext();
+      const request = host.connection.request.bind(host.connection);
+      let release: ((reply: Awaited<ReturnType<typeof request>>) => void) | undefined;
+      host.connection.request = (method, params) =>
+        method === 'device-host.app.offer'
+          ? new Promise((resolve) => {
+              release = resolve;
+            })
+          : request(method, params);
+      host.connection.close = vi.fn<() => void>(() =>
+        release?.({ error: { code: 'closed', message: 'the connection was closed by this client' } }),
+      );
+      let outcome: string | undefined;
+      void withAmbientContext(context, place).then(
+        () => (outcome = 'placed'),
+        (error: unknown) => (outcome = String(error)),
+      );
+      await vi.advanceTimersByTimeAsync(10 * POLL_MS);
+      expect(release).toBeDefined();
+      expect(outcome).toBeUndefined();
+      runAbort.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(operationState(context).draining).toBe(true);
+      expect(host.connection.close).toHaveBeenCalled();
+      expect(outcome).toContain('closed by this client');
+    },
+  );
+
+  test('refuses a preparation the host stopped with its notice and no reconcile remedy', async () => {
+    pendingState = 'stopped';
+    readyAt = Infinity;
+    notice = 'Host memory pressure is unknown or elevated.';
+    const result = String(await place().catch((error: unknown) => error));
+    expect(result).toContain('stopped before it was ready: Host memory pressure is unknown or elevated. Retry');
+    expect(result).not.toMatch(/unknown state|Run stim stop/);
+    expect(methods.some(({ method }) => method.startsWith('device-host.app.'))).toBe(false);
   });
 
   test('still refuses a ready reply without the reserved device identity', async () => {
@@ -248,5 +345,74 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     expect(String(await result)).toMatch(/reserved architecture|offered architecture|reserved macOS app slot/);
     expect(recorded?.session).toBe(session);
     expect(methods.some(({ method }) => method.startsWith('device-host.app.'))).toBe(false);
+  });
+});
+
+describe('hosted session settle cancellation', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test('a cancelled run stops waiting within one poll interval', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const connection: BuildConnection = Object.create(BuildConnection.prototype);
+    connection.request = async () => ({ result: { id: session, platform: 'ios', state: 'preparing', device: null } });
+    const host: HostConnection = {
+      machine: 'mini',
+      credential: {
+        machine: 'mini',
+        transport: 'tailscale',
+        address: 'mini.tail.ts.net',
+        deviceId: 'client',
+        serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
+        state: 'approved',
+        requestedAt: '2026-10-09T00:00:00Z',
+      },
+      connection,
+    };
+    const controller = new AbortController();
+    let outcome: unknown;
+    void settle(
+      host,
+      { id: session, state: 'preparing', device: null },
+      ['preparing'],
+      PREPARE_TIMEOUT_MS,
+      'ios',
+      controller.signal,
+    ).then(
+      (value) => (outcome = { value }),
+      (error: unknown) => (outcome = { error }),
+    );
+    await vi.advanceTimersByTimeAsync(10 * POLL_MS + 1);
+    expect(outcome).toBeUndefined();
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(outcome).toMatchObject({ error: { code: 'STIM_CANCELLED' } });
+  });
+});
+
+describe('hosted client limits', () => {
+  const settleMs = 2 * DEVICE_HOST_LIMITS.killGraceMs;
+  const worker = (deadlineMs: number) => deadlineMs + settleMs;
+  test.each([
+    ['prepare', PREPARE_TIMEOUT_MS, worker(DEVICE_HOST_LIMITS.prepareMs), HOSTED_POLL_MARGIN_MS],
+    ['install', INSTALL_TIMEOUT_MS, worker(DEVICE_HOST_LIMITS.prepareMs), HOSTED_POLL_MARGIN_MS],
+    [
+      'stop',
+      SESSION_TIMEOUT_MS,
+      settleMs + worker(DEVICE_HOST_LIMITS.logsMs) + 2 * worker(DEVICE_HOST_LIMITS.stopMs),
+      HOSTED_POLL_MARGIN_MS,
+    ],
+    [
+      'reserve',
+      RESERVE_TIMEOUT_MS,
+      HOSTED_PARKED_CANDIDATES * (worker(DEVICE_HOST_LIMITS.offerMs) + worker(DEVICE_HOST_LIMITS.stopMs)) +
+        worker(DEVICE_HOST_LIMITS.offerMs),
+      HOSTED_REQUEST_MARGIN_MS,
+    ],
+    ['offer', OFFER_TIMEOUT_MS, worker(DEVICE_HOST_LIMITS.offerMs), HOSTED_REQUEST_MARGIN_MS],
+  ])('the %s wait outlasts the server worker bound plus its margin', (_phase, client, server, margin) => {
+    expect(client).toBeGreaterThanOrEqual(server + margin);
   });
 });

@@ -23,7 +23,7 @@ final class TutorialModel: ObservableObject {
   private var viewerEventSequence = 0
   @Published private(set) var phoneState = TutorialPhoneState(pairedPhoneCount: nil)
   private var pairedPhoneCount: Int?
-  private var removalRefused = false
+  @Published private var removalRefused = false
   private var missingSince: Date?
   private var followedPath: String?
   private var followTask: Task<Void, Never>?
@@ -31,6 +31,13 @@ final class TutorialModel: ObservableObject {
   private lazy var follower = LogFollower { [weak self] in self?.receive($0) }
   private lazy var agentFollower = LogFollower { [weak self] in self?.receive($0) }
   private static let seenKey = "tutorial.openedPaths"
+
+  enum RestartDialog: Equatable {
+    case confirm(base: String, worktrees: [String])
+    case blocked(String)
+  }
+  @Published var restartDialog: RestartDialog?
+  private var restarting = false
 
   private let cloneBase: String
 
@@ -98,8 +105,9 @@ final class TutorialModel: ObservableObject {
     }
     self.viewerEvents = viewerEvents
     self.pairedPhoneCount = pairedPhoneCount
-    phoneState = TutorialPhoneState(pairedPhoneCount: pairedPhoneCount)
-    self.removalRefused = removalRefused
+    let nextPhoneState = TutorialPhoneState(pairedPhoneCount: pairedPhoneCount)
+    if phoneState != nextPhoneState { phoneState = nextPhoneState }
+    if self.removalRefused != removalRefused { self.removalRefused = removalRefused }
     self.workspaces = workspaces
     self.archived = archived
     statusLoaded = true
@@ -109,9 +117,11 @@ final class TutorialModel: ObservableObject {
       workspaces, trackedPath: saved?.tourPath, since: saved.flatMap { $0.tourPath == nil ? $0.startedAt : nil },
       repository: saved?.clonePath)
     let tracked = saved?.tourPath
-    workspace = workspaces.first { $0.path == (tracked ?? candidate?.path) }
+    let nextWorkspace = workspaces.first { $0.path == (tracked ?? candidate?.path) }
+    if workspace != nextWorkspace { workspace = nextWorkspace }
     let seen = defaults.stringArray(forKey: Self.seenKey) ?? []
-    if launchPending, let saved {
+    let offered = AppPreferences.offersTutorial(defaults)
+    if launchPending, let saved, offered {
       if let path = saved.tourPath, workspace != nil || archivedRoots.contains(path) {
         openPending = saved.step != "done"
         launchPending = false
@@ -119,7 +129,7 @@ final class TutorialModel: ObservableObject {
         openPending = true
         launchPending = false
       }
-    } else if let candidate, !seen.contains(candidate.path), saved == nil || saved?.step == "done" {
+    } else if offered, let candidate, !seen.contains(candidate.path), saved == nil || saved?.step == "done" {
       progress = TutorialProgress()
       snapshot = nil
       archiveEnabled = nil
@@ -130,7 +140,7 @@ final class TutorialModel: ObservableObject {
       openPending = true
       launchPending = false
     }
-    if openPending, !sheetOpen {
+    if openPending, offered, !sheetOpen {
       let opening = !isOpen
       isOpen = true
       openPending = false
@@ -145,7 +155,7 @@ final class TutorialModel: ObservableObject {
     let fallback =
       archiveEnabled == nil && progress.record?.step == "finish" && progress.record?.stopped == true
       && missingSince.map { now.timeIntervalSince($0) >= 10 } == true
-    snapshot = progress.update(
+    let next = progress.update(
       TutorialInput(
         environment: workspace.flatMap(TutorialEnvironment.init), siblings: workspaces.compactMap(TutorialEnvironment.init),
         archivedProjectRoots: archivedRoots,
@@ -157,6 +167,7 @@ final class TutorialModel: ObservableObject {
         newCloneFolder: saved?.step == "begin"
           ? TutorialCloneFolder(path: cloneBase) : nil,
         now: now, record: records.record))
+    if snapshot != next { snapshot = next }
     if records.record != snapshot?.record { records.record = snapshot?.record }
     if let path = tourPath, isOpen, !seen.contains(path) { defaults.set(seen + [path], forKey: Self.seenKey) }
     syncFollowers()
@@ -178,30 +189,65 @@ final class TutorialModel: ObservableObject {
     checkCLI()
   }
 
+  func restart() {
+    guard let cli else { return open(beginning: true) }
+    guard !restarting, restartDialog == nil else { return }
+    restarting = true
+    let base = records.record?.clonePath ?? cloneBase
+    Task {
+      defer { restarting = false }
+      let cleanup = tutorialCleanup(cli: await cli.value)
+      do {
+        guard let plan = try await cleanup.plan(base: base) else { return open(beginning: true) }
+        switch plan {
+        case .remove(let worktrees): restartDialog = .confirm(base: base, worktrees: worktrees)
+        case .refuse(let reason): restartDialog = .blocked(reason)
+        }
+      } catch { restartDialog = .blocked(error.localizedDescription) }
+    }
+  }
+
+  private func tutorialCleanup(cli: StimCLI) -> TutorialCleanup {
+    TutorialCleanup(
+      stop: { path in
+        let result = try await runServerStop(
+          StimCommand(["stop"], cwd: path), cli: cli, connection: await ServerSession.shared.localActionConnection)
+        guard result.exitStatus == 0 else { throw StimCLI.Failure.exited(result.exitStatus, stderr: result.message) }
+      },
+      removeWorktree: { path, base in
+        let result = try await runServerWorktreeRemove(
+          StimCommand(["worktree", "remove", path], cwd: base), cli: cli,
+          connection: await ServerSession.shared.localActionConnection)
+        guard result.exitStatus == 0 else { throw StimCLI.Failure.exited(result.exitStatus, stderr: result.message) }
+      })
+  }
+
+  func confirmRestart(base: String, worktrees: [String]) {
+    guard let cli, !restarting else { return }
+    restartDialog = nil
+    restarting = true
+    Task {
+      defer { restarting = false }
+      do {
+        try await tutorialCleanup(cli: await cli.value).remove(base: base, worktrees: worktrees)
+        open(beginning: true)
+      } catch { restartDialog = .blocked(error.localizedDescription) }
+    }
+  }
+
   func close() {
     isOpen = false
     openPending = false
     syncFollowers()
   }
 
-  func skip() {
-    progress.skip(now: Date())
-    refresh()
-  }
-  func markDone() {
-    progress.markDone(now: Date())
+  func next() {
+    progress.next(now: Date())
     refresh()
   }
   func copiedPrompt(now: Date = Date()) {
     progress.copiedRunPrompt(now: now)
     refresh(now: now)
-  }
-
-  func commands(for step: TutorialStep) -> String {
-    tutorialCommands(
-      step.commands, tourPath: tourPath, repository: workspace?.worktree?.repository ?? snapshot?.record.clonePath,
-      stateDir: workspace?.agentDevice?.stateDir,
-      udid: workspace?.ios?.udid, second: snapshot?.record.secondPath)
   }
 
   private func refresh(now: Date = Date()) {
@@ -211,9 +257,13 @@ final class TutorialModel: ObservableObject {
       viewerEvents: viewerEvents, pairedPhoneCount: pairedPhoneCount, removalRefused: removalRefused)
   }
 
-  private func syncFollowers() {
+  func refreshLogs() {
+    syncFollowers(force: true)
+  }
+
+  private func syncFollowers(force: Bool = false) {
     let path = isOpen && workspace?.live == true ? workspace?.path : nil
-    guard path != followedPath else { return }
+    guard force || path != followedPath else { return }
     followTask?.cancel()
     follower.stop()
     agentFollower.stop()
@@ -224,21 +274,27 @@ final class TutorialModel: ObservableObject {
       guard !Task.isCancelled, followedPath == path else { return }
       var query = LogQuery()
       query.search = "\\[stim:tutorial\\]"
-      follower.start(query, cli: cli, cwd: path)
+      follower.start(query, cli: cli, connection: ServerSession.shared.statsConnection, cwd: path)
       query.search = ""
       query.sources = [.agent]
-      agentFollower.start(query, cli: cli, cwd: path)
-      let settings = try? await cli.settings(cwd: path)
-      guard !Task.isCancelled, followedPath == path else { return }
-      if let value = settings?.entry("archive.enabled")?.value {
-        switch value {
-        case .bool(let enabled): archiveEnabled = enabled
-        case .string(let enabled): archiveEnabled = ["true", "1"].contains(enabled)
-        default: break
-        }
-      }
-      refresh()
+      agentFollower.start(query, cli: cli, connection: ServerSession.shared.statsConnection, cwd: path)
+      await refreshSettings()
     }
+  }
+
+  func refreshSettings() async {
+    guard let path = followedPath, let cli else { return }
+    let settings = try? await readServerSettings(
+      cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: path)
+    guard !Task.isCancelled, followedPath == path else { return }
+    if let value = settings?.entry("archive.enabled")?.value {
+      switch value {
+      case .bool(let enabled): archiveEnabled = enabled
+      case .string(let enabled): archiveEnabled = ["true", "1"].contains(enabled)
+      default: break
+      }
+    }
+    refresh()
   }
 
   private func receive(_ event: LogFollower.Event) {

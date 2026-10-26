@@ -1,22 +1,18 @@
 import { delimiter, isAbsolute, join, relative } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
-import type { ServeRoute } from './tailscale.ts';
+import type { ServeRecord } from '@stim-cli/transport-tailscale';
 
 export class ServiceError extends Error {}
 
 export const DEFAULT_LABEL = 'dev.stim.server';
 export const DEFAULT_PORT = 7787;
-const THROTTLE_SECONDS = 30;
+export const THROTTLE_SECONDS = 30;
 
 const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const JOB_KEYS = ['STIM_HOME', 'SHELL'];
 
-export interface ServeRecord {
-  port: number;
-  /** Whether `service install` created the `tailscale serve` route, so `uninstall` removes it. */
-  created: boolean;
-}
+export { planServe, type ServeRecord } from '@stim-cli/transport-tailscale';
 
 export interface ServiceSpec {
   label: string;
@@ -93,19 +89,20 @@ export function applyServeEnvironment(
   env: string[],
   pathPrepend: string[],
   source: NodeJS.ProcessEnv = process.env,
+  warn: (line: string) => void = console.error,
 ): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = { ...base };
   for (const entry of env) {
     const parsed = parseEnvAssignment(entry);
     const name = typeof parsed === 'string' ? entry : parsed.key;
     if (JOB_KEYS.includes(name)) {
-      console.error(`stim-server: ignoring --env ${name}; the service takes it from the process that installed it.`);
+      warn(`stim-server: ignoring --env ${name}; the service takes it from the process that installed it.`);
     } else if (typeof parsed !== 'string') {
       result[name] = parsed.value;
     } else if (ENV_KEY_PATTERN.test(entry)) {
       const value = source[entry];
       if (value === undefined)
-        console.error(`stim-server: --env ${entry} has no value in the service environment; skipping it.`);
+        warn(`stim-server: --env ${entry} has no value in the service environment; skipping it.`);
       else result[entry] = value;
     }
   }
@@ -115,7 +112,7 @@ export function applyServeEnvironment(
   return result;
 }
 
-function environmentValues(env: string[]): Map<string, string> {
+export function environmentValues(env: string[]): Map<string, string> {
   const values = new Map<string, string>();
   for (const entry of env) {
     const parsed = parseEnvAssignment(entry);
@@ -129,7 +126,7 @@ export function normalizeEnv(env: string[]): string[] {
   return [...environmentValues(env)].map(([name, value]) => `${name}=${value}`);
 }
 
-function serverArguments(spec: Pick<ServiceSpec, 'port' | 'env' | 'pathPrepend'>): string[] {
+export function serverArguments(spec: Pick<ServiceSpec, 'port' | 'env' | 'pathPrepend'>): string[] {
   return [
     '--port',
     String(spec.port),
@@ -220,16 +217,25 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
 }
 
-/** Reads `plutil -convert json` output of a plist `renderPlist` wrote. */
-export function parseInstalledPlist(value: unknown): InstalledService | null {
-  if (!isJsonObject(value) || typeof value.Label !== 'string') return null;
-  const programArguments = strings(value.ProgramArguments);
+/** What a job file records besides its arguments, read by `parseInstalledPlist` and `parseUnit`. */
+export interface JobFields {
+  label: string;
+  programArguments: string[];
+  environment: Record<string, unknown>;
+  logPath: string | null;
+  managed: boolean;
+  servePort: unknown;
+  serveCreated: boolean;
+  previousScript: unknown;
+}
+
+export function installedService(job: JobFields): InstalledService {
+  const { programArguments, environment } = job;
   const host =
     programArguments[1] === 'run' && programArguments[0]?.endsWith('/Contents/MacOS/stim-host')
       ? programArguments[0]
       : null;
   const [node = null, script = null, ...args] = host ? programArguments.slice(2) : programArguments;
-  const environment = isJsonObject(value.EnvironmentVariables) ? value.EnvironmentVariables : {};
   const env: string[] = [];
   const pathPrepend: string[] = [];
   let port: number | null = null;
@@ -245,10 +251,9 @@ export function parseInstalledPlist(value: unknown): InstalledService | null {
     }
     if (flag === '--path-prepend') pathPrepend.push(next);
   }
-  const meta = isJsonObject(value.StimService) ? value.StimService : {};
-  const servePort = meta.ServePort;
+  const servePort = job.servePort;
   return {
-    label: value.Label,
+    label: job.label,
     host,
     node,
     script,
@@ -256,15 +261,31 @@ export function parseInstalledPlist(value: unknown): InstalledService | null {
     env,
     pathPrepend,
     stimHome: typeof environment.STIM_HOME === 'string' ? environment.STIM_HOME : null,
-    logPath: typeof value.StandardOutPath === 'string' ? value.StandardOutPath : null,
-    managed: meta.Managed === true,
+    logPath: job.logPath,
+    managed: job.managed,
     serve:
       typeof servePort === 'number' && Number.isInteger(servePort)
-        ? { port: servePort, created: meta.ServeCreated === true }
+        ? { port: servePort, created: job.serveCreated }
         : null,
-    previousScript: typeof meta.PreviousScript === 'string' ? meta.PreviousScript : null,
+    previousScript: typeof job.previousScript === 'string' ? job.previousScript : null,
     programArguments,
   };
+}
+
+/** Reads `plutil -convert json` output of a plist `renderPlist` wrote. */
+export function parseInstalledPlist(value: unknown): InstalledService | null {
+  if (!isJsonObject(value) || typeof value.Label !== 'string') return null;
+  const meta = isJsonObject(value.StimService) ? value.StimService : {};
+  return installedService({
+    label: value.Label,
+    programArguments: strings(value.ProgramArguments),
+    environment: isJsonObject(value.EnvironmentVariables) ? value.EnvironmentVariables : {},
+    logPath: typeof value.StandardOutPath === 'string' ? value.StandardOutPath : null,
+    managed: meta.Managed === true,
+    servePort: meta.ServePort,
+    serveCreated: meta.ServeCreated === true,
+    previousScript: meta.PreviousScript,
+  });
 }
 
 /** The job's `ProgramArguments` with the server script, which follows the launcher, `run` and node, set to `script`. */
@@ -298,28 +319,29 @@ export function parseLaunchctlPrint(output: string): LaunchdJob {
   };
 }
 
-/**
- * What `install --serve` does about the node's `tailscale serve` config: refuse a Funnel route or an unreadable
- * config, keep a route that already reaches the port (remembering whether an earlier install created it), or
- * create one.
- */
-export function planServe(
-  route: ServeRoute,
-  target: number,
-  previous: ServeRecord | null,
-): { record: ServeRecord; create: boolean } | { refusal: string } {
-  if (route.state === 'funneled') {
-    return {
-      refusal: `refusing to serve. Tailscale Funnel is on for port ${route.ports.join(', ')}, which proxies to port ${target}, so it is reachable from the public internet. Remove that handler (see \`tailscale serve status\`), then run install again.`,
-    };
+const parseVersion = (v: string) => /^(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+.*)?$/.exec(v);
+
+export function compareVersions(a: string, b: string): number {
+  const aa = parseVersion(a),
+    bb = parseVersion(b);
+  if (!aa || !bb) throw new ServiceError(`Cannot compare stim-server versions ${a} and ${b}.`);
+  for (let i = 1; i <= 3; i++) {
+    const diff = Number(aa[i]) - Number(bb[i]);
+    if (diff) return diff;
   }
-  if (route.state === 'unknown') {
-    return { refusal: `could not read \`tailscale serve status --json\` (${route.reason}); not changing the route.` };
+  if (!aa[4] || !bb[4]) return aa[4] ? -1 : bb[4] ? 1 : 0;
+  const ap = aa[4].split('.'),
+    bp = bb[4].split('.');
+  for (let i = 0; i < Math.max(ap.length, bp.length); i++) {
+    const x = ap[i],
+      y = bp[i];
+    if (x === y) continue;
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+    if (/^\d+$/.test(x) && /^\d+$/.test(y)) return Number(x) - Number(y);
+    if (/^\d+$/.test(x) !== /^\d+$/.test(y)) return /^\d+$/.test(x) ? -1 : 1;
+    return x < y ? -1 : 1;
   }
-  if (route.state === 'routed') {
-    return { record: { port: route.port, created: previous?.port === route.port && previous.created }, create: false };
-  }
-  return { record: { port: route.port, created: true }, create: true };
+  return 0;
 }
 
 const RELEASE_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;

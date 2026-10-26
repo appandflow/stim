@@ -4,6 +4,7 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import { benchmarks, displayVariant } from '@site/src/components/benchmarkCatalog';
 import BenchmarkVideo from '@site/src/components/BenchmarkVideo';
+import NativeBenchmarkResults from '@site/src/components/NativeBenchmarkResults';
 import { benchmarkModelLabel } from '@site/src/components/benchmarkSelection';
 import {
   benchmarkDisplayTitle,
@@ -94,7 +95,7 @@ export default function Benchmarks(): ReactNode {
   return (
     <Layout
       title="Agent benchmarks"
-      description="Auditable Stim agent benchmark results with command timelines and Settings-screen proof."
+      description="Stim agent benchmarks for React Native and standalone native apps, with timings and verified screen proof."
     >
       <main className={styles.page}>
         <div className="container">
@@ -102,9 +103,9 @@ export default function Benchmarks(): ReactNode {
             <div className={styles.eyebrow}>Agent benchmark</div>
             <Heading as="h1">Stim agent benchmarks</Heading>
             <p>
-              Compare how coding agents launch the same React Native app with Stim and the local Expo/native toolchain.
-              Platforms and JavaScript/native tasks are measured separately, and every published time links to its
-              command-level audit and Settings-screen proof.
+              Compare coding agents using Stim and local platform tools. React Native results measure Settings-ready
+              time and link to command-level audits. Standalone native pilots below measure complete task time and
+              include verified screen proof. Platforms and tasks are measured separately.
             </p>
           </header>
 
@@ -137,7 +138,7 @@ export default function Benchmarks(): ReactNode {
                     A deterministic root-render exception is committed before dispatch. The agent must launch first,
                     diagnose from captured errors, repair the source, and prove the unchanged Settings screen. Each
                     comparison shows the latest validated run per arm, not an average or a best-of selection. Stim runs
-                    use the same optional app readiness logs as controls. The crash and recovery task are identical;
+                    use the same recommended app readiness logs as controls. The crash and recovery task are identical;
                     Stim can use those signals to report the failure during launch.
                   </p>
                 </div>
@@ -155,11 +156,13 @@ export default function Benchmarks(): ReactNode {
             </section>
           ) : null}
 
+          <NativeBenchmarkResults />
+
           <section className={styles.methodology} aria-labelledby="methodology-title">
             <div>
               <span className={styles.eyebrow}>Methodology</span>
               <Heading as="h2" id="methodology-title">
-                How the comparisons work
+                How the React Native comparisons work
               </Heading>
               <p>
                 We compare Stim with standard Expo and native build tools on the same app. The goal is to measure how
@@ -172,8 +175,8 @@ export default function Benchmarks(): ReactNode {
                 <dt>Same task, same agent</dt>
                 <dd>
                   Each comparison uses the same app task, AI model, and model settings. The agent works with Stim in one
-                  run and without it in the other. Both arms use the same fixture, including optional app readiness logs
-                  for the launch-error task.
+                  run and without it in the other. Both arms use the same fixture, including recommended app readiness
+                  logs for the launch-error task.
                 </dd>
               </div>
               <div>

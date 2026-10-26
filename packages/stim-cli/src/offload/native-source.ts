@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
+import { lstat, readlink, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
 import { manifestDigest } from './manifest.ts';
-import { getExecutor } from '../exec.ts';
+import { gitAsync } from '../workspace/git.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 
 export interface NativeTransferFile {
@@ -42,16 +43,19 @@ export function checkNativeTransferMembership(snapshot: NativeInputSnapshot, vis
   }
 }
 
-export function nativeTransferManifest(
+export async function nativeTransferManifest(
   root: string,
   snapshot: NativeInputSnapshot,
   visible: readonly NativeTransferFile[],
-): NativeTransferFile[] {
+  signal?: AbortSignal,
+): Promise<NativeTransferFile[]> {
   const files = new Map(visible.map((file) => [file.path, file]));
-  root = realpathSync(root);
+  signal?.throwIfAborted();
+  root = await realpath(root);
   const selected: NativeTransferFile[] = [];
   const empty = createHash('sha256').update('').digest('hex');
   for (const { entry, path } of repositoryInputs(snapshot)) {
+    signal?.throwIfAborted();
     if (entry.kind === 'directory') {
       selected.push({ path, kind: 'directory', size: 0, sha256: empty });
       continue;
@@ -64,8 +68,8 @@ export function nativeTransferManifest(
     selected.push(file);
     if (kind === 'link') {
       const link = join(root, path);
-      const target = readlinkSync(link);
-      const destination = relative(root, realpathSync(resolve(dirname(link), target)));
+      const target = await readlink(link);
+      const destination = relative(root, await realpath(resolve(dirname(link), target)));
       if (isAbsolute(target) || isAbsolute(destination) || destination === '..' || destination.startsWith(`..${sep}`))
         throw new Error(`Native input ${path} has a link that cannot be relocated inside the repository.`);
     }
@@ -73,34 +77,58 @@ export function nativeTransferManifest(
   return selected.toSorted((a, b) => a.path.localeCompare(b.path));
 }
 
-export function verifyNativeTransfer(
+export async function verifyNativeTransfer(
   root: string,
   files: readonly NativeTransferFile[],
   digest: string,
   ignoredDirectoryMarkers: readonly string[] = [],
-): boolean {
-  const snapshot = fingerprintNativeInputs([{ name: 'repository', path: root }], {
+): Promise<boolean> {
+  const snapshot = await fingerprintNativeInputs([{ name: 'repository', path: root }], {
     excluded: [join(root, '.git')],
     ignoredDirectoryMarkers,
     parameters: null,
   });
-  return manifestDigest(nativeTransferManifest(root, snapshot, files)) === digest;
+  return manifestDigest(await nativeTransferManifest(root, snapshot, files)) === digest;
 }
 
-/** The exact source a build needs: tracked and untracked, not ignored, as `git ls-files -co --exclude-standard`. */
-export function sourceManifest(repoRoot: string, strict = false): NativeTransferFile[] {
+/** SHA-256 and byte count of one regular file, streamed without blocking the caller. */
+export async function nativeFileDigest(path: string, signal?: AbortSignal): Promise<{ size: number; sha256: string }> {
+  const hash = createHash('sha256');
+  let size = 0;
+  try {
+    for await (const chunk of createReadStream(path, { signal })) {
+      hash.update(chunk);
+      size += chunk.length;
+    }
+  } finally {
+    signal?.throwIfAborted();
+  }
+  return { size, sha256: hash.digest('hex') };
+}
+
+/**
+ * The exact source a build needs: tracked and untracked, not ignored, as `git ls-files -co --exclude-standard`, and
+ * the repository-relative `ignored` paths it also reads.
+ */
+export async function sourceManifest(
+  repoRoot: string,
+  strict = false,
+  signal?: AbortSignal,
+  ignored: readonly string[] = [],
+): Promise<NativeTransferFile[]> {
   const files: NativeTransferFile[] = [];
-  for (const path of gitVisiblePaths(repoRoot)) {
+  for (const path of new Set([...(await gitVisiblePaths(repoRoot, signal)), ...ignored])) {
+    signal?.throwIfAborted();
     const absolute = join(repoRoot, path);
     let stat;
     try {
-      stat = lstatSync(absolute);
+      stat = await lstat(absolute);
     } catch (error) {
       if (strict && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       continue;
     }
     if (stat.isSymbolicLink()) {
-      const target = Buffer.from(readlinkSync(absolute));
+      const target = Buffer.from(await readlink(absolute));
       files.push({
         path,
         kind: 'link',
@@ -108,23 +136,19 @@ export function sourceManifest(repoRoot: string, strict = false): NativeTransfer
         sha256: createHash('sha256').update(target).digest('hex'),
       });
     } else if (stat.isFile()) {
-      const content = readFileSync(absolute);
-      files.push({
-        path,
-        kind: stat.mode & 0o111 ? 'exec' : 'file',
-        size: content.length,
-        sha256: createHash('sha256').update(content).digest('hex'),
-      });
+      files.push({ path, kind: stat.mode & 0o111 ? 'exec' : 'file', ...(await nativeFileDigest(absolute, signal)) });
     } else if (strict)
       throw new Error(`Native source ${path} is not a file or link; transfer submodule contents explicitly.`);
   }
+  signal?.throwIfAborted();
   return files;
 }
 
-export function gitVisiblePaths(repoRoot: string): Set<string> {
-  const listed = getExecutor().runFile('git', ['-C', repoRoot, 'ls-files', '-z', '-co', '--exclude-standard'], {
+export async function gitVisiblePaths(repoRoot: string, signal?: AbortSignal): Promise<Set<string>> {
+  const listed = await gitAsync(repoRoot, ['ls-files', '-z', '-co', '--exclude-standard'], {
     untrimmed: true,
     timeoutMs: 120_000,
+    signal,
   });
   return new Set(listed.split('\0').filter(Boolean));
 }

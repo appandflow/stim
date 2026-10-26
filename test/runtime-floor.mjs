@@ -17,7 +17,21 @@ import { pathToFileURL } from 'node:url';
 
 const repositoryRoot = join(import.meta.dirname, '..');
 const require = createRequire(join(repositoryRoot, 'packages', 'stim-cli', 'package.json'));
-const packageDirs = ['stim-cli', 'core', 'cache', 'metro', 'expo-build-cache', 'ci', 'server'];
+const packageDirs = [
+  'stim-cli',
+  'core',
+  'cache',
+  'cache-s3',
+  'agent-driver',
+  'agent-driver-agent-device',
+  'metro',
+  'expo-build-cache',
+  'ci',
+  'transport',
+  'transport-tailscale',
+  'transport-local',
+  'server',
+];
 
 for (const directory of packageDirs) {
   const root = join(repositoryRoot, 'packages', directory);
@@ -40,15 +54,27 @@ const entrypoints = [
   ['@stim-cli/core/ownership-claim', 'tryAcquireClaim'],
   ['@stim-cli/core/state', 'loadConfig'],
   ['@stim-cli/core/oversight', 'oversee'],
+  ['@stim-cli/core/noise', 'generateNoiseKeyPair'],
   ['@stim-cli/cache', 'loadCacheProvider'],
+  ['@stim-cli/agent-driver', 'loadAgentDriver'],
+  ['@stim-cli/agent-driver-agent-device', 'createAgentDriver'],
+  ['@stim-cli/cache-s3', 'createS3FileCache', 'cache-s3'],
   ['@stim-cli/expo-build-cache', 'cacheRoot'],
   ['@stim-cli/metro', 'sharedCacheStores'],
+  ['@stim-cli/transport', 'loadTransport', 'server'],
+  ['@stim-cli/transport-tailscale', 'createTransport', 'server'],
+  ['@stim-cli/transport-local', 'createTransport', 'server'],
   ['stim/cache-manifest', 'readManifest'],
 ];
 
-for (const [specifier, exportName] of entrypoints) {
-  assert.equal(typeof require(specifier)[exportName], 'function', `require(${specifier}) must load ESM synchronously`);
-  const resolved = pathToFileURL(require.resolve(specifier)).href;
+for (const [specifier, exportName, context] of entrypoints) {
+  const entryRequire = context ? createRequire(join(repositoryRoot, 'packages', context, 'package.json')) : require;
+  assert.equal(
+    typeof entryRequire(specifier)[exportName],
+    'function',
+    `require(${specifier}) must load ESM synchronously`,
+  );
+  const resolved = pathToFileURL(entryRequire.resolve(specifier)).href;
   assert.equal(typeof (await import(resolved))[exportName], 'function', `import(${specifier}) must load ESM`);
 }
 
@@ -150,8 +176,8 @@ ${source}
   }
   const stim = require('stim').createStim({ projectRoot: apiScratch, home: join(apiScratch, 'home') });
   const diagnostics = await stim.diagnostics({ tail: 0 });
-  assert.equal(diagnostics.records.length, 0, 'the API worker reads an empty workspace on the runtime floor');
-  assert.ok(diagnostics.directory.startsWith(join(apiScratch, 'home')), 'the API worker uses its explicit home');
+  assert.equal(diagnostics.records.length, 0, 'the API reads an empty workspace on the runtime floor');
+  assert.ok(diagnostics.directory.startsWith(join(apiScratch, 'home')), 'the API uses its explicit home');
 } finally {
   rmSync(apiScratch, { recursive: true, force: true });
 }
@@ -224,9 +250,10 @@ try {
     [join(repositoryRoot, 'packages/stim-cli/dist/cli.mjs'), 'stats', '--json'],
     options,
   );
-  const report = execFileSync(process.execPath, [join(repositoryRoot, 'packages/server/dist/stats-read.mjs')], options);
-  assert.deepEqual(JSON.parse(report), JSON.parse(cli));
-  assert.equal(JSON.parse(report).machine.ios.runs, 3);
+  const { createStim } = await import(pathToFileURL(join(repositoryRoot, 'packages/stim-cli/dist/api.mjs')).href);
+  const report = await createStim({ projectRoot: statsHome, home: statsHome }).stats();
+  assert.deepEqual(report, JSON.parse(cli));
+  assert.equal(report.machine.ios.runs, 3);
 } finally {
   rmSync(statsHome, { recursive: true, force: true });
 }

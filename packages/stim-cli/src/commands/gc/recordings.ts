@@ -1,9 +1,10 @@
-import { existsSync, rmSync } from 'fs';
+import { existsSync } from 'fs';
+import { rm } from 'node:fs/promises';
 import { join } from 'path';
 import chalk from 'chalk';
-import { listRecordedDevices, recordedBytes, type RecordedDevice } from '@stim-cli/core/state';
+import { listRecordedDevicesAsync, recordedBytes, type RecordedDevice } from '@stim-cli/core/state';
 import { formatBytes, isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { listWorkspaceDirs, type WorkspaceDirEntry } from './workspaces.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -84,51 +85,75 @@ function planRecordings(
  * workspace and dead project sweeps remove whole, are listed with them; entries whose project root is on an
  * unmounted volume are left out.
  */
-export function collectRecordings(plan: RecordingsPlan, gone: readonly string[] = []): WorkspaceRecordings[] {
+export async function collectRecordings(
+  plan: RecordingsPlan,
+  gone: readonly string[] = [],
+  signal?: AbortSignal,
+): Promise<WorkspaceRecordings[]> {
+  signal?.throwIfAborted();
   const mountedVolumes = listMountedVolumes();
-  const entries = listWorkspaceDirs()
-    .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
-    .map((entry) => Object.assign({}, entry, { recordings: join(entry.dir, 'recordings') }))
-    .filter((entry) => existsSync(entry.recordings))
-    .map((entry) =>
-      Object.assign({}, entry, { gone: gone.includes(entry.dir), devices: listRecordedDevices(entry.recordings) }),
-    );
+  const entries: RecordingsEntry[] = [];
+  for (const entry of listWorkspaceDirs()) {
+    signal?.throwIfAborted();
+    if (entry.projectRoot !== null && !isOnMountedVolume(entry.projectRoot, mountedVolumes)) continue;
+    const recordings = join(entry.dir, 'recordings');
+    if (!existsSync(recordings)) continue;
+    entries.push({
+      ...entry,
+      recordings,
+      gone: gone.includes(entry.dir),
+      devices: await listRecordedDevicesAsync(recordings, false, signal),
+    });
+  }
+  signal?.throwIfAborted();
   return planRecordings(entries, plan);
 }
 
 /** Deletes what `planRecordings` chose, planning again from the files on disk. */
-export function deleteRecordings(report: readonly WorkspaceRecordings[], plan: RecordingsPlan): number {
+export async function deleteRecordings(
+  report: readonly WorkspaceRecordings[],
+  plan: RecordingsPlan,
+  output: GcOutput = GC_OUTPUT,
+  signal?: AbortSignal,
+): Promise<number> {
+  signal?.throwIfAborted();
   let failures = 0;
   for (const entry of report) {
+    signal?.throwIfAborted();
     const label = entry.projectRoot ?? entry.dir;
     if (entry.withWorkspace) continue;
     if (!entry.willDelete) {
       if (entry.keptCode === 'unresolved' || entry.keptCode === 'recently-recorded') {
-        console.log(chalk.dim(`Kept the device recordings of ${label}: ${entry.keptReason}`));
-        recordGcResult('recording', 'kept', label, { bytes: entry.bytes, detail: entry.keptReason });
+        output.log(chalk.dim(`Kept the device recordings of ${label}: ${entry.keptReason}`));
+        output.record('recording', 'kept', label, { bytes: entry.bytes, detail: entry.keptReason });
       }
       continue;
     }
     try {
       let deleted = 0;
       if (plan.whole) {
-        deleted = recordedBytes(listRecordedDevices(entry.dir));
-        rmSync(entry.dir, { recursive: true, force: true });
+        deleted = recordedBytes(await listRecordedDevicesAsync(entry.dir, false, signal));
+        signal?.throwIfAborted();
+        await rm(entry.dir, { recursive: true, force: true });
       } else if (plan.olderThan !== null) {
-        for (const segment of oldSegments(listRecordedDevices(entry.dir), plan.olderThan, plan.now)) {
-          rmSync(segment.file, { force: true });
+        const devices = await listRecordedDevicesAsync(entry.dir, false, signal);
+        for (const segment of oldSegments(devices, plan.olderThan, plan.now)) {
+          signal?.throwIfAborted();
+          await rm(segment.file, { force: true });
           deleted += segment.bytes;
         }
       }
-      console.log(chalk.green(`Deleted ${formatBytes(deleted)} of device recordings of ${label}`));
-      recordGcResult('recording', 'done', label, { bytes: deleted });
+      output.log(chalk.green(`Deleted ${formatBytes(deleted)} of device recordings of ${label}`));
+      output.record('recording', 'done', label, { bytes: deleted });
     } catch (error) {
+      signal?.throwIfAborted();
       failures++;
       const detail = (error as Error)?.message || String(error);
-      console.log(chalk.red(`Could not delete the device recordings of ${label}: ${detail}`));
-      recordGcResult('recording', 'failed', label, { bytes: entry.bytes, detail });
+      output.log(chalk.red(`Could not delete the device recordings of ${label}: ${detail}`));
+      output.record('recording', 'failed', label, { bytes: entry.bytes, detail });
     }
   }
+  signal?.throwIfAborted();
   return failures;
 }
 

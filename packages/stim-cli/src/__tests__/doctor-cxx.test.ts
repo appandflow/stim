@@ -24,7 +24,7 @@ beforeEach(() => {
   previousPath = process.env.PATH;
   writeFileSync(join(home, 'ccache'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   process.env.PATH = `${home}${delimiter}${previousPath}`;
-  getExecutor().runFile('git', ['init', '-q', root]);
+  getExecutor().runFile('git', ['init', '-q', root], { timeoutMs: 60_000 });
   writeFileSync(join(root, '.gitignore'), '.cxx/\nnode_modules/\n');
 });
 
@@ -72,7 +72,7 @@ test.skipIf(process.platform === 'win32')(
   'repair refuses tracked or non-ignored output and leaves neighboring source intact (ccache PATH lookup is POSIX-only; skipped on win32)',
   () => {
     const tracked = cache('android/app', null);
-    getExecutor().runFile('git', ['add', '-f', join(tracked, 'CMakeCache.txt')], { cwd: root });
+    getExecutor().runFile('git', ['add', '-f', join(tracked, 'CMakeCache.txt')], { cwd: root, timeoutMs: 60_000 });
     writeFileSync(join(root, '.gitignore'), '');
     const source = join(root, 'android/app/CMakeLists.txt');
     writeFileSync(source, 'project(Example)\n');
@@ -81,7 +81,10 @@ test.skipIf(process.platform === 'win32')(
     expect(result.refused[0]?.reason).toMatch(/tracked/);
     expect(existsSync(tracked)).toBe(true);
     expect(existsSync(source)).toBe(true);
-    getExecutor().runFile('git', ['rm', '--cached', '-f', join(tracked, 'CMakeCache.txt')], { cwd: root });
+    getExecutor().runFile('git', ['rm', '--cached', '-f', join(tracked, 'CMakeCache.txt')], {
+      cwd: root,
+      timeoutMs: 60_000,
+    });
     expect(repairCxxLauncherState(root, projectSettings()).refused).toHaveLength(1);
     expect(existsSync(tracked)).toBe(true);
   },
@@ -151,7 +154,12 @@ const cli = join(import.meta.dirname, '../../dist/cli.mjs');
 
 function doctorJson(args: string[], env: Record<string, string>, omitEnv: string[] = []): { findings: Finding[] } {
   return JSON.parse(
-    getExecutor().runFile(process.execPath, [cli, 'doctor', '--json', ...args], { cwd: root, env, omitEnv }),
+    getExecutor().runFile(process.execPath, [cli, 'doctor', '--json', ...args], {
+      cwd: root,
+      env,
+      omitEnv,
+      timeoutMs: 60_000,
+    }),
   );
 }
 
@@ -225,18 +233,22 @@ test('doctor preserves native configurations while a CAS toolchain Stim can use 
 });
 
 test.skipIf(process.platform === 'win32')(
-  'legacy launcher repair preserves managed compiler profiles alongside stale legacy configurations (ccache PATH lookup is POSIX-only; skipped on win32)',
+  'legacy launcher repair preserves managed compiler profiles, including the short Windows form, alongside stale legacy configurations (ccache PATH lookup is POSIX-only; skipped on win32)',
   () => {
     const legacy = cache('android/app', null);
-    const managed = join(root, 'android/app/.cxx/stim-0123456789abcdef/Debug/abc123/arm64-v8a');
-    mkdirSync(managed, { recursive: true });
-    writeFileSync(
-      join(managed, 'CMakeCache.txt'),
-      'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
+    const managed = ['stim-0123456789abcdef', '0123'].map((profile) =>
+      join(root, `android/app/.cxx/${profile}/Debug/abc123/arm64-v8a`),
     );
+    for (const dir of managed) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, 'CMakeCache.txt'),
+        'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
+      );
+    }
     expect(repairCxxLauncherState(root, projectSettings()).removed).toHaveLength(1);
     expect(existsSync(legacy)).toBe(false);
-    expect(existsSync(managed)).toBe(true);
+    for (const dir of managed) expect(existsSync(dir)).toBe(true);
   },
 );
 

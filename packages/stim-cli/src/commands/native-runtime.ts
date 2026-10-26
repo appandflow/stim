@@ -7,7 +7,7 @@ import { resolveProjectMetro } from '../metro.ts';
 import { metroPortSetting } from '../workspace/settings.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { startDevServer, type StartDevServerRequest } from './start.ts';
-import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import { ensureWorkspaceStorageAsync } from '../workspace/paths.ts';
 import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../engine/launch-verify.ts';
 
 export interface MobileRuntimePreparation {
@@ -20,11 +20,17 @@ export interface RuntimeReadiness {
   unattributed?: boolean;
 }
 
-export const sleep = (ms: number): Promise<void> => new Promise<void>((r) => setTimeout(r, ms));
-
 export type DevServerGate =
   | { ok: true; port: number; pid: number | null; devServer: DevServerStart | null; reclaimed: ReclaimedStep[] }
-  | { ok: false; code: string; message: string; remedy: string | null; lines: string[]; reclaimed: ReclaimedStep[] };
+  | {
+      ok: false;
+      code: string;
+      message: string;
+      remedy: string | null;
+      lines: string[];
+      reclaimed: ReclaimedStep[];
+      retainedClaimRoots?: string[];
+    };
 
 export async function ensureDevServer({
   root,
@@ -32,6 +38,8 @@ export async function ensureDevServer({
   settings,
   settingsContext,
   remote,
+  hostedPorts,
+  env,
   note,
   resolve = resolveProjectMetro,
   start = startDevServer,
@@ -42,18 +50,20 @@ export async function ensureDevServer({
   settings: StartDevServerRequest['settings'];
   settingsContext: StartDevServerRequest['settingsContext'];
   remote: boolean;
+  hostedPorts?: StartDevServerRequest['hostedPorts'];
+  env?: NodeJS.ProcessEnv;
   note: (line: string) => void;
   resolve?: (port: number, root: string) => Promise<{ metro?: { pid?: number } | null }>;
   start?: typeof startDevServer;
   readState?: typeof readWorkspaceState;
 }): Promise<DevServerGate> {
-  const pin = metroPortSetting(settings);
+  const pin = metroPortSetting(settings, env);
   const canReuse = !pin.error && (pin.port === null || pin.port === port);
   const held = port === null || !canReuse ? null : (await resolve(port, root)).metro;
   if (port !== null && held) return { ok: true, port, pid: held.pid ?? null, devServer: null, reclaimed: [] };
   const reason = readIdleStop(readState(root)) ? 'stopped (idle)' : 'not running';
   note(chalk.dim(phaseLine('metro', `dev server ${reason}; starting it${remote ? ' for a remote device' : ''}`)));
-  const result = await start({ root, settings, settingsContext, remote, out: note, note });
+  const result = await start({ root, settings, settingsContext, remote, hostedPorts, out: note, note });
   if (!result.ok) {
     return {
       ok: false,
@@ -62,6 +72,7 @@ export async function ensureDevServer({
       remedy: result.error.remedy,
       lines: result.lines,
       reclaimed: result.reclaimed,
+      ...(result.retainedClaimRoots ? { retainedClaimRoots: result.retainedClaimRoots } : {}),
     };
   }
   const { facts } = result;
@@ -79,7 +90,7 @@ export async function ensureWorkspaceStorageSafely(
   { note = (_line: string) => {} }: { note?: (line: string) => void } = {},
 ): Promise<unknown> {
   try {
-    return ensureWorkspaceStorage(root);
+    return await ensureWorkspaceStorageAsync(root);
   } catch (err) {
     note(chalk.dim(`Could not prepare this workspace's Stim state: ${(err as Error)?.message || err}`));
     throw err;
@@ -89,6 +100,7 @@ export async function ensureWorkspaceStorageSafely(
 export function launchOutcomeRecord({
   launchState,
   release,
+  process = false,
   bundleId,
   configuration,
   metroPort,
@@ -96,6 +108,7 @@ export function launchOutcomeRecord({
 }: {
   launchState: boolean | string;
   release: boolean;
+  process?: boolean;
   bundleId: string | null;
   configuration: string | null;
   metroPort?: number | null;
@@ -104,7 +117,9 @@ export function launchOutcomeRecord({
   const unverified = launchState === LAUNCH_UNVERIFIED;
   const bundling = launchState === LAUNCH_BUNDLING;
   let msg: string;
-  if (release) {
+  if (process) {
+    msg = unverified ? `${bundleId} could not be verified as running` : `${bundleId} is running its native process`;
+  } else if (release) {
     msg = unverified
       ? `${bundleId} could not be verified as running after its ${configuration} launch`
       : `${bundleId} is running its embedded ${configuration} bundle`;

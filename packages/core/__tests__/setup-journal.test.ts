@@ -13,7 +13,6 @@ let home: string;
 const hash = 'a'.repeat(64);
 const journal: SetupJournal = {
   v: 1,
-  client: { nodeId: 'nClient' },
   expiresAt: '2026-10-06T12:00:00.000Z',
   capabilities: ['build', 'device-host'],
   steps: [{ id: 'route', state: 'failed', title: 'Tailnet route', detail: 'Port busy', fix: 'Choose another port' }],
@@ -64,7 +63,7 @@ test('rejects unsupported or malformed fields and extra data instead of exposing
   for (const invalid of [
     null,
     { ...journal, v: 2 },
-    { ...journal, client: { nodeId: 1 } },
+    { ...journal, client: { nodeId: 'nClient' } },
     { ...journal, expiresAt: 'not a date' },
     { ...journal, capabilities: ['read'] },
     { ...journal, steps: [{ id: 'tools', state: ['ok'], title: 'Tools' }] },
@@ -73,7 +72,6 @@ test('rejects unsupported or malformed fields and extra data instead of exposing
     { ...journal, done: 1 },
     { ...journal, exit: 1.5 },
     { ...journal, token: 'secret' },
-    { ...journal, client: { ...journal.client, token: 'secret' } },
     { ...journal, steps: [{ ...journal.steps[0], token: 'secret' }] },
     { ...journal, granted: [{ ...journal.granted[0], token: 'secret' }] },
   ])

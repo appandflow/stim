@@ -24,6 +24,7 @@ import {
   agentDeviceAuxiliarySessions,
   benchmarkSetupInvalidReasons,
   benchmarkCcache,
+  benchmarkMeasurementWarnings,
   topLevelShellCommand,
 } from './agent-benchmark/run-guards.mjs';
 
@@ -991,7 +992,6 @@ function validateLaunchCrashRecord(runDir, record, meta, rederive = false, revie
   const diagnosisUsage = runner === 'claude' ? null : usageAtOrBefore(transcriptPath, diagnosis.observedAt);
   if (!existsSync(transcriptPath)) return reject('transcript missing');
   if (record.evidenceSha256?.transcript !== fileSha256(transcriptPath)) return reject('transcript hash mismatch');
-  if (runner !== 'claude' && !diagnosisUsage) return reject('diagnosis usage missing');
   if (rederive) return { diagnosis, recovery, diagnosisUsage, screenReadySeconds, auxiliarySessions, checksumProof };
   if (
     record.diagnosis?.observedAt !== diagnosis.observedAt ||
@@ -1056,7 +1056,16 @@ function publicationRecord(runDir, meta) {
     const derived = eligible ? validateLaunchCrashRecord(runDir, record, meta, true, review ?? {}) : null;
     if (!derived) return record.valid ? { ...record, valid: false } : record;
     const warnings = derived.diagnosis.setupWarnings ?? [];
-    if (!warnings.length && !derived.auxiliarySessions.length && !derived.checksumProof && record.valid) return record;
+    const measurementWarnings = benchmarkMeasurementWarnings({
+      ...record,
+      runner: record.runner ?? meta.runner,
+      diagnosis: derived.diagnosis,
+      diagnosisUsage: derived.diagnosisUsage,
+    });
+    if (!review && !derived.auxiliarySessions.length && !derived.checksumProof && record.valid) {
+      if (!validateLaunchCrashRecord(runDir, record, meta)) return { ...record, valid: false };
+      return { ...record, measurementWarnings };
+    }
     if (!review) return { ...record, valid: false };
     if (
       (review.diagnosticCommands ?? []).some(
@@ -1093,6 +1102,7 @@ function publicationRecord(runDir, meta) {
       ...record,
       valid: true,
       invalidReasons: [],
+      measurementWarnings,
       ...(derived.checksumProof
         ? {
             proof: {
@@ -1195,7 +1205,11 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         const stamped = readFileSync(join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
         const { commands } = reconstructCommandEvidence(meta.runner, stamped);
         const evidence = ccacheLogEvidence({ runDir, meta, commands, worktree: record.worktree });
-        if (!evidence || JSON.stringify(benchmarkCcache(meta, commands, evidence)) !== JSON.stringify(record.ccache))
+        if (
+          !evidence ||
+          JSON.stringify(benchmarkCcache(meta, commands, evidence)) !==
+            JSON.stringify({ ...record.ccache, warnings: record.ccache.warnings ?? [] })
+        )
           record.valid = false;
       }
       return {
@@ -1300,6 +1314,9 @@ export function exportBenchmark(stageDir, outputPath, proofDir, machine = {}) {
         arm: record.arm,
         valid: record.valid,
         invalidReasons: (record.invalidReasons ?? []).map((reason) => sanitizeBenchmarkText(reason, replacements)),
+        measurementWarnings: (record.measurementWarnings ?? []).map((warning) =>
+          sanitizeBenchmarkText(warning, replacements),
+        ),
         settingsReadySeconds: launchCrashValidation?.screenReadySeconds ?? record.dispatchToScreenReadySeconds,
         appAliveSeconds: record.dispatchToAppAliveSeconds,
         diagnosisSeconds: launchCrashValidation?.diagnosis.dispatchToDiagnosisSeconds ?? null,

@@ -59,6 +59,7 @@ export type BenchmarkRun = {
   arm: 'stim' | 'control';
   valid: boolean;
   invalidReasons: string[];
+  measurementWarnings?: string[];
   settingsReadySeconds: number | null;
   appAliveSeconds: number | null;
   diagnosisSeconds?: number | null;

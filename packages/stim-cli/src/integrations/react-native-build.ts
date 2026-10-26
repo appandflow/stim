@@ -2,14 +2,16 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { AndroidLayout } from '../workspace/settings.ts';
 import chalk from 'chalk';
+import type { StimContext } from '@stim-cli/core';
+import { killOnAbort } from '../workspace/git-read.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { phaseLine } from '../command-output.ts';
-import type { Executor } from '../exec.ts';
+import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { resolvePackageJson } from '../workspace/project.ts';
 import { sharedCompilationCache } from '../workspace/paths.ts';
-import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '../engine/android-path-limit.ts';
+import { androidPathRoomRefusal } from '../engine/android-path-limit.ts';
 import {
   ASSEMBLE_TASK,
   BUILD_ERROR,
@@ -24,8 +26,8 @@ import {
   buildXcode,
   compilationCacheSettings,
   COMPILATION_CACHE_MIN_XCODE,
-  detectSwiftVersion,
-  detectXcodeMajor,
+  parseSwiftVersion,
+  parseXcodeMajor,
   pickXcodeProject,
   swiftPrefixMappingSupported,
   SWIFT_PREFIX_MAPPING_MIN_SWIFT,
@@ -43,10 +45,6 @@ export function gradlewPath(layout: AndroidLayout): string {
 
 export function apkOutputsDir(layout: AndroidLayout): string {
   return join(layout.moduleDir, 'build', 'outputs', 'apk');
-}
-
-export function debugApkDir(layout: AndroidLayout): string {
-  return join(apkOutputsDir(layout), 'debug');
 }
 
 export function discoverAndroidProject(root: string, layout: AndroidLayout): AndroidProjectResult {
@@ -137,7 +135,6 @@ export async function buildAndroid(
     };
   // https://github.com/appandflow/stim/issues/893: Gradle has not configured a custom
   // buildStagingDirectory yet, so this default-layout check may refuse a shorter custom path.
-  const room = androidPathRoom(root, { abi, variant, platform: options.platform ?? process.platform });
   return buildGradle(
     {
       root,
@@ -151,9 +148,7 @@ export async function buildAndroid(
       },
       task: layout.custom ? `${layout.module}:${assembleTaskFor(variant)}` : assembleTaskFor(variant),
       projectArgs: abi ? [`-PreactNativeArchitectures=${abi}`] : [],
-      preflightFailure: room
-        ? { code: 'STIM_PATH_TOO_LONG', reason: androidPathRoomMessage(room), remedy: androidPathRoomRemedy(room) }
-        : null,
+      preflightFailure: androidPathRoomRefusal(root, { abi, variant, platform: options.platform ?? process.platform }),
     },
     options,
   );
@@ -240,7 +235,8 @@ export function reactNativeCompilationCacheSettings({
   });
 }
 
-function resolveCompilationCacheSettings({
+async function resolveCompilationCacheSettings({
+  context,
   root,
   iosDir,
   derivedDataPath,
@@ -256,8 +252,13 @@ function resolveCompilationCacheSettings({
   casPath?: string;
   optimizations?: Optimizations['ios'];
   onNote?: (line: string) => void;
-}): string[] {
-  const xcodeMajor = detectXcodeMajor(exec);
+  context?: StimContext;
+}): Promise<string[]> {
+  const executor = exec ?? getExecutor();
+  context?.signal.throwIfAborted();
+  const probeOptions = { timeoutMs: 10_000, declareFor: context, onSpawn: killOnAbort(context?.signal) };
+  const xcodeMajor = parseXcodeMajor(await executor.runFileQuietAsync('xcodebuild', ['-version'], probeOptions));
+  context?.signal.throwIfAborted();
   const ccache = ccacheEnabled(readPodfileProperties(iosDir));
   const probe =
     xcodeMajor !== null &&
@@ -265,7 +266,10 @@ function resolveCompilationCacheSettings({
     !ccache &&
     optimizations.compilationCache &&
     optimizations.swiftCompilationCache !== false;
-  const swiftVersion = probe ? detectSwiftVersion(exec) : null;
+  const swiftVersion = probe
+    ? parseSwiftVersion(await executor.runFileQuietAsync('xcrun', ['swift', '--version'], probeOptions))
+    : null;
+  context?.signal.throwIfAborted();
   const reactNativeVersion = probe ? detectReactNativeVersion(root) : null;
   const settings = reactNativeCompilationCacheSettings({
     workspaceRoot: root,
@@ -280,6 +284,7 @@ function resolveCompilationCacheSettings({
   if (settings.length > 0 && optimizations.compilationCache) {
     register({
       dir: casPath,
+      registeredBy: context?.cwd ?? root,
       name: 'Xcode compilation cache',
       prune: 'atomic',
       note: 'shared Xcode compilation cache',
@@ -321,6 +326,7 @@ export async function buildIos(inputs: IosBuildInputs): Promise<BuildIosResult> 
       inputs.compilationCache === undefined
         ? ({ derivedDataPath, exec }) =>
             resolveCompilationCacheSettings({
+              context: inputs.context,
               root,
               iosDir,
               derivedDataPath,

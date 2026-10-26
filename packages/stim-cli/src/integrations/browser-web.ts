@@ -1,4 +1,6 @@
-import { sleep } from '../commands/native-runtime.ts';
+import { followLogs } from '@stim-cli/core/state';
+import { statSync, watch, type FSWatcher } from 'node:fs';
+import { cancelledError } from '../cancellation.ts';
 import { resolveWorkspaceMetroPort } from '../commands/start.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { resolveProjectMetro } from '../metro.ts';
@@ -9,6 +11,8 @@ import { findChrome, CHROME_INSTALL_REMEDY } from '../web/chrome.ts';
 import {
   EXPO_WEB_DEPENDENCIES,
   EXPO_WEB_PACKAGES,
+  LOADING_WAIT_MS,
+  VERIFY_WAIT_MS,
   resolveWebUrl,
   webLaunchRemedy,
   webLaunchVerdict,
@@ -24,7 +28,80 @@ import { metroPortSetting, SETTING_SHAPE_REMEDY, webSettings } from '../workspac
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import type { WebFailure, WebProject } from './web-project.ts';
 
-const POLL_MS = 250;
+async function verifyLaunch(root: string, since: number, expectBundle: boolean, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  const startedAt = Date.now();
+  let stop: (() => void) | undefined;
+  let fileWatch: { watcher: FSWatcher; dev: number; ino: number } | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let queued: ReturnType<typeof setImmediate> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await new Promise<WebLaunchVerdict>((resolve, reject) => {
+      const schedule = () => {
+        queued ??= setImmediate(check);
+      };
+      const watchFile = () => {
+        try {
+          const file = webLogFile(root);
+          const stat = statSync(file);
+          if (fileWatch?.dev === stat.dev && fileWatch.ino === stat.ino) return;
+          fileWatch?.watcher.close();
+          fileWatch = undefined;
+          const watcher = watch(file, { persistent: false }, schedule);
+          fileWatch = { watcher, dev: stat.dev, ino: stat.ino };
+          const lost = () => {
+            if (fileWatch?.watcher === watcher) fileWatch = undefined;
+            watcher.close();
+          };
+          watcher.once('error', lost);
+          watcher.once('close', lost);
+        } catch {
+          fileWatch?.watcher.close();
+          fileWatch = undefined;
+        }
+      };
+      const check = () => {
+        clearImmediate(queued);
+        queued = undefined;
+        clearTimeout(timer);
+        try {
+          signal?.throwIfAborted();
+          watchFile();
+          const elapsedMs = Date.now() - startedAt;
+          const measured = webLaunchVerdict({
+            records: readNdjsonGenerations(webLogFile(root)),
+            metroRecords: expectBundle ? readMetroRecords(workspaceLogsDir(root)) : [],
+            since,
+            expectBundle,
+            elapsedMs,
+          });
+          if (measured) resolve(measured);
+          else
+            timer = setTimeout(
+              check,
+              Math.max(0, (elapsedMs < VERIFY_WAIT_MS ? VERIFY_WAIT_MS : LOADING_WAIT_MS) - elapsedMs),
+            );
+        } catch (error) {
+          reject(error);
+        }
+      };
+      stop = followLogs({
+        dir: workspaceLogsDir(root),
+        onRecord: schedule,
+      });
+      onAbort = () => reject(cancelledError('wait'));
+      signal?.addEventListener('abort', onAbort, { once: true });
+      check();
+    });
+  } finally {
+    stop?.();
+    fileWatch?.watcher.close();
+    clearTimeout(timer);
+    clearImmediate(queued);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+  }
+}
 
 function failure(code: string, message: string, remedy: string | null): { ok: false; error: WebFailure } {
   return { ok: false, error: { code, message, remedy } };
@@ -32,14 +109,14 @@ function failure(code: string, message: string, remedy: string | null): { ok: fa
 
 export function browserWebProject(root: string): WebProject {
   return {
-    runtime: ({ settings, headed, note }) => ({
+    runtime: ({ settings, headed, note, context }) => ({
       async prepare() {
         const web = webSettings(settings);
         const usesMetro = web.url === null || web.url.includes('{port:metro}');
-        const pin = usesMetro ? metroPortSetting(settings) : null;
+        const pin = usesMetro ? metroPortSetting(settings, context?.env) : null;
         if (pin?.error) return failure('STIM_BAD_ARG', pin.error, SETTING_SHAPE_REMEDY);
 
-        const chrome = findChrome();
+        const chrome = findChrome({ env: context?.env });
         if (!chrome)
           return failure('STIM_WEB_NO_CHROME', 'Google Chrome or Chromium is not installed.', CHROME_INSTALL_REMEDY);
 
@@ -103,19 +180,7 @@ export function browserWebProject(root: string): WebProject {
       },
       launch: launchOwnedBrowser,
       async verify({ url, verification: { template, expectBundle, serve, foreign } }, { since }) {
-        const startedAt = Date.now();
-        let measured: WebLaunchVerdict | null;
-        for (;;) {
-          measured = webLaunchVerdict({
-            records: readNdjsonGenerations(webLogFile(root)),
-            metroRecords: expectBundle ? readMetroRecords(workspaceLogsDir(root)) : [],
-            since,
-            expectBundle,
-            elapsedMs: Date.now() - startedAt,
-          });
-          if (measured) break;
-          await sleep(POLL_MS);
-        }
+        const measured = await verifyLaunch(root, since, expectBundle, context?.signal);
         const verdict: WebLaunchVerdict = foreign
           ? { launched: 'unverified', kind: 'no-response', reason: foreign.reason }
           : measured;

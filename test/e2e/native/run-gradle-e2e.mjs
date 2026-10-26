@@ -75,6 +75,35 @@ function closeAgent(label) {
   agent(label, ['close']);
   activeAgentSerial = undefined;
 }
+function recordUiDiagnostics(label, serial) {
+  for (const [name, args] of [
+    ['last-anr', ['shell', 'dumpsys', 'activity', 'lastanr']],
+    ['windows', ['shell', 'dumpsys', 'window', 'windows']],
+    ['activities', ['shell', 'dumpsys', 'activity', 'activities']],
+  ]) {
+    const result = spawnSync('adb', ['-s', serial, ...args], {
+      env,
+      encoding: 'utf8',
+      timeout: 10_000,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    write(
+      join(logs, `${label}-${name}.log`),
+      `${result.stdout ?? ''}\n${result.stderr ?? ''}\n${result.error ?? ''}\nstatus=${result.status} signal=${result.signal}`,
+    );
+  }
+  const image = spawnSync('adb', ['-s', serial, 'exec-out', 'screencap', '-p'], {
+    env,
+    timeout: 10_000,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (image.status === 0 && image.stdout?.length) writeFileSync(join(logs, `${label}.png`), image.stdout);
+  else
+    write(
+      join(logs, `${label}-screenshot.log`),
+      `${image.stderr ?? ''}\n${image.error ?? ''}\nstatus=${image.status} signal=${image.signal}`,
+    );
+}
 function verifyUi(label, facts, beforePid, revision) {
   assert.equal(facts.agentDevice?.stateDir, env.AGENT_DEVICE_STATE_DIR);
   activeAgentSerial = facts.serial;
@@ -376,7 +405,7 @@ dependencies {
       stim(`setting-${setting}`, ['settings', 'set', setting, 'stim-desktop']);
     const plan = stim('plan', ['android', '--plan', '--json'], { allowFailure: true });
     assert.notEqual(plan.status, 0);
-    assert.match(plan.text, /--plan does not execute Gradle/);
+    assert.equal(JSON.parse(plan.stdout).code, 'STIM_BAD_ARG');
     assert(!existsSync(join(fixture, '.gradle')), 'read-only plan configured Gradle');
     const model = join(output, 'direct-model.json');
     const args = [
@@ -432,9 +461,28 @@ dependencies {
       assert.equal(facts.cacheSkipped, true);
       assert(facts.serial, 'no owned emulator serial');
       serial = facts.serial;
+      if (label === 'stim-cold') {
+        const volume = command(
+          'stim-cold-media-volume',
+          'adb',
+          ['-s', serial, 'shell', 'cmd', 'media_session', 'volume', '--stream', '3', '--get'],
+          { timeout: 30_000 },
+        );
+        assert.match(volume.stdout, /\bvolume is 0 in range \[0\.\.\d+\]/);
+      }
       const pid = command(`${label}-pid`, 'adb', ['-s', serial, 'shell', 'pidof', facts.bundleId]);
       assert.match(pid.stdout.trim(), /^[1-9]\d*$/);
-      verifyUi(label, facts, pid.stdout.trim(), revision);
+      if (label === 'stim-cold') recordUiDiagnostics(`${label}-baseline`, serial);
+      try {
+        verifyUi(label, facts, pid.stdout.trim(), revision);
+      } catch (error) {
+        try {
+          recordUiDiagnostics(`${label}-failure`, serial);
+        } catch (captureError) {
+          console.error(`Could not retain ${label} UI failure evidence: ${String(captureError)}`);
+        }
+        throw error;
+      }
       const digest = createHash('sha256').update(readFileSync(facts.appPath)).digest('hex');
       if (label === 'stim-cold') originalDigest = digest;
       if (label === 'stim-warm') assert.equal(digest, originalDigest);

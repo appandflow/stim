@@ -1,9 +1,16 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { isIP, type AddressInfo } from 'node:net';
-import { withDirLock, createMetroBridge, type MetroBridge } from '@stim-cli/core';
+import { connect, type AddressInfo } from 'node:net';
+import {
+  withDirLock,
+  createMetroBridge,
+  createMetroLinks,
+  type MetroBridge,
+  type MetroLink,
+  type MetroLinks,
+} from '@stim-cli/core';
 import {
   clearClaimChild,
   ClaimRefusedError,
@@ -20,6 +27,7 @@ import {
   createDebugLog,
   type DebugLog,
   deviceHostArea,
+  HOSTED_PARKED_CANDIDATES,
   deviceHostRoot,
   getConcurrencyLimits,
   getParkedMax,
@@ -37,6 +45,7 @@ import {
   readJsonObject,
   readHostedSessions,
   parseHostedOfferRequest,
+  maxLoadPerCore,
   parseHostedNativeOffer,
   parseHostedLocalDeviceCount,
   hostedAppAttempt,
@@ -58,6 +67,9 @@ import {
   type HostedAndroidDevice,
   type HostedMacosDevice,
   type MacosAppState,
+  DEVICE_HOST_LIMITS,
+  hostedWorkerSettleMs,
+  type DeviceHostLimits,
 } from '@stim-cli/core/state';
 import { readDeviceHostClients, writeJson } from './registry.ts';
 import { readHostedSessionRows } from './hosted-sessions.ts';
@@ -66,14 +78,6 @@ import { adbPath } from './frame-helper.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
 import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp, handOverHostedApp } from './hosted-app.ts';
 import type { HostedAgentHost } from './agent-driver.ts';
-
-export interface DeviceHostLimits {
-  prepareMs: number;
-  offerMs: number;
-  stopMs: number;
-  logsMs: number;
-  killGraceMs: number;
-}
 
 interface WorkerRun {
   done: Promise<{ value: unknown; settled: boolean; notice?: string }>;
@@ -94,13 +98,11 @@ interface OwnedSession {
   metro?: {
     bridge: MetroBridge;
     ready: Promise<number>;
-    peer: string;
-    gatewayPort: number;
     clientMetroPort?: number;
-    secret: string;
     port?: number;
     closing?: boolean;
   };
+  links?: MetroLinks;
   viewer?: { close: () => Promise<void> };
 }
 
@@ -110,7 +112,7 @@ export interface DeviceHostOptions {
   allowed: (client: string) => boolean;
   /** Issues and revokes session-scoped agent control for installed hosted apps. */
   agents: Pick<HostedAgentHost, 'appRunning' | 'appStopped' | 'access'>;
-  /** Takes the native app a build on this Mac retained under `handoff`, when `client` may have it, or says why not. */
+  /** Takes the native app a build on this machine retained under `handoff`, when `client` may have it, or says why not. */
   builtBundle?: (client: string, handoff: string, sha256: string) => { bundle: string; release: () => void } | string;
   limits?: Partial<DeviceHostLimits>;
 }
@@ -140,6 +142,24 @@ function hostedDeviceExclusions(records: HostedDeviceSession[]) {
   );
 }
 
+/** macOS lets 127.0.0.1 bind beside a wildcard listener and takes its loopback traffic, so probe by connecting. */
+function loopbackAccepts(port: number): Promise<boolean> {
+  const accepts = (host: string) =>
+    new Promise<boolean>((resolve) => {
+      const socket = connect({ host, port });
+      const done = (open: boolean) => {
+        socket.destroy();
+        resolve(open);
+      };
+      socket.setTimeout(1000, () => done(true));
+      socket.once('connect', () => done(true));
+      socket.once('error', (error: NodeJS.ErrnoException) =>
+        done(!['ECONNREFUSED', 'EADDRNOTAVAIL', 'EAFNOSUPPORT', 'ENETUNREACH'].includes(error.code ?? '')),
+      );
+    });
+  return Promise.all([accepts('127.0.0.1'), accepts('::1')]).then((open) => open.includes(true));
+}
+
 /** Owns hosted reservations, not build jobs or viewer connections. Native work runs in the packaged CLI child. */
 export class DeviceHost {
   private readonly owned = new Map<string, OwnedSession>();
@@ -156,14 +176,7 @@ export class DeviceHost {
   constructor(options: DeviceHostOptions) {
     this.options = options;
     this.debug = createDebugLog('server', { env: options.env });
-    this.limits = {
-      prepareMs: 5 * 60_000,
-      offerMs: 30_000,
-      stopMs: 90_000,
-      logsMs: 15_000,
-      killGraceMs: 5000,
-      ...options.limits,
-    };
+    this.limits = { ...DEVICE_HOST_LIMITS, ...options.limits };
   }
 
   private transaction<T>(fn: (records: HostedDeviceSession[]) => T): T {
@@ -242,6 +255,9 @@ export class DeviceHost {
       const running = hosted + (typeof local === 'number' ? local : 0);
       let declined =
         this.draining ??
+        (loadConfig()?.server?.devicesPaused === true
+          ? 'Hosted sessions are paused; resume with stim settings set server.devicesPaused false'
+          : null) ??
         native.declined ??
         (native.resources.memoryPressure !== 'normal' ? 'Host memory pressure is unknown or elevated.' : null);
       if (request.platform === 'android' || request.platform === 'macos') {
@@ -258,6 +274,7 @@ export class DeviceHost {
       return {
         result: {
           ...native,
+          resources: { ...native.resources, maxLoadPerCore: maxLoadPerCore() },
           declined,
           capacity: {
             running,
@@ -331,6 +348,8 @@ export class DeviceHost {
         if (occupied)
           throw new Error(`This workspace slot already has session ${occupied.id}; attach or stop it first.`);
         if (this.draining) throw new Error(`This Mac takes no new hosted sessions: ${this.draining}.`);
+        if (loadConfig()?.server?.devicesPaused === true)
+          throw new Error('Hosted sessions are paused; resume with stim settings set server.devicesPaused false.');
         if (typeof local !== 'number') throw new Error(local.unknown);
         const hosted = records.filter((record) => record.state !== 'stopped').length;
         if (max > 0 && hosted + local >= max)
@@ -356,7 +375,8 @@ export class DeviceHost {
           if (adoption) {
             const owned = adoption;
             try {
-              const ledger = readHostedDeviceLedger(join(deviceHostArea(adopted.id), 'home'));
+              const home = join(deviceHostArea(adopted.id), 'home');
+              const ledger = readHostedDeviceLedger(home);
               if (
                 !ledger ||
                 !adopted.device ||
@@ -364,7 +384,11 @@ export class DeviceHost {
               ) {
                 this.release(adopted.id, owned);
                 adoption = undefined;
-              }
+              } else
+                rmSync(hostedNativeLogsDir(home, request.platform === 'android' ? 'android' : 'ios'), {
+                  recursive: true,
+                  force: true,
+                });
             } catch (error) {
               this.release(adopted.id, owned);
               throw error;
@@ -444,7 +468,7 @@ export class DeviceHost {
           !this.revoked.has(record.id),
       )
       .toSorted((a, b) => a.parked!.at.localeCompare(b.parked!.at))
-      .slice(0, 3);
+      .slice(0, HOSTED_PARKED_CANDIDATES);
     for (const record of candidates) {
       if (this.closed || !this.options.allowed(client)) break;
       if (this.owned.has(record.id)) continue;
@@ -562,29 +586,23 @@ export class DeviceHost {
     }
   }
 
-  async metroOpen(client: string, params: unknown, peer: string | null): Promise<AppAnswer<{ port: number }>> {
+  async metroOpen(client: string, params: unknown): Promise<AppAnswer<{ port: number }>> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
+    if (isJsonObject(params) && ('gatewayPort' in params || 'secret' in params))
+      return refused(
+        'protocol-unsupported',
+        'This stim-server carries Metro over connections the client opens, and this Stim is too old for that. Update stim on this machine, then retry.',
+      );
     if (
       !isJsonObject(params) ||
       typeof params.session !== 'string' ||
-      !peer ||
-      !isIP(peer) ||
-      typeof params.gatewayPort !== 'number' ||
-      !Number.isInteger(params.gatewayPort) ||
-      params.gatewayPort < 1 ||
-      params.gatewayPort > 65535 ||
-      typeof params.secret !== 'string' ||
-      !/^[a-f0-9]{64}$/.test(params.secret) ||
       (params.clientMetroPort !== undefined &&
         (typeof params.clientMetroPort !== 'number' ||
           !Number.isInteger(params.clientMetroPort) ||
           params.clientMetroPort < 1 ||
           params.clientMetroPort > 65535))
     )
-      return refused(
-        'bad-request',
-        'Metro needs its session, client gateway port and 256-bit secret on a tailnet connection.',
-      );
+      return refused('bad-request', 'Metro needs its session and, when given, a client Metro port.');
     try {
       const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
       if (!record || record.state !== 'ready' || this.closed || !this.owned.has(record.id))
@@ -598,30 +616,35 @@ export class DeviceHost {
         throw new Error('This hosted session has a native operation in progress.');
       if (owned.metro) {
         if (owned.metro.closing) throw new Error('This session Metro bridge is closing.');
-        if (
-          owned.metro.peer !== peer ||
-          owned.metro.gatewayPort !== params.gatewayPort ||
-          owned.metro.secret !== params.secret ||
-          owned.metro.clientMetroPort !== params.clientMetroPort
-        )
-          throw new Error('Close this session Metro bridge before replacing its gateway.');
+        if (owned.metro.clientMetroPort !== params.clientMetroPort)
+          throw new Error('Close this session Metro bridge before changing its client Metro port.');
         const port = await owned.metro.ready;
         await this.restoreAndroidMetro(record, owned);
         return { result: { port } };
       }
-      const bridge = createMetroBridge({ peer, gatewayPort: params.gatewayPort, secret: params.secret });
-      const ready = new Promise<number>((resolve, reject) => {
-        bridge.server.once('error', reject);
-        bridge.server.listen(record.metroPort ?? 0, '127.0.0.1', () =>
-          resolve((bridge.server.address() as AddressInfo).port),
+      const devClientPort = record.platform === 'ios' ? (params.clientMetroPort as number | undefined) : undefined;
+      const bridge = createMetroBridge((owned.links ??= createMetroLinks()));
+      const inUse = () =>
+        Object.assign(
+          new Error(
+            `Port ${devClientPort} is in use on the hosting Mac, and an Expo dev client loads its bundle from the client's Metro port.`,
+          ),
+          { code: 'device-busy' as const },
         );
-      });
+      const ready = (async () => {
+        if (devClientPort !== undefined && (await loopbackAccepts(devClientPort))) throw inUse();
+        return new Promise<number>((resolve, reject) => {
+          bridge.server.once('error', (error: NodeJS.ErrnoException) =>
+            reject(devClientPort !== undefined && error.code === 'EADDRINUSE' ? inUse() : error),
+          );
+          bridge.server.listen(devClientPort ?? record.metroPort ?? 0, '127.0.0.1', () =>
+            resolve((bridge.server.address() as AddressInfo).port),
+          );
+        });
+      })();
       const metro: NonNullable<OwnedSession['metro']> = {
         bridge,
         ready,
-        peer,
-        gatewayPort: params.gatewayPort,
-        secret: params.secret,
         clientMetroPort: params.clientMetroPort as number | undefined,
       };
       owned.metro = metro;
@@ -642,7 +665,10 @@ export class DeviceHost {
         throw error;
       }
     } catch (error) {
-      return refused('action-failed', (error as Error).message);
+      return refused(
+        (error as { code?: unknown }).code === 'device-busy' ? 'device-busy' : 'action-failed',
+        (error as Error).message,
+      );
     }
   }
 
@@ -692,6 +718,39 @@ export class DeviceHost {
     }
   }
 
+  /** Names the ports a new dev-client bridge could not bind, apart from this client's own dev-client bridges. */
+  async metroPorts(client: string, params: unknown): Promise<AppAnswer<{ busy: number[] }>> {
+    if (this.closed || !this.options.allowed(client))
+      return refused('forbidden', 'Current device-host approval is required.');
+    if (
+      !isJsonObject(params) ||
+      !Array.isArray(params.ports) ||
+      params.ports.length > 256 ||
+      params.ports.some((port) => typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535)
+    )
+      return refused('bad-request', 'Metro ports needs at most 256 TCP ports.');
+    try {
+      const ports = [...new Set(params.ports as number[])];
+      const sessions = new Set(readHostedSessions().flatMap((record) => (record.client === client ? [record.id] : [])));
+      const own = new Set(
+        [...this.owned].flatMap(([id, { metro }]) =>
+          sessions.has(id) && metro?.port !== undefined && metro.port === metro.clientMetroPort ? [metro.port] : [],
+        ),
+      );
+      const busy: number[] = [];
+      const queue = ports.filter((port) => !own.has(port));
+      await Promise.all(
+        Array.from({ length: 16 }, async () => {
+          for (let port = queue.shift(); port !== undefined; port = queue.shift())
+            if (await loopbackAccepts(port)) busy.push(port);
+        }),
+      );
+      return { result: { busy: busy.toSorted((a, b) => a - b) } };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
+  }
+
   async metroClose(client: string, params: unknown): Promise<AppAnswer<{ port: null }>> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
     if (!isJsonObject(params) || typeof params.session !== 'string')
@@ -709,7 +768,34 @@ export class DeviceHost {
     }
   }
 
+  /** Holds a connection the client opened as an idle link that the session's Metro bridge pairs with one stream. */
+  metroLink(client: string, params: unknown, link: MetroLink): AppAnswer<Record<string, never>> {
+    if (this.closed || !this.options.allowed(client))
+      return refused('forbidden', 'Current device-host approval is required.');
+    if (!isJsonObject(params) || typeof params.session !== 'string')
+      return refused('bad-request', 'A Metro link needs a session.');
+    try {
+      const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
+      if (!record) return refused('unknown-session', 'This client has no such hosted session.');
+      const owned = this.owned.get(record.id);
+      if (record.state !== 'ready' || !owned || owned.stopping)
+        throw new Error('Only a ready session attached to this owner can link Metro.');
+      if (record.platform !== 'ios' && record.platform !== 'android')
+        throw new Error('Hosted Metro supports iOS and Android sessions only.');
+      if (!(owned.links ??= createMetroLinks()).add(link)) throw new Error('This session Metro bridge is closing.');
+      return { result: {} };
+    } catch (error) {
+      return refused('action-failed', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  metroUnlink(link: MetroLink): void {
+    for (const owned of this.owned.values()) owned.links?.remove(link);
+  }
+
   private async closeMetro(owned: OwnedSession): Promise<void> {
+    owned.links?.close();
+    delete owned.links;
     const metro = owned.metro;
     if (!metro) return;
     metro.closing = true;
@@ -1140,7 +1226,11 @@ export class DeviceHost {
         hostedDeviceId(parseHostedPlatformDevice(value.device, record.platform)!) === hostedDeviceId(record.device) &&
         (value.launched === true || value.launched === 'unverified');
       if (installed) owned.installedAttempt = attempt;
-      if (installed && (record.platform !== 'macos' || (Number.isSafeInteger(value.pid) && (value.pid as number) > 0)))
+      if (
+        installed &&
+        (record.platform !== 'macos' ||
+          (typeof value.pid === 'number' && Number.isSafeInteger(value.pid) && value.pid > 0))
+      )
         await this.startAgent(record, attempt, value.pid as number);
       const app = changeHostedApp(record.id, attempt, (current) => {
         current.state = installed ? 'installed' : 'unknown';
@@ -1717,7 +1807,7 @@ export class DeviceHost {
       notice ??= 'Hosted worker was cancelled or exceeded its deadline.';
       signal('SIGTERM');
       killTimer = setTimeout(() => signal('SIGKILL'), this.limits.killGraceMs);
-      finishTimer = setTimeout(finish, this.limits.killGraceMs * 2);
+      finishTimer = setTimeout(finish, hostedWorkerSettleMs(this.limits));
     };
     const finishGroup = () => {
       if (finished) return;

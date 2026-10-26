@@ -1,7 +1,20 @@
-import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
-import { filesystemDevice, makeTemporaryDirectory, temporaryRoot } from '../temporary.ts';
+import { withAmbientContext } from '@stim-cli/core';
+import { filesystemDevice, makeTemporaryDirectory, removeTemporaryEntryAsync, temporaryRoot } from '../temporary.ts';
+import { testContext } from './_context.ts';
 
 const volume = vi.hoisted(() => ({ path: '' }));
 vi.mock('node:fs', async (importOriginal) => {
@@ -114,4 +127,33 @@ test('swap staging for a cached artifact stays outside the build cache', () => {
   mkdirSync(app, { recursive: true });
   expect(temporaryRoot(app)).toBe(volume.path);
   expect(temporaryRoot(join(cache, 'android', 'key', 'app.apk'))).toBe(volume.path);
+});
+
+test("an operation's STIM_TMPDIR wins over the host process's", () => {
+  vi.stubEnv('STIM_TMPDIR', join(volume.path, 'host'));
+  const context = testContext({ env: { ...process.env, STIM_TMPDIR: tmpdir() } });
+  expect(withAmbientContext(context, () => temporaryRoot(near))).toBe(tmpdir());
+});
+
+test('artifact cleanup yields to other work, removes read-only directories and leaves symlink targets intact', async () => {
+  const staged = join(base, 'staged');
+  const retained = join(base, 'retained');
+  mkdirSync(retained);
+  writeFileSync(join(retained, 'keep'), 'untouched');
+  for (let index = 0; index < 32; index++) {
+    const directory = join(staged, `assets-${index}`);
+    mkdirSync(directory, { recursive: true });
+    for (let file = 0; file < 16; file++) writeFileSync(join(directory, `${file}.asset`), 'asset');
+    chmodSync(directory, 0o500);
+  }
+  symlinkSync(retained, join(staged, 'linked-assets'), 'junction');
+  const removed = removeTemporaryEntryAsync(staged);
+  const responsive = await Promise.race([
+    new Promise<true>((resolve) => setImmediate(() => resolve(true))),
+    removed.then(() => false),
+  ]);
+  await removed;
+  expect(responsive).toBe(true);
+  expect(existsSync(staged)).toBe(false);
+  expect(readFileSync(join(retained, 'keep'), 'utf8')).toBe('untouched');
 });

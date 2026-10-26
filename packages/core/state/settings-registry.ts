@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { isJsonObject } from './json-file.ts';
 import { TAILNET_MACHINE_PATTERN } from './tailnet.ts';
 import { HOSTED_AGENT_DRIVERS } from './hosted-macos.ts';
 
@@ -59,11 +60,21 @@ export interface SettingEntry {
 }
 
 /** The payload `stim settings --json` prints. */
-export interface SettingsPayload {
+export type SettingsPayload = {
   project: string | null;
   files: Partial<Record<SettingScope, string>>;
   settings: SettingEntry[];
-  unknown: Array<{ key: string; scope: SettingScope; file: string; value: unknown }>;
+  unknown: Array<{ key: string; scope: SettingScope; file: string; value: unknown; replacement?: string }>;
+};
+
+/** The masked JSON result of a settings set or unset. */
+export interface SettingWriteResult {
+  key: string;
+  scope: SettingScope;
+  file: string;
+  changed: boolean;
+  setting: SettingEntry;
+  recordingsDeleted?: string[];
 }
 
 export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
@@ -72,9 +83,22 @@ export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop'] as con
 
 export const ANDROID_EMULATOR_APPS = ['emulator', 'stim-desktop'] as const;
 
-export const OFFLOAD_MODES = ['auto', 'force', 'off'] as const;
+export const REPLACED_SETTINGS: Readonly<
+  Record<string, { key: string; env?: string; value: (old: unknown) => string | null }>
+> = {
+  'remote.buildMode': {
+    key: 'remote.build',
+    env: 'STIM_REMOTE_BUILD_MODE',
+    value: (old) => (old === 'auto' ? 'auto' : old === 'force' ? 'remote' : old === 'off' ? 'local' : null),
+  },
+};
 
-export type OffloadMode = (typeof OFFLOAD_MODES)[number];
+export function replacementAdvice(key: string, old: unknown): { key: string; command: string | null } | null {
+  const replaced = REPLACED_SETTINGS[key];
+  if (!replaced) return null;
+  const value = replaced.value(old);
+  return { key: replaced.key, command: value ? `stim settings set ${replaced.key} ${value}` : null };
+}
 
 export const WEB_VIEWPORTS = ['desktop', 'phone'] as const;
 
@@ -149,18 +173,18 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'ios.scheme',
     type: STRING,
     scopes: ['workspace', 'committed'],
-    description: 'Shared Xcode scheme to build when the workspace has several',
+    description: 'Shared Xcode scheme to build when the workspace has several; the --scheme flag overrides it',
   },
   {
     key: 'ios.remote',
     type: {
       kind: 'string',
       pattern: TAILNET_MACHINE_PATTERN,
-      patternHelp: 'eas, proxy, auto, local, or a tailnet machine name',
+      patternHelp: 'eas, proxy, local, auto, remote, remote-only, or a tailnet machine name',
     },
     scopes: EVERY,
     description:
-      'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, overriding a lower layer',
+      'Where the iOS simulator runs: local here (overriding a lower layer); auto here first, then a remote.machines entry when this machine is full or busy; remote on a remote.machines entry in order, here only when none takes it; remote-only the same but never here; a machine name exactly that machine; eas or proxy a remote device backend',
   },
   {
     key: 'ios.projectPath',
@@ -168,6 +192,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: ['workspace', 'committed'],
     default: 'ios',
     description: "Directory under the app that holds a bare React Native app's Xcode project and Podfile",
+  },
+  {
+    key: 'ios.simslim',
+    type: { kind: 'choice', choices: ['on', 'off'] },
+    scopes: EVERY,
+    default: 'off',
+    description:
+      "Slim every Stim-owned iOS simulator with SimSlim's default categories when no ios.simslimProfile is set; off in a project opts that app out",
   },
   {
     key: 'ios.simslimProfile',
@@ -188,6 +220,28 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'SHA-1 of the signing identity, when two share a name',
   },
   {
+    key: 'ios.appStoreConnectKeyPath',
+    type: ABSOLUTE_PATH,
+    scopes: MACHINE,
+    env: 'STIM_ASC_KEY_PATH',
+    sensitive: true,
+    description: 'App Store Connect API key (.p8) that `stim device provision ios` authenticates with',
+  },
+  {
+    key: 'ios.appStoreConnectKeyId',
+    type: { kind: 'string', pattern: '^[A-Za-z0-9]+$', patternHelp: 'the key ID App Store Connect shows' },
+    scopes: MACHINE,
+    env: 'STIM_ASC_KEY_ID',
+    description: 'Key ID of ios.appStoreConnectKeyPath',
+  },
+  {
+    key: 'ios.appStoreConnectIssuerId',
+    type: { kind: 'string', pattern: '^[A-Za-z0-9-]+$', patternHelp: 'the issuer ID App Store Connect shows' },
+    scopes: MACHINE,
+    env: 'STIM_ASC_ISSUER_ID',
+    description: 'Issuer ID of ios.appStoreConnectKeyPath',
+  },
+  {
     key: 'ios.lanHost',
     type: {
       kind: 'string',
@@ -200,7 +254,11 @@ export const SETTINGS: readonly SettingDefinition[] = [
   { key: 'android.systemImage', type: STRING, scopes: EVERY, description: 'SDK system image for owned AVDs' },
   {
     key: 'android.deviceProfile',
-    type: STRING,
+    type: {
+      kind: 'string',
+      pattern: '^[A-Za-z0-9 ._()-]*$',
+      patternHelp: 'an avdmanager device id such as pixel_6 or Nexus 5X (`avdmanager list device -c`)',
+    },
     scopes: EVERY,
     default: 'pixel_6',
     description: 'avdmanager hardware profile id for new owned AVDs',
@@ -240,6 +298,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   { key: 'android.variant', type: STRING, scopes: PROJECT, description: 'Gradle build variant' },
   {
+    key: 'android.artifactInputs',
+    type: OBJECT,
+    scopes: PROJECT,
+    description:
+      'Complete repeatable native Gradle inputs for local APK caching, including declared local files and environment names',
+  },
+  {
     key: 'android.offloadInputs',
     type: OBJECT,
     scopes: PROJECT,
@@ -264,11 +329,11 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: {
       kind: 'string',
       pattern: TAILNET_MACHINE_PATTERN,
-      patternHelp: 'eas, proxy, auto, local, or a tailnet machine name',
+      patternHelp: 'eas, proxy, local, auto, remote, remote-only, or a tailnet machine name',
     },
     scopes: EVERY,
     description:
-      'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, overriding a lower layer',
+      'Where the Android emulator runs: local here (overriding a lower layer); auto here first, then a remote.machines entry when this machine is full or busy; remote on a remote.machines entry in order, here only when none takes it; remote-only the same but never here; a machine name exactly that machine; eas or proxy a remote device backend',
   },
   {
     key: 'metro.tunnel',
@@ -318,7 +383,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: 30,
     description:
-      'Minutes an owned simulator or emulator stays idle before the workspace supervisor shuts it down; 0 never',
+      'Minutes an owned simulator or emulator stays idle before the workspace supervisor, or automatic maintenance when no supervisor runs, shuts it down; 0 never',
   },
   {
     key: 'devices.reclaimIdleMinutes',
@@ -341,10 +406,28 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Development Info.plist relative to the Swift Package directory.',
   },
   {
+    key: 'macos.artifactInputs',
+    type: OBJECT,
+    scopes: PROJECT,
+    description:
+      'Complete pinned, repeatable SwiftPM inputs producing a relocatable app for completed artifact caching.',
+  },
+  {
     key: 'macos.arguments',
     type: { kind: 'strings' },
     scopes: PROJECT,
     description: 'Arguments passed directly to the owned macOS development executable.',
+  },
+  {
+    key: 'macos.remote',
+    type: {
+      kind: 'string',
+      pattern: `^(?![Ee][Aa][Ss]$|[Pp][Rr][Oo][Xx][Yy]$)${TAILNET_MACHINE_PATTERN.slice(1)}`,
+      patternHelp: 'local, auto, remote, remote-only, or a tailnet machine name (macOS has no eas or proxy backend)',
+    },
+    scopes: EVERY,
+    description:
+      'Where stim macos launches the app: local here; auto here unless this machine is busy, then a remote.machines entry; remote on a remote.machines entry in order, here only when none takes it; remote-only the same but never here; a machine name exactly that machine. The --remote flag overrides it',
   },
   {
     key: 'macos.assetCatalog',
@@ -398,7 +481,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: true,
     env: 'STIM_ARCHIVE_ENABLED',
     scopedHomeValue: false,
-    description: 'Keep workspace history on removal; false under STIM_HOME unless explicitly enabled',
+    description:
+      "Keep workspace history on removal, and archive a dirty finished worktree's changes before gc removes it; false keeps such worktrees, and is the default under STIM_HOME unless explicitly enabled",
   },
   {
     key: 'archive.maxAgeDays',
@@ -406,7 +490,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 30,
     env: 'STIM_ARCHIVE_MAX_AGE_DAYS',
-    description: 'Days to keep archived workspace records; 0 keeps nothing',
+    description: 'Days to keep archived workspace records and worktree change archives; 0 keeps nothing',
   },
   {
     key: 'archive.maxCount',
@@ -422,7 +506,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 5,
     env: 'STIM_ARCHIVE_MAX_TOTAL_GB',
-    description: 'Total archived bytes in binary GB; 0 keeps no artifacts',
+    description: 'Total archived bytes in binary GB, and separately the worktree change archives; 0 keeps no artifacts',
   },
   {
     key: 'archive.logs.maxAgeDays',
@@ -463,6 +547,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 7,
     env: 'STIM_ARCHIVE_AGENT_ACTIONS_MAX_AGE_DAYS',
     description: 'Days to keep archived agent-device sessions; 0 keeps none',
+  },
+  {
+    key: 'workspace.hidden',
+    type: BOOLEAN,
+    scopes: ['workspace'],
+    default: false,
+    description: 'Hide this workspace in Stim Desktop and the phone app; the next command that uses it unhides it',
   },
   {
     key: 'worktree.exclude',
@@ -589,7 +680,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 1,
     env: 'STIM_MAINTENANCE_LOG_MAX_MB',
-    description: 'Machine maintenance log rotation size in MiB',
+    description: 'Machine maintenance and gc log rotation size in MiB',
   },
   {
     key: 'maintenance.logRetentionDays',
@@ -597,7 +688,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 30,
     env: 'STIM_MAINTENANCE_LOG_RETENTION_DAYS',
-    description: 'Retention of the rotated machine maintenance log in days',
+    description: 'Retention of the rotated machine maintenance and gc logs in days',
   },
   {
     key: 'maintenance.logChecks',
@@ -647,6 +738,24 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Finished-worktree check interval in minutes',
   },
   {
+    key: 'maintenance.idleCheckMinutes',
+    type: { kind: 'number', integer: true, minimum: 1 },
+    scopes: MACHINE,
+    default: 5,
+    env: 'STIM_MAINTENANCE_IDLE_CHECK_MINUTES',
+    description:
+      'Interval in minutes of the check that shuts down owned simulators and emulators idle for devices.idleShutdownMinutes, also with no dev server running, and stops workspaces idle for maintenance.idleStopHours',
+  },
+  {
+    key: 'maintenance.idleStopHours',
+    type: { kind: 'number', minimum: 0 },
+    scopes: EVERY,
+    default: 6,
+    env: 'STIM_MAINTENANCE_IDLE_STOP_HOURS',
+    description:
+      "Hours with no native run, Metro bundle or HMR request, agent-device command, Stim command or live view before automatic maintenance and gc --delete stop a workspace's dev server and shut down its owned simulators and emulators, as stim stop does; device and app log lines do not count; 0 never",
+  },
+  {
     key: 'maintenance.sweepHours',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,
@@ -656,11 +765,21 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'maintenance.olderThanDays',
-    type: { kind: 'number', integer: true, minimum: 1 },
+    type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,
     default: 7,
     env: 'STIM_MAINTENANCE_OLDER_THAN_DAYS',
-    description: 'Age in days for the age sweep: unused workspace build outputs and shared cache entries',
+    description:
+      'Days unused before the age sweep removes it: workspace build outputs, shared cache entries, parked simulators and emulators, and, with maintenance.removeIdleWorktrees, clean pushed linked worktrees; 0 turns those age removals off',
+  },
+  {
+    key: 'maintenance.deviceIdleDays',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: MACHINE,
+    default: 3,
+    env: 'STIM_MAINTENANCE_DEVICE_IDLE_DAYS',
+    description:
+      'Days a workspace stays idle before the age sweep deletes its owned simulators and emulators; 0 turns that off',
   },
   {
     key: 'maintenance.protectRecentHours',
@@ -671,19 +790,66 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Cache entries used within this many hours are never evicted',
   },
   {
+    key: 'maintenance.urgentFreeDiskGb',
+    type: GIGABYTES,
+    scopes: MACHINE,
+    default: 12,
+    env: 'STIM_MAINTENANCE_URGENT_FREE_DISK_GB',
+    description:
+      'Free disk, in GB, below which automatic maintenance reports disk pressure level 2; 0 turns that threshold off',
+  },
+  {
+    key: 'maintenance.criticalFreeDiskGb',
+    type: GIGABYTES,
+    scopes: MACHINE,
+    default: 6,
+    env: 'STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB',
+    description:
+      'Free disk, in GB, below which automatic maintenance enters disk pressure level 3, also at or below budget.hardFloorDiskGb; 0 leaves only the hard floor',
+  },
+  {
+    key: 'maintenance.pressureProtectMinutes',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: MACHINE,
+    default: 10,
+    env: 'STIM_MAINTENANCE_PRESSURE_PROTECT_MINUTES',
+    description:
+      'Protection window, in minutes, that replaces maintenance.protectRecentHours at disk pressure levels 2 and 3, except for workspace build outputs and build directories, which level 2 keeps for 15 minutes after the last ios, android or macos run',
+  },
+  {
+    key: 'maintenance.gradleVersionIdleDays',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: MACHINE,
+    default: 7,
+    env: 'STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS',
+    description:
+      'At disk pressure level 3, stop idle Gradle and Kotlin daemons, then delete the Gradle version caches and wrapper distributions no registered project pins once their directories are unmodified this many days; 0 turns this off',
+  },
+  {
     key: 'maintenance.removeFinishedWorktrees',
     type: BOOLEAN,
     scopes: MACHINE,
     default: true,
     env: 'STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES',
-    description: 'Remove clean linked worktrees whose branch or pull request finished, under gc.worktreeGraceMinutes',
+    description:
+      "Remove linked worktrees whose branch or pull request finished, under gc.worktreeGraceMinutes, archiving a dirty one's uncommitted files first, and clean, pushed ones with no commits of their own once idle",
+  },
+  {
+    key: 'maintenance.removeIdleWorktrees',
+    type: BOOLEAN,
+    scopes: MACHINE,
+    default: false,
+    env: 'STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES',
+    description:
+      'In the age sweep, also remove clean, pushed linked worktrees whose branch is not merged once no Stim command has used them for maintenance.olderThanDays, with their git-ignored files; needs maintenance.removeFinishedWorktrees',
   },
   {
     key: 'maintenance.keep',
     type: BOOLEAN,
     scopes: PROJECT,
     default: false,
-    description: 'Pin this workspace: automatic maintenance never clears its build outputs or removes its worktree',
+    description:
+      'Pin this workspace: automatic maintenance never clears its build outputs, deletes its owned devices or removes its worktree',
   },
   {
     key: 'maintenance.workspaceOutputsMaxGb',
@@ -759,7 +925,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: false,
     env: 'STIM_DEBUG',
     description:
-      'Debug-level logging. While on, the CLI records its commands, child processes and requests to other Macs, and stim-server records every request with its timings, under STIM_HOME/logs/debug/ with rotation. Nothing is sent anywhere, and records never carry arguments, tokens or tickets',
+      'Debug-level logging. While on, the CLI records its commands, child processes and requests to other machines, and stim-server records every request with its timings, under STIM_HOME/logs/debug/ with rotation. Nothing is sent anywhere, and records never carry arguments, tokens or tickets',
   },
   {
     key: 'hosting.agentDriver',
@@ -770,19 +936,43 @@ export const SETTINGS: readonly SettingDefinition[] = [
       "Tool this Mac starts so a client's coding agent can drive the macOS apps, iOS simulators and Android emulators it hosts for that client; none starts nothing",
   },
   {
+    key: 'server.buildsPaused',
+    type: { kind: 'boolean' },
+    scopes: MACHINE,
+    default: false,
+    description:
+      'Temporarily refuse new incoming builds without interrupting running builds, serving cached artifacts, or changing client approvals; local CLI builds remain available',
+  },
+  {
+    key: 'server.devicesPaused',
+    type: { kind: 'boolean' },
+    scopes: MACHINE,
+    default: false,
+    description:
+      'Temporarily refuse new hosted iOS, Android and macOS sessions without interrupting existing sessions or changing client approvals; local CLI devices remain available',
+  },
+  {
     key: 'server.acceptClientBuilds',
     type: { kind: 'boolean' },
     scopes: MACHINE,
     default: false,
     description:
-      "Whether a Mac approved for builds or device hosting here may update this Mac's stim-server service to that Mac's own stim-server build; releases from npm need no setting",
+      "Whether a machine approved for builds or device hosting here may update this machine's stim-server service to that machine's own stim-server build; releases from npm need no setting",
+  },
+  {
+    key: 'server.lanAddresses',
+    type: { kind: 'strings' },
+    scopes: MACHINE,
+    default: [],
+    description:
+      "IPv4 addresses or network interface names (such as en0) on which stim-server also accepts machines and phones on the local network, without Tailscale, on its own port. Empty listens on no local network address. Wildcard addresses are refused. Connections there run protocol 2's Noise authentication and encryption, without TLS",
   },
   {
     key: 'remote.machines',
     type: { kind: 'strings' },
     scopes: MACHINE,
     description:
-      'Tailscale names of the remote Macs this Mac may build on and host owned simulators on, each optionally with :<port> of its tailscale serve route (default 7443); what each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
+      'The remote machines this machine may build on and host owned simulators, emulators and macOS apps on: a Tailscale name, optionally with :<port> of its tailscale serve route (default 7443), or local: and a host name or IPv4 address on the local network, optionally with :<port> of its stim-server (default 7787), whose server key doctor --fix pins after a person confirms its fingerprint. The order is the placement priority: each workload goes to the first machine with room and a load under its own limit. What each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
   },
   {
     key: 'remote.buildPoolDisabled',
@@ -806,29 +996,28 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: false,
     description:
-      'When ios.remote or android.remote is auto, this Mac is at its concurrency.maxDevices cap and no Mac in remote.machines takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can',
+      'When ios.remote or android.remote is auto or remote, this machine is at its concurrency.maxDevices cap and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can; remote-only never uses it',
+  },
+  {
+    key: 'remote.easMaxDurationMinutes',
+    type: { kind: 'number', integer: true, minimum: 1 },
+    scopes: MACHINE,
+    default: 30,
+    description:
+      "Maximum minutes of each EAS Simulator session Stim creates, after which EAS stops it and stops billing; stim stop and gc --delete end a session sooner. EAS rejects a value above the account plan's session limit",
   },
   {
     key: 'remote.build',
     type: {
       kind: 'string',
       pattern: TAILNET_MACHINE_PATTERN,
-      patternHelp: 'auto, local, or a tailnet machine name',
+      patternHelp: 'local, auto, remote, remote-only, or a tailnet machine name',
     },
     scopes: MACHINE,
     default: 'auto',
     env: 'STIM_REMOTE_BUILD',
     description:
-      'Build placement: auto follows remote.buildMode within enabled automatic pool members; local always builds here; a name in remote.machines requires that remote Mac without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
-  },
-  {
-    key: 'remote.buildMode',
-    type: { kind: 'choice', choices: OFFLOAD_MODES },
-    scopes: MACHINE,
-    default: 'auto',
-    env: 'STIM_REMOTE_BUILD_MODE',
-    description:
-      'When remote.build is auto, where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: auto builds here while this Mac has a free concurrency.maxBuilds slot and its load is under server.maxLoadPerCore, and otherwise builds on a less loaded Mac in remote.machines; force builds on an enabled remote Mac whenever one can take the build; off builds here when local is enabled in remote.buildPoolDisabled',
+      'Where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: local here; auto here while it has a free concurrency.maxBuilds slot and load under server.maxLoadPerCore, otherwise on a remote.machines entry; remote on a remote.machines entry in order, here only when none takes the build; remote-only the same but never here; a machine name exactly that machine without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
   },
   {
     key: 'server.maxLoadPerCore',
@@ -836,14 +1025,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 2,
     description:
-      'Load per core (5-minute load average divided by the CPU count) at which this Mac counts as saturated: it declines builds other Macs send it, automatic build placement stops preferring it, and automatic iOS and Android device placement treats it as busy',
+      'Load per core (5-minute load average divided by the CPU count) at which this machine counts as saturated: it declines builds other machines send it, reports the limit in its device offers so other machines skip it like a full one, stops preferring itself for automatic placement, and automatic iOS, Android and macOS placement treats it as busy',
   },
   {
     key: 'server.workerRoot',
     type: ABSOLUTE_PATH,
     scopes: MACHINE,
     description:
-      'Directory where stim-server keeps the checkouts, dependencies and build state of the Macs that build here; default $STIM_HOME/build-worker',
+      'Directory where stim-server keeps the checkouts, dependencies and build state of the machines that build here; default $STIM_HOME/build-worker',
   },
   {
     key: 'server.gradleDaemonIdleMinutes',
@@ -851,7 +1040,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 30,
     description:
-      'Minutes the Gradle daemon of an Android build another Mac sent here stays warm after the build; 0 stops it when the build ends',
+      'Minutes the Gradle daemon of an Android build another machine sent here stays warm after the build; 0 stops it when the build ends',
   },
   {
     key: 'caches.buildCache',
@@ -896,10 +1085,6 @@ export const SETTING_GROUPS: readonly string[] = [
     ),
   ),
 ];
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 
 function bundleUrlAccepts(value: unknown, key: string): boolean {
   if (typeof value !== 'string' || !/^(https?:\/\/|\/(?!\/))/.test(value) || /[\s\\#]/.test(value)) return false;
@@ -947,7 +1132,7 @@ export function acceptsShape(setting: SettingDefinition, value: unknown): boolea
     case 'choice':
       return typeof value === 'string' && type.choices.includes(value);
     case 'object':
-      return isPlainObject(value);
+      return isJsonObject(value);
     case 'bundle-url':
       return bundleUrlAccepts(value, setting.key);
   }

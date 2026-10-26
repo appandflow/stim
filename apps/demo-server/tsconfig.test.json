@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "exactOptionalPropertyTypes": true,
     "module": "preserve",
     "moduleResolution": "bundler",
     "allowJs": true,
@@ -8,5 +9,6 @@
     "declaration": false,
     "isolatedDeclarations": false
   },
-  "include": ["test/**/*.ts", "vitest.config.ts", "vitest.live.config.ts"]
+  "include": ["test/**/*.ts", "vitest.config.ts", "vitest.live.config.ts"],
+  "exclude": ["test/server.test.ts", "test/cloudflare-workers.ts"]
 }

@@ -12,7 +12,11 @@
 
     var body: some Scene {
       Window("SwiftUI Playground", id: ComponentGallery.windowID) {
-        ComponentGallery().onAppear { NSApp.activate(ignoringOtherApps: true) }
+        ComponentGallery().onAppear {
+          if ProcessInfo.processInfo.environment["STIM_BACKGROUND_LAUNCH"] != "1" {
+            NSApp.activate(ignoringOtherApps: true)
+          }
+        }
       }
       .defaultSize(width: 1100, height: 850)
     }
@@ -28,6 +32,7 @@
     case workspace = "Workspace"
     case archivedWorkspace = "Archived workspace"
     case notifications = "Notifications"
+    case notificationCards = "Notification cards"
     case builds = "Builds"
     case buildSheet = "Build sheet"
     case archivedBuildSheet = "Archived build sheet"
@@ -35,7 +40,7 @@
     case hostedIos = "Hosted iOS"
     case hostedAndroid = "Hosted Android"
     case settings = "Settings"
-    case addMachine = "Add remote Mac"
+    case addMachine = "Add remote machine"
     case pairPhone = "Pair a phone"
     case viewerPermissions = "Viewer permissions"
     case discovery = "Suggestions"
@@ -55,7 +60,7 @@
       case .hostedIos, .hostedAndroid: return [.ready, .loading, .error, .empty]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
-      case .tokens, .addMachine, .pairPhone, .viewerPermissions, .discovery: return [.ready]
+      case .tokens, .addMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards: return [.ready]
       }
     }
   }
@@ -226,6 +231,8 @@
         workspacePage(fixtures)
       case .notifications:
         InboxView(inbox: fixtures.inbox) { _ in action = "Selected notification logs (fixture only)." }
+      case .notificationCards:
+        NotificationCardsGallery()
       case .builds:
         ScrollView {
           BuildSection(

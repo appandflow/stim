@@ -14,13 +14,19 @@ app=build/Stim.app
 dmg=$out/Stim-$version.dmg
 zip=$out/Stim-$version.zip
 
-./scripts/bundle.sh --universal --release >/dev/null
+./scripts/bundle.sh --universal --release ${DESKTOP_SERVER_RUNTIME:+--server "$DESKTOP_SERVER_RUNTIME"} >/dev/null
 rm -rf "$out"
 mkdir -p "$out"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" -c "Set :CFBundleVersion $build_number" \
   "$app/Contents/Info.plist"
 
 if [ -n "$identity" ]; then
+  profile=${DESKTOP_PROVISIONING_PROFILE:-}
+  if [ -z "$profile" ] || [ ! -f "$profile" ]; then
+    echo "release.sh: Set DESKTOP_PROVISIONING_PROFILE to a Developer ID profile for dev.stim.desktop with Associated Domains enabled." >&2
+    exit 1
+  fi
+  cp "$profile" "$app/Contents/embedded.provisionprofile"
   sign() { codesign --force --options runtime --timestamp --sign "$identity" "$@"; }
   app_entitlements="--entitlements Support/app.entitlements"
 else
@@ -36,6 +42,10 @@ sign "$sparkle/Versions/B/Autoupdate"
 sign "$sparkle/Versions/B/Updater.app"
 sign "$sparkle"
 sign --entitlements Support/SimFold/runtime.entitlements "$app/Contents/Resources/sim-fold"
+for addon in "$app"/Contents/Resources/stim-server/node_modules/unique-pid/prebuilds/darwin-*/node.napi.node; do
+  sign "$addon"
+done
+sign --entitlements Support/Node/node.entitlements "$app/Contents/Resources/stim-server/bin/node"
 sign $app_entitlements "$app"
 codesign --verify --strict --deep "$app"
 
@@ -59,11 +69,26 @@ submit() {
   fi
 }
 
+# Stapler's CloudKit ticket lookup drops intermittently on GitHub-hosted runners: actions/runner-images#14924
+staple() {
+  attempt=1
+  while ! xcrun stapler staple "$1"; do
+    if [ "$attempt" -ge 6 ]; then
+      echo "release.sh: stapling $1 failed after $attempt attempts, although Apple accepted its notarization" >&2
+      exit 1
+    fi
+    delay=$((20 * attempt))
+    echo "release.sh: stapling $1 failed on attempt $attempt of 6, retrying in ${delay}s" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+  done
+}
+
 if [ -n "$notarize" ]; then
   ditto -c -k --keepParent "$app" "$out/notarize.zip"
   submit "$out/notarize.zip"
   rm "$out/notarize.zip"
-  xcrun stapler staple "$app"
+  staple "$app"
   spctl --assess --type execute --verbose=2 "$app"
 fi
 ditto -c -k --keepParent "$app" "$zip"
@@ -78,7 +103,7 @@ if [ -n "$identity" ]; then
 fi
 if [ -n "$notarize" ]; then
   submit "$dmg"
-  xcrun stapler staple "$dmg"
+  staple "$dmg"
 fi
 
 (cd "$out" && shasum -a 256 "Stim-$version.dmg" "Stim-$version.zip" >SHA256SUMS)

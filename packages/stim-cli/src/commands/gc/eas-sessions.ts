@@ -1,7 +1,10 @@
-import { recordGcResult } from './results.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
+import { runOperationFile } from '../../engine/operation-exec.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import chalk from 'chalk';
+import type { StimContext } from '@stim-cli/core';
 import { loadConfig } from '../../workspace/config.ts';
 import { readClaimSet } from '../../ownership-claim.ts';
 import {
@@ -38,6 +41,7 @@ export interface EasSessionSweep {
 }
 
 export interface EasGcDependencies {
+  operation?: StimContext;
   findProjectRoot?: typeof findProjectRoot;
   detectIsExpo?: typeof detectIsExpo;
   resolveEasCliBin?: typeof resolveEasCliBin;
@@ -45,7 +49,7 @@ export interface EasGcDependencies {
     file: string,
     args: string[],
     options: { cwd: string; timeoutMs: number; omitEnv: readonly string[] },
-  ) => string;
+  ) => string | Promise<string>;
   withRemoteSessionLock?: typeof withRemoteSessionLock;
   withEasProjectLock?: typeof withEasProjectLock;
   easMaxPages?: number;
@@ -160,8 +164,8 @@ function claimStateAbsence(claim: EasSessionClaim): { absent: boolean; notice: s
   return { absent: sessionId !== claim.sessionId, notice: null };
 }
 
-export function collectEasSessionSweep(config: Config | null, deps: EasGcDependencies): EasSessionSweep {
-  const projectRoot = (deps.findProjectRoot ?? findProjectRoot)(process.cwd());
+export async function collectEasSessionSweep(config: Config | null, deps: EasGcDependencies): Promise<EasSessionSweep> {
+  const projectRoot = (deps.findProjectRoot ?? findProjectRoot)(deps.operation?.cwd ?? process.cwd());
   const empty = (notices: string[] = []): EasSessionSweep => ({
     projectScope: projectRoot,
     orphaned: [],
@@ -178,7 +182,10 @@ export function collectEasSessionSweep(config: Config | null, deps: EasGcDepende
   const recorded = readRecordedRemoteSessionIds(workspaceRoots);
   const ledgerRoot = deps.easLedgerRoot ?? easMachineStateRoot();
   const ledger = readEasSessionLedger(ledgerRoot);
-  const run = deps.runEasFile ?? ((file, args, options) => getExecutor().runFile(file, args, options));
+  const run =
+    deps.runEasFile ??
+    ((file, args, options) =>
+      runOperationFile(deps.operation, getExecutor(), file, args, { ...options, killSignal: 'SIGKILL' }));
   const sessions: unknown[] = [];
   const seenCursors = new Set<string>();
   const now = deps.easNow ?? Date.now;
@@ -188,6 +195,7 @@ export function collectEasSessionSweep(config: Config | null, deps: EasGcDepende
   let pageCount = 0;
   let after: string | null = null;
   while (true) {
+    deps.operation?.signal.throwIfAborted();
     if (pageCount >= maxPages) {
       return empty([
         ...recorded.notices,
@@ -201,12 +209,15 @@ export function collectEasSessionSweep(config: Config | null, deps: EasGcDepende
 
     let stdout: string;
     try {
-      stdout = run(eas.file, listOwnedSessionsArgs(after), {
+      stdout = await run(eas.file, listOwnedSessionsArgs(after), {
         cwd: projectRoot,
         timeoutMs: Math.min(EAS_OPERATION_TIMEOUT_MS, remainingMs),
         omitEnv: PROXY_CREDENTIAL_ENV,
       });
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      deps.operation?.signal.throwIfAborted();
       return empty([...recorded.notices, `EAS session list failed for ${projectRoot}: ${describeError(error)}`]);
     }
     pageCount++;
@@ -310,6 +321,7 @@ export async function withRemoteSessionGcLocks<T>(
   const maxSnapshots = deps.easLockSnapshotRetries ?? EAS_LOCK_SNAPSHOT_RETRIES;
 
   for (let attempt = 0; attempt < maxSnapshots; attempt++) {
+    deps.operation?.signal.throwIfAborted();
     const roots = easLockRoots(projectRoot, loadConfig());
     const unavailable = unavailableLockRootNotice(roots);
     if (unavailable) return fn({ ...deps, easSweepBlockedNotice: unavailable });
@@ -329,12 +341,18 @@ export async function withRemoteSessionGcLocks<T>(
             coreStarted = true;
             return fn({ ...deps, easSweepBlockedNotice: undefined, easLockedRoots: roots });
           })()
-        : withLock(roots[index]!, () => acquire(index + 1), { waitMs });
+        : withLock(roots[index]!, () => acquire(index + 1), {
+            waitMs,
+            ...(deps.operation ? { signal: deps.operation.signal, declareSpawnsFor: deps.operation } : {}),
+          });
 
     try {
       const result = await acquire(0);
       if (!expanded) return result as T;
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      deps.operation?.signal.throwIfAborted();
       if (coreStarted) throw error;
       return fn({
         ...deps,
@@ -349,12 +367,17 @@ export async function withRemoteSessionGcLocks<T>(
   });
 }
 
-export async function deleteEasSessions(easSessionSweep: EasSessionSweep, deps: EasGcDependencies): Promise<number> {
+export async function deleteEasSessions(
+  easSessionSweep: EasSessionSweep,
+  deps: EasGcDependencies,
+  output: GcOutput = GC_OUTPUT,
+): Promise<number> {
+  deps.operation?.signal.throwIfAborted();
   let deleteFailures = 0;
   const refuseAll = (detail: string): void => {
     deleteFailures += easSessionSweep.orphaned.length;
     for (const session of easSessionSweep.orphaned)
-      recordGcResult('easSession', 'failed', session.name, { id: session.id, detail });
+      output.record('easSession', 'failed', session.name, { id: session.id, detail });
   };
   if (easSessionSweep.orphaned.length && easSessionSweep.deletionSafe && easSessionSweep.projectScope) {
     const projectScope = easSessionSweep.projectScope;
@@ -368,7 +391,7 @@ export async function deleteEasSessions(easSessionSweep: EasSessionSweep, deps: 
           return withRemoteSessionGcLocks(projectScope, deps, async (lockedDeps) => {
             if (lockedDeps.easSweepBlockedNotice) {
               refuseAll(`EAS session deletion refused: ${lockedDeps.easSweepBlockedNotice}`);
-              console.log(chalk.red(`EAS session deletion refused: ${lockedDeps.easSweepBlockedNotice}`));
+              output.log(chalk.red(`EAS session deletion refused: ${lockedDeps.easSweepBlockedNotice}`));
               return;
             }
             const coordinatedDeps = lockedDeps;
@@ -384,14 +407,16 @@ export async function deleteEasSessions(easSessionSweep: EasSessionSweep, deps: 
             const ledger = readEasSessionLedger(ledgerRoot);
             const removeClaim = coordinatedDeps.removeEasSessionClaim ?? removeEasSessionClaim;
             const reconcileClaim = (sessionId: string): void => {
+              deps.operation?.signal.throwIfAborted();
               let detail = 'the claim store did not remove it';
               try {
                 if (removeClaim(sessionId, ledgerRoot)) return;
               } catch (error) {
+                deps.operation?.signal.throwIfAborted();
                 detail = describeError(error);
               }
               deleteFailures++;
-              console.log(
+              output.log(
                 chalk.red(
                   `EAS session ${sessionId} is resolved, but its ownership claim could not be removed: ${detail}. The claim was retained for reconciliation.`,
                 ),
@@ -399,23 +424,29 @@ export async function deleteEasSessions(easSessionSweep: EasSessionSweep, deps: 
             };
             if (registryExpanded) {
               refuseAll('EAS session deletion refused: registered workspace roots changed after classification.');
-              console.log(
+              output.log(
                 chalk.red('EAS session deletion refused: registered workspace roots changed after classification.'),
               );
             } else if (!currentRecords?.safe || !ledger.safe) {
               refuseAll('EAS session deletion refused: the session records could not be read safely.');
               for (const notice of [...(currentRecords?.notices ?? []), ...(ledger.notice ? [ledger.notice] : [])]) {
-                console.log(chalk.red(`EAS session deletion refused: ${notice}`));
+                output.log(chalk.red(`EAS session deletion refused: ${notice}`));
               }
             } else {
               const recorded = new Set(currentRecords.ids);
               const eas = (coordinatedDeps.resolveEasCliBin ?? resolveEasCliBin)(projectScope);
               const run =
-                coordinatedDeps.runEasFile ?? ((file, args, options) => getExecutor().runFile(file, args, options));
+                coordinatedDeps.runEasFile ??
+                ((file, args, options) =>
+                  runOperationFile(coordinatedDeps.operation, getExecutor(), file, args, {
+                    ...options,
+                    killSignal: 'SIGKILL',
+                  }));
               for (const session of easSessionSweep.orphaned) {
+                deps.operation?.signal.throwIfAborted();
                 if (recorded.has(session.id)) {
-                  console.log(chalk.dim(`EAS session ${session.id} has a workspace record and was left running.`));
-                  recordGcResult('easSession', 'kept', session.name, {
+                  output.log(chalk.dim(`EAS session ${session.id} has a workspace record and was left running.`));
+                  output.record('easSession', 'kept', session.name, {
                     id: session.id,
                     detail: 'it has a workspace record and was left running',
                   });
@@ -431,12 +462,12 @@ export async function deleteEasSessions(easSessionSweep: EasSessionSweep, deps: 
                   claimState.notice
                 ) {
                   deleteFailures++;
-                  console.log(
+                  output.log(
                     chalk.red(
                       `Could not verify fixed ownership for EAS session ${session.id}: ${claimState?.notice ?? 'the claim is missing, mismatched, or still recorded in workspace state'}.`,
                     ),
                   );
-                  recordGcResult('easSession', 'failed', session.name, {
+                  output.record('easSession', 'failed', session.name, {
                     id: session.id,
                     detail: `Could not verify fixed ownership for EAS session ${session.id}: ${claimState?.notice ?? 'the claim is missing, mismatched, or still recorded in workspace state'}.`,
                   });
@@ -444,8 +475,8 @@ export async function deleteEasSessions(easSessionSweep: EasSessionSweep, deps: 
                 }
                 if (!eas) {
                   deleteFailures++;
-                  console.log(chalk.red(`Could not verify EAS session ${session.id}: eas-cli is not available.`));
-                  recordGcResult('easSession', 'failed', session.name, {
+                  output.log(chalk.red(`Could not verify EAS session ${session.id}: eas-cli is not available.`));
+                  output.record('easSession', 'failed', session.name, {
                     id: session.id,
                     detail: `Could not verify EAS session ${session.id}: eas-cli is not available.`,
                   });
@@ -458,15 +489,22 @@ export async function deleteEasSessions(easSessionSweep: EasSessionSweep, deps: 
                 };
                 let live: string;
                 try {
-                  live = run(eas.file, getSessionArgs(session.id), options);
+                  live = await run(eas.file, getSessionArgs(session.id), options);
+                  deps.operation?.signal.throwIfAborted();
                 } catch (error) {
+                  if (
+                    error instanceof WorkspaceProcessCleanupError ||
+                    (error instanceof Error && 'reportCleanup' in error)
+                  )
+                    throw error;
+                  deps.operation?.signal.throwIfAborted();
                   if (isDefinitiveMissingSessionError(error, session.id)) {
-                    console.log(chalk.dim(`EAS session ${session.id} is already gone.`));
+                    output.log(chalk.dim(`EAS session ${session.id} is already gone.`));
                     reconcileClaim(session.id);
                   } else {
                     deleteFailures++;
-                    console.log(chalk.red(`Could not verify EAS session ${session.id}: ${describeError(error)}`));
-                    recordGcResult('easSession', 'failed', session.name, {
+                    output.log(chalk.red(`Could not verify EAS session ${session.id}: ${describeError(error)}`));
+                    output.record('easSession', 'failed', session.name, {
                       id: session.id,
                       detail: `Could not verify EAS session ${session.id}: ${describeError(error)}`,
                     });
@@ -476,14 +514,14 @@ export async function deleteEasSessions(easSessionSweep: EasSessionSweep, deps: 
 
                 const inspection = inspectSessionForTeardown(live, session.id);
                 if (inspection.action === 'already-stopped') {
-                  console.log(chalk.dim(`EAS session ${session.id} is already stopped (${inspection.status}).`));
+                  output.log(chalk.dim(`EAS session ${session.id} is already stopped (${inspection.status}).`));
                   reconcileClaim(session.id);
                   continue;
                 }
                 if (inspection.action === 'refused') {
                   deleteFailures++;
-                  console.log(chalk.red(`Could not stop EAS session ${session.id}: ${inspection.reason}`));
-                  recordGcResult('easSession', 'failed', session.name, {
+                  output.log(chalk.red(`Could not stop EAS session ${session.id}: ${inspection.reason}`));
+                  output.record('easSession', 'failed', session.name, {
                     id: session.id,
                     detail: `Could not stop EAS session ${session.id}: ${inspection.reason}`,
                   });
@@ -492,11 +530,19 @@ export async function deleteEasSessions(easSessionSweep: EasSessionSweep, deps: 
 
                 let stopped: string;
                 try {
-                  stopped = run(eas.file, stopSessionArgs(session.id), options);
+                  deps.operation?.signal.throwIfAborted();
+                  stopped = await run(eas.file, stopSessionArgs(session.id), options);
+                  deps.operation?.signal.throwIfAborted();
                 } catch (error) {
+                  if (
+                    error instanceof WorkspaceProcessCleanupError ||
+                    (error instanceof Error && 'reportCleanup' in error)
+                  )
+                    throw error;
+                  deps.operation?.signal.throwIfAborted();
                   deleteFailures++;
-                  console.log(chalk.red(`Could not stop EAS session ${session.id}: ${describeError(error)}`));
-                  recordGcResult('easSession', 'failed', session.name, {
+                  output.log(chalk.red(`Could not stop EAS session ${session.id}: ${describeError(error)}`));
+                  output.record('easSession', 'failed', session.name, {
                     id: session.id,
                     detail: `Could not stop EAS session ${session.id}: ${describeError(error)}`,
                   });
@@ -505,26 +551,34 @@ export async function deleteEasSessions(easSessionSweep: EasSessionSweep, deps: 
                 const verified = verifyStoppedSession(stopped, session.id);
                 if (!verified.ok) {
                   deleteFailures++;
-                  console.log(chalk.red(`Could not verify EAS session ${session.id} stopped: ${verified.reason}`));
-                  recordGcResult('easSession', 'failed', session.name, {
+                  output.log(chalk.red(`Could not verify EAS session ${session.id} stopped: ${verified.reason}`));
+                  output.record('easSession', 'failed', session.name, {
                     id: session.id,
                     detail: `Could not verify EAS session ${session.id} stopped: ${verified.reason}`,
                   });
                   continue;
                 }
-                console.log(chalk.green(`Stopped EAS session ${session.id} (${session.name})`));
-                recordGcResult('easSession', 'done', session.name, { id: session.id });
+                output.log(chalk.green(`Stopped EAS session ${session.id} (${session.name})`));
+                output.record('easSession', 'done', session.name, { id: session.id });
                 reconcileClaim(session.id);
               }
             }
           });
         },
-        { waitMs: 0, ownerPurpose: 'EAS orphan deletion', machineRoot: deps.easLedgerRoot },
+        {
+          waitMs: 0,
+          ownerPurpose: 'EAS orphan deletion',
+          machineRoot: deps.easLedgerRoot,
+          ...(deps.operation ? { signal: deps.operation.signal, declareSpawnsFor: deps.operation } : {}),
+        },
       );
     } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      deps.operation?.signal.throwIfAborted();
       const phase = finalSweepStarted ? 'failed' : 'lock acquisition failed';
       refuseAll(`EAS session deletion ${phase}: ${describeError(error)}`);
-      console.log(chalk.red(`EAS session deletion ${phase}: ${describeError(error)}`));
+      output.log(chalk.red(`EAS session deletion ${phase}: ${describeError(error)}`));
     }
   }
 

@@ -7,21 +7,26 @@ import {
   configInputsChanged,
   filesystemBuildCapability,
   fingerprintDiffRecord,
+  gitignoredFingerprintInputs,
+  ignoredFingerprintPaths,
+  trackedFingerprintPaths,
   inputsChangedDuringBuild,
   refingerprintAfterMutation,
   untrackedMissLine,
 } from '../cache/build-cache.ts';
+import type { FingerprintCheck } from '../cache/fingerprint-memo.ts';
 import { explainBuildMiss, fingerprintErrorMissReason } from '../cache/miss-reason.ts';
 import { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 import { DEFAULT_DEPS, type IosDeps } from '../commands/ios/dependencies.ts';
 import { iosMetroRuntime, iosProcessRuntime } from '../commands/ios/launch.ts';
 import { iosProviderRunOptions, isReleaseConfiguration, podAction } from '../commands/ios/support.ts';
 import type { FailArgs } from '../commands/ios/types.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
 import { easDeviceBuildRemedy } from '../engine/eas-build.ts';
 import { copyAppAside, writeIpTxt } from '../engine/ios-lan.ts';
-import { recordPrebuild, staleNativeDirRefusal } from '../engine/prebuild.ts';
+import { staleNativeDirRefusal, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { bundlerPin } from '../engine/bundler.ts';
-import { iosToolchain } from '../offload/toolchain.ts';
+import { iosToolchainAsync } from '../offload/toolchain.ts';
 import { resolveIosProjectDir, type IosProjectDir, type SettingsObject } from '../workspace/settings.ts';
 import { IosRecipeRefusal, type IosProject, type IosArtifactContext, type IosArtifactRecipe } from './ios-project.ts';
 
@@ -36,9 +41,11 @@ type ReactNativeIosDependencies = Pick<
   | 'discoverXcodeProject'
   | 'resolveScheme'
   | 'fingerprintProject'
+  | 'memoizedFingerprint'
   | 'untrackedNativeFiles'
   | 'resolveBuild'
   | 'storeBuild'
+  | 'readBundleId'
   | 'readWorkspaceState'
   | 'loadProjectProvider'
   | 'planPrebuild'
@@ -53,13 +60,13 @@ type ReactNativeIosDependencies = Pick<
   | 'swapJsBundle'
 >;
 
-function reactNativeIosSchemeProblem(
+async function reactNativeIosSchemeProblem(
   root: string,
   iosDir: string,
   scheme: string | undefined,
   isExpo: boolean,
   d: ReactNativeIosDependencies,
-): FailArgs | null {
+): Promise<FailArgs | null> {
   if (scheme === undefined) return null;
   if (!scheme.trim())
     return {
@@ -70,7 +77,7 @@ function reactNativeIosSchemeProblem(
   if (isExpo) return null;
   const project = d.discoverXcodeProject(root, iosDir);
   if (project.error) return project.error;
-  return d.resolveScheme(project, { scheme }).error ?? null;
+  return (await d.resolveScheme(project, { scheme })).error ?? null;
 }
 
 const runtimeKind: IosProject['runtimeKind'] = (configuration) =>
@@ -85,13 +92,14 @@ export function reactNativeIosProject(
   const isExpo = d.detectIsExpo(root);
   const iosProject = resolveIosProjectDir(settings, root);
   return {
-    plan: (options, resolved) =>
+    plan: (options, resolved, operation) =>
       planReactNativeIos(
         root,
         options,
         { ...DEFAULT_DEPS, ...dependencies },
         (scheme) => reactNativeIosSchemeProblem(root, iosProject.dir, scheme, isExpo, d),
         resolved,
+        operation,
       ),
     isExpo,
     bundleId: () => d.detectBundleId(root, iosProject.dir),
@@ -113,6 +121,7 @@ function fail(failure: FailArgs): never {
 
 function reactNativeIosArtifact(
   {
+    operation,
     root,
     logFile,
     configuration,
@@ -134,6 +143,7 @@ function reactNativeIosArtifact(
   iosProject: IosProjectDir,
   d: ReactNativeIosDependencies,
 ): IosArtifactRecipe {
+  const signingOptions = { env: operation?.env, signal: runCancellationSignal(operation) ?? operation?.signal };
   const physical = device !== null;
   const { udid } = target;
   const release = isReleaseConfiguration(configuration);
@@ -149,6 +159,7 @@ function reactNativeIosArtifact(
   let storeHash: string | null = null;
   let storeSources: FingerprintSource[] = [];
   let mutatingSteps: string[] = [];
+  let fingerprintCheck: FingerprintCheck | null = null;
   const identity = () => (storeHash ? { hash: storeHash, key: buildCacheKey(PLATFORM, storeHash, keyOptions) } : null);
   const materialize: IosArtifactRecipe['materialize'] = async (artifactPath, { fresh: isFresh, ownTemporary }) => {
     const lanAddress = device?.lanAddress ?? null;
@@ -166,8 +177,13 @@ function reactNativeIosArtifact(
         note(chalk.dim(phaseLine('', remedy)));
         return null;
       };
-      const gateProfile = (): string | null => {
-        const gate = d.gateProfileForDevice({ appPath: path, udid: physicalDevice.udid, configuration });
+      const gateProfile = async (): Promise<string | null> => {
+        const gate = await d.gateProfileForDevice({
+          ...signingOptions,
+          appPath: path,
+          udid: physicalDevice.udid,
+          configuration,
+        });
         return gate.ok ? path : refuse(gate.code, gate.reason, gate.remedy);
       };
 
@@ -202,7 +218,8 @@ function reactNativeIosArtifact(
       }
       ownTemporary(copy.tmpDir);
       writeIpTxt(copy.appPath, lanAddress as string, metroPort as number);
-      const sealed = d.sealAppForDevice({
+      const sealed = await d.sealAppForDevice({
+        ...signingOptions,
         appPath: copy.appPath,
         udid: physicalDevice.udid,
         configuration,
@@ -229,6 +246,8 @@ function reactNativeIosArtifact(
       if (!release) return cachedPath;
       phase('swap', `regenerating this workspace's JS for the cached ${configuration} app`);
       const swap = await d.swapJsBundle({
+        context: operation,
+        onHeartbeat: note,
         root,
         iosDir: iosProject.dir,
         isExpo,
@@ -265,7 +284,18 @@ function reactNativeIosArtifact(
       let computedFingerprint: string | null;
       let fingerprintError = 'no hash';
       try {
-        const computed = await d.fingerprintProject(root, { platform: PLATFORM, iosProjectPath: iosProject.relative });
+        const memo = await d.memoizedFingerprint(
+          root,
+          { platform: PLATFORM, iosProjectPath: iosProject.relative },
+          { consult: cachePolicy.read, record: true, operation, fingerprint: d.fingerprintProject },
+        );
+        const computed = memo.fingerprint;
+        fingerprintCheck = memo.check;
+        if (memo.memoHit)
+          phase(
+            'fingerprint',
+            chalk.dim('matches a recorded fingerprint of this tree; confirming it in the background'),
+          );
         computedFingerprint = computed?.hash ?? null;
         fingerprintSources = computed?.sources ?? [];
       } catch (error) {
@@ -284,10 +314,23 @@ function reactNativeIosArtifact(
       storeSources = fingerprintSources;
       return identity()!;
     },
-    cache: () => filesystemBuildCapability({ resolve: d.resolveBuild, store: d.storeBuild, sources: storeSources }),
-    validateExternal(path) {
+    fingerprintCheck: () => fingerprintCheck,
+    cache: () =>
+      filesystemBuildCapability({
+        context: operation,
+        resolve: d.resolveBuild,
+        store: d.storeBuild,
+        sources: storeSources,
+        readAppId: (path) => d.readBundleId(path),
+      }),
+    async validateExternal(path) {
       if (device) {
-        const gate = d.gateProfileForDevice({ appPath: path, udid: device.udid, configuration });
+        const gate = await d.gateProfileForDevice({
+          ...signingOptions,
+          appPath: path,
+          udid: device.udid,
+          configuration,
+        });
         if (!gate.ok) {
           fail({ code: gate.code, message: gate.reason, remedy: easDeviceBuildRemedy(easProfile!) });
         }
@@ -305,7 +348,7 @@ function reactNativeIosArtifact(
     async prepare(beforePrepare) {
       mutatingSteps = [];
 
-      const prebuild = d.planPrebuild(root, PLATFORM, { isExpo, fingerprint, sources: fingerprintSources });
+      const prebuild = await d.planPrebuild(root, PLATFORM, { isExpo, fingerprint, sources: fingerprintSources });
       if (prebuild === 'refuse') {
         fail({ ...staleNativeDirRefusal(PLATFORM) });
       }
@@ -317,8 +360,8 @@ function reactNativeIosArtifact(
       if (mutates && cachePolicy.read) beforePrepare();
       if (prebuild === 'generate' || prebuild === 'regenerate') {
         step('prebuild');
-        recordPrebuild(root, PLATFORM, null);
-        const result = await d.runPrebuild(root, PLATFORM, logWriter(), { clean: prebuild === 'regenerate' });
+        await recordPrebuildAsync(root, PLATFORM, null);
+        const result = await d.runPrebuild(root, PLATFORM, logWriter());
         if (result?.failed) {
           phase('prebuild', 'FAILED');
           fail({
@@ -331,7 +374,7 @@ function reactNativeIosArtifact(
         const outcome =
           prebuild === 'generate'
             ? 'ios/ absent -> generated'
-            : 'ios/ not generated from this fingerprint -> regenerated with --clean';
+            : 'ios/ not generated from this fingerprint -> updated in place';
         phase('prebuild', `${outcome} (${formatDuration(result?.durationMs ?? 0)})`);
         mutatingSteps.push('prebuild');
       }
@@ -339,16 +382,17 @@ function reactNativeIosArtifact(
       if (isExpo && buildScheme !== undefined) {
         const project = d.discoverXcodeProject(root, iosProject.dir);
         if (project.error) fail({ ...project.error });
-        const schemeError = d.resolveScheme(project, { scheme: buildScheme }).error;
+        const schemeError = (await d.resolveScheme(project, { scheme: buildScheme })).error;
         if (schemeError) fail({ ...schemeError });
       }
 
       const podState = d.readPodState(root, iosProject.dir);
       const verdict = d.podsAreStale(podState.lockText, podState.manifestText, podState.dir);
-      const action = podAction(podState, verdict);
+      const action = podAction(podState, verdict, { prebuildRan: mutatingSteps.includes('prebuild') });
       if (action.install) {
         step('pods');
         const result = await d.runPodInstall(root, logWriter(), {
+          onHeartbeat: note,
           estimateMs: estimates().podsMs,
           directory: iosProject.dir,
         });
@@ -383,7 +427,7 @@ function reactNativeIosArtifact(
         });
         const prebuildRan = mutatingSteps.includes('prebuild');
         const editedConfig = after ? configInputsChanged(fingerprintSources, after.sources, { prebuildRan }) : [];
-        if (after && !editedConfig.length && prebuildRan) recordPrebuild(root, PLATFORM, after.hash);
+        if (after && !editedConfig.length && prebuildRan) await recordPrebuildAsync(root, PLATFORM, after.hash);
         if (!after || editedConfig.length) {
           storeHash = null;
           note(
@@ -452,6 +496,7 @@ function reactNativeIosArtifact(
     },
     compile: () =>
       d.buildIos({
+        context: operation,
         root,
         iosDir: iosProject.dir,
         scheme: buildScheme,
@@ -462,6 +507,8 @@ function reactNativeIosArtifact(
         logWriter: logWriter(),
         ...(configuration ? { configuration } : {}),
         estimateMs: estimates().coldBuildMs,
+        onHeartbeat: note,
+        onNote: note,
         optimizations,
       }),
     explain(rekeyedBy) {
@@ -487,11 +534,11 @@ function reactNativeIosArtifact(
     },
     untrackedLine: () =>
       untrackedMissLine(d.untrackedNativeFiles({ projectRoot: root, iosProjectPath: iosProject.relative })),
-    legacyCache:
+    expoCache:
       physical || !cachePolicy.remote || buildProfile || buildScheme
         ? null
         : {
-            load: () => d.loadProjectProvider(root, { isExpo }),
+            load: () => d.loadProjectProvider(root, { context: operation, isExpo, sources: fingerprintSources }),
             runOptions: iosProviderRunOptions(configuration, target.keyArch),
           },
     offload: {
@@ -510,23 +557,35 @@ function reactNativeIosArtifact(
                 : null);
         return { runtime, unsupported };
       },
-      target: (runtime) => ({
+      target: async (runtime) => ({
         platform: 'ios',
         local: {
-          ...iosToolchain(root),
+          ...(await iosToolchainAsync(root, iosProject.dir)),
           ...(target.hostedArchitecture ? { arch: target.hostedArchitecture === 'x86_64' ? 'x64' : 'arm64' } : {}),
         },
         runtime,
-        cocoapodsPinned: bundlerPin(root) !== null,
+        cocoapodsPinned: bundlerPin(root, iosProject.dir) !== null,
       }),
       request: (runtime) => ({
         platform: 'ios',
+        cacheArtifact: cachePolicy.write && cachePolicy.remote,
         runtime,
         configuration,
         scheme: buildScheme ?? null,
         iosProjectPath: iosProject.relative,
         isExpo,
         optimizations,
+      }),
+      fingerprintInputs: async () => ({
+        sources: storeSources,
+        ignored: await gitignoredFingerprintInputs(
+          root,
+          storeSources,
+          { platform: PLATFORM, iosProjectPath: iosProject.relative },
+          { env: operation?.env },
+        ),
+        ignoredPaths: ignoredFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
+        trackedPaths: trackedFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
       }),
       unchanged: async () => {
         const after = await refingerprintAfterMutation({

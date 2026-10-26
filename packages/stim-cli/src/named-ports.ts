@@ -1,5 +1,12 @@
 import { realpathSync } from 'node:fs';
-import { ensureConfig, getConfigDir, getProject, loadConfig, saveConfig, withConfigLock } from './workspace/config.ts';
+import {
+  ensureConfig,
+  getConfigDir,
+  getProject,
+  loadConfig,
+  saveConfig,
+  withConfigLockAsync,
+} from './workspace/config.ts';
 import { getExecutor } from './exec.ts';
 import { withWorkspaceProcessLock } from './engine/workspace-process-lock.ts';
 import { parseNetstatPids, signalProcessTree } from './metro.ts';
@@ -52,8 +59,8 @@ function processCommand(pid: number, platform: NodeJS.Platform): string {
   return (e.runFileQuiet('ps', ['-p', String(pid), '-o', 'args='], { timeoutMs: 5000 }) ?? '').trim();
 }
 
-function withPortsLock<T>(fn: () => Promise<T>): Promise<T> {
-  return withWorkspaceProcessLock(getConfigDir(), 'ports', fn, { external: true });
+function withPortsLock<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  return withWorkspaceProcessLock(getConfigDir(), 'ports', fn, { external: true, signal });
 }
 
 interface AllocateOptions {
@@ -70,15 +77,17 @@ export function reserveBrowserPort(projectPath: string, options: AllocateOptions
   return allocateNamedPort(projectPath, BROWSER_LABEL, options);
 }
 
-export function releaseBrowserPort(projectPath: string, port: number): Promise<void> {
-  return withPortsLock(async () =>
-    withConfigLock(() => {
-      const cfg = loadConfig();
-      const ports = cfg?.projects?.[projectPath]?.ports;
-      if (!cfg || ports?.[BROWSER_LABEL] !== port) return;
-      delete ports[BROWSER_LABEL];
-      saveConfig(cfg);
-    }),
+export function releaseBrowserPort(projectPath: string, port: number, signal?: AbortSignal): Promise<void> {
+  return withPortsLock(
+    () =>
+      withConfigLockAsync(() => {
+        const cfg = loadConfig();
+        const ports = cfg?.projects?.[projectPath]?.ports;
+        if (!cfg || ports?.[BROWSER_LABEL] !== port) return;
+        delete ports[BROWSER_LABEL];
+        saveConfig(cfg);
+      }, signal),
+    signal,
   );
 }
 
@@ -96,7 +105,7 @@ async function allocateNamedPort(
       if (projects.some((project) => project.metroPort === port || Object.values(project.ports ?? {}).includes(port)))
         continue;
       if (!(await isFree(port))) continue;
-      const claimed = withConfigLock(() => {
+      const claimed = await withConfigLockAsync(() => {
         const cfg = ensureConfig();
         if (
           Object.values(cfg.projects).some(
@@ -123,9 +132,11 @@ async function stopListeners(
   dryRun: boolean,
   log: (line: string) => void,
   platform: NodeJS.Platform,
+  signal?: AbortSignal,
 ): Promise<void> {
   const listeners = () => portListeners(port, platform);
   for (const pid of listeners()) {
+    signal?.throwIfAborted();
     if (pid === process.pid) throw new Error(`Refusing to stop Stim itself on ${label} (${port}).`);
     const identity = captureProcessIdentity(pid);
     if (!identity.ok) {
@@ -144,10 +155,10 @@ async function stopListeners(
     if (status !== 'same') throw new Error(`Cannot verify pid ${pid} on ${label} (${port}); allocation kept.`);
     try {
       signalProcessTree(pid, 'SIGTERM', { platform });
-      if (!(await waitForProcessExit(record, 2000))) {
+      if (!(await waitForProcessExit(record, 2000, signal))) {
         if (inspectProcessIdentity(record) !== 'same') throw new Error(`Cannot verify pid ${pid} before SIGKILL.`);
         signalProcessTree(pid, 'SIGKILL', { platform });
-        if (!(await waitForProcessExit(record, 2000))) throw new Error(`Pid ${pid} did not exit.`);
+        if (!(await waitForProcessExit(record, 2000, signal))) throw new Error(`Pid ${pid} did not exit.`);
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
@@ -165,12 +176,14 @@ export async function clearNamedPorts(
     dryRun = false,
     log = console.error,
     platform = process.platform,
+    signal,
   }: {
     label?: string;
     stop?: boolean;
     dryRun?: boolean;
     log?: (line: string) => void;
     platform?: NodeJS.Platform;
+    signal?: AbortSignal;
   } = {},
 ): Promise<void> {
   if (label !== undefined) validatePortLabel(label);
@@ -184,6 +197,7 @@ export async function clearNamedPorts(
     }
     const failures: string[] = [];
     for (const [name, port] of selected) {
+      signal?.throwIfAborted();
       try {
         if (!Number.isInteger(port) || port < FIRST_PORT || port > LAST_PORT) {
           throw new Error(`Invalid named port ${name} (${port}); repair its config record before cleanup.`);
@@ -192,24 +206,25 @@ export async function clearNamedPorts(
           if (Object.values(loadConfig()?.projects ?? {}).some((project) => project.metroPort === port)) {
             throw new Error(`Port ${port} is reserved for managed Metro; allocation kept.`);
           }
-          await stopListeners(port, name, dryRun, log, platform);
+          await stopListeners(port, name, dryRun, log, platform, signal);
         }
         if (dryRun) {
           log(`would release ${name} (${port})`);
           continue;
         }
-        withConfigLock(() => {
+        await withConfigLockAsync(() => {
           const cfg = loadConfig();
           const current = cfg?.projects?.[projectPath]?.ports;
           if (!cfg || current?.[name] !== port) return;
           delete current[name];
           saveConfig(cfg);
-        });
+        }, signal);
         log(`released ${name} (${port})`);
       } catch (error) {
+        signal?.throwIfAborted();
         failures.push(`${name} (${port}): ${(error as Error).message}`);
       }
     }
     if (failures.length) throw new Error(failures.join('\n'));
-  });
+  }, signal);
 }

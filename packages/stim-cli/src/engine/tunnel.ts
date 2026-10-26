@@ -1,17 +1,27 @@
+import type { StimContext } from '@stim-cli/core';
+import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import type { ChildProcess } from 'node:child_process';
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, watch, type FSWatcher } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { basename, join, resolve as resolvePath, sep } from 'node:path';
+import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path';
 import { getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
-import { pidExists, signalProcessTree } from '../metro.ts';
+import { pidExists, signalProcessTree, signalProcessTreeAsync } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { createLineReader } from '../process-output.ts';
 import { resolveTailscaleBinary, type ManagedProvider } from './metro-reach.ts';
 import { probePublicHttp } from './public-http-probe.ts';
-import { readClaimSet } from '../ownership-claim.ts';
+import {
+  clearClaimChild,
+  markClaimChildPending,
+  processGroupAlive,
+  readClaimSet,
+  setClaimChild,
+  type ClaimHandle,
+} from '../ownership-claim.ts';
 import {
   withWorkspaceProcessLock,
+  WorkspaceProcessCleanupError,
   workspaceProcessLockPath,
   type WorkspaceProcessLockOptions,
 } from './workspace-process-lock.ts';
@@ -96,7 +106,7 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeou
 
 export async function withManagedTunnelLock<T>(
   root: string,
-  fn: () => Promise<T>,
+  fn: (claim: ClaimHandle) => Promise<T>,
   options: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
   return withWorkspaceProcessLock(managedTunnelLockRoot(root), 'metro-tunnel', fn, {
@@ -181,6 +191,7 @@ function waitForUrl(
   child: ChildProcess,
   parseLine: (line: string) => string | null,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ url: string | null; exited: boolean; lastLine?: string | null }> {
   return new Promise((resolve) => {
     let settled = false;
@@ -198,8 +209,10 @@ function waitForUrl(
       child.stderr?.removeListener('data', onErr);
       child.removeListener('error', onError);
       child.removeListener('exit', onExit);
+      signal?.removeEventListener('abort', onAbort);
       resolve({ url, exited, lastLine });
     };
+    const onAbort = () => finish(null);
     const onLine = (line: string) => {
       if (settled) return;
       if (line.trim()) lastLine = line.trim();
@@ -223,6 +236,8 @@ function waitForUrl(
     child.on('error', onError);
     child.on('exit', onExit);
     timer = setTimeout(() => finish(null), timeoutMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }
 
@@ -231,18 +246,23 @@ function waitForFileUrl(
   logFile: string,
   parseLine: (line: string) => string | null,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<{ url: string | null; exited: boolean; lastLine?: string | null }> {
   return new Promise((resolve) => {
     let settled = false;
+    let watcher: FSWatcher | null = null;
     const finish = (url: string | null, exited = false) => {
       if (settled) return;
       settled = true;
+      watcher?.close();
       clearInterval(interval);
       clearTimeout(timer);
       child.removeListener('error', onError);
       child.removeListener('exit', onExit);
+      signal?.removeEventListener('abort', onAbort);
       resolve({ url, exited });
     };
+    const onAbort = () => finish(null);
     const probe = () => {
       try {
         for (const line of readFileSync(logFile, 'utf-8').split(/\r?\n/)) {
@@ -255,9 +275,21 @@ function waitForFileUrl(
     const onExit = () => finish(null, true);
     child.on('error', onError);
     child.on('exit', onExit);
-    const interval = setInterval(probe, 25);
+    try {
+      watcher = watch(dirname(logFile), (_event, name) => {
+        if (name === null || name.toString() === basename(logFile)) probe();
+      });
+      watcher.on('error', () => {
+        watcher?.close();
+        watcher = null;
+      });
+      watcher.unref();
+    } catch {}
+    const interval = setInterval(probe, Math.min(1000, timeoutMs));
     const timer = setTimeout(() => finish(null), timeoutMs);
-    probe();
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    else probe();
   });
 }
 
@@ -290,7 +322,9 @@ async function waitUntilReachable({
   sleep,
   probe,
   timeoutMs,
+  signal,
 }: {
+  signal?: AbortSignal;
   url: string;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
@@ -299,15 +333,22 @@ async function waitUntilReachable({
 }): Promise<boolean> {
   const deadline = now() + timeoutMs;
   for (;;) {
+    throwIfCancelled(signal, 'Metro tunnel startup');
     const controller = new AbortController();
-    const ok = await probe(url, controller.signal).catch(() => false);
+    const ok = await probe(url, signal ? AbortSignal.any([signal, controller.signal]) : controller.signal).catch(
+      () => false,
+    );
+    throwIfCancelled(signal, 'Metro tunnel startup');
     if (ok) return true;
     if (now() >= deadline) return false;
-    await sleep(REACHABLE_POLL_MS);
+    if (sleep === defaultSleep) await cancellableSleep(REACHABLE_POLL_MS, { signal, what: 'Metro tunnel startup' });
+    else await sleep(REACHABLE_POLL_MS);
   }
 }
 
 export interface StartTunnelOptions {
+  claims?: readonly ClaimHandle[];
+  signal?: AbortSignal;
   provider: ManagedProvider;
   port: number;
   spawnFn?: SpawnFn | null;
@@ -340,9 +381,10 @@ export type StartTunnelResult =
   | { failed: true; reason: string; cleanupFailed?: true };
 
 const CLEANUP_TIMEOUT_MS = 1_000;
-const CLEANUP_POLL_MS = 25;
 
 export async function startTunnel({
+  claims = [],
+  signal,
   provider,
   port,
   spawnFn = null,
@@ -358,6 +400,7 @@ export async function startTunnel({
   readProcessToken = captureProcessToken,
   logFile = null,
 }: StartTunnelOptions): Promise<StartTunnelResult> {
+  throwIfCancelled(signal, 'Metro tunnel startup');
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const outputFile = provider === 'tailscale' ? null : logFile || (spawnFn ? null : createTunnelLogFile(provider));
 
@@ -367,29 +410,46 @@ export async function startTunnel({
       provider === 'tailscale' ? resolveTailscaleBinary((bin) => getExecutor().findExecutable(bin)) : provider;
     if (!binary) throw new Error('Install Tailscale and sign in to your tailnet.');
     const { bin, args } = tunnelArgv(provider, port, ngrokUrl, outputFile, binary);
+    for (const claim of claims) markClaimChildPending(claim);
     child = spawn(bin, args, {
       stdio: outputFile ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
   } catch (err) {
+    for (const claim of claims) clearClaimChild(claim);
     removeTunnelLogFile(outputFile);
     return { failed: true, reason: `Could not start ${provider}: ${describe(err)}` };
   }
 
   let childExited = false;
+  let childIdentity: { pid: number; processToken: string } | null = null;
   child.once('exit', () => {
     childExited = true;
   });
   const cleanup = async (alreadyExited = childExited): Promise<TunnelCleanupResult> => {
+    if (
+      claims.length > 0 &&
+      childIdentity &&
+      process.platform !== 'win32' &&
+      inspectProcessIdentity(childIdentity) === 'same'
+    ) {
+      try {
+        signalProcessTree(childIdentity.pid, 'SIGTERM', { group: true });
+      } catch {}
+    }
     const stopped = await terminateChild(child, {
       alreadyExited,
       timeoutMs: cleanupTimeoutMs,
-      now,
-      sleep,
       isAlive: isChildAlive,
+      waitForGroup: claims.length > 0 && process.platform !== 'win32',
     });
-    if (stopped) removeTunnelLogFile(outputFile);
-    return stopped
+    const drained =
+      stopped && (claims.length === 0 || process.platform === 'win32' || !child.pid || !processGroupAlive(child.pid));
+    if (drained) {
+      for (const claim of claims) clearClaimChild(claim);
+      removeTunnelLogFile(outputFile);
+    }
+    return drained
       ? { status: 'stopped' }
       : {
           status: 'failed',
@@ -398,13 +458,9 @@ export async function startTunnel({
   };
   const failAfterCleanup = async (reason: string, alreadyExited = childExited): Promise<StartTunnelResult> => {
     const stopped = await cleanup(alreadyExited);
-    return stopped.status === 'stopped'
-      ? { failed: true, reason }
-      : {
-          failed: true,
-          reason: `${reason} ${stopped.reason}`,
-          cleanupFailed: true,
-        };
+    if (stopped.status === 'failed')
+      return { failed: true, reason: `${reason} ${stopped.reason}`, cleanupFailed: true };
+    return { failed: true, reason: signal?.aborted ? 'Metro tunnel startup was cancelled.' : reason };
   };
   const pid = child.pid;
   if (!pid) {
@@ -421,10 +477,18 @@ export async function startTunnel({
   if (!initialProcessToken) {
     return failAfterCleanup(`${provider} started but its process identity token could not be read.`);
   }
+  childIdentity = { pid, processToken: initialProcessToken };
+  if (claims.length > 0) {
+    try {
+      for (const claim of claims) setClaimChild(claim, childIdentity);
+    } catch (error) {
+      return failAfterCleanup(`Could not record ${provider} process ownership: ${describe(error)}`);
+    }
+  }
 
   const { url, exited, lastLine } = outputFile
-    ? await waitForFileUrl(child, outputFile, parserFor(provider), urlTimeoutMs)
-    : await waitForUrl(child, parserFor(provider), urlTimeoutMs);
+    ? await waitForFileUrl(child, outputFile, parserFor(provider), urlTimeoutMs, signal)
+    : await waitForUrl(child, parserFor(provider), urlTimeoutMs, signal);
   if (!url) {
     return failAfterCleanup(
       exited
@@ -438,13 +502,19 @@ export async function startTunnel({
   if (!outputFile) resumeChildPipes(child);
 
   if (requireReachable) {
-    const reachable = await waitUntilReachable({
-      url,
-      now,
-      sleep,
-      probe: probeReachable,
-      timeoutMs: reachableTimeoutMs,
-    });
+    let reachable: boolean;
+    try {
+      reachable = await waitUntilReachable({
+        url,
+        now,
+        sleep,
+        probe: probeReachable,
+        timeoutMs: reachableTimeoutMs,
+        signal,
+      });
+    } catch (cause) {
+      return failAfterCleanup(`Could not establish ${provider} tunnel reachability: ${describe(cause)}`);
+    }
     if (!reachable) {
       return failAfterCleanup(
         `${url} did not become reachable within ${reachableTimeoutMs}ms; ${provider} may still be registering, or the network path is blocked.`,
@@ -452,6 +522,7 @@ export async function startTunnel({
     }
   }
 
+  if (signal?.aborted) return failAfterCleanup('Metro tunnel startup was cancelled.');
   const finalProcessToken = captureChildIdentity();
   if (!finalProcessToken || finalProcessToken !== initialProcessToken) {
     return failAfterCleanup(`${provider} process identity changed before its tunnel could be recorded.`);
@@ -465,6 +536,8 @@ export async function startTunnel({
 }
 
 export interface StartTunnelSequenceOptions {
+  claims?: readonly ClaimHandle[];
+  signal?: AbortSignal;
   providers: readonly ManagedProvider[];
   port: number;
   ngrokUrl?: string | null;
@@ -481,9 +554,11 @@ export type StartTunnelSequenceResult =
       logFile?: string | null;
       cleanup: () => Promise<TunnelCleanupResult>;
     }
-  | { failed: true; reason: string };
+  | { failed: true; reason: string; cleanupFailed?: true };
 
 export async function startTunnelSequence({
+  claims = [],
+  signal,
   providers,
   port,
   ngrokUrl = null,
@@ -492,7 +567,10 @@ export async function startTunnelSequence({
 }: StartTunnelSequenceOptions): Promise<StartTunnelSequenceResult> {
   const failures: string[] = [];
   for (const provider of providers) {
+    if (signal?.aborted) return { failed: true, reason: 'Metro tunnel startup was cancelled.' };
     const result = await start({
+      claims,
+      signal,
       provider,
       port,
       ngrokUrl: provider === 'ngrok' ? ngrokUrl : null,
@@ -500,7 +578,7 @@ export async function startTunnelSequence({
     });
     if (!('failed' in result)) return { provider, ...result };
     failures.push(`${provider}: ${result.reason}`);
-    if (result.cleanupFailed) return { failed: true, reason: failures.join(' ') };
+    if (result.cleanupFailed) return { failed: true, reason: failures.join(' '), cleanupFailed: true };
   }
   return { failed: true, reason: failures.join(' ') || 'No managed tunnel provider was selected.' };
 }
@@ -522,45 +600,44 @@ function resumeChildPipes(child: ChildProcess): void {
   child.stderr?.resume?.();
 }
 
-async function signalAndWaitForExit(
+function signalAndWaitForExit(
   child: TerminableChild,
   signal: NodeJS.Signals,
   {
     timeoutMs,
-    now,
-    sleep,
     isAlive,
     platform,
   }: {
     timeoutMs: number;
-    now: () => number;
-    sleep: (ms: number) => Promise<void>;
     isAlive: (pid: number) => boolean;
     platform: NodeJS.Platform;
   },
 ): Promise<boolean> {
-  let exited = false;
-  const onExit = () => {
-    exited = true;
-  };
-  child.once('exit', onExit);
-  try {
-    // Package-manager shims (choco shimgen, pnpm) run the real tunnel binary as a
-    // child; on win32 only taskkill /T reaches it.
-    if (platform === 'win32' && child.pid) signalProcessTree(child.pid, signal, { platform });
-    child.kill(signal);
-  } catch (err) {
-    child.removeListener('exit', onExit);
-    return isEsrch(err);
-  }
-  const hasExited = () => exited;
-  const deadline = now() + timeoutMs;
-  while (!hasExited() && now() < deadline) {
-    await sleep(CLEANUP_POLL_MS);
-  }
-  if (!hasExited() && child.pid && !isAlive(child.pid)) exited = true;
-  child.removeListener('exit', onExit);
-  return hasExited();
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onExit = () => finish(true);
+    const onError = (error: unknown) => finish(isEsrch(error));
+    const finish = (exited: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.removeListener('exit', onExit);
+      child.removeListener('error', onError);
+      resolve(exited);
+    };
+    child.once('exit', onExit);
+    child.once('error', onError);
+    try {
+      // Package-manager shims (choco shimgen, pnpm) run the real tunnel binary as a
+      // child; on win32 only taskkill /T reaches it.
+      if (platform === 'win32' && child.pid) signalProcessTree(child.pid, signal, { platform });
+      child.kill(signal);
+    } catch (error) {
+      finish(isEsrch(error));
+    }
+    if (!settled) timer = setTimeout(() => finish(Boolean(child.pid && !isAlive(child.pid))), timeoutMs);
+  });
 }
 
 export interface TerminableChild {
@@ -577,31 +654,30 @@ export async function terminateChild(
   {
     alreadyExited,
     timeoutMs,
-    now,
-    sleep,
     isAlive,
     platform = process.platform,
+    waitForGroup = false,
   }: {
     alreadyExited: boolean;
     timeoutMs: number;
-    now: () => number;
-    sleep: (ms: number) => Promise<void>;
     isAlive: (pid: number) => boolean;
     platform?: NodeJS.Platform;
+    waitForGroup?: boolean;
   },
 ): Promise<boolean> {
-  if (alreadyExited) {
-    closeChildPipes(child);
-    return true;
+  let stopped = alreadyExited;
+  let deadline = Date.now() + timeoutMs;
+  if (!stopped) stopped = await signalAndWaitForExit(child, 'SIGTERM', { timeoutMs, isAlive, platform });
+  if (!stopped) {
+    deadline = Date.now() + timeoutMs;
+    stopped = await signalAndWaitForExit(child, 'SIGKILL', { timeoutMs, isAlive, platform });
   }
-  const terminated = await signalAndWaitForExit(child, 'SIGTERM', { timeoutMs, now, sleep, isAlive, platform });
-  if (terminated) {
-    closeChildPipes(child);
-    return true;
+  if (stopped && waitForGroup && child.pid) {
+    while (processGroupAlive(child.pid) && Date.now() < deadline) await cancellableSleep(25);
+    stopped = !processGroupAlive(child.pid);
   }
-  const killed = await signalAndWaitForExit(child, 'SIGKILL', { timeoutMs, now, sleep, isAlive, platform });
   closeChildPipes(child);
-  return killed;
+  return stopped;
 }
 
 function describe(err: unknown): string {
@@ -609,9 +685,10 @@ function describe(err: unknown): string {
 }
 
 export interface StopTunnelOptions {
+  operation?: StimContext;
   isAlive?: (pid: number) => boolean;
   inspectIdentity?: typeof inspectProcessIdentity;
-  kill?: (pid: number) => void;
+  kill?: (pid: number) => unknown;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   timeoutMs?: number;
@@ -636,12 +713,16 @@ export async function stopTunnel(
     isAlive = pidExists,
     inspectIdentity = inspectProcessIdentity,
     platform = process.platform,
-    kill = (pid: number) => signalProcessTree(pid, 'SIGTERM', { platform }),
+    operation,
+    kill = (pid: number) => signalProcessTreeAsync(pid, 'SIGTERM', { platform, operation }),
     now = Date.now,
-    sleep = defaultSleep,
+    sleep = operation
+      ? (ms: number) => cancellableSleep(ms, { signal: operation.signal, what: 'tunnel stop' })
+      : defaultSleep,
     timeoutMs = STOP_TIMEOUT_MS,
   }: StopTunnelOptions = {},
 ): Promise<StopTunnelResult> {
+  operation?.signal.throwIfAborted();
   const missing = (): StopTunnelResult => {
     removeRecordedTunnelLogFile(record?.logFile);
     return { status: 'missing' };
@@ -667,8 +748,10 @@ export async function stopTunnel(
   }
 
   try {
-    kill(pid);
+    await kill(pid);
   } catch (err) {
+    if (err instanceof WorkspaceProcessCleanupError) throw err;
+    operation?.signal.throwIfAborted();
     return isEsrch(err) ? missing() : { status: 'failed', reason: describe(err) };
   }
 
@@ -679,8 +762,10 @@ export async function stopTunnel(
     return current === 'gone' || current === 'different';
   };
   while (now() < deadline && !exited()) {
+    operation?.signal.throwIfAborted();
     await sleep(STOP_POLL_MS);
   }
+  operation?.signal.throwIfAborted();
   if (!exited()) return { status: 'failed', reason: `pid ${pid} did not exit within ${timeoutMs}ms.` };
   removeRecordedTunnelLogFile(record.logFile);
   return { status: 'stopped' };

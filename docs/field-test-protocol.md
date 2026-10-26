@@ -59,7 +59,9 @@ For a standalone field pass of the published release:
 
 ```bash
 published_version=$(npm view stim version)
-stim() { npx "stim@$published_version" "$@"; }
+prefix=$(mktemp -d)
+npm install --prefix "$prefix" "stim@$published_version"
+stim() { "$prefix/node_modules/.bin/stim" "$@"; }
 test "$(stim --version)" = "$published_version"
 npx skills add appandflow/stim
 stim guide agent

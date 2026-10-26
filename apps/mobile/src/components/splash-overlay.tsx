@@ -9,6 +9,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { PIXEL_DISMISS_MS, PixelDismiss } from '@/components/pixel-dismiss';
 import { colors } from '@/design/tokens';
+import { markSplashHidden } from '@/lib/startup-readiness';
 
 const LOGO = require('@/assets/images/splash-logo.png');
 
@@ -48,6 +49,7 @@ export function SplashOverlay({ children }: { children: ReactNode }) {
     }
     played = true;
     SplashScreen.hide();
+    markSplashHidden();
     const timeout = setTimeout(
       () => setVisible(false),
       (reduceMotion ? CROSSFADE_MS : PIXELS_DELAY_MS + PIXEL_DISMISS_MS) + UNMOUNT_SLACK_MS,

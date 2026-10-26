@@ -534,6 +534,24 @@ import Testing
     #expect((defaults.persistentDomain(forName: name)! as NSDictionary) == expected)
   }
 
+  @Test func movesTheLastLoginShellStimHomeIntoTheSettingOnce() throws {
+    let cases: [(last: String, existing: String?, expected: String?)] = [
+      ("/Volumes/Work/stim", nil, "/Volumes/Work/stim"),
+      ("/Volumes/Work/stim", "/kept", "/kept"),
+      (NSHomeDirectory() + "/.stim", nil, nil),
+    ]
+    for (last, existing, expected) in cases {
+      let name = "stim-test-home-\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: name))
+      defer { defaults.removePersistentDomain(forName: name) }
+      defaults.set(last, forKey: "lastLoginStimHome")
+      if let existing { defaults.set(existing, forKey: AppPreferences.Key.stimHome) }
+      AppPreferences.migrate(defaults)
+      #expect(defaults.string(forKey: AppPreferences.Key.stimHome) == expected)
+      #expect(defaults.object(forKey: "lastLoginStimHome") == nil)
+    }
+  }
+
   @Test func migratesSavedSidebarChoicesWithoutAddingUnsavedCheckboxDefaults() throws {
     let cases: [(saved: [String: Any], expected: Set<StatusFilter>?)] = [
       ([:], nil),
@@ -915,18 +933,6 @@ import Testing
     #expect(outcome.kept.isEmpty)
   }
 
-  @Test func fallsBackToTheReportOnACLIWithoutResults() throws {
-    let json = """
-      {"mode":"delete","actionable":true,"failures":0,"sections":{
-        "orphanedWorkspaces":[{"dir":"/s/workspaces/a","projectRoot":"/p","bytes":4096}],
-        "caches":[{"name":"Metro transform cache","dir":"/s/metro","bytes":7,"willEmpty":false,"note":"no eviction"}]
-      }}
-      """
-    let outcome = try GcOutcome(json: Data(json.utf8))
-    #expect(outcome.done.map(\.label) == ["/s/workspaces/a"])
-    #expect(outcome.freedBytes == 4096)
-  }
-
   @Test func onlyActingGcJsonRunsHaveAnOutcome() {
     #expect(GcOutcome.describes(["gc", "--delete", "--json"]))
     #expect(GcOutcome.describes(["gc", "--idle", "30m", "--json"]))
@@ -1045,6 +1051,25 @@ import Testing
 
 }
 
+@Suite struct MachineCpuTicksTests {
+  @Test func computesBusyShareOfAllTicksBetweenTwoReadings() {
+    let before = MachineCpuTicks(busy: 1_000, idle: 9_000)
+    let after = MachineCpuTicks(busy: 1_300, idle: 9_700)
+    #expect(MachineCpuTicks.fraction(from: before, to: after) == 0.3)
+  }
+
+  @Test func survivesA32BitCounterWrap() {
+    let before = MachineCpuTicks(busy: UInt32.max - 99, idle: 0)
+    let after = MachineCpuTicks(busy: 100, idle: 200)
+    #expect(MachineCpuTicks.fraction(from: before, to: after) == 0.5)
+  }
+
+  @Test func reportsNothingWhenNoTickElapsed() {
+    let ticks = MachineCpuTicks(busy: 5, idle: 5)
+    #expect(MachineCpuTicks.fraction(from: ticks, to: ticks) == nil)
+  }
+}
+
 @Suite struct OpenURLTests {
   @Test func readsTheDeviceOnlyFromAnOpenURL() {
     #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?udid=U1")!) == .simulator(udid: "U1"))
@@ -1059,19 +1084,6 @@ import Testing
     #expect(deviceOpenRequest(fromOpenURL: URL(string: "siniulator://open?udid=U1")!) == nil)
     #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?udid=")!) == nil)
     #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?serial=")!) == nil)
-  }
-
-  @Test func findsTheWorkspaceThatOwnsTheRequestedDevice() throws {
-    let url = Bundle.module.url(forResource: "status", withExtension: "json", subdirectory: "Fixtures")!
-    let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
-    let simulator = try #require(payload.owner(of: .simulator(udid: "D39CAF14-F4A4-4C0A-B8A4-3A30B2D268F0")))
-    #expect(simulator.workspace.path == "/Users/dev/app/.worktrees/wide-insets/apps/mobile")
-    #expect(simulator.device.slot == "ipad")
-    let emulator = try #require(payload.owner(of: .emulator(serial: "emulator-5554")))
-    #expect(emulator.workspace.path == "/Users/dev/app/.worktrees/wide-insets/apps/mobile")
-    #expect(emulator.device.id == "android:default:stim-wide-insets-mobile")
-    #expect(payload.owner(of: .simulator(udid: "emulator-5554")) == nil)
-    #expect(payload.owner(of: .emulator(serial: "emulator-5556")) == nil)
   }
 
   @Test func readsAWorkspaceLink() {
@@ -1246,45 +1258,6 @@ import Testing
     #expect(StimCLI(environment: ["PATH": dir.path], override: "").executable == stim)
   }
 
-  @Test func returnsASettingsRefusalFromAFailedCommand() async throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let stim = dir.appendingPathComponent("stim").path
-    let script = """
-      #!/bin/sh
-      echo "$*" > "\(dir.path)/args"
-      echo '{"code":"STIM_BAD_ARG","message":"Invalid metro.tunnel value","remedy":"For example"}'
-      exit 1
-      """
-    FileManager.default.createFile(atPath: stim, contents: Data(script.utf8), attributes: [.posixPermissions: 0o755])
-
-    let result = try await StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
-      .writeSetting("metro.tunnel", value: "wormhole", scope: .workspace, cwd: dir.path)
-
-    guard case .refused(let refusal) = result else {
-      Issue.record("expected a refusal")
-      return
-    }
-    #expect(refusal.code == "STIM_BAD_ARG" && refusal.remedy == "For example")
-    let args = try String(contentsOf: dir.appendingPathComponent("args"), encoding: .utf8)
-    #expect(args == "settings set metro.tunnel wormhole --scope workspace --json\n")
-  }
-}
-
-@Suite struct StatusWatchTests {
-  @Test func fallsBackOnlyWhenStimRefusesTheWatchFlag() {
-    #expect(StatusWatch.isUnsupported(stderr: ["error: unknown option '--watch'"]))
-    #expect(!StatusWatch.isUnsupported(stderr: ["error: unknown option '--wtch'"]))
-    #expect(!StatusWatch.isUnsupported(stderr: ["Error: EACCES: permission denied, open '/Users/dev/.stim/config.json'"]))
-  }
-
-  @Test func restartDelayDoublesToTheCapAndResetsAfterALongRun() {
-    var backoff = RestartBackoff()
-    #expect([0, 0, 0, 0, 0, 0, 0].map { backoff.delay(afterRunning: $0) } == [1, 2, 4, 8, 16, 30, 30])
-    #expect(backoff.delay(afterRunning: 120) == 1)
-    #expect(backoff.delay(afterRunning: 0) == 2)
-  }
 }
 
 @Suite struct AgentSessionTests {

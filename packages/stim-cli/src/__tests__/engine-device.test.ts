@@ -31,7 +31,7 @@ import type { DeviceRecord } from '@stim-cli/core/state';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
-import { workspaceId } from '../workspace/paths.ts';
+import { workspaceId, workspaceLogsDir } from '../workspace/paths.ts';
 import { decodeStats, statsFile } from '@stim-cli/core/state';
 import { createIosSimSnapshot, ownedSimName } from '../devices/ios.ts';
 import { makeAdbDevices, makeChildProcess, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
@@ -92,6 +92,22 @@ afterEach(() => {
   resetExecutor();
 });
 
+const SPRINGBOARD_ROW = '4242\t0\tcom.apple.SpringBoard\n';
+
+function deviceLog(root = tmpHome): Record<string, unknown>[] {
+  const file = join(workspaceLogsDir(root), 'device.ndjson');
+  return existsSync(file)
+    ? readFileSync(file, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line): Record<string, unknown> => JSON.parse(line))
+    : [];
+}
+
+function simctlSpawnStub(file: string, args: readonly string[]): string {
+  return file === 'xcrun' && args[1] === 'spawn' && args[3] === 'launchctl' ? SPRINGBOARD_ROW : '';
+}
+
 function simList(devices: SimEntry[]) {
   return JSON.stringify({
     devices: {
@@ -125,7 +141,7 @@ describe('ensureBooted: ios', () => {
         runFile(file, args = [], options) {
           if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
           probes.push([file, ...args, options]);
-          return '';
+          return SPRINGBOARD_ROW;
         },
         spawn: (cmd: string, args: readonly string[] = []) => {
           commands.push([cmd, ...args].join(' '));
@@ -181,47 +197,242 @@ describe('ensureBooted: ios', () => {
     expect(result.reason).not.toMatch(/out of memory|OOM/i);
   });
 
-  test('boots a shut-down owned sim and waits for the Booted state', async () => {
-    let listCalls = 0;
-    const commands: string[] = [];
-    setExecutor({
-      run: (cmd) => {
-        commands.push(cmd);
-        if (cmd.includes('list devices')) {
-          listCalls += 1;
-          const state = listCalls >= 3 ? 'Booted' : 'Shutdown';
-          return simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]);
-        }
-        return '';
-      },
-      runQuiet: () => '',
-      runFileQuiet: (file, args = []) => {
-        commands.push([file, ...args].join(' '));
-        return '';
-      },
-      runFile(file, args = []) {
-        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
-          ? this.run!([file, ...args].join(' '))
-          : '';
-      },
-      spawn: (cmd: string, args: readonly string[] = []) => {
-        commands.push([cmd, ...args].join(' '));
-        return makeExitingChild();
-      },
+  describe('a Booted simulator whose SpringBoard is not running', () => {
+    function deadShellExecutor({ rows, recoversOnBoot }: { rows: string[]; recoversOnBoot: boolean }) {
+      let state = 'Booted';
+      let shellUp = false;
+      let listings = 0;
+      const commands: string[] = [];
+      setExecutor({
+        findExecutable: () => null,
+        run: () => simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]),
+        runQuiet: () => '',
+        runFileQuiet: (file, args = []) => {
+          commands.push([file, ...args].join(' '));
+          if (args[1] === 'shutdown') state = 'Shutdown';
+          return '';
+        },
+        runFile(file, args = []) {
+          commands.push([file, ...args].join(' '));
+          if (file === 'xcrun' && args[1] === 'list')
+            return simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]);
+          if (file === 'xcrun' && args[3] === 'launchctl') {
+            if (shellUp) return SPRINGBOARD_ROW;
+            return rows[Math.min(listings++, rows.length - 1)] ?? '';
+          }
+          if (file === 'xcrun' && args[3] === 'notifyutil') return 'com.apple.springboard.finishedstartup 4242';
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+          }
+          return '';
+        },
+        spawn: (cmd: string, args: readonly string[] = []) => {
+          commands.push([cmd, ...args].join(' '));
+          if (args[1] === 'boot') {
+            state = 'Booted';
+            shellUp = recoversOnBoot;
+          }
+          return makeExitingChild();
+        },
+      });
+      return commands;
+    }
+    let savedHome: string | undefined;
+    let savedProfile: string | undefined;
+    beforeEach(() => {
+      savedHome = process.env.HOME;
+      savedProfile = process.env.USERPROFILE;
+      process.env.HOME = tmpHome;
+      process.env.USERPROFILE = tmpHome;
+      mkdirSync(join(tmpHome, 'Library/Logs/DiagnosticReports'), { recursive: true });
     });
-    const result = await ensureBooted({
-      projectPath: tmpHome,
-      platform: 'ios',
-      simulatorApp: 'siniulator',
-      device: { deviceUdid: 'U1', owned: true },
-      timeoutMs: 5000,
-      pollMs: 5,
+    afterEach(() => {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+      if (savedProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = savedProfile;
     });
-    expect(commands).toContain('open -a Siniulator siniulator://open?udid=U1');
-    expect(result).toEqual({ ok: true, udid: 'U1' });
-    expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
-    expect(commands.indexOf('xcrun simctl boot U1')).toBeLessThan(commands.indexOf('xcrun simctl bootstatus U1 -b'));
+    const ensure = (out: string[] = []) =>
+      ensureBooted({
+        projectPath: tmpHome,
+        platform: 'ios',
+        device: { deviceUdid: 'U1', owned: true, booted: 'U1' },
+        timeoutMs: 5000,
+        pollMs: 1,
+        out: (line) => out.push(line),
+      });
+
+    test('restarts it once through teardown and launches nothing on the dead shell', async () => {
+      const commands = deadShellExecutor({ rows: [''], recoversOnBoot: true });
+      const notes: string[] = [];
+      expect(await ensure(notes)).toEqual({ ok: true, udid: 'U1' });
+      expect(commands.filter((c) => c === 'xcrun simctl shutdown U1')).toHaveLength(1);
+      expect(commands.filter((c) => c === 'xcrun simctl boot U1')).toHaveLength(1);
+      expect(commands.indexOf('xcrun simctl shutdown U1')).toBeLessThan(commands.indexOf('xcrun simctl boot U1'));
+      expect(notes.some((line) => line.includes('SpringBoard is not running on U1'))).toBe(true);
+    });
+
+    test('copies the simulator SpringBoard crash reports into the workspace logs before the restart', async () => {
+      const name = 'SpringBoard-2026-10-23-000000.ips';
+      const text = `{}\n${JSON.stringify({ captureTime: new Date().toISOString(), coalitionName: 'com.apple.CoreSimulator.SimDevice.u1' })}`;
+      writeFileSync(join(tmpHome, 'Library/Logs/DiagnosticReports', name), text);
+      writeFileSync(
+        join(tmpHome, 'Library/Logs/DiagnosticReports', 'SpringBoard-2026-10-23-000001.ips'),
+        `{}\n${JSON.stringify({ captureTime: new Date().toISOString(), coalitionName: 'com.apple.CoreSimulator.SimDevice.OTHER' })}`,
+      );
+      deadShellExecutor({ rows: [''], recoversOnBoot: true });
+      expect(await ensure()).toEqual({ ok: true, udid: 'U1' });
+      const records = deviceLog();
+      const copy = records.findIndex((record) => record.event === 'springboard_crash_reports');
+      expect(records[copy]).toMatchObject({ deviceId: 'U1', files: [name], level: 'warn' });
+      expect(copy).toBeGreaterThanOrEqual(0);
+      expect(copy).toBeLessThan(records.findIndex((record) => record.phase === 'restart'));
+      expect(readFileSync(join(workspaceLogsDir(tmpHome), name), 'utf8')).toBe(text);
+      expect(existsSync(join(workspaceLogsDir(tmpHome), 'SpringBoard-2026-10-23-000001.ips'))).toBe(false);
+    });
+
+    test('records a restart, a boot marked as a restart and an empty copy when no report exists', async () => {
+      deadShellExecutor({ rows: [''], recoversOnBoot: true });
+      await ensure();
+      const records = deviceLog().filter((record) => record.event !== undefined);
+      expect(records.map((record) => record.phase ?? record.event)).toEqual([
+        'springboard_crash_reports',
+        'restart',
+        'boot_requested',
+        'bootstatus_done',
+        'springboard_started',
+        'viewer_opened',
+      ]);
+      expect(records[0]).toMatchObject({ files: [], level: 'info' });
+      expect(records[1]).toMatchObject({ level: 'warn', deviceId: 'U1' });
+      expect(records[2]).toMatchObject({ boot: 'restart' });
+    });
+
+    test('attributes the boot, copy and restart records of a named slot to it', async () => {
+      deadShellExecutor({ rows: [''], recoversOnBoot: true });
+      await ensureBooted({
+        projectPath: tmpHome,
+        platform: 'ios',
+        slot: 'tablet',
+        device: { deviceUdid: 'U1', owned: true, booted: 'U1' },
+        timeoutMs: 5000,
+        pollMs: 1,
+      });
+      const records = deviceLog();
+      expect(records.length).toBeGreaterThan(4);
+      expect(records.every((record) => record.slot === 'tablet')).toBe(true);
+    });
+
+    test('waits out a respawn without restarting the simulator', async () => {
+      const commands = deadShellExecutor({ rows: ['', '', SPRINGBOARD_ROW], recoversOnBoot: false });
+      expect(await ensure()).toEqual({ ok: true, udid: 'U1' });
+      expect(commands.some((c) => c.includes('simctl shutdown') || c.includes('simctl boot'))).toBe(false);
+    });
+
+    test('restarts only once and then names the stop and rerun remedy', async () => {
+      const commands = deadShellExecutor({ rows: ['-\t-5\tcom.apple.SpringBoard\n'], recoversOnBoot: false });
+      const result = await ensure();
+      expect(result.failed).toBe(true);
+      expect(result.reason).toMatch(/U1.*SpringBoard.*not running.*`stim stop`.*`stim ios`/);
+      expect(commands.filter((c) => c === 'xcrun simctl shutdown U1')).toHaveLength(1);
+      expect(commands.filter((c) => c === 'xcrun simctl boot U1')).toHaveLength(1);
+      const records = deviceLog();
+      expect(records.filter((record) => record.phase === 'restart')).toHaveLength(1);
+      expect(records.filter((record) => record.event === 'springboard_crash_reports')).toHaveLength(2);
+    });
   });
+
+  const springBoardStarting = 'com.apple.springboard.finishedstartup 0';
+  const springBoardStarted = 'com.apple.springboard.finishedstartup 4242';
+  test.each([
+    ['U1', 0, [springBoardStarting, springBoardStarting, springBoardStarted], false],
+    ['OTHER', 0, [springBoardStarted], true],
+    ['U1', 60, [springBoardStarted], true],
+    ['U1', 0, [new Error('notifyutil: No such file or directory')], true],
+  ] as const)(
+    'boots a shut-down owned sim, waits for the Booted state and SpringBoard, and mutes it (%s at %s, case %#)',
+    async (reportedUdid, reportedVolume, springBoard, warns) => {
+      let listCalls = 0;
+      let springBoardCalls = 0;
+      const commands: string[] = [];
+      const notes: string[] = [];
+      setExecutor({
+        run: (cmd) => {
+          commands.push(cmd);
+          if (cmd.includes('list devices')) {
+            listCalls += 1;
+            const state = listCalls >= 3 ? 'Booted' : 'Shutdown';
+            return simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]);
+          }
+          return '';
+        },
+        runQuiet: () => '',
+        runFileQuiet: (file, args = []) => {
+          commands.push([file, ...args].join(' '));
+          return '';
+        },
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            commands.push([file, ...args].join(' '));
+            return JSON.stringify({
+              info: { outcome: 'success' },
+              result: { deviceIdentifier: reportedUdid, volume: reportedVolume },
+            });
+          }
+          if (file === 'xcrun' && args[1] === 'spawn' && args[3] === 'notifyutil') {
+            commands.push([file, ...args].join(' '));
+            const reply = springBoard[Math.min(springBoardCalls++, springBoard.length - 1)];
+            if (reply instanceof Error) throw reply;
+            return reply;
+          }
+          return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+            ? this.run!([file, ...args].join(' '))
+            : simctlSpawnStub(file, args);
+        },
+        spawn: (cmd: string, args: readonly string[] = []) => {
+          commands.push([cmd, ...args].join(' '));
+          return makeExitingChild();
+        },
+      });
+      const result = await ensureBooted({
+        projectPath: tmpHome,
+        platform: 'ios',
+        simulatorApp: 'siniulator',
+        device: { deviceUdid: 'U1', owned: true },
+        timeoutMs: 5000,
+        pollMs: 5,
+        out: (line) => notes.push(line),
+      });
+      expect(commands).toContain('open -a Siniulator siniulator://open?udid=U1');
+      expect(result).toEqual({ ok: true, udid: 'U1' });
+      expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
+      expect(commands.indexOf('xcrun simctl boot U1')).toBeLessThan(commands.indexOf('xcrun simctl bootstatus U1 -b'));
+      const mute = 'xcrun devicectl device settings audio --device U1 --volume 0 --json-output -';
+      const springBoardQuery = 'xcrun simctl spawn U1 notifyutil -g com.apple.springboard.finishedstartup';
+      const started = springBoard.at(-1) === springBoardStarted;
+      expect(commands.filter((c) => c === springBoardQuery).length).toBe(springBoard.length + 1);
+      expect(commands.indexOf('xcrun simctl bootstatus U1 -b')).toBeLessThan(commands.indexOf(springBoardQuery));
+      expect(commands.filter((c) => c === mute).length).toBe(started ? 1 : 0);
+      expect(commands.indexOf(mute) > commands.lastIndexOf(springBoardQuery)).toBe(started);
+      expect(notes.some((line) => line.includes('Could not mute this simulator'))).toBe(warns);
+      expect(notes.some((line) => line.includes('simulator muted'))).toBe(!warns);
+      const phases = deviceLog();
+      expect(phases.map((record) => record.phase)).toEqual([
+        'boot_requested',
+        'bootstatus_done',
+        ...(started ? ['springboard_started'] : []),
+        'viewer_opened',
+      ]);
+      expect(phases.find((record) => record.phase === 'springboard_started')?.pid).toBe(started ? 4242 : undefined);
+      expect(phases[0]).toMatchObject({
+        src: 'device',
+        platform: 'ios',
+        event: 'ios_boot',
+        deviceId: 'U1',
+        boot: 'existing',
+      });
+    },
+  );
 
   test('an explicit ensureBooted timeout bounds the whole iOS boot wait', async () => {
     setExecutor({
@@ -236,7 +447,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => {
         const child = makeChildProcess();
@@ -273,7 +484,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => makeExitingChild(1, 'CoreLocationMigrator failed'),
     });
@@ -297,7 +508,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => {
         throw new Error('must not boot a foreign sim');
@@ -316,7 +527,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => null,
     });
@@ -336,7 +547,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => makeExitingChild(),
     });
@@ -358,7 +569,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => null,
     });
@@ -383,7 +594,7 @@ describe('ensureBooted: ios', () => {
       runFile: (file, args = []) => {
         expect(finished).toBe(true);
         commands.push([file, ...args].join(' '));
-        return '';
+        return SPRINGBOARD_ROW;
       },
       spawn: () => null,
     });
@@ -411,7 +622,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => null,
     });
@@ -438,7 +649,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => null,
     });
@@ -463,7 +674,7 @@ describe('ensureBooted: ios', () => {
       runFile(file, args = []) {
         return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
           ? this.run!([file, ...args].join(' '))
-          : '';
+          : simctlSpawnStub(file, args);
       },
       spawn: () => null,
     });
@@ -485,7 +696,9 @@ describe('ensureBooted: android', () => {
   test('waits for boot completion on an already-running owned AVD', async () => {
     const commands: string[] = [];
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         commands.push(cmd);
         if (cmd === 'emulator -list-avds') return 'stim-app';
@@ -513,47 +726,71 @@ describe('ensureBooted: android', () => {
       device: { avdName: 'stim-app', consolePort: 5554, owned: true },
     });
     expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
+    expect(commands.some((c) => /\b(push|app_process)\b/.test(c))).toBe(false);
   });
 
-  test('boots a stopped owned AVD on a claimed console port and waits', async () => {
-    const spawned: string[][] = [];
-    let booted = false;
-    setExecutor({
-      runFileQuiet: () => null,
-      run: (cmd) => {
-        if (cmd === 'emulator -list-avds') return 'stim-app';
-        if (cmd === 'adb devices')
-          return booted ? 'List of devices attached\nemulator-5554\tdevice' : 'List of devices attached';
-        return '';
-      },
-      runQuiet: (cmd) => {
-        if (cmd.includes('sys.boot_completed')) return booted ? '1' : '';
-        if (cmd.includes('pm path android')) return booted ? 'package:/system/framework/framework-res.apk' : '';
-        return '';
-      },
-      runFile(file, args = []) {
-        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
-        return '';
-      },
-      spawn: (cmd, args) => {
-        spawned.push([cmd, ...args]);
-        booted = true;
-        return { unref() {} };
-      },
-    });
-    const result = await ensureBooted({
-      platform: 'android',
-      projectPath: tmpHome,
-      device: { avdName: 'stim-app', consolePort: 5556, owned: true },
-      timeoutMs: 5000,
-    });
-    expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
-    expect(spawned).toEqual([['emulator', '-avd', 'stim-app', '-port', '5554', '-grpc', '8554', '-grpc-use-token']]);
-  });
+  test.each([
+    ['[V] volume is 0 in range [0..15]', false, 'stim-app'],
+    ['[V] volume is 5 in range [0..15]', true, 'stim-app'],
+    ["Error: unknown command 'set-volume'", true, 'stim-app'],
+    ['[V] volume is 0 in range [0..15]', true, 'other-avd'],
+    ['[V] volume is 0 in range [0..15]', true, ''],
+  ])(
+    'boots a stopped owned AVD on a claimed console port, waits, and mutes media (%s)',
+    async (readback, warns, identity) => {
+      const spawned: string[][] = [];
+      const notes: string[] = [];
+      let booted = false;
+      let transferredHelper = false;
+      setExecutor({
+        runFileQuiet(file, args = [], opts) {
+          return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+        },
+        run: (cmd) => {
+          if (cmd === 'emulator -list-avds') return 'stim-app';
+          if (cmd === 'adb devices')
+            return booted ? 'List of devices attached\nemulator-5554\tdevice' : 'List of devices attached';
+          return '';
+        },
+        runQuiet: (cmd) => {
+          if (cmd.includes('emu avd name')) return identity ? identity + '\nOK' : '';
+          if (cmd.includes('sys.boot_completed')) return booted ? '1' : '';
+          if (cmd.includes('pm path android')) return booted ? 'package:/system/framework/framework-res.apk' : '';
+          return '';
+        },
+        runFile(file, args = []) {
+          if (file === 'adb' && args[2] === 'push') transferredHelper = true;
+          if (file === 'adb' && args[3] === 'cmd') {
+            return args[4] === 'media_session' ? readback : '';
+          }
+          if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+          return '';
+        },
+        spawn: (cmd, args) => {
+          spawned.push([cmd, ...args]);
+          booted = true;
+          return { unref() {} };
+        },
+      });
+      const result = await ensureBooted({
+        platform: 'android',
+        projectPath: tmpHome,
+        device: { avdName: 'stim-app', consolePort: 5556, owned: true },
+        timeoutMs: 5000,
+        out: (line) => notes.push(line),
+      });
+      expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
+      expect(spawned).toEqual([['emulator', '-avd', 'stim-app', '-port', '5554', '-grpc', '8554', '-grpc-use-token']]);
+      expect(notes.some((line) => line.includes('Could not mute emulator media'))).toBe(warns);
+      expect(transferredHelper).toBe(identity === 'stim-app');
+    },
+  );
 
   test('reuses the serial returned by a fresh owned AVD boot when adb listing briefly misses it', async () => {
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -594,7 +831,9 @@ describe('ensureBooted: android', () => {
       upsertProject(other, {});
       setDevice(other, 'android', { avdName: 'stim-other', consolePort: 5560, owned: true });
       setExecutor({
-        runFileQuiet: () => null,
+        runFileQuiet(file, args = [], opts) {
+          return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+        },
         run: (cmd) => {
           if (cmd === 'emulator -list-avds') return 'stim-app\nstim-other';
           if (cmd === 'adb devices') return 'List of devices attached\nemulator-5560\tdevice';
@@ -627,7 +866,9 @@ describe('ensureBooted: android', () => {
     const spawned: string[][] = [];
     let ourSerial: string | null = null;
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') {
@@ -676,7 +917,9 @@ describe('ensureBooted: android', () => {
     }
     const spawnedPorts: number[] = [];
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-0\nstim-1';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -716,7 +959,9 @@ describe('ensureBooted: android', () => {
 
   test('ensureBooted stops the moment the spawned emulator process is gone', async () => {
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -747,7 +992,9 @@ describe('ensureBooted: android', () => {
   test('ensureBooted keeps polling while the emulator process is alive', async () => {
     let probes = 0;
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -776,6 +1023,47 @@ describe('ensureBooted: android', () => {
     expect(probes >= 5).toBeTruthy();
   });
 
+  test.skipIf(process.platform !== 'darwin')(
+    'Android boot completes while the memory-culprit top read is still running, then names the culprit',
+    async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(0);
+      vi.spyOn(hostMemory, 'readHostMemoryPressure').mockReturnValue('warning');
+      let finishTop: (output: string) => void = () => {};
+      const top = vi.fn<() => Promise<string | null>>(() => new Promise((resolve) => (finishTop = resolve)));
+      const run = (cmd: string) => (cmd === 'emulator -list-avds' ? 'stim-app' : 'List of devices attached');
+      const runQuiet = (cmd: string) =>
+        cmd.includes('sys.boot_completed') ? '1' : cmd.includes('pm path android') ? 'package:/x' : '';
+      const runFileQuiet = (file: string, args: string[] = []) =>
+        file === 'adb' || file === 'emulator' ? runQuiet([file, ...args].join(' ')) : null;
+      setExecutor({
+        runFileQuiet,
+        runFileQuietAsync: async (file, args) => (file === '/usr/bin/top' ? top() : runFileQuiet(file, args)),
+        run,
+        runQuiet,
+        runFile: (file, args = []) => (file === 'adb' || file === 'emulator' ? run([file, ...args].join(' ')) : ''),
+        spawn: () => ({ pid: 987654, unref() {} }),
+      });
+      const events: string[] = [];
+      const resultPromise = ensureBooted({
+        platform: 'android',
+        projectPath: tmpHome,
+        device: { avdName: 'stim-app', consolePort: 5556, owned: true },
+        timeoutMs: 20000,
+        alive: () => true,
+        out: (line) => events.push(line),
+      });
+      await vi.runAllTimersAsync();
+      const result = await resultPromise;
+      expect(result).toEqual({ ok: true, serial: 'emulator-5554' });
+      expect(top).toHaveBeenCalledTimes(1);
+      expect(events.filter((line) => line.includes('host memory pressure'))).toHaveLength(1);
+      expect(events.some((line) => line.includes('fseventsd'))).toBe(false);
+      finishTop(['PID    MEM    COMMAND', '76886  63G    fseventsd', ''].join('\n'));
+      await vi.waitFor(() => expect(events.some((line) => line.includes('fseventsd (pid 76886)'))).toBe(true));
+    },
+  );
+
   test.each([
     ['warning', 'late boot', true, 121000, true],
     ['critical', 'timeout', true, Infinity, true],
@@ -796,7 +1084,9 @@ describe('ensureBooted: android', () => {
       return { pid: live === null ? undefined : 987654, unref() {} };
     });
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => (cmd === 'emulator -list-avds' ? 'stim-app' : 'List of devices attached'),
       runQuiet: (cmd, opts) => {
         if (cmd.includes('getprop') || cmd.includes('pm path android')) {
@@ -873,7 +1163,9 @@ describe('ensureBooted: android', () => {
     setDevice(tmpHome, 'android', { owned: true, avdName: 'stim-app', consolePort: 5556 });
     const spawn = vi.fn<() => void>();
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\tdevice';
@@ -908,7 +1200,9 @@ describe('ensureBooted: android', () => {
     const logFile = join(tmpHome, 'ws', '.stim', 'logs', 'emulator.log');
     const opts: Array<Record<string, unknown>> = [];
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], options) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), options) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -946,7 +1240,9 @@ describe('ensureBooted: android', () => {
 
   test('refuses an AVD that this Stim home did not record', async () => {
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => (cmd === 'emulator -list-avds' ? 'Pixel_7_API_35' : ''),
       runQuiet: () => '',
       runFile(file, args = []) {
@@ -967,7 +1263,9 @@ describe('ensureBooted: android', () => {
 
   test('refuses a legacy physical record without issuing a single command at it', async () => {
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         throw new Error(`Stim must not run "${cmd}" for a physical record`);
       },
@@ -1065,6 +1363,12 @@ function iosExecutor(devices: SimEntry[]) {
       runFileQuiet: () => '',
       run(cmd: string) {
         run.push(cmd);
+        if (/simctl list --json/.test(cmd))
+          return JSON.stringify({
+            ...JSON.parse(DEVICE_TYPES_JSON),
+            ...JSON.parse(RUNTIMES_JSON),
+            ...JSON.parse(simList(devices)),
+          });
         if (/simctl list devicetypes --json/.test(cmd)) return DEVICE_TYPES_JSON;
         if (/simctl list runtimes --json/.test(cmd)) return RUNTIMES_JSON;
         if (/simctl list devices --json/.test(cmd)) return simList(devices);
@@ -1081,9 +1385,9 @@ function iosExecutor(devices: SimEntry[]) {
       },
       runFile(file: string, args: string[] = []) {
         files.push([file, ...args]);
-        if (file === 'xcrun' && args[0] === 'simctl' && (args[1] === 'list' || args[1] === 'boot'))
+        if (file === 'xcrun' && args[0] === 'simctl' && ['list', 'boot', 'create'].includes(args[1] ?? ''))
           return this.run!([file, ...args].join(' '));
-        return '';
+        return simctlSpawnStub(file, args);
       },
       spawn(cmd: string, args: readonly string[] = []) {
         if (args[1] === 'boot') run.push([cmd, ...args].join(' '));
@@ -1423,7 +1727,7 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
-  test('completing adoption clears both transient adoption fields', () => {
+  test('completing adoption clears both transient adoption fields', async () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', {
@@ -1435,7 +1739,7 @@ describe('ensureOwnedDevice: ios', () => {
         parkedCacheKey: 'fingerprint-debug-sim',
       });
 
-      clearIosAdoptionPending(root);
+      await clearIosAdoptionPending(root);
 
       expect(getProject(root)?.platforms?.ios).toEqual({
         deviceUdid: 'U1',
@@ -1451,9 +1755,9 @@ describe('ensureOwnedDevice: ios', () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
-      recordIosSchemeApprovals(root, 'OTHER', ['bridge-->app']);
+      await recordIosSchemeApprovals(root, 'OTHER', ['bridge-->app']);
       expect(getProject(root)?.platforms?.ios?.schemeApprovals).toBeUndefined();
-      recordIosSchemeApprovals(root, 'U1', ['bridge-->app']);
+      await recordIosSchemeApprovals(root, 'U1', ['bridge-->app']);
 
       setExecutor(iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]).exec);
       const device = await ensureOwnedDevice({
@@ -1535,7 +1839,7 @@ describe('ensureOwnedDevice: ios', () => {
     },
   );
 
-  test('the budget gate, capacity check and device setup of a cache hit share one simulator listing', async () => {
+  test('the budget gate, capacity check and device setup of a cache hit share one simctl list', async () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app (iPhone 17 Pro 26.2)' });
@@ -1575,7 +1879,7 @@ describe('ensureOwnedDevice: ios', () => {
         ok: true,
         udid: 'U1',
       });
-      expect(run.filter((cmd) => cmd.includes('simctl list devices'))).toHaveLength(1);
+      expect(run.filter((cmd) => cmd.includes('simctl list'))).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1678,6 +1982,60 @@ describe('ensureOwnedDevice: ios', () => {
 
       expect(calls).toMatchObject([{ udid: 'U1', profile, previouslyManaged: false }]);
       expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('slims an owned simulator with the defaults when ios.simslim is on and no profile is set', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      setExecutor(exec);
+      const calls: unknown[] = [];
+
+      await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslim: 'on' } },
+        reconcileIosSimulator: async (args) => {
+          calls.push(args);
+          return { managed: true, profile: null };
+        },
+      });
+
+      expect(calls).toMatchObject([{ udid: 'U1', profile: null, slimByDefault: true, previouslyManaged: false }]);
+      expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('does not slim, and restores a managed simulator, when ios.simslim is off', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app', simslimManaged: true });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      setExecutor(exec);
+      const calls: unknown[] = [];
+
+      await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslim: 'off' } },
+        reconcileIosSimulator: async (args) => {
+          calls.push(args);
+          return { managed: false, profile: null };
+        },
+      });
+
+      expect(calls).toMatchObject([{ udid: 'U1', profile: null, slimByDefault: false, previouslyManaged: true }]);
+      expect(getProject(root)?.platforms?.ios?.simslimManaged).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1829,6 +2187,320 @@ describe('ensureOwnedDevice: ios', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test('mutes a created simulator after the SimSlim reconcile has rebooted it', async () => {
+    const root = projectDir();
+    try {
+      const profilePath = join(root, 'simslim.json');
+      writeFileSync(profilePath, '{}\n');
+      const profile = realpathSync(profilePath);
+      const { exec } = iosExecutor([]);
+      const events: string[] = [];
+      setExecutor({
+        ...exec,
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            events.push('mute');
+            return JSON.stringify({
+              info: { outcome: 'success' },
+              result: { deviceIdentifier: 'NEW-UDID', volume: 0 },
+            });
+          }
+          if (file === 'xcrun' && args.includes('notifyutil')) {
+            events.push('springboard');
+            return 'com.apple.springboard.finishedstartup 4242';
+          }
+          return exec.runFile(file, args);
+        },
+      });
+      const notes: string[] = [];
+      const result = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslimProfile: 'simslim.json' } },
+        out: (line) => notes.push(line),
+        reconcileIosSimulator: async () => {
+          events.push('reconcile');
+          return { managed: true, profile };
+        },
+      });
+      await result.booting?.done;
+      expect(events.at(-1)).toBe('mute');
+      expect(events.slice(events.indexOf('reconcile'))).toEqual(['reconcile', 'springboard', 'springboard', 'mute']);
+      expect(events.filter((event) => event === 'mute')).toHaveLength(1);
+      expect(notes.some((line) => line.includes('simulator muted'))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    { name: 'mutes a running simulator that the SimSlim reconcile rebooted', pids: [4242, 4300], muted: true },
+    { name: 'leaves the volume of a running simulator SimSlim did not reboot', pids: [4242, 4242], muted: false },
+  ])('$name', async ({ pids, muted }) => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      const events: string[] = [];
+      let reconciled = false;
+      setExecutor({
+        ...exec,
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            events.push('mute');
+            return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+          }
+          if (file === 'xcrun' && args.includes('notifyutil')) {
+            return `com.apple.springboard.finishedstartup ${pids[reconciled ? 1 : 0]}`;
+          }
+          return exec.runFile(file, args);
+        },
+      });
+      await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: { ios: { simslim: 'on' } },
+        reconcileIosSimulator: async () => {
+          events.push('reconcile');
+          reconciled = true;
+          return { managed: true, profile: null };
+        },
+      });
+      expect(events).toEqual(muted ? ['reconcile', 'mute'] : ['reconcile']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  describe('SimSlim rerun on a running simulator', () => {
+    function prepareRunning(springBoardPids: number[]) {
+      const root = projectDir();
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      const events: string[] = [];
+      const pids = [...springBoardPids];
+      setExecutor({
+        ...exec,
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            events.push('mute');
+            return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+          }
+          if (file === 'xcrun' && args.includes('notifyutil')) {
+            return `com.apple.springboard.finishedstartup ${pids.length > 1 ? pids.shift() : pids[0]}`;
+          }
+          return exec.runFile(file, args);
+        },
+      });
+      const notes: string[] = [];
+      const run = (settings: Record<string, unknown>) =>
+        ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings,
+          out: (line) => notes.push(line),
+          reconcileIosSimulator: async (args) => {
+            events.push(`reconcile ${args.profile ?? (args.slimByDefault ? 'default' : 'off')}`);
+            return { managed: Boolean(args.profile) || Boolean(args.slimByDefault), profile: args.profile ?? null };
+          },
+        });
+      return { root, events, notes, run };
+    }
+
+    test('skips SimSlim when the profile and the boot match the last reconcile', async () => {
+      const { root, events, notes, run } = prepareRunning([4242]);
+      try {
+        await run({ ios: { simslim: 'on' } });
+        expect(events).toEqual(['reconcile default']);
+        expect(getProject(root)?.platforms?.ios).toMatchObject({
+          simslimManaged: true,
+          simslimApplied: { profile: 'default', springBoardPid: 4242 },
+        });
+        notes.length = 0;
+        events.length = 0;
+
+        const record = await run({ ios: { simslim: 'on' } });
+        expect(events).toEqual([]);
+        expect(notes.some((line) => line.includes('SimSlim'))).toBe(false);
+        expect(record.simslimApplied).toEqual({ profile: 'default', springBoardPid: 4242 });
+        expect(getProject(root)?.platforms?.ios?.simslimApplied).toEqual({ profile: 'default', springBoardPid: 4242 });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('runs SimSlim again when the simulator has a different boot', async () => {
+      const { root, events, run } = prepareRunning([4242]);
+      try {
+        await run({ ios: { simslim: 'on' } });
+        events.length = 0;
+        setDevice(root, 'ios', {
+          ...getProject(root)?.platforms?.ios,
+          simslimApplied: { profile: 'default', springBoardPid: 1111 },
+        });
+        await run({ ios: { simslim: 'on' } });
+        expect(events).toEqual(['reconcile default']);
+        expect(getProject(root)?.platforms?.ios?.simslimApplied).toEqual({ profile: 'default', springBoardPid: 4242 });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('records the SpringBoard pids when SimSlim reboots the simulator', async () => {
+      const { root, run } = prepareRunning([1111, 4242]);
+      try {
+        await run({ ios: { simslim: 'on' } });
+        expect(deviceLog(root).filter((record) => record.phase === 'simslim_reboot')).toMatchObject([
+          { event: 'ios_boot', deviceId: 'U1', pidBefore: 1111, pidAfter: 4242 },
+        ]);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('records the SpringBoard pid of a simulator that is still starting after SimSlim rebooted it', async () => {
+      const { root, events, run } = prepareRunning([1111, 0, 4242]);
+      try {
+        await run({ ios: { simslim: 'on' } });
+        expect(getProject(root)?.platforms?.ios?.simslimApplied).toEqual({ profile: 'default', springBoardPid: 4242 });
+        events.length = 0;
+        await run({ ios: { simslim: 'on' } });
+        expect(events).toEqual([]);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('runs SimSlim again when the profile file changes, and skips again once it is applied', async () => {
+      const { root, events, run } = prepareRunning([4242]);
+      try {
+        const profilePath = join(root, 'simslim.json');
+        writeFileSync(profilePath, '{"a":1}\n');
+        const settings = { ios: { simslimProfile: 'simslim.json' } };
+        await run(settings);
+        events.length = 0;
+        await run(settings);
+        expect(events).toEqual([]);
+
+        writeFileSync(profilePath, '{"a":2}\n');
+        await run(settings);
+        expect(events).toEqual([`reconcile ${realpathSync(profilePath)}`]);
+        events.length = 0;
+        await run(settings);
+        expect(events).toEqual([]);
+
+        await run({ ios: { simslim: 'on' } });
+        expect(events).toEqual(['reconcile default']);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('restores stock services when SimSlim is turned off after a skipped rerun', async () => {
+      const { root, events, run } = prepareRunning([4242]);
+      try {
+        await run({ ios: { simslim: 'on' } });
+        await run({ ios: { simslim: 'on' } });
+        expect(events).toEqual(['reconcile default']);
+        events.length = 0;
+        await run({ ios: { simslim: 'off' } });
+        expect(events).toEqual(['reconcile off']);
+        const ios = getProject(root)?.platforms?.ios;
+        expect(ios?.simslimManaged).toBeUndefined();
+        expect(ios?.simslimApplied).toBeUndefined();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('reconciles a shut-down simulator even when its record matches the pid it will report', async () => {
+      const root = projectDir();
+      try {
+        setDevice(root, 'ios', {
+          deviceUdid: 'U1',
+          owned: true,
+          deviceName: 'stim-app',
+          simslimManaged: true,
+          simslimApplied: { profile: 'default', springBoardPid: 4242 },
+        });
+        const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
+        setExecutor({
+          ...exec,
+          runFile(file, args = []) {
+            if (file === 'xcrun' && args[0] === 'devicectl') {
+              return JSON.stringify({ info: { outcome: 'success' }, result: { deviceIdentifier: 'U1', volume: 0 } });
+            }
+            if (file === 'xcrun' && args.includes('notifyutil')) return 'com.apple.springboard.finishedstartup 4242';
+            return exec.runFile(file, args);
+          },
+        });
+        const reconciled: string[] = [];
+        const result = await ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: { ios: { simslim: 'on' } },
+          reconcileIosSimulator: async (args) => {
+            reconciled.push(args.udid);
+            return { managed: true, profile: null };
+          },
+        });
+        await result.booting?.done;
+        expect(reconciled).toEqual(['U1']);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('does not record a profile when SimSlim is not installed', async () => {
+      const { root } = prepareRunning([4242]);
+      try {
+        setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app', simslimManaged: true });
+        await ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: { ios: { simslim: 'on' } },
+          reconcileIosSimulator: async () => ({ managed: true, profile: null, notInstalled: true }),
+        });
+        expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+        expect(getProject(root)?.platforms?.ios?.simslimApplied).toBeUndefined();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    test('forgets the applied profile while a reconcile is in flight', async () => {
+      const { root, run } = prepareRunning([4242]);
+      try {
+        await run({ ios: { simslim: 'on' } });
+        const failing = ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: { ios: { simslim: 'off' } },
+          reconcileIosSimulator: async () => {
+            throw new Error('simslim off failed');
+          },
+        });
+        await expect(failing).rejects.toThrow('simslim off failed');
+        expect(getProject(root)?.platforms?.ios).toMatchObject({ simslimManaged: true });
+        expect(getProject(root)?.platforms?.ios?.simslimApplied).toBeUndefined();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
   });
 
   test.each([false, true])('prepares and joins a boot with the requested viewer (reused=%s)', async (reused) => {
@@ -1988,7 +2660,7 @@ describe('ensureOwnedDevice: android', () => {
           run.push(cmd);
           if (cmd === 'emulator -list-avds') return avds.length ? `${avds.join('\n')}\n` : '';
           if (/delete avd/.test(cmd)) {
-            const name = / -n "([^"]+)"/.exec(cmd)?.[1];
+            const name = / -n (\S+)/.exec(cmd)?.[1];
             assert(name);
             avds = avds.filter((entry) => entry !== name);
             rmSync(join(process.env.ANDROID_AVD_HOME!, `${name}.ini`), { force: true });
@@ -2013,10 +2685,12 @@ describe('ensureOwnedDevice: android', () => {
           }
         },
         runFile(file: string, args: string[] = []): string {
-          if (file === 'adb' || file === 'emulator') return this.run([file, ...args].join(' '));
+          if (file === 'adb' || file === 'emulator' || file === 'avdmanager')
+            return this.run([file, ...args].join(' '));
           return '';
         },
-        runFileQuiet(file: string) {
+        runFileQuiet(file: string, args: string[] = []) {
+          if (file === 'adb' || file === 'emulator') return this.runQuiet([file, ...args].join(' '));
           return file === 'ps' ? '' : null;
         },
         spawn(cmd: string, args: readonly string[], opts?: object) {
@@ -2203,7 +2877,7 @@ describe('ensureOwnedDevice: android', () => {
           settings: {},
         }),
       ).rejects.toThrow(/could not configure its AVD settings/i);
-      expect(run.some((cmd) => /delete avd -n "stim-app"/.test(cmd))).toBe(true);
+      expect(run).toContain('avdmanager delete avd -n stim-app');
       expect(spawn).toEqual([]);
       expect(getProject(root)?.platforms?.android).toBeUndefined();
     } finally {
@@ -2219,7 +2893,7 @@ describe('ensureOwnedDevice: android', () => {
       const configureAvd = () => {
         throw new Error('EEXIST: file already exists');
       };
-      const teardownAvd = () => ({ status: 'failed' as const, reason: 'delete failed' });
+      const teardownAvd = async () => ({ status: 'failed' as const, reason: 'delete failed' });
       await expect(
         ensureOwnedDevice({
           platform: 'android',
@@ -3209,7 +3883,7 @@ describe('ensureOwnedDevice: the requested model against the sim this workspace 
   test('a created sim reports the model and runtime it was created with', async () => {
     const root = projectDir();
     try {
-      const { run, exec } = iosExecutor([]);
+      const { files, exec } = iosExecutor([]);
       setExecutor(exec);
 
       const device = await ensureOwnedDevice({
@@ -3223,9 +3897,13 @@ describe('ensureOwnedDevice: the requested model against the sim this workspace 
 
       expect(device.deviceType).toBe('iPhone 16');
       expect(device.runtime).toBe('26.2');
-      expect(run.some((cmd) => cmd.includes(`simctl create "stim-app (iPhone 16 26.2)" "${TYPE_16.identifier}"`))).toBe(
-        true,
-      );
+      expect(files.find((call) => call[2] === 'create')?.slice(0, 5)).toEqual([
+        'xcrun',
+        'simctl',
+        'create',
+        'stim-app (iPhone 16 26.2)',
+        TYPE_16.identifier,
+      ]);
       expect(getProject(root)?.platforms?.ios?.runtime).toBe(undefined);
     } finally {
       rmSync(root, { recursive: true, force: true });

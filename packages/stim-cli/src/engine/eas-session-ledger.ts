@@ -8,7 +8,7 @@ import {
   validEasSessionClaim,
   type EasSessionClaim,
 } from '@stim-cli/core/state';
-import { withDirLock } from '../dir-lock.ts';
+import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
 import { EAS_TEST_GUARD_ROOT_ENV } from './eas-machine-root-guard-env.ts';
 
 export { easMachineStateRoot, readEasSessionLedger, type EasSessionClaim } from '@stim-cli/core/state';
@@ -39,31 +39,56 @@ function writeLedger(root: string, ledger: EasSessionLedger): void {
   }
 }
 
-export function recordEasSessionClaim(claim: EasSessionClaim, root: string = easMachineStateRoot()): void {
+function easSessionClaimWrite(claim: EasSessionClaim, root: string): () => void {
   assertEasMachineRootWritable(root);
   const normalized = validEasSessionClaim(claim.sessionId, claim);
   if (!normalized) throw new Error(`Invalid EAS session claim for ${claim.sessionId}.`);
-  withDirLock(
-    easSessionLedgerLock(root),
-    () => {
-      const current = readEasSessionLedger(root);
-      if (!current.safe) throw new Error(current.notice ?? 'EAS ownership ledger is unreadable.');
-      current.claims.set(normalized.sessionId, normalized);
-      writeLedger(root, { version: 1, claims: Object.fromEntries(current.claims) });
-    },
-    { ensureParent: () => mkdirSync(dirname(easSessionLedgerLock(root)), { recursive: true }) },
-  );
+  return () => {
+    const current = readEasSessionLedger(root);
+    if (!current.safe) throw new Error(current.notice ?? 'EAS ownership ledger is unreadable.');
+    current.claims.set(normalized.sessionId, normalized);
+    writeLedger(root, { version: 1, claims: Object.fromEntries(current.claims) });
+  };
 }
 
-export function removeEasSessionClaim(sessionId: string, root: string = easMachineStateRoot()): boolean {
+/** Records the claim after waiting for the ledger lock without blocking the event loop. */
+export async function recordEasSessionClaim(
+  claim: EasSessionClaim,
+  root: string = easMachineStateRoot(),
+): Promise<void> {
+  await withDirLockAsync(easSessionLedgerLock(root), easSessionClaimWrite(claim, root), {
+    ensureParent: () => mkdirSync(dirname(easSessionLedgerLock(root)), { recursive: true }),
+  });
+}
+
+export function removeEasSessionClaim(
+  sessionId: string,
+  root: string = easMachineStateRoot(),
+  when: (claim: EasSessionClaim) => boolean = () => true,
+): boolean {
   const file = easSessionLedgerFile(root);
   if (!existsSync(file)) return false;
   assertEasMachineRootWritable(root);
   return withDirLock(easSessionLedgerLock(root), () => {
     const current = readEasSessionLedger(root);
     if (!current.safe) return false;
-    if (!current.claims.delete(sessionId)) return false;
+    const claim = current.claims.get(sessionId);
+    if (!claim || !when(claim)) return false;
+    current.claims.delete(sessionId);
     writeLedger(root, { version: 1, claims: Object.fromEntries(current.claims) });
     return true;
   });
+}
+
+/** Removes a matching EAS session claim after asynchronously acquiring the ownership ledger lock. */
+export async function removeEasSessionClaimAsync(
+  sessionId: string,
+  root: string = easMachineStateRoot(),
+  when: (claim: EasSessionClaim) => boolean = () => true,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  signal?.throwIfAborted();
+  if (!existsSync(easSessionLedgerFile(root))) return false;
+  assertEasMachineRootWritable(root);
+  return withDirLockAsync(easSessionLedgerLock(root), () => removeEasSessionClaim(sessionId, root, when), { signal });
 }

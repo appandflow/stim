@@ -8,6 +8,9 @@ dispatch, evidence collection, audit, cleanup, and reporting reviewable.
 The driver runs the iOS and Android readiness suites plus the JavaScript
 launch-failure suite described in [`../../docs/agent-benchmark.md`](../../docs/agent-benchmark.md).
 Runs are sequential. Never dispatch two cells against the same benchmark root.
+Standalone native iOS, Android and macOS use the separate [native cohort](./NATIVE.md).
+Freeze a copy of the coordinator before timed dispatch: proof receipts bind its
+exact bytes, so editing a helper during a run invalidates that attempt.
 
 ## Task prompts
 
@@ -84,8 +87,8 @@ each platform, change, and arm:
 ```
 
 Every dispatched cell needs an entry. `screenReadySeconds` is reported as a
-performance target but does not invalidate a slow model. A Stim platform
-command over `platformCommandSeconds` is an invalid machine/build result.
+performance target. A Stim platform command over `platformCommandSeconds`
+also produces a measurement warning; a proven slow outcome remains valid.
 `runTimeoutSeconds` terminates and invalidates a runaway agent. Keep
 authentication and raw evidence out of Git.
 
@@ -97,18 +100,21 @@ C++ compilation, and flags missing or below-target compiler-cache evidence. A
 `stim android` invocation that exits 1 with a `STIM_NO_METRO` refusal and no
 build phase output stays in the timeline but does not count as missing
 compiler-cache evidence; another `stim android` invocation must still carry
-compiler statistics or a proven artifact hit, and a failed, interrupted, or
-crashed command that could have compiled still fails closed.
+compiler statistics or a proven artifact hit to establish cache performance.
+Missing counters remain unknown and produce a warning.
 Completed tool output triggers an immediate `CACHE ALERT` and preserves
-`cache-alerts.json`. A flagged attempt stays available for investigation and is
-excluded from published comparisons; investigate the cause before retrying.
+`cache-alerts.json`. A flagged attempt stays in comparisons when its outcome
+and evidence pass validation; retain the warning when reporting it.
 When a completed build fails later during launch, collection can retain the
 owned workspace's timestamped compiler statistics. A literal `cd` to that
 worktree followed by `&& stim android ...; echo "EXIT=$?"` is also eligible;
 additional commands, a different directory, or ambiguous status reports are not.
 
-Android golden preparation and every preflight require a structured doctor
-report without cost findings. Repair the fixture with
+Android uses the `pixel_6` hardware profile, `hw.keyboard=yes`, and an 8 GiB
+data partition in both arms. Golden validation requires all three creation
+settings in the parked record and the actual AVD. Older single-setting pool
+records require fresh preparation with the pinned release. Android golden
+preparation and every preflight require a structured doctor report without cost findings. Repair the fixture with
 `stim doctor --fix --platform android`, seed its shared caches, and verify
 cross-worktree reuse before creating the golden. Preflight only inspects the
 fixture; it never changes cache state during a timed cell.
@@ -165,6 +171,9 @@ state remain accessible. Configured tool/cache paths cannot overlap golden,
 results, coordinator state or worktree directories, including through symlinks.
 Only the coordinator's selected run paths receive scoped exceptions. Dispatch
 also refuses a policy that exposes the protected coordinator probes.
+Launch-crash arms can read the original fixture's prepared dependencies and
+build inputs so warmed dependency links remain usable. Original application
+source stays hidden, and dependency writes remain denied.
 
 `smoke stim` and `smoke control` verify real filesystem denials and the Codex
 skill profile without running a model task. Timed dispatch repeats the same
@@ -311,7 +320,8 @@ agent to create the measured run worktree itself. `collect` rejects source
 inspection before launch/error capture, a missing exact repair, a missing
 mismatched device, missing Settings-screen proof, failed Stim guide or warm
 setup, dependency installation inside the timer, missing Gradle cache injection,
-or exceeded machine phase target. The recovery mechanism is measured, not
+or an actual run timeout. Exceeded phase targets and missing diagnosis token
+usage produce measurement warnings. The recovery mechanism is measured, not
 prescribed.
 
 Run the self-tests before a campaign:
@@ -372,7 +382,9 @@ source under `raw/`, with hashes in `auxiliary-audit-evidence.json`. A review's
 `sourceChanges` contains that file's `evidenceSha256` and an `assessment`; export
 checks every retained hash, the original source hash and checksum-only semantics.
 It cannot clear other source changes, dependency changes or source-before-capture
-violations. Valid runs with setup or auxiliary warnings also require review before publication. The original
+violations. Valid runs with benign setup warnings publish with those warnings
+without separate review. Auxiliary sessions and evidence corrections still
+require review before publication. The original
 `run.json` is never rewritten, and review records stay private.
 
 The coordinator may adjudicate source-inspection false positives with
@@ -390,3 +402,19 @@ proof, recording copy, session close and every captured command must finish
 before it. A missing or late proof, a running command, or a different runner
 failure still rejects the run. The final conversational response is not a task
 completion requirement; its timeout remains recorded in the private evidence.
+
+Both arms keep temporary build outputs under the supplied run-scoped `TMPDIR`
+on the benchmark volume. Confirm enough free space for a fresh simulator on
+the host volume before dispatch; disk-exhausted attempts are invalid evidence.
+
+### Android AVD locations
+
+The watcher asks the selected emulator for its AVD directory, then checks the
+canonical configuration and name index within the configured AVD home or that
+run's directory. A control run may use its own `ANDROID_AVD_HOME` under the run
+directory. The recorded configuration path also guides collection and cleanup;
+cleanup revalidates it before deleting the exact run-owned AVD. Unknown paths,
+changed indexes, and model or system-image mismatches still refuse validation.
+
+See [the standalone native campaign](./NATIVE.md) for native iOS, Android, and
+macOS runs, emulator lifetime, and independent verification.

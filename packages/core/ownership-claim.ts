@@ -186,7 +186,9 @@ export function claimFailure(err: unknown, retryCommand: string | null): ClaimFa
     return {
       code: CLAIM_UNAVAILABLE,
       message: err.message,
-      remedy: `${err.remedy}, then ${retry}.`,
+      remedy: err.remedy
+        ? `${err.remedy}, then ${retry}.`
+        : `Check that no process from the failed command is still running, then ${retry}.`,
     };
   }
   return null;
@@ -212,7 +214,7 @@ function asOwner(record: unknown): ClaimOwner | null {
   return { pid: candidate.pid, processToken: candidate.processToken };
 }
 
-function sleepSync(ms: number): void {
+export function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 

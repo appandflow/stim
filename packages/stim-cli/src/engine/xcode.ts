@@ -2,16 +2,27 @@ import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { getExecutor, type Executor } from '../exec.ts';
+import { getExecutor, type Executor, type ExecOptions } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { createLineReader } from '../process-output.ts';
-import { spawnDeclared } from './spawn-claims.ts';
-import { capDiagnostics, createXcodeDiagnosticCollector, describeDiagnostic, type Diagnostic } from './errors-xcode.ts';
+import { declareSpawnsOn, spawnDeclared, stopDeclaringSpawnsOn } from './spawn-claims.ts';
+import { shareCompilationCache } from '../cache/cache-claim.ts';
+import { runCancellationSignal } from './native-run.ts';
+import { releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
+import {
+  COMPILATION_CACHE_CORRUPTION,
+  capDiagnostics,
+  createXcodeDiagnosticCollector,
+  describeDiagnostic,
+  type Diagnostic,
+} from './errors-xcode.ts';
 import { cleanLine } from '../supervisor/server-expo.ts';
 import type { CompilationCacheActivity } from './build-facts.ts';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
+import { ambientContext, type StimContext } from '@stim-cli/core';
+import { killOnAbort } from '../workspace/git-read.ts';
 
 export interface XcodeProject {
   kind?: string;
@@ -93,26 +104,45 @@ export function pickScheme(schemes: unknown, containerName: unknown): string | n
 
 const LIST_TIMEOUT_MS = 180000;
 
-export function listSchemes(
+async function probe(executor: Executor, file: string, args: string[], options: ExecOptions): Promise<string> {
+  const context = ambientContext();
+  context?.signal.throwIfAborted();
+  try {
+    return await executor.runFileAsync(file, args, {
+      ...options,
+      declareFor: context,
+      onSpawn: killOnAbort(context?.signal),
+    });
+  } finally {
+    context?.signal.throwIfAborted();
+  }
+}
+
+export async function listSchemes(
   project: XcodeProject,
   { exec = null }: { exec?: Executor | null } = {},
-): { name: string | null; schemes: string[] } | null {
+): Promise<{ name: string | null; schemes: string[] } | null> {
   const executor = exec || getExecutor();
   try {
-    const out = executor.runFile('xcodebuild', [project.flag as string, project.path as string, '-list', '-json'], {
-      timeoutMs: LIST_TIMEOUT_MS,
-    });
+    const out = await probe(
+      executor,
+      'xcodebuild',
+      [project.flag as string, project.path as string, '-list', '-json'],
+      {
+        timeoutMs: LIST_TIMEOUT_MS,
+      },
+    );
     return parseSchemeList(out);
   } catch {
     return null;
   }
 }
 
-export function resolveScheme(
+export async function resolveScheme(
   project: XcodeProject,
   { exec = null, scheme: requested = null }: { exec?: Executor | null; scheme?: string | null } = {},
-): SchemeResult {
-  const listing = listSchemes(project, { exec });
+): Promise<SchemeResult> {
+  const listing = await listSchemes(project, { exec });
   if (listing === null) {
     return {
       error: {
@@ -238,10 +268,6 @@ export function parseSwiftVersion(output: unknown): SwiftVersion | null {
   return Number.isFinite(major) && Number.isFinite(minor) ? { major, minor } : null;
 }
 
-export function detectSwiftVersion(exec: Executor | null = null): SwiftVersion | null {
-  return parseSwiftVersion((exec || getExecutor()).runQuiet('xcrun swift --version', { timeoutMs: 10000 }));
-}
-
 export function parseXcodeMajor(output: unknown): number | null {
   const m = /^Xcode\s+(\d+)/m.exec(String(output || ''));
   if (!m) return null;
@@ -251,8 +277,10 @@ export function parseXcodeMajor(output: unknown): number | null {
   return Number.isFinite(major) ? major : null;
 }
 
-export function detectXcodeMajor(exec: Executor | null = null): number | null {
-  return parseXcodeMajor((exec || getExecutor()).runQuiet('xcodebuild -version', { timeoutMs: 10000 }));
+export async function detectXcodeMajorAsync(exec: Executor | null = null): Promise<number | null> {
+  return parseXcodeMajor(
+    await (exec || getExecutor()).runFileQuietAsync('xcodebuild', ['-version'], { timeoutMs: 10000 }),
+  );
 }
 
 export function xcodebuildArgs({
@@ -339,15 +367,22 @@ export function parseBundleId(plistJson: unknown): string | null {
   return typeof id === 'string' && id.trim() !== '' ? id.trim() : null;
 }
 
-export function readBundleId(appPath: string, { exec = null }: { exec?: Executor | null } = {}): string | null {
+export async function readBundleId(
+  appPath: string,
+  { exec = null }: { exec?: Executor | null } = {},
+): Promise<string | null> {
   const executor = exec || getExecutor();
   try {
-    const json = executor.runFile('plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')]);
+    const json = await probe(executor, 'plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')], {
+      timeoutMs: 10_000,
+    });
     const id = parseBundleId(json);
     if (id) return id;
   } catch {}
   try {
-    const value = executor.runFile('defaults', ['read', join(appPath, 'Info'), 'CFBundleIdentifier']);
+    const value = await probe(executor, 'defaults', ['read', join(appPath, 'Info'), 'CFBundleIdentifier'], {
+      timeoutMs: 10_000,
+    });
     const trimmed = String(value).trim();
     return trimmed === '' ? null : trimmed;
   } catch {
@@ -368,15 +403,22 @@ export function parseBundleExecutable(plistJson: unknown): string | null {
   return typeof name === 'string' && name.trim() !== '' ? name.trim() : null;
 }
 
-export function readBundleExecutable(appPath: string, { exec = null }: { exec?: Executor | null } = {}): string | null {
+export async function readBundleExecutable(
+  appPath: string,
+  { exec = null }: { exec?: Executor | null } = {},
+): Promise<string | null> {
   const executor = exec || getExecutor();
   try {
-    const json = executor.runFile('plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')]);
+    const json = await probe(executor, 'plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')], {
+      timeoutMs: 10_000,
+    });
     const name = parseBundleExecutable(json);
     if (name) return name;
   } catch {}
   try {
-    const value = executor.runFile('defaults', ['read', join(appPath, 'Info'), 'CFBundleExecutable']);
+    const value = await probe(executor, 'defaults', ['read', join(appPath, 'Info'), 'CFBundleExecutable'], {
+      timeoutMs: 10_000,
+    });
     const trimmed = String(value).trim();
     return trimmed === '' ? null : trimmed;
   } catch {
@@ -459,6 +501,7 @@ function failedResult({
   transcriptLines = 0,
   tail = [],
   compilationCache = COMPILATION_CACHE_UNAVAILABLE,
+  compilationCacheCorruption = null,
 }: {
   code: string;
   diagnostics: Diagnostic[];
@@ -467,6 +510,7 @@ function failedResult({
   transcriptLines?: number;
   tail?: string[];
   compilationCache?: CompilationCacheActivity;
+  compilationCacheCorruption?: CompilationCacheCorruption | null;
 }): Extract<BuildIosResult, { ok: false }> {
   const capped = capDiagnostics(diagnostics);
   return {
@@ -479,7 +523,14 @@ function failedResult({
     transcriptLines,
     tail,
     compilationCache,
+    ...(compilationCacheCorruption ? { compilationCacheCorruption } : {}),
   };
+}
+
+/** A failed build's transcript line that reports a damaged object in the compilation cache the build was given. */
+export interface CompilationCacheCorruption {
+  dir: string;
+  line: string;
 }
 
 export type BuildIosResult = {
@@ -503,6 +554,7 @@ export type BuildIosResult = {
       truncated: number;
       exitCode: number | null;
       tail: string[];
+      compilationCacheCorruption?: CompilationCacheCorruption;
     }
 );
 
@@ -549,6 +601,7 @@ export function compilationCacheActivityLine(activity: CompilationCacheActivity)
 }
 
 export async function buildXcode({
+  context = ambientContext(),
   root,
   udid = null,
   logWriter,
@@ -569,6 +622,7 @@ export async function buildXcode({
   estimateMs = null,
   onHeartbeat = (line: string) => console.error(line),
 }: {
+  context?: StimContext;
   root: string;
   udid?: string | null;
   logWriter: NdjsonWriter;
@@ -581,7 +635,10 @@ export async function buildXcode({
   arch?: string | null;
   derivedDataPath?: string | null;
   extraArgs?: string[];
-  compilationCache: string[] | null | ((context: { derivedDataPath: string; exec: Executor }) => string[]);
+  compilationCache:
+    | string[]
+    | null
+    | ((context: { derivedDataPath: string; exec: Executor }) => string[] | Promise<string[]>);
   startedAt?: number;
   now?: () => number;
   exec?: Executor | null;
@@ -623,7 +680,7 @@ export async function buildXcode({
   }
   const resolvedTarget = project;
 
-  const selected = resolveScheme(resolvedTarget, { exec: executor, scheme });
+  const selected = await resolveScheme(resolvedTarget, { exec: executor, scheme });
   if (selected.error) {
     reportError(selected.error.message, selected.error.remedy);
     return failedResult({
@@ -636,10 +693,20 @@ export async function buildXcode({
 
   const cacheSettings =
     typeof compilationCache === 'function'
-      ? compilationCache({ derivedDataPath: dd, exec: executor })
+      ? await compilationCache({ derivedDataPath: dd, exec: executor })
       : compilationCache || [];
   // Xcode forces ONLY_ACTIVE_ARCH=NO for a generic destination; only an explicit ARCHS narrows the build.
-  const buildSettings = arch ? [...cacheSettings, `ARCHS=${arch}`, 'ONLY_ACTIVE_ARCH=YES'] : cacheSettings;
+  const debugSettings =
+    configuration === 'Debug' && sdk === 'iphonesimulator' ? ['DEBUG_INFORMATION_FORMAT=dwarf'] : [];
+  const buildSettings = [
+    ...cacheSettings,
+    ...debugSettings,
+    ...(arch ? [`ARCHS=${arch}`, 'ONLY_ACTIVE_ARCH=YES'] : []),
+  ];
+  const casPathSetting = 'COMPILATION_CACHE_CAS_PATH=';
+  const casDir = cacheSettings.includes('COMPILATION_CACHE_ENABLE_CACHING=YES')
+    ? (cacheSettings.find((setting) => setting.startsWith(casPathSetting))?.slice(casPathSetting.length) ?? null)
+    : null;
 
   const args = xcodebuildArgs({
     project: resolvedTarget,
@@ -660,16 +727,19 @@ export async function buildXcode({
     event: 'build_start',
   });
 
-  const diagnosticCollector = createXcodeDiagnosticCollector(root, sdk);
+  const diagnosticCollector = createXcodeDiagnosticCollector(root, sdk, resolvedTarget.dir || root);
   const tail: string[] = [];
   let transcriptLines = 0;
   let compilationCacheActivity: CompilationCacheActivity = COMPILATION_CACHE_UNAVAILABLE;
   let swiftTargetsWithoutExplicitModules = 0;
+  let compilationCacheCorruption: CompilationCacheCorruption | null = null;
   const onLine = (line: unknown) => {
     const msg = cleanLine(line);
     transcriptLines += 1;
     diagnosticCollector.push(msg);
     if (msg.trim() === '') return;
+    if (casDir && !compilationCacheCorruption && COMPILATION_CACHE_CORRUPTION.test(msg))
+      compilationCacheCorruption = { dir: casDir, line: msg.trim() };
     tail.push(msg);
     if (tail.length > TAIL_LINES) tail.shift();
     logWriter.write({ src: 'build', level: 'debug', msg });
@@ -691,9 +761,33 @@ export async function buildXcode({
     }
   };
 
+  let cacheClaim: ClaimHandle | null = null;
+  if (casDir) {
+    const shared = await shareCompilationCache({
+      dir: casDir,
+      projectRoot: root,
+      note: onHeartbeat,
+      signal: AbortSignal.any([context?.signal, runCancellationSignal(context)].filter((each) => each !== undefined)),
+    });
+    if ('failure' in shared) {
+      reportError(shared.failure.message, shared.failure.remedy);
+      return failedResult({
+        code: shared.failure.code,
+        diagnostics: [{ message: shared.failure.message, remedy: shared.failure.remedy }],
+        durationMs: elapsed(),
+      });
+    }
+    cacheClaim = shared.claim;
+    declareSpawnsOn(context, cacheClaim);
+  }
+  const releaseCache = () => {
+    stopDeclaringSpawnsOn(context, cacheClaim);
+    releaseClaim(cacheClaim);
+  };
+
   let child: ChildProcess;
   try {
-    child = spawnDeclared(() =>
+    child = spawnDeclared(context, () =>
       executor.spawn('xcodebuild', args, {
         cwd: resolvedTarget.dir || root,
         // stdin is ignored: xcodebuild never prompts in this mode, and a build
@@ -701,13 +795,14 @@ export async function buildXcode({
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: false,
         env: {
-          ...process.env,
+          ...(context?.env ?? process.env),
           NSUnbufferedIO: 'YES',
           FORCE_COLOR: '0',
         },
       }),
     );
   } catch (err) {
+    releaseCache();
     const message = `Could not run xcodebuild: ${(err as Error).message}`;
     const remedy = 'Install Xcode and select it with `sudo xcode-select -s /Applications/Xcode.app`.';
     reportError(message, remedy);
@@ -743,6 +838,7 @@ export async function buildXcode({
     },
   );
 
+  releaseCache();
   stopHeartbeat();
   const durationMs = elapsed();
 
@@ -778,6 +874,7 @@ export async function buildXcode({
       transcriptLines,
       tail,
       compilationCache: compilationCacheActivity,
+      compilationCacheCorruption,
     });
   }
 
@@ -786,7 +883,8 @@ export async function buildXcode({
   if (scheme) {
     try {
       const targets = JSON.parse(
-        executor.runFile(
+        await probe(
+          executor,
           'xcodebuild',
           [
             resolvedTarget.flag as string,
@@ -856,7 +954,7 @@ export async function buildXcode({
     });
   }
 
-  const bundleId = readBundleId(appPath, { exec: executor });
+  const bundleId = await readBundleId(appPath, { exec: executor });
   if (!bundleId) {
     const message = `No readable CFBundleIdentifier in ${join(appPath, 'Info.plist')}.`;
     const remedy = "Check PRODUCT_BUNDLE_IDENTIFIER in the target's Debug configuration.";

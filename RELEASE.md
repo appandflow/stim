@@ -17,8 +17,14 @@ packages/core                @stim-cli/core                shared primitives (ca
 packages/stim-cli            stim                          the CLI
 packages/ci                  @stim-cli/ci                  CI lifecycle and stim-ci executable
 packages/cache               @stim-cli/cache               cache provider contract and tier coordination
+packages/cache-s3            @stim-cli/cache-s3            optional S3-compatible cache provider
 packages/expo-build-cache    @stim-cli/expo-build-cache    Expo build cache provider
 packages/metro               @stim-cli/metro               shared Metro transform cache + log reporter
+packages/agent-driver        @stim-cli/agent-driver        hosted agent driver contract for stim-server
+packages/agent-driver-agent-device @stim-cli/agent-driver-agent-device agent-device hosted agent driver
+packages/transport           @stim-cli/transport           transport contract for stim-server
+packages/transport-tailscale @stim-cli/transport-tailscale Tailscale transport for stim-server
+packages/transport-local     @stim-cli/transport-local     local network transport for stim-server
 packages/server              @stim-cli/server              stim-server, read-only status for paired clients
 ```
 
@@ -81,7 +87,7 @@ Every package name must already exist on npm, because trusted publishing can
 only be configured for an existing package:
 
 ```bash
-for p in @stim-cli/core @stim-cli/cache @stim-cli/metro @stim-cli/expo-build-cache stim @stim-cli/ci @stim-cli/server; do
+for p in @stim-cli/core @stim-cli/cache @stim-cli/cache-s3 @stim-cli/agent-driver @stim-cli/agent-driver-agent-device @stim-cli/metro @stim-cli/expo-build-cache stim @stim-cli/ci @stim-cli/transport @stim-cli/transport-tailscale @stim-cli/transport-local @stim-cli/server; do
   npm view "$p" name >/dev/null || echo "$p: first publication required"
 done
 ```
@@ -143,11 +149,11 @@ preparation, `git status --short` may show only the draft
    uncommitted and untagged. If any of that fails it puts the manifests
    back at the version they had, so a failed run is never half-bumped.
 
-   Nothing else moves. The packages depend on each other through pnpm's
-   `workspace:` protocol, so there is no dependency range to bump: pnpm
-   substitutes the real version when it packs (verified in step 3).
+   Nothing else moves. The packages depend on each other as `workspace:*`, so
+   there is no dependency range to bump: pnpm packs each internal dependency
+   as the exact release version, never a `^` range (verified in step 3).
    `pnpm run release:prep --check` audits that shape -- package versions in
-   lockstep, every internal range a bare `workspace:` range -- without changing
+   lockstep, every internal range exactly `workspace:*` -- without changing
    anything.
 
    Confirm all packages moved:
@@ -183,13 +189,13 @@ preparation, `git status --short` may show only the draft
 
 3. **Verify each npm tarball** ships only what should ship, that each one
    carries its own README, and that every `@stim-cli/*` and `stim` dependency
-   names a real version. Pack with `pnpm`, never `npm`: the release workflow publishes
+   names the exact release version, with no `^` or `~`. Pack with `pnpm`, never `npm`: the release workflow publishes
    pnpm-packed tarballs, and `npm pack` prints the unsubstituted `workspace:`
    ranges rather than what actually publishes.
 
    ```bash
    out=$(mktemp -d)
-   for p in core cache metro expo-build-cache stim-cli ci server; do
+   for p in core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server; do
      tgz=$(cd "packages/$p" && pnpm pack --pack-destination "$out" | tail -1)
      echo "== $p ($(tar -tzf "$tgz" | wc -l | tr -d ' ') files)"
      tar -tzf "$tgz" | grep -E 'README|LICENSE'
@@ -351,14 +357,16 @@ repeat the affected gate rather than waiving it.
    test "$(git rev-parse HEAD)" = "$release_commit"
    ```
 
-   Dispatch the CI workflow against the release branch as well and wait for
-   its full Windows job on the same candidate SHA before tagging. Routine PR
+   Dispatch the CI workflow against the release branch as well. Routine PR
    and main runs cover Windows build/typecheck and CLI/cache smoke; nightly
-   and manual CI runs cover the complete Windows unit suite. The Release
-   workflow repeats the full Windows gate before npm publication.
+   and manual CI runs cover the complete Windows unit suite. Until
+   [#3878](https://github.com/appandflow/stim/issues/3878) fixes that suite,
+   record the result of its full Windows job on the candidate SHA instead of
+   waiting for it to pass, and the Release workflow runs it alongside
+   publication without gating it.
 
    A fix creates a new commit and repeats this step. Never tag a commit that
-   has not passed this exact-commit check.
+   has not passed this exact-commit check, apart from that full Windows job.
 
 5. **Tag and push the proven commit:**
 
@@ -369,6 +377,9 @@ repeat the affected gate rather than waiving it.
 
    One tag for the repo, not one per package: the packages share a version, so
    a per-package tag would only repeat the same thing.
+
+   The Release workflow refuses to run unless the tagged commit is an ancestor
+   of `origin/main`, so push the candidate commit to `main` (step 3) first.
 
 6. **Publish the already-reviewed release notes in
    `docs/releases/X.Y.Z.md`.** This committed file is the single source of
@@ -384,7 +395,7 @@ repeat the affected gate rather than waiving it.
    Do not add claims here. Once the tag is remote, a correction requires a new
    version; never move or force-push the published tag.
 7. **Publish to npm.** Pushing the tag in step 5 triggers the
-   `Release` workflow, which publishes all seven packages via OIDC trusted
+   `Release` workflow, which publishes all eight packages via OIDC trusted
    publishing (no token, `--provenance`) once the run is approved in the
    `release` environment. If the current GitHub identity is an allowed
    reviewer, approve the deployment directly with `gh` instead of waiting for
@@ -411,7 +422,8 @@ repeat the affected gate rather than waiving it.
 
    Send the `url` (the run page has Review deployments -> `release` ->
    Approve and deploy). The workflow packs the package tarballs with pnpm, checks
-   that no `workspace:` range survived the pack, skips an exact package version
+   that every packed `stim` and `@stim-cli/*` dependency is exactly the tag
+   version (no `workspace:`, `^` or `~`), skips an exact package version
    that already exists, computes the dist-tag (section 1) and publishes every
    package to it. Its `smoke` job then waits, up to 15 minutes per check, for
    the registry to serve each version, its tarball and the dist-tag, and runs
@@ -440,6 +452,12 @@ repeat the affected gate rather than waiving it.
    cd /tmp && npx -p "@stim-cli/ci@$version" stim-ci --version
    cd /tmp && npx -p "@stim-cli/server@$version" stim-server --version
    ```
+   Keep the `cd /tmp`. Inside this repository, `npx "stim@$version"` with the
+   workspace's own `stim` version does not download the release: npm treats
+   the workspace package as installed and runs whichever `stim` is first on
+   `PATH`, so the check can pass or fail against a different build. The same
+   holds for `npx -p`. The `smoke` job runs from a scratch directory for this
+   reason.
    The `npm pack` line lists the published tarball's README. Do not check
    `npm view "stim@$version" readme`: it prints the registry's package-level
    README, which is empty whenever the newest publish is not on `latest`, such
@@ -452,6 +470,9 @@ repeat the affected gate rather than waiving it.
 - Leave every `package.json` at the just-released version. The next release
   bumps them as part of its own section 2, step 1; we don't carry a `-dev`
   suffix between releases.
+- Cut the Stim Desktop release for this version now, at the release commit
+  that `vX.Y.Z` points to, so the bundled CLI and server equal the published
+  packages. See [apps/desktop/RELEASING.md](./apps/desktop/RELEASING.md).
 
 ## Stim Host releases
 

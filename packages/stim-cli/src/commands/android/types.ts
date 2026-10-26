@@ -44,9 +44,11 @@ export interface VerifyLaunchResultLike {
   processAlive?: boolean | null;
   errors?: LaunchErrorRecord[];
   waitedMs?: number;
+  jsRunning?: boolean;
 }
 
 export interface FailExtra {
+  retainedClaimRoots?: string[];
   setup?: boolean;
   lastBuildStatus?: boolean;
   diagnostics?: string[];
@@ -70,9 +72,11 @@ export interface AndroidRecord {
   bundleId?: string | null;
   avdName?: string | null;
   deviceName?: string | null;
+  /** The serial `deviceName` falls back to for a device with no known model; never recorded as a name. */
+  deviceSerial?: string | null;
   systemImage?: string | null;
   deviceProfile?: string | null;
-  /** The remote Mac that compiled the APK, when the build was offloaded. */
+  /** The remote machine that compiled the APK, when the build was offloaded. */
   offloadedTo?: string | null;
   /** Why the APK was built here after the run considered offloading it. */
   offloadFallback?: string | null;
@@ -80,8 +84,9 @@ export interface AndroidRecord {
 
 export interface RunAndroidResult {
   ok: boolean;
-  error?: { code?: string; message?: string | null; remedy?: string | null };
+  error?: { code?: string; message?: string | null; remedy?: string | null; retainedClaimRoots?: string[] };
   facts?: AndroidFacts;
+  uploadsAbandoned?: boolean;
 }
 
 export interface AndroidBootLike {

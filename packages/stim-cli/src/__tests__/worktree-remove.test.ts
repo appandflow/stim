@@ -1,4 +1,4 @@
-import { readArchives } from '@stim-cli/core/state';
+import { readArchives, type DiskPressureLevel } from '@stim-cli/core/state';
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -9,6 +9,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,6 @@ import { basename, join, resolve } from 'node:path';
 import {
   excludePodChurn,
   excludeWatchmanCookies,
-  matchWorktreeEntry,
   porcelainPath,
   removalBlockers,
   removalPath,
@@ -25,6 +25,8 @@ import {
 } from '../commands/worktree.ts';
 import type { Command } from 'commander';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
+import { serviceRunningFrom } from '../workspace/service-guard.ts';
+import { matchWorktreeEntry } from '../workspace/worktree.ts';
 import { registerStart } from '../commands/start.ts';
 import { asProcessExit } from './_factories.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
@@ -32,6 +34,7 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject, getProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import * as measurements from '../maintenance/measure.ts';
 
 type ActionFn = (target: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;
 
@@ -202,6 +205,8 @@ function porcelain(entries: PorcelainEntry[]) {
     .join('\n');
 }
 
+const TIMED_OUT = 'timed out';
+
 interface MakeExecutorOptions {
   dirty?: string | null;
   unpushed?: string | null;
@@ -214,6 +219,9 @@ interface MakeExecutorOptions {
   worktreeRemoveError?: string;
   branchDeleteError?: string;
   refSha?: string | null;
+  statusAnswers?: (string | null)[];
+  staged?: string | null;
+  commonDir?: string | null;
 }
 
 function makeExecutor({
@@ -228,6 +236,9 @@ function makeExecutor({
   worktreeRemoveError,
   branchDeleteError,
   refSha = 'abc123',
+  statusAnswers = [],
+  staged = '',
+  commonDir = null,
 }: MakeExecutorOptions = {}) {
   const runCalls: string[] = [];
   const runQuietCalls: string[] = [];
@@ -236,13 +247,13 @@ function makeExecutor({
     run(cmd: string) {
       runCalls.push(cmd);
       if (/simctl list devices --json/.test(cmd)) return simctlList;
-      if (/simctl delete|delete avd/.test(cmd)) return '';
       throw new Error(`unexpected run: ${cmd}`);
     },
     runFile(file: string, args: string[] = []) {
       const cmd = [file, ...args].join(' ');
       runCalls.push(cmd);
       if (/simctl list devices --json/.test(cmd)) return simctlList;
+      if (/simctl delete|delete avd/.test(cmd)) return '';
       if (/worktree remove/.test(cmd)) {
         if (worktreeRemoveError) throw new Error(worktreeRemoveError);
         return '';
@@ -251,25 +262,34 @@ function makeExecutor({
         if (branchDeleteError) throw new Error(branchDeleteError);
         return '';
       }
-      if (/rev-parse/.test(cmd)) return refSha;
+      if (/rev-parse --verify/.test(cmd)) return refSha;
+      if (file === 'git') {
+        const out = exec.runFileQuiet(file, args);
+        if (out === TIMED_OUT)
+          throw Object.assign(new Error(`Command timed out after 60000ms: ${cmd}`), { code: 'ETIMEDOUT' });
+        if (out === null) throw new Error(`Command failed: ${cmd}`);
+        return out;
+      }
       throw new Error(`unexpected runFile: ${cmd}`);
     },
     runQuiet(cmd: string) {
+      runQuietCalls.push(cmd);
+      return null;
+    },
+    runFileQuiet(file: string, args: string[] = []) {
+      const cmd = [file, ...args].join(' ');
       runQuietCalls.push(cmd);
       const spawnMatch = cmd.match(/simctl spawn (\S+) launchctl list/);
       if (spawnMatch) {
         const udid = spawnMatch[1] ?? '';
         return occupied[udid] ? '082a\t0\tUIKitApplication:com.example.MyAppUITests.xctrunner[082a][rb-legacy]' : '';
       }
-      return null;
-    },
-    runFileQuiet(file: string, args: string[] = []) {
-      const cmd = [file, ...args].join(' ');
-      runQuietCalls.push(cmd);
-      if (args.includes('symbolic-ref') && bare && args[1] === bare.path) {
+      if (args.includes('symbolic-ref') && bare && args[args.indexOf('-C') + 1] === bare.path) {
         return bare.head ? `refs/heads/${bare.head}` : null;
       }
-      if (/status --porcelain/.test(cmd)) return dirty;
+      if (/status --porcelain/.test(cmd)) return statusAnswers.length ? (statusAnswers.shift() ?? null) : dirty;
+      if (/ls-files --stage/.test(cmd)) return staged;
+      if (/--git-common-dir/.test(cmd)) return commonDir;
       const diffMatch = cmd.match(/ diff -- (.+)$/);
       if (diffMatch) return diffs[diffMatch[1] ?? ''] ?? '';
       if (/ checkout -- /.test(cmd)) return '';
@@ -465,10 +485,10 @@ test('action: a failed device teardown on the source checkout keeps the record a
     worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
     simctlList: simctlJson([{ udid: 'U7', name: 'stim-held', state: 'Shutdown', isAvailable: true }]),
   });
-  const originalRun = exec.run.bind(exec);
-  exec.run = (cmd: string) => {
-    if (/simctl delete U7/.test(cmd)) throw new Error('Unable to delete');
-    return originalRun(cmd);
+  const originalRunFile = exec.runFile.bind(exec);
+  exec.runFile = (file: string, args: string[] = []) => {
+    if (args.join(' ') === 'simctl delete U7') throw new Error('Unable to delete');
+    return originalRunFile(file, args);
   };
   setExecutor(exec);
 
@@ -667,6 +687,76 @@ test('action: refuses when git cannot answer the status check, leaving config un
   expect(getProject(wtDir)).toEqual(before);
   expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
 });
+
+test.each([
+  [
+    'cannot answer the dirty-path listing',
+    { statusAnswers: [' M a.txt', null] },
+    /could not determine git status/,
+    true,
+  ],
+  ['cannot answer the submodule check', { staged: null }, /could not check for initialized submodules/, true],
+  ['times out on the status check', { statusAnswers: [TIMED_OUT] }, /git safety check timed out/, false],
+  ['times out on the submodule check', { staged: TIMED_OUT }, /git safety check timed out/, false],
+])('action: refuses before any teardown when git %s', async (_probe, answers, reason, suggestsForce) => {
+  upsertProject(wtDir, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });
+  const before = getProject(wtDir);
+  const exec = makeExecutor({
+    ...answers,
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+    simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
+  });
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(errs.join('\n')).toMatch(reason);
+  expect(/--force/.test(errs.join('\n'))).toBe(suggestsForce);
+  expect(getProject(wtDir)).toEqual(before);
+  expect(exec.calls.run.some((c) => /simctl delete|worktree remove/.test(c))).toBe(false);
+});
+
+test.each([
+  ['listing worktrees', { worktrees: TIMED_OUT }],
+  ['reading the common git directory', { worktrees: '', commonDir: TIMED_OUT }],
+])(
+  'action: a registered worktree whose git times out on %s is refused, not reclaimed as a plain folder',
+  async (_read, answers) => {
+    upsertProject(wtDir, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });
+    const before = getProject(wtDir);
+    const exec = makeExecutor({
+      ...answers,
+      simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
+    });
+    setExecutor(exec);
+    const errs: string[] = [];
+    const original = console.error;
+    console.error = (m) => errs.push(String(m));
+    try {
+      const run = captureAction(registerRemove);
+      await run(wtDir, {});
+    } finally {
+      console.error = original;
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/git safety check timed out/);
+    expect(errs.join('\n')).not.toMatch(/not a git repository/);
+    expect(getProject(wtDir)).toEqual(before);
+    expect(exec.calls.run.some((c) => /simctl delete|worktree remove/.test(c))).toBe(false);
+  },
+);
 
 test('action: on success, ownership state stays until removeWorktree succeeds', async () => {
   upsertProject(wtDir, { metroPort: 8083 });
@@ -884,6 +974,72 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
   expect(process.exitCode).not.toBe(1);
   expect(retryExec.calls.run.some((call) => /update-ref -d refs\/heads\/worktree-feat-x abc123/.test(call))).toBe(true);
   expect(getProject(wtDir)).toBe(null);
+});
+
+test('action: a timed-out worktree list after removal keeps the branch and the retry state', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+    worktreeMainRoot: mainDir,
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'worktree-feat-x' },
+    ]),
+  });
+  const runFileQuiet = exec.runFileQuiet.bind(exec);
+  exec.runFileQuiet = (file, args = []) =>
+    /worktree list --porcelain/.test([file, ...args].join(' ')) && exec.calls.run.some((c) => /worktree remove/.test(c))
+      ? TIMED_OUT
+      : runFileQuiet(file, args);
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    await captureAction(registerRemove)(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(exec.calls.run.some((c) => /update-ref -d/.test(c))).toBe(false);
+  expect(errs.join('\n')).toMatch(/kept worktree-feat-x/);
+  expect(getProject(wtDir)).toMatchObject({ worktreeRemovalComplete: true, worktreePendingBranchSha: 'abc123' });
+});
+
+test('action: a HEAD read that times out after reclaim still reports what was released', async () => {
+  upsertProject(wtDir, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+    simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
+  });
+  const runFile = exec.runFile.bind(exec);
+  exec.runFile = (file, args = []) => {
+    if (/rev-parse --verify/.test([file, ...args].join(' ')) && exec.calls.run.some((c) => /simctl delete/.test(c))) {
+      throw Object.assign(new Error('Command timed out after 60000ms'), { code: 'ETIMEDOUT' });
+    }
+    return runFile(file, args);
+  };
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    await captureAction(registerRemove)(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(errs.join('\n')).toMatch(/git safety check timed out/);
+  expect(errs.join('\n')).toMatch(/device/);
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(false);
 });
 
 test('action: pending cleanup keeps a branch that another worktree checks out', async () => {
@@ -1536,10 +1692,10 @@ function realGitFakeSimctl(simctlList: string) {
   const exec = {
     run: fake,
     runQuiet: fake,
-    runFile(file: string, args: string[] = [], opts?: Parameters<typeof real.runFile>[2]) {
+    runFile(file: string, args: string[] = [], opts: Parameters<typeof real.runFile>[2] = { timeoutMs: 60_000 }) {
       return file === 'git' ? real.runFile(file, args, opts) : fake([file, ...args].join(' '));
     },
-    runFileQuiet(file: string, args: string[] = [], opts?: Parameters<typeof real.runFile>[2]) {
+    runFileQuiet(file: string, args: string[] = [], opts: Parameters<typeof real.runFile>[2] = { timeoutMs: 60_000 }) {
       return file === 'git' ? real.runFileQuiet(file, args, opts) : fake([file, ...args].join(' '));
     },
     spawn() {
@@ -1578,6 +1734,148 @@ test('against a real repo: a locked worktree is refused before its owned sim is 
   }
 }, 30_000);
 
+function worktreeWithIgnoredTrees(base: string) {
+  const made = realRepoWithWorktree(base);
+  const { wt, git } = made;
+  writeFileSync(join(wt, '.gitignore'), 'node_modules/\nios/Pods/\nlinked\n');
+  mkdirSync(join(wt, 'ios'));
+  writeFileSync(join(wt, 'ios', 'Podfile'), "platform :ios, '15.1'");
+  git('git add .gitignore ios/Podfile', wt);
+  git('git commit -q -m ignore', wt);
+  git('git push -q -u origin feat-x', wt);
+  mkdirSync(join(wt, 'node_modules', 'pkg'), { recursive: true });
+  writeFileSync(join(wt, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1;');
+  mkdirSync(join(wt, 'ios', 'Pods', 'Foo'), { recursive: true });
+  writeFileSync(join(wt, 'ios', 'Pods', 'Foo', 'a.h'), '#pragma once');
+  const outside = join(base, 'outside');
+  mkdirSync(outside);
+  writeFileSync(join(outside, 'keep.txt'), 'outside the worktree');
+  symlinkSync(outside, join(wt, 'linked'));
+  return { ...made, outside };
+}
+
+test.skipIf(process.platform === 'win32')(
+  'against a real repo: removal moves the ignored directories into the Stim trash, git removes the rest and a background rm empties the trash',
+  async () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-trash-')));
+    const errs: string[] = [];
+    const outs: string[] = [];
+    const originalError = console.error;
+    const originalLog = console.log;
+    try {
+      const { wt, outside, git } = worktreeWithIgnoredTrees(base);
+      realGitFakeSimctl('{"devices":{}}');
+      const exec = getExecutor();
+      resetExecutor();
+      const real = getExecutor();
+      setExecutor({ ...exec, spawn: real.spawn.bind(real) });
+
+      console.error = (m) => errs.push(String(m));
+      console.log = (m) => outs.push(String(m));
+      await captureAction(registerRemove)(wt, {});
+      console.error = originalError;
+      console.log = originalLog;
+
+      expect(process.exitCode).not.toBe(1);
+      expect(outs).toEqual([]);
+      expect(existsSync(wt)).toBe(false);
+      expect(git('git worktree list --porcelain')).not.toContain(wt);
+      expect(git('git status --porcelain')).toBe('');
+      expect(readFileSync(join(outside, 'keep.txt'), 'utf-8')).toBe('outside the worktree');
+      expect(errs.join('\n')).toMatch(
+        /(deleting 2 ignored directories in the background|deleted 2 ignored directories)/,
+      );
+      const deadline = Date.now() + 20_000;
+      while (readdirSync(join(tmpHome, 'trash')).length && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 100));
+      expect(readdirSync(join(tmpHome, 'trash'))).toEqual([]);
+    } finally {
+      console.error = originalError;
+      console.log = originalLog;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'against a real repo: when git worktree remove fails, the ignored directories move back into the worktree',
+  async () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-trash-back-')));
+    const errs: string[] = [];
+    const originalError = console.error;
+    try {
+      const { wt } = worktreeWithIgnoredTrees(base);
+      realGitFakeSimctl('{"devices":{}}');
+      const exec = getExecutor();
+      setExecutor({
+        ...exec,
+        runFile(...params: Parameters<typeof exec.runFile>) {
+          const [file, args = []] = params;
+          if (file === 'git' && args.includes('worktree') && args.includes('remove'))
+            throw new Error('fatal: simulated');
+          return exec.runFile(...params);
+        },
+      });
+
+      console.error = (m) => errs.push(String(m));
+      await captureAction(registerRemove)(wt, {});
+      console.error = originalError;
+
+      expect(process.exitCode).toBe(1);
+      expect(errs.join('\n')).toMatch(/git worktree remove failed: fatal: simulated/);
+      expect(readFileSync(join(wt, 'node_modules', 'pkg', 'index.js'), 'utf-8')).toBe('module.exports = 1;');
+      expect(readFileSync(join(wt, 'ios', 'Pods', 'Foo', 'a.h'), 'utf-8')).toBe('#pragma once');
+      expect(readdirSync(join(tmpHome, 'trash'))).toEqual([]);
+    } finally {
+      console.error = originalError;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'against a real repo: when git worktree remove fails and a directory cannot move back, the command names it and the trash entry',
+  async () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-trash-stuck-')));
+    const errs: string[] = [];
+    const originalError = console.error;
+    try {
+      const { wt } = worktreeWithIgnoredTrees(base);
+      realGitFakeSimctl('{"devices":{}}');
+      const exec = getExecutor();
+      setExecutor({
+        ...exec,
+        runFile(...params: Parameters<typeof exec.runFile>) {
+          const [file, args = []] = params;
+          if (file === 'git' && args.includes('worktree') && args.includes('remove')) {
+            mkdirSync(join(wt, 'node_modules'));
+            throw new Error('fatal: simulated');
+          }
+          return exec.runFile(...params);
+        },
+      });
+
+      console.error = (m) => errs.push(String(m));
+      await captureAction(registerRemove)(wt, {});
+      console.error = originalError;
+
+      const [entry] = readdirSync(join(tmpHome, 'trash'));
+      expect(process.exitCode).toBe(1);
+      expect(errs.join('\n')).toContain(
+        `Could not move node_modules back into ${wt}; it stays in ${join(tmpHome, 'trash', entry ?? '')}, which stim gc keeps while ${wt} exists.`,
+      );
+      expect(readFileSync(join(wt, 'ios', 'Pods', 'Foo', 'a.h'), 'utf-8')).toBe('#pragma once');
+      expect(readdirSync(join(tmpHome, 'trash', entry ?? '', 'entries'))).toHaveLength(1);
+    } finally {
+      console.error = originalError;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
 const launchAgentPlist = (label: string, script: string, marked: boolean) => `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1592,6 +1890,92 @@ const launchAgentPlist = (label: string, script: string, marked: boolean) => `<?
 </dict>
 </plist>
 `;
+
+const systemdUnit = (
+  label: string,
+  script: string,
+  managed: boolean,
+) => `# Written by \`stim-server service install\`; change it with \`stim-server service\`.
+[Unit]
+Description=stim-server (${label})
+
+[Service]
+ExecStart="/usr/bin/node" "${script}" "--port" "7787"
+Environment="STIM_SERVICE_LABEL=${label}"
+Restart=always
+${managed ? '\n[X-Stim]\nManaged=true\n' : ''}
+[Install]
+WantedBy=default.target
+`;
+
+describe('stim-server service guard for systemd user units', () => {
+  const identity = (path: string) => path;
+  test.each([
+    {
+      name: 'a unit stim-server installed that runs a script inside the folder',
+      managed: true,
+      script: '/w/a b/server.mjs',
+      found: true,
+    },
+    { name: 'a unit stim-server did not install', managed: false, script: '/w/a b/server.mjs', found: false },
+    { name: 'a unit that runs from another folder', managed: true, script: '/elsewhere/server.mjs', found: false },
+  ])('$name', ({ managed, script, found }) => {
+    const units = mkdtempSync(join(tmpdir(), 'stim-test-units-'));
+    try {
+      writeFileSync(join(units, 'dev.stim.server.service'), systemdUnit('dev.stim.server', script, managed));
+      const use = serviceRunningFrom('/w/a b', identity, '/nonexistent', units, 'linux');
+      expect(use).toEqual(
+        found ? { label: 'dev.stim.server', plist: join(units, 'dev.stim.server.service'), argument: script } : null,
+      );
+    } finally {
+      rmSync(units, { recursive: true, force: true });
+    }
+  });
+
+  test('a Stim unit whose ExecStart cannot be read blocks removal with no argument', () => {
+    const units = mkdtempSync(join(tmpdir(), 'stim-test-units-'));
+    try {
+      writeFileSync(
+        join(units, 'dev.stim.server.service'),
+        systemdUnit('dev.stim.server', '/w/server.mjs', true).replace(/^ExecStart=.*$/m, 'ExecStart="/usr/bin/node'),
+      );
+      expect(serviceRunningFrom('/w', identity, '/nonexistent', units, 'linux')).toMatchObject({ argument: null });
+    } finally {
+      rmSync(units, { recursive: true, force: true });
+    }
+  });
+});
+
+test.skipIf(process.platform !== 'linux')(
+  'against a real repo: a systemd unit stim-server installed refuses removal of the checkout it runs, even with --force',
+  async () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-unit-')));
+    const errs: string[] = [];
+    const originalError = console.error;
+    vi.stubEnv('HOME', base);
+    try {
+      const { wt } = realRepoWithWorktree(base);
+      const units = join(base, '.config', 'systemd', 'user');
+      mkdirSync(units, { recursive: true });
+      writeFileSync(
+        join(units, 'dev.stim.server.service'),
+        systemdUnit('dev.stim.server', join(wt, 'server.mjs'), true),
+      );
+      console.error = (m) => errs.push(String(m));
+      const run = captureAction(registerRemove);
+      await run(wt, { force: true });
+      console.error = originalError;
+      expect(existsSync(wt)).toBe(true);
+      expect(process.exitCode).toBe(1);
+      expect(errs.join('\n')).toContain('STIM_WORKTREE_SERVICE');
+    } finally {
+      console.error = originalError;
+      vi.unstubAllEnvs();
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
 
 describe.skipIf(process.platform !== 'darwin')('stim-server service guard', () => {
   test.each([
@@ -2066,3 +2450,40 @@ test('action: removal releases this workspace lease and leaves another workspace
     ),
   ).toBe(true);
 });
+
+const PARKING_PRESSURE: [DiskPressureLevel, boolean][] = [
+  [0, false],
+  [2, true],
+];
+
+test.each(PARKING_PRESSURE)(
+  'action: at disk pressure level %i with parking enabled, removal parks the owned simulator unless the disk is short',
+  async (level, deletes) => {
+    vi.stubEnv('STIM_POOL_IOS_PARKED_MAX', '3');
+    vi.spyOn(measurements, 'currentDiskLevel').mockReturnValue(level);
+    upsertProject(mainDir, {
+      metroPort: 8081,
+      platforms: { ios: { deviceUdid: 'U9', owned: true, deviceName: 'stim-main' } },
+    });
+    const exec = makeExecutor({
+      worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+      simctlList: simctlJson([{ udid: 'U9', name: 'stim-main', state: 'Shutdown', isAvailable: true }]),
+    });
+    setExecutor(exec);
+
+    const errs: string[] = [];
+    const original = console.error;
+    console.error = (m) => errs.push(String(m));
+    try {
+      await captureAction(registerRemove)(mainDir, {});
+    } finally {
+      console.error = original;
+      vi.restoreAllMocks();
+    }
+
+    const output = errs.join('\n');
+    expect(output.includes('disk pressure level 2: deleted the owned devices instead of parking them')).toBe(deletes);
+    expect(/could not park|parked stim/.test(output)).toBe(!deletes);
+    expect(exec.calls.run.some((c) => /xcrun simctl delete U9/.test(c))).toBe(true);
+  },
+);

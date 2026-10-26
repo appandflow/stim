@@ -1,11 +1,18 @@
+import type { StimContext } from '@stim-cli/core';
 import { stopHostedAndroid } from '../device-host/hosted-android.ts';
 import { stopHostedIos } from '../device-host/hosted-ios.ts';
 import { archiveWorkspace } from '../archive.ts';
 import { clearNamedPorts } from '../named-ports.ts';
 import { projectDeviceSlots } from './device-slots.ts';
-import { type ProjectRecord, clearDevice, getProject, removeProject } from '../workspace/config.ts';
+import {
+  type ProjectRecord,
+  clearDevice,
+  getProject,
+  removeProject,
+  withConfigLockAsync,
+} from '../workspace/config.ts';
 import { existsSync } from 'node:fs';
-import { resolveProjectMetro, killMetroTree, pidExists, signalProcessTree } from '../metro.ts';
+import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../supervisor/stop-cause.ts';
 import {
   teardownOwnedBrowser,
@@ -26,16 +33,19 @@ import {
   readRemoteSessionId,
   type ManagedTunnelRecord,
 } from '../supervisor/state.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { LAST_BUILD_KEYS, readMacosRecord } from '@stim-cli/core/state';
+import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
+import { isJsonObject, LAST_BUILD_KEYS, readMacosRecord } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
 import { macosAppPresent } from '../macos/state.ts';
 import { readWebRecord } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
+import { removePhoneReverses } from './phone-reverses.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from '../engine/tunnel.ts';
 import { getExecutor } from '../exec.ts';
+import { runOperationFile } from '../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { agentDeviceDaemon } from './activity.ts';
 import { phaseLine } from '../command-output.ts';
 import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
@@ -48,19 +58,27 @@ import {
   type ProcessRecord,
 } from '../process-identity.ts';
 
+function throwIfCleanupInterrupted(error: unknown, operation?: StimContext): void {
+  if (error instanceof WorkspaceProcessCleanupError) throw error;
+  operation?.signal.throwIfAborted();
+}
+
 async function reapCollectors(
   root: string,
   {
     verify = verifyCollectorOwnership,
     collectors,
+    operation,
   }: {
     verify?: typeof verifyCollectorOwnership;
     collectors: Record<string, unknown>;
+    operation?: StimContext;
   },
 ): Promise<{ skippedDevices: SkippedDevice[]; failedDevices: SkippedDevice[] }> {
   const skippedDevices: SkippedDevice[] = [];
   const failedDevices: SkippedDevice[] = [];
   for (const [platform, record] of Object.entries(collectors)) {
+    operation?.signal.throwIfAborted();
     const rec = record as ProcessRecord | null;
     const pid = rec?.pid;
     if (typeof pid !== 'number' || pid <= 0 || pid === process.pid || !pidExists(pid)) continue;
@@ -80,7 +98,7 @@ async function reapCollectors(
     }
     try {
       process.kill(pid, 'SIGTERM');
-      if (await waitForProcessExit(rec!, 5_000)) continue;
+      if (await waitForProcessExit(rec!, 5_000, operation?.signal)) continue;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ESRCH') continue;
     }
@@ -96,16 +114,18 @@ async function reapCollectors(
 }
 
 // eas simulator:stop needs a project cwd, so end the session before removing the worktree.
-function reclaimRemoteSession(
+async function reclaimRemoteSession(
   root: string,
-  { stopSession = defaultStopSession }: { stopSession?: StopSession } = {},
-): { stopped: string | null; failed: SkippedDevice | null } {
+  { stopSession = defaultStopSession, operation }: { stopSession?: StopSession; operation?: StimContext } = {},
+): Promise<{ stopped: string | null; failed: SkippedDevice | null }> {
   const sessionId = readRemoteSessionId(root);
   if (!sessionId) return { stopped: null, failed: null };
   let result: { status: 'torn-down' | 'failed'; reason?: string };
   try {
-    result = stopSession(root, sessionId);
+    result = await stopSession(root, sessionId, operation);
+    operation?.signal.throwIfAborted();
   } catch (err) {
+    throwIfCleanupInterrupted(err, operation);
     result = { status: 'failed', reason: String((err as Error)?.message ?? err) };
   }
   if (result.status === 'torn-down') {
@@ -119,7 +139,7 @@ function reclaimRemoteSession(
         },
       };
     }
-    clearRemoteSession(root, sessionId);
+    await withWorkspaceStateLockAsync(root, () => clearRemoteSession(root, sessionId));
     return { stopped: sessionId, failed: null };
   }
   return {
@@ -134,28 +154,37 @@ function reclaimRemoteSession(
   };
 }
 
-type StopSession = (root: string, sessionId: string) => { status: 'torn-down' | 'failed'; reason?: string };
+type StopSession = (
+  root: string,
+  sessionId: string,
+  operation?: StimContext,
+) => { status: 'torn-down' | 'failed'; reason?: string } | Promise<{ status: 'torn-down' | 'failed'; reason?: string }>;
 
-function defaultStopSession(root: string, sessionId: string) {
-  return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null });
+function defaultStopSession(root: string, sessionId: string, operation?: StimContext) {
+  return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null, operation });
 }
 
-type StopMetroTunnelFn = (record: ManagedTunnelRecord) => Promise<StopTunnelResult>;
+type StopMetroTunnelFn = (record: ManagedTunnelRecord, operation?: StimContext) => Promise<StopTunnelResult>;
 
-function defaultStopMetroTunnel(record: ManagedTunnelRecord): Promise<StopTunnelResult> {
-  return stopTunnel(record);
+function defaultStopMetroTunnel(record: ManagedTunnelRecord, operation?: StimContext): Promise<StopTunnelResult> {
+  return stopTunnel(record, { operation });
 }
 
 async function reclaimMetroTunnel(
   root: string,
-  { stopMetroTunnel = defaultStopMetroTunnel }: { stopMetroTunnel?: StopMetroTunnelFn } = {},
+  {
+    stopMetroTunnel = defaultStopMetroTunnel,
+    operation,
+  }: { stopMetroTunnel?: StopMetroTunnelFn; operation?: StimContext } = {},
 ): Promise<{ stopped: string | null; failed: SkippedDevice | null }> {
   const record = readMetroTunnel(root);
   if (record?.kind !== 'managed') return { stopped: null, failed: null };
   let result: StopTunnelResult;
   try {
-    result = await stopMetroTunnel(record);
+    result = await stopMetroTunnel(record, operation);
+    operation?.signal.throwIfAborted();
   } catch (err) {
+    throwIfCleanupInterrupted(err, operation);
     result = { status: 'failed', reason: String((err as Error)?.message ?? err) };
   }
   if (result.status === 'failed') {
@@ -170,7 +199,7 @@ async function reclaimMetroTunnel(
       },
     };
   }
-  if (!clearManagedMetroTunnel(root, record)) {
+  if (!(await withWorkspaceStateLockAsync(root, () => clearManagedMetroTunnel(root, record)))) {
     return {
       stopped: null,
       failed: {
@@ -204,8 +233,8 @@ export function describeDereferenced(project: ProjectRecord | null): string[] {
 
 function lastBuildCacheKey(projectPath: string, platform: 'ios' | 'android'): string | null {
   const build = readWorkspaceState(projectPath)?.[LAST_BUILD_KEYS[platform]];
-  if (build === null || typeof build !== 'object' || Array.isArray(build)) return null;
-  const { cacheKey } = build as Record<string, unknown>;
+  if (!isJsonObject(build)) return null;
+  const { cacheKey } = build;
   return typeof cacheKey === 'string' ? cacheKey : null;
 }
 
@@ -227,18 +256,18 @@ function parkRequest(
   };
 }
 
-function reclaimOwnedDevices(
+async function reclaimOwnedDevices(
   project: ProjectRecord | null,
   projectPath: string,
-  { park = false }: { park?: boolean } = {},
-): {
+  { park = false, operation }: { park?: boolean; operation?: StimContext } = {},
+): Promise<{
   deletedDevices: string[];
   parkedDevices: ParkedDevice[];
   evictedDevices: ParkedDevice[];
   poolNotes: string[];
   skippedDevices: SkippedDevice[];
   failedDevices: SkippedDevice[];
-} {
+}> {
   const deletedDevices: string[] = [];
   const parkedDevices: ParkedDevice[] = [];
   const evictedDevices: ParkedDevice[] = [];
@@ -247,11 +276,13 @@ function reclaimOwnedDevices(
   const failedDevices: SkippedDevice[] = [];
 
   for (const { slot, platforms } of projectDeviceSlots(project)) {
+    operation?.signal.throwIfAborted();
     const ios = platforms.ios;
     if (ios?.owned && ios.deviceUdid) {
       const udid = ios.deviceUdid as string;
       const label = (ios.deviceName as string | undefined) || udid;
-      const r = teardownOwnedIosSim(udid, {
+      const r = await teardownOwnedIosSim(udid, {
+        operation,
         del: true,
         label,
         ...(park ? { park: parkRequest(project, projectPath, slot, Boolean(ios.simslimManaged)) } : {}),
@@ -263,7 +294,7 @@ function reclaimOwnedDevices(
         evictedDevices.push(...(r.evicted ?? []));
       } else if (r.status === 'torn-down') deletedDevices.push(r.label as string);
       if (!r.parked && (r.status === 'torn-down' || r.status === 'missing')) {
-        clearDevice(projectPath, 'ios', slot, udid);
+        await withConfigLockAsync(() => clearDevice(projectPath, 'ios', slot, udid));
       }
       if (r.status === 'skipped') {
         skippedDevices.push({ platform: 'ios', name: label, udid, reason: `${r.reason} -- not touched` });
@@ -275,9 +306,11 @@ function reclaimOwnedDevices(
     }
 
     const android = platforms.android;
+    operation?.signal.throwIfAborted();
     if (android?.owned && android.avdName) {
       const bound = parkedMaxSetting('android');
-      const r = teardownOwnedAvd(android.avdName, {
+      const r = await teardownOwnedAvd(android.avdName, {
+        operation,
         del: true,
         owner: { projectPath, slot },
         ...(park && !bound.error && bound.max > 0
@@ -296,7 +329,8 @@ function reclaimOwnedDevices(
       if (r.parkFallback) poolNotes.push(`could not park ${android.avdName}: ${r.parkFallback} -- deleted it instead`);
       for (const failure of r.evictionFailures ?? []) poolNotes.push(failure);
       if (!r.parked && (r.status === 'torn-down' || r.status === 'missing')) {
-        clearDevice(projectPath, 'android', slot, android.avdName);
+        const avdName = android.avdName;
+        await withConfigLockAsync(() => clearDevice(projectPath, 'android', slot, avdName));
       }
       if (r.parked) {
         parkedDevices.push(r.parked);
@@ -339,6 +373,7 @@ export interface ReclaimResult {
 }
 
 type ReclaimOptions = {
+  operation?: StimContext;
   archive?: { removedBy: 'worktree-remove' | 'gc' | 'maintenance' };
   deleteOwnedDevices?: boolean;
   parkOwnedDevices?: boolean;
@@ -355,6 +390,7 @@ export async function reclaimProject(path: string, options: ReclaimOptions = {})
   const dir = workspaceDir(path);
   const existed = existsSync(dir);
   const run = await withIdleWorkspace(path, () => reclaimIdleProject(path, existed, options), {
+    operation: options.operation,
     purpose: 'workspace removal',
     hosted: false,
     supervisor: false,
@@ -383,6 +419,46 @@ export async function reclaimProject(path: string, options: ReclaimOptions = {})
   };
 }
 
+function verifyAvdClaims(project: ProjectRecord | null, operation?: StimContext): void {
+  for (const { platforms } of projectDeviceSlots(project)) {
+    operation?.signal.throwIfAborted();
+    if (platforms.android?.owned && platforms.android.avdName) {
+      releaseClaim(acquireAvdClaim(platforms.android.avdName));
+    }
+  }
+}
+
+async function removeWorkspaceOutput(
+  path: string,
+  dir: string,
+  archive: ReclaimOptions['archive'],
+  state: ReturnType<typeof readWorkspaceState>,
+  operation?: StimContext,
+): Promise<void> {
+  const stateDir = workspaceAgentDeviceDir(path);
+  if (!['none', 'dead'].includes(agentDeviceDaemon(stateDir))) {
+    const exec = getExecutor();
+    try {
+      if (!exec.findExecutable('agent-device')) throw new Error('agent-device is not on PATH');
+      await runOperationFile(operation, exec, 'agent-device', ['daemon', 'stop', '--state-dir', stateDir, '--clean'], {
+        cwd: operation?.cwd,
+        timeoutMs: 20_000,
+        killSignal: 'SIGKILL',
+        env: { AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' },
+      });
+    } catch (error) {
+      throwIfCleanupInterrupted(error, operation);
+      const message = `${phaseLine('agent-device', `daemon could not be stopped: ${(error as Error).message}; run agent-device daemon stop --state-dir "${stateDir}" --clean`)}\n`;
+      if (operation) operation.output('stderr', message);
+      else process.stderr.write(message);
+      throw error;
+    }
+  }
+  operation?.signal.throwIfAborted();
+  if (archive) await archiveWorkspace(path, archive.removedBy, state, operation);
+  await emptyWorkspaceDir(dir, operation?.signal);
+}
+
 async function reclaimIdleProject(
   path: string,
   workspaceExisted: boolean,
@@ -397,17 +473,21 @@ async function reclaimIdleProject(
     verifyCollector = verifyCollectorOwnership,
     teardownBrowser = teardownOwnedBrowser,
     stopRequester = { by: 'stim gc --delete' },
+    operation,
   }: ReclaimOptions,
 ): Promise<ReclaimResult> {
-  await clearNamedPorts(path);
+  const signal = operation?.signal;
+  signal?.throwIfAborted();
+  await clearNamedPorts(
+    path,
+    operation ? { signal, log: (line) => operation.output('stderr', `${line}\n`) } : undefined,
+  );
+  signal?.throwIfAborted();
   const project = getProject(path);
-  for (const { platforms } of projectDeviceSlots(project)) {
-    if (platforms.android?.owned && platforms.android.avdName) {
-      releaseClaim(acquireAvdClaim(platforms.android.avdName));
-    }
-  }
+  verifyAvdClaims(project, operation);
   const dereferenced = describeDereferenced(project);
   const initialState = readWorkspaceState(path);
+  await removePhoneReverses(path, { operation });
 
   let killedPid: number | null = null;
   let skippedMetro: string | null = null;
@@ -426,10 +506,14 @@ async function reclaimIdleProject(
       ? inspectProcessIdentity(orphanServer)
       : null;
   if (supervisor.status === 'ours') {
-    requestDevServerStop(path, supervisor.processToken, stopRequester);
-    const signalled = killMetroTree(supervisor.pid, supervisor.processToken);
-    if (!signalled) withdrawDevServerStopRequest(path, supervisor.processToken);
-    if (signalled && (await waitForProcessExit(supervisor, 10_000))) {
+    const processToken = supervisor.processToken;
+    await withWorkspaceStateLockAsync(path, () => requestDevServerStop(path, processToken, stopRequester)).catch(
+      () => {},
+    );
+    const signalled = await killMetroTreeAsync(supervisor.pid, supervisor.processToken, operation);
+    if (!signalled)
+      await withWorkspaceStateLockAsync(path, () => withdrawDevServerStopRequest(path, processToken)).catch(() => {});
+    if (signalled && (await waitForProcessExit(supervisor, 10_000, signal))) {
       killedPid = supervisor.pid!;
     } else {
       skippedMetro = `could not confirm supervisor pid ${supervisor.pid} exited`;
@@ -441,12 +525,15 @@ async function reclaimIdleProject(
   } else if (orphanIdentity === 'same') {
     let signalled = false;
     try {
-      signalled = signalProcessTree(orphanServer.pid, 'SIGTERM', {
+      signalled = await signalProcessTreeAsync(orphanServer.pid, 'SIGTERM', {
         group: initialState?.supervisor?.mode === MODE_COMMAND,
+        operation,
       });
-    } catch {}
+    } catch (error) {
+      throwIfCleanupInterrupted(error, operation);
+    }
     const exited = signalled
-      ? await waitForProcessExit(orphanServer, 10_000)
+      ? await waitForProcessExit(orphanServer, 10_000, signal)
       : ['gone', 'different'].includes(inspectProcessIdentity(orphanServer));
     if (exited) {
       killedPid = orphanServer.pid;
@@ -465,8 +552,11 @@ async function reclaimIdleProject(
   const { skippedDevices: skippedCollectors, failedDevices: failedCollectors } = await reapCollectors(path, {
     verify: verifyCollector,
     collectors: initialState?.collectors ?? {},
+    operation,
   });
-  const browser = await teardownBrowser(path, { deleteProfile: true });
+  signal?.throwIfAborted();
+  const browser = await teardownBrowser(path, { deleteProfile: true, operation });
+  signal?.throwIfAborted();
   if (browser.status === 'failed' || browser.status === 'skipped') {
     const entry: SkippedDevice = { name: 'owned Chrome', reason: browser.reason ?? 'it could not be closed' };
     skippedCollectors.push(entry);
@@ -498,7 +588,7 @@ async function reclaimIdleProject(
 
   const { deletedDevices, parkedDevices, evictedDevices, poolNotes, skippedDevices, failedDevices } =
     deleteOwnedDevices && !supervisorHeld && failedCollectors.length === 0
-      ? reclaimOwnedDevices(project, path, { park: parkOwnedDevices })
+      ? await reclaimOwnedDevices(project, path, { park: parkOwnedDevices, operation })
       : {
           deletedDevices: [] as string[],
           parkedDevices: [] as ParkedDevice[],
@@ -510,26 +600,31 @@ async function reclaimIdleProject(
   skippedDevices.push(...skippedCollectors);
   failedDevices.push(...failedCollectors);
   for (const platform of ['ios', 'android'] as const) {
+    signal?.throwIfAborted();
     try {
-      await (platform === 'ios' ? stopHostedIos : stopHostedAndroid)(path);
+      await (platform === 'ios' ? stopHostedIos : stopHostedAndroid)(path, undefined, signal);
     } catch (error) {
+      throwIfCleanupInterrupted(error, operation);
       const failed: SkippedDevice = { platform, name: `hosted ${platform} device`, reason: (error as Error).message };
       failedDevices.push(failed);
       skippedDevices.push(failed);
     }
   }
 
-  const remote = reclaimRemoteSession(path, { stopSession });
+  signal?.throwIfAborted();
+  const remote = await reclaimRemoteSession(path, { stopSession, operation });
   if (remote.failed) {
     skippedDevices.push(remote.failed);
     failedDevices.push(remote.failed);
   }
 
   if (macosAppPresent(path)) {
+    signal?.throwIfAborted();
     const hosted = readMacosRecord(path)?.host;
     try {
-      await stopMacosApp(path);
+      await stopMacosApp(path, operation);
     } catch (error) {
+      throwIfCleanupInterrupted(error, operation);
       const failed = {
         name: hosted ? `hosted macOS session ${hosted.session} on ${hosted.machine}` : 'macOS app',
         reason: String((error as Error)?.message ?? error),
@@ -539,16 +634,19 @@ async function reclaimIdleProject(
     }
   }
 
-  const tunnel = await reclaimMetroTunnel(path, { stopMetroTunnel });
+  signal?.throwIfAborted();
+  const tunnel = await reclaimMetroTunnel(path, { stopMetroTunnel, operation });
   if (tunnel.failed) {
     skippedDevices.push(tunnel.failed);
     failedDevices.push(tunnel.failed);
   }
 
   let releasedLeases: ReleasedLease[] = [];
+  signal?.throwIfAborted();
   try {
     releasedLeases = releaseLeases(path);
-  } catch {
+  } catch (error) {
+    throwIfCleanupInterrupted(error, operation);
     releasedLeases = [];
   }
 
@@ -557,37 +655,22 @@ async function reclaimIdleProject(
   const removedWorkspaceDirs: string[] = [];
   const failedWorkspaceDirs: string[] = [];
   if (failedDevices.length === 0 && !supervisorHeld) {
+    signal?.throwIfAborted();
     const dir = workspaceDir(path);
     if (existsSync(dir)) {
       try {
-        const stateDir = workspaceAgentDeviceDir(path);
-        if (!['none', 'dead'].includes(agentDeviceDaemon(stateDir))) {
-          const exec = getExecutor();
-          try {
-            if (!exec.findExecutable('agent-device')) throw new Error('agent-device is not on PATH');
-            exec.runFile('agent-device', ['daemon', 'stop', '--state-dir', stateDir, '--clean'], {
-              timeoutMs: 20_000,
-              killSignal: 'SIGKILL',
-              env: { AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' },
-            });
-          } catch (error) {
-            process.stderr.write(
-              `${phaseLine('agent-device', `daemon could not be stopped: ${(error as Error).message}; run agent-device daemon stop --state-dir "${stateDir}" --clean`)}\n`,
-            );
-            throw error;
-          }
-        }
-        if (archive) archiveWorkspace(path, archive.removedBy, initialState);
-        emptyWorkspaceDir(dir);
+        await removeWorkspaceOutput(path, dir, archive, initialState, operation);
         if (workspaceExisted) removedWorkspaceDirs.push(dir);
-      } catch {
+      } catch (error) {
+        throwIfCleanupInterrupted(error, operation);
         failedWorkspaceDirs.push(dir);
       }
     }
   }
 
   const keptEntry = supervisorHeld || failedDevices.length > 0 || failedWorkspaceDirs.length > 0;
-  if (project && !keptEntry && !preserveProjectRecord) removeProject(path);
+  signal?.throwIfAborted();
+  if (project && !keptEntry && !preserveProjectRecord) await withConfigLockAsync(() => removeProject(path));
 
   return {
     path,

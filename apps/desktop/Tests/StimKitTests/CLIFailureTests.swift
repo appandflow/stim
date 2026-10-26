@@ -1,6 +1,7 @@
 import Foundation
-import StimKit
 import Testing
+
+@testable import StimKit
 
 struct CLIFailureTests {
   private struct Boom: LocalizedError {
@@ -36,7 +37,7 @@ struct CLIFailureTests {
 
     let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
 
-    let error = await #expect(throws: StimCLI.Failure.self) { try await cli.gcReport() }
+    let error = await #expect(throws: StimCLI.Failure.self) { try await cli.doctor(cwd: dir.path) }
     #expect(error?.localizedDescription == "stim exited with status 2: first\nsecond\nerror: disk full")
   }
 
@@ -47,7 +48,7 @@ struct CLIFailureTests {
     let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
 
     let error = await #expect(throws: StimCLI.Failure.self) {
-      try await cli.machineAccess(cwd: dir.path, ask: false, timeout: 1)
+      try await cli.run(["doctor", "--json"], cwd: dir.path, timeout: 1)
     }
     guard case .timedOut(let seconds) = error else {
       Issue.record("expected timedOut, got \(String(describing: error))")
@@ -59,7 +60,7 @@ struct CLIFailureTests {
   @Test func throwsNotFoundWithoutRunningAnythingWhenStimIsMissing() async {
     let cli = StimCLI(environment: ["PATH": "/nonexistent"])
 
-    let error = await #expect(throws: StimCLI.Failure.self) { try await cli.status() }
+    let error = await #expect(throws: StimCLI.Failure.self) { try await cli.doctor(cwd: NSHomeDirectory()) }
     guard case .notFound = error else {
       Issue.record("expected notFound, got \(String(describing: error))")
       return
@@ -91,14 +92,21 @@ struct CLIFailureTests {
       in: dir, name: "stim",
       """
       #!/bin/sh
-      trap 'echo terminated > "\(dir.path)/terminated"' TERM
+      reply() {
+        echo terminated > "\(dir.path)/terminated"
+        kill "$sleeper"
+        echo '{"environments":[]}'
+        exit 0
+      }
+      trap reply TERM
+      sleep 30 &
+      sleeper=$!
       echo $$ > "\(pidFile)"
-      sleep 1
-      echo '{"environments":[]}'
+      wait "$sleeper"
       """)
     let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
 
-    let task = Task { try await cli.status() }
+    let task = Task { try await cli.doctor(cwd: dir.path) }
     while !FileManager.default.fileExists(atPath: pidFile) { try await Task.sleep(for: .milliseconds(20)) }
     task.cancel()
 
@@ -121,7 +129,7 @@ struct CLIFailureTests {
 
     let task = Task {
       withUnsafeCurrentTask { $0?.cancel() }
-      return try await cli.status()
+      return try await cli.doctor(cwd: dir.path)
     }
 
     await #expect(throws: CancellationError.self) { try await task.value }

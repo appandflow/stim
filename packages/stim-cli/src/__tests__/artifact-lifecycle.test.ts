@@ -117,15 +117,22 @@ describe('artifact lifecycle', () => {
     expect(state).toEqual({ claimed: false, stored: null });
   });
 
-  test('failed source preparation releases the producer claim without compiling or publishing', async () => {
-    const { phases, state } = recipe();
-    const failure = new Error('source preparation failed');
-    phases.build.prepare = async () => {
-      throw failure;
-    };
-    phases.build.compile = async () => unexpected('compile after failed preparation');
+  test.each(['placement', 'preparation'])(
+    'failed %s releases the producer claim without compiling or publishing',
+    async (phase) => {
+      const { phases, state } = recipe();
+      const failure = new Error('source preparation failed');
+      const fail = async () => {
+        throw failure;
+      };
+      if (phase === 'placement') {
+        phases.build.placement = { select: fail, acquire: async () => unexpected('upload after failed selection') };
+        phases.build.prepare = async () => unexpected('preparation after failed selection');
+      } else phases.build.prepare = fail;
+      phases.build.compile = async () => unexpected('compile after failed preparation');
 
-    await expect(runArtifactLifecycle(phases)).rejects.toBe(failure);
-    expect(state).toEqual({ claimed: false, stored: null });
-  });
+      await expect(runArtifactLifecycle(phases)).rejects.toBe(failure);
+      expect(state).toEqual({ claimed: false, stored: null });
+    },
+  );
 });

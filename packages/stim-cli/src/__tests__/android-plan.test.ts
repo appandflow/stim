@@ -15,7 +15,7 @@ import type { AndroidPlanDeps } from '../integrations/react-native-android-plan.
 import { reactNativeAndroidProject } from '../integrations/react-native-android.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { buildCacheKey, entryDir } from '../cache/build-cache.ts';
-import { upsertProject } from '../workspace/config.ts';
+import { getProject, upsertProject } from '../workspace/config.ts';
 import { hostSystemImageArch } from '../devices/android.ts';
 import { readProductFlavors } from '../integrations/react-native-build.ts';
 
@@ -86,8 +86,8 @@ function inspection(events: string[]): AndroidPlanDependencies {
   };
 }
 
-test('a plan binds build selectors and cache policy to the selected emulator', () => {
-  const result = resolveAndroidRunPlan(
+test('a plan binds build selectors and cache policy to the selected emulator', async () => {
+  const result = await resolveAndroidRunPlan(
     inputs({
       settings: {
         android: { variant: 'settingDebug', systemImage: 'setting-image', deviceProfile: 'setting-profile' },
@@ -110,6 +110,76 @@ test('a plan binds build selectors and cache policy to the selected emulator', (
     kind: 'emulator',
     systemImage: 'installed-image',
     deviceProfile: '7.6in Foldable',
+  });
+});
+
+describe('the local build preflight', () => {
+  const refusal = { code: 'STIM_PATH_TOO_LONG', reason: 'too long', remedy: 'move it' };
+
+  async function plan(overrides: Partial<AndroidPlanInputs>, pairedMachines = 0) {
+    const asked: unknown[] = [];
+    const result = await resolveAndroidRunPlan(inputs(overrides), {
+      ...inspection([]),
+      buildMachines: () => Array.from({ length: pairedMachines }),
+      preflight: (target) => {
+        asked.push(target);
+        return refusal;
+      },
+    });
+    return { result, asked };
+  }
+
+  test('an emulator run is refused with the preflight failure before any device exists, for the host ABI', async () => {
+    const { result, asked } = await plan({ systemImage: 'installed-image', variant: 'productionDebug' });
+    expect(result).toMatchObject({ ok: false, code: 'STIM_PATH_TOO_LONG', message: 'too long', remedy: 'move it' });
+    expect(asked).toEqual([{ abi: hostSystemImageArch(), variant: 'productionDebug' }]);
+  });
+
+  test('the ABI is the one of the explicit system image, and every ABI when narrowing is off', async () => {
+    const x86 = 'system-images;android-35;google_apis;x86';
+    const images = [{ api: 35, tag: 'google_apis', arch: 'x86', pkg: x86 }];
+    const ask = async (overrides: Partial<AndroidPlanInputs>, targetAbiOnly: boolean) => {
+      const asked: unknown[] = [];
+      const base = inspection([]);
+      const compilerCache = base.resolveCompilerCache;
+      assert(compilerCache);
+      await resolveAndroidRunPlan(inputs(overrides), {
+        ...base,
+        listSystemImages: () => images,
+        resolveCompilerCache: (args) => {
+          const resolved = compilerCache(args);
+          return {
+            ...resolved,
+            optimizations: {
+              ...resolved.optimizations,
+              android: { ...resolved.optimizations.android, targetAbiOnly },
+            },
+          };
+        },
+        preflight: (target) => {
+          asked.push(target);
+          return null;
+        },
+      });
+      return asked;
+    };
+    expect(await ask({ systemImage: x86 }, true)).toEqual([{ abi: 'x86', variant: null }]);
+    expect(await ask({ systemImage: x86 }, false)).toEqual([{ abi: null, variant: null }]);
+  });
+
+  test('a release build asks about every ABI', async () => {
+    const { asked } = await plan({ variant: 'productionRelease' });
+    expect(asked).toEqual([{ abi: null, variant: 'productionRelease' }]);
+  });
+
+  test.each([
+    ['a physical device', { device: 'serial-1' }, 0],
+    ['an EAS profile', { easProfile: 'development' }, 0],
+    ['a paired build machine', { buildMachine: 'auto' }, 1],
+  ])('%s is not asked, because no local build follows', async (_name, overrides, paired) => {
+    const { result, asked } = await plan(overrides, paired);
+    expect(result.ok).toBe(true);
+    expect(asked).toEqual([]);
   });
 });
 
@@ -171,25 +241,33 @@ test('build planning needs no installed image, emulator profile, device lease or
   expect(calls).not.toEqual(expect.arrayContaining(['flavors']));
 });
 
-test('a physical target overrides configured remote mode and carries its parsed lease options', () => {
-  const events: string[] = [];
-  const result = resolveAndroidRunPlan(
-    inputs({ settings: { android: { remote: 'eas' } }, device: 'phone-serial', wait: '90' }),
-    inspection(events),
-  );
+test.each([
+  { setting: 'eas', remote: null },
+  { setting: 'auto', remote: null },
+  { setting: 'janics-mac-mini', remote: null },
+  { setting: 'janics-mac-mini', remote: 'local' },
+])(
+  'a physical target ignores android.remote $setting with --remote $remote and keeps its lease options',
+  async ({ setting, remote }) => {
+    const events: string[] = [];
+    const result = await resolveAndroidRunPlan(
+      inputs({ settings: { android: { remote: setting } }, device: 'phone-serial', wait: '90', remote }),
+      inspection(events),
+    );
 
-  assert(result.ok);
-  expect(result.plan.target).toEqual({
-    kind: 'physical',
-    serial: 'phone-serial',
-    lease: { waitSeconds: 90, noWait: false },
-  });
-  expect(events).not.toContain('images');
-  expect(events).not.toContain('profiles');
-});
+    assert(result.ok);
+    expect(result.plan.target).toEqual({
+      kind: 'physical',
+      serial: 'phone-serial',
+      lease: { waitSeconds: 90, noWait: false },
+    });
+    expect(events).not.toContain('images');
+    expect(events).not.toContain('profiles');
+  },
+);
 
-test('EAS selection keeps a Debug build plan while an explicit remote flag overrides settings', () => {
-  const result = resolveAndroidRunPlan(
+test('EAS selection keeps a Debug build plan while an explicit remote flag overrides settings', async () => {
+  const result = await resolveAndroidRunPlan(
     inputs({ settings: { android: { remote: 'eas', variant: 'storeRelease' } }, easProfile: 'qa', remote: 'proxy' }),
     inspection([]),
   );
@@ -233,13 +311,19 @@ const REFUSALS: Array<{
     name: 'a malformed remote target refuses at shape validation',
     inputs: { settings: { unused: true, android: { remote: 'bad name' } } },
     message:
-      /^Invalid android\.remote setting "bad name"\. Expected eas, proxy, auto, local, or a tailnet machine name\.$/,
+      /^Invalid android\.remote setting "bad name"\. Expected eas, proxy, local, auto, remote, remote-only, or a tailnet machine name\.$/,
     events: ['pool'],
   },
   {
     name: 'a lease flag conflict precedes system-image inspection',
     inputs: { device: true, wait: false, waitConflict: true, systemImage: 'installed-image' },
     message: /--wait and --no-wait ask for opposite things/,
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'flavors', 'avd', 'expo'],
+  },
+  {
+    name: '--device with an explicit --remote machine refuses before system-image inspection',
+    inputs: { device: true, remote: 'janics-mac-mini', systemImage: 'installed-image' },
+    message: /--remote janics-mac-mini/,
     events: ['pool', 'compiler', 'warning:cache', 'provider', 'flavors', 'avd', 'expo'],
   },
   {
@@ -257,9 +341,9 @@ const REFUSALS: Array<{
   },
 ];
 
-test.each(REFUSALS)('$name', ({ inputs: overrides, message, events: expected }) => {
+test.each(REFUSALS)('$name', async ({ inputs: overrides, message, events: expected }) => {
   const events: string[] = [];
-  const result = resolveAndroidRunPlan(inputs(overrides), inspection(events));
+  const result = await resolveAndroidRunPlan(inputs(overrides), inspection(events));
 
   assert(!result.ok);
   expect(result.code).toBe('STIM_BAD_ARG');
@@ -267,11 +351,11 @@ test.each(REFUSALS)('$name', ({ inputs: overrides, message, events: expected }) 
   expect(events).toEqual(expected);
 });
 
-test('a product-flavor refusal precedes Expo inspection and target/lease conflicts', () => {
+test('a product-flavor refusal precedes Expo inspection and target/lease conflicts', async () => {
   mkdirSync(join(root, 'android', 'app'), { recursive: true });
   writeFileSync(join(root, 'android', 'app', 'build.gradle'), 'android { productFlavors { free {} paid {} } }');
   const events: string[] = [];
-  const result = resolveAndroidRunPlan(inputs({ device: '', waitConflict: true }), inspection(events));
+  const result = await resolveAndroidRunPlan(inputs({ device: '', waitConflict: true }), inspection(events));
 
   assert(!result.ok);
   expect(result.message).toMatch(/2 product flavors/);
@@ -379,6 +463,33 @@ describe('planAndroid', () => {
     expect(payload.cacheKey).toBe(buildCacheKey('android', HASH, { variant: 'debug', abi: 'x86_64' }));
   });
 
+  test("an explicit --system-image replaces a never-booted AVD, so the key carries the requested image's ABI", async () => {
+    upsertProject(app, { platforms: { android: { avdName: 'stim-fixture', owned: true, bootPending: true } } });
+    const { payload, exitCode } = await plan(
+      { systemImage: X86.pkg },
+      { avdDirectory: () => join(app, 'avd'), avdSystemImage: () => ARM.pkg },
+    );
+    expect(exitCode).toBeUndefined();
+    expect(payload.cacheKey).toBe(buildCacheKey('android', HASH, { variant: 'debug', abi: 'x86_64' }));
+  });
+
+  test.each([
+    { variant: 'debug', remote: undefined },
+    { variant: 'release', remote: undefined },
+    { variant: 'debug', remote: 'auto' },
+  ])('an explicit --system-image refuses to replace an AVD that finished a boot (%j)', async ({ variant, remote }) => {
+    if (remote) writeFileSync(join(app, '.stim.json'), JSON.stringify({ android: { remote } }));
+    upsertProject(app, { platforms: { android: { avdName: 'stim-fixture', owned: true } } });
+    const before = getProject(app);
+    const { payload, exitCode } = await plan(
+      { systemImage: X86.pkg, variant },
+      { avdDirectory: () => join(app, 'avd'), avdSystemImage: () => ARM.pkg },
+    );
+    expect(exitCode).toBe(1);
+    expect(payload).toMatchObject({ code: 'STIM_BAD_ARG', message: expect.stringContaining('never finished a boot') });
+    expect(getProject(app)).toEqual(before);
+  });
+
   test('no installed system image refuses, because the ABI in the key is unknown', async () => {
     const { payload, exitCode } = await plan({}, { listSystemImages: () => [] });
     expect(exitCode).toBe(1);
@@ -401,7 +512,7 @@ describe('a profile the emulator gates on foldable image support', () => {
     pkg: `system-images;android-${api};${tag};${arch}`,
   });
   const foldable = new Set([image(34).pkg]);
-  const plan = (
+  const plan = async (
     overrides: Partial<AndroidPlanInputs>,
     {
       images = [image(30), image(33), image(34)],
@@ -416,44 +527,44 @@ describe('a profile the emulator gates on foldable image support', () => {
       ownedAvd: () => owned,
     });
 
-  test('refuses pixel_fold on the default image when it lacks the feature, naming an installed one that has it', () => {
-    const result = plan({ deviceProfile: 'pixel_fold' }, { images: [image(30), image(34), image(35)] });
+  test('refuses pixel_fold on the default image when it lacks the feature, naming an installed one that has it', async () => {
+    const result = await plan({ deviceProfile: 'pixel_fold' }, { images: [image(30), image(34), image(35)] });
     assert(!result.ok);
     expect(result.code).toBe('STIM_BAD_ARG');
     expect(result.message).toContain(`pixel_fold with system image ${image(35).pkg}`);
     expect(result.remedy).toContain(`--system-image "${image(34).pkg}"`);
   });
 
-  test('refuses resizable on an explicit image without the feature, whatever its API level', () => {
-    const result = plan({ deviceProfile: 'resizable', systemImage: image(33).pkg });
+  test('refuses resizable on an explicit image without the feature, whatever its API level', async () => {
+    const result = await plan({ deviceProfile: 'resizable', systemImage: image(33).pkg });
     assert(!result.ok);
     expect(result.remedy).toContain(image(34).pkg);
   });
 
-  test('accepts pixel_fold on an image with the feature and a hinged generic profile on an old image', () => {
-    expect(plan({ deviceProfile: 'pixel_fold', systemImage: image(34).pkg }).ok).toBe(true);
-    expect(plan({ deviceProfile: '7.6in Foldable', systemImage: image(30).pkg }).ok).toBe(true);
+  test('accepts pixel_fold on an image with the feature and a hinged generic profile on an old image', async () => {
+    expect((await plan({ deviceProfile: 'pixel_fold', systemImage: image(34).pkg })).ok).toBe(true);
+    expect((await plan({ deviceProfile: '7.6in Foldable', systemImage: image(30).pkg })).ok).toBe(true);
   });
 
-  test('without an installed image that has the feature, the remedy is an sdkmanager install', () => {
-    const result = plan({ deviceProfile: 'pixel_fold' }, { images: [image(30), image(33)] });
+  test('without an installed image that has the feature, the remedy is an sdkmanager install', async () => {
+    const result = await plan({ deviceProfile: 'pixel_fold' }, { images: [image(30), image(33)] });
     assert(!result.ok);
     expect(result.remedy).toContain(`sdkmanager "system-images;android-36;google_apis;${arch}"`);
   });
 
-  test("checks the slot's existing AVD instead of the default image unless --system-image names one", () => {
+  test("checks the slot's existing AVD instead of the default image unless --system-image names one", async () => {
     const owned = { avdName: 'stim-app-fold', systemImage: image(30).pkg, deviceProfile: 'pixel_fold' };
-    const refused = plan({}, { owned });
+    const refused = await plan({}, { owned });
     assert(!refused.ok);
     expect(refused.message).toContain(`emulator stim-app-fold uses device profile pixel_fold on ${image(30).pkg}`);
     expect(refused.remedy).toMatch(/replaces stim-app-fold if that emulator never finished a boot.*--slot <name>/);
-    expect(plan({ systemImage: image(34).pkg }, { owned }).ok).toBe(true);
-    expect(plan({ systemImage: image(30).pkg }, { owned })).toMatchObject({
+    expect((await plan({ systemImage: image(34).pkg }, { owned })).ok).toBe(true);
+    expect(await plan({ systemImage: image(30).pkg }, { owned })).toMatchObject({
       ok: false,
       message: expect.stringContaining('emulator stim-app-fold'),
     });
-    expect(plan({ deviceProfile: 'pixel_6' }, { owned }).ok).toBe(true);
-    expect(plan({}, { owned: { ...owned, systemImage: image(34).pkg } }).ok).toBe(true);
+    expect((await plan({ deviceProfile: 'pixel_6' }, { owned })).ok).toBe(true);
+    expect((await plan({}, { owned: { ...owned, systemImage: image(34).pkg } })).ok).toBe(true);
   });
 });
 
@@ -462,12 +573,12 @@ test.each([
   { wait: '30', expected: 30_000 },
   { wait: false, expected: 0 },
   { wait: '0', expected: 0 },
-])('owned-device slot wait policy accepts %j without changing physical lease defaults', ({ wait, expected }) => {
-  const owned = resolveAndroidRunPlan(inputs({ wait }), inspection([]));
+])('owned-device slot wait policy accepts %j without changing physical lease defaults', async ({ wait, expected }) => {
+  const owned = await resolveAndroidRunPlan(inputs({ wait }), inspection([]));
   expect(owned.ok).toBe(true);
   assert(owned.ok);
   expect(owned.plan.deviceSlotWaitMs).toBe(expected);
-  const physical = resolveAndroidRunPlan(inputs({ device: true, wait }), inspection([]));
+  const physical = await resolveAndroidRunPlan(inputs({ device: true, wait }), inspection([]));
   expect(physical.ok).toBe(true);
   assert(physical.ok);
   expect(physical.plan.target).toMatchObject({
@@ -477,4 +588,22 @@ test.each([
       noWait: wait === false,
     },
   });
+});
+
+test('a client-only CAS manifest failure names the environment override', () => {
+  const warnings: string[] = [];
+  const result = resolveAndroidBuildPlan(
+    inputs({
+      env: { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: join(root, 'missing-cas.json') },
+      settings: { optimizations: { android: { compilerCache: 'cas' } } },
+    }),
+    {
+      runtimeKind: ({ release }) => (release ? 'embedded-js' : 'metro'),
+      warn: (_kind, text) => warnings.push(text),
+      variantProblem: () => null,
+    },
+  );
+  assert(result.ok);
+  expect(warnings.join('\n')).toContain('STIM_ANDROID_CAS_TOOLCHAIN');
+  expect(warnings.join('\n')).not.toContain('optimizations.android.casToolchain');
 });

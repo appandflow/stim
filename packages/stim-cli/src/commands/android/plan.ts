@@ -13,7 +13,9 @@ import { parseDeviceWait } from '../../engine/device-lease-run.ts';
 import { detectIsExpo } from '../../workspace/project.ts';
 import {
   DEFAULT_AVD_DEVICE_PROFILE,
-  listAvdDeviceProfiles,
+  androidSystemImageAbi,
+  hostSystemImageArch,
+  listAvdDeviceProfilesAsync,
   listInstalledSystemImages,
   ownedAvdDeviceProfile,
   ownedAvdSystemImage,
@@ -25,7 +27,7 @@ import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import { getProject } from '../../workspace/config.ts';
 import { parkedMaxSetting } from '../../devices/sim-pool.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
-import type { SettingsObject } from '@stim-cli/core/state';
+import type { AutomaticPlacement, SettingsObject } from '@stim-cli/core/state';
 import {
   androidLayoutSetting,
   androidLayoutSettingError,
@@ -42,10 +44,13 @@ import {
   settingOriginScope,
   settingShapeErrors,
   settingsLayers,
+  inertSettingWarning,
   unknownSettingKeys,
 } from '../../workspace/settings.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
 import type { AndroidRuntimeKind } from './launch.ts';
+import type { AndroidProject } from '../../integrations/android-project.ts';
+import { buildPlacementCandidates } from '../../offload/client.ts';
 import {
   deviceProfileRefusal,
   foldableImageRefusal,
@@ -66,6 +71,7 @@ interface SettingsContext {
 export interface AndroidBuildPlanInputs {
   readonly settings: SettingsObject;
   readonly settingsContext: SettingsContext;
+  readonly env?: NodeJS.ProcessEnv;
   readonly easProfile?: string;
   readonly variant: string | null;
   readonly buildCache: boolean;
@@ -73,18 +79,21 @@ export interface AndroidBuildPlanInputs {
 
 export interface AndroidPlanInputs extends AndroidBuildPlanInputs {
   readonly slot: string;
+  readonly signal?: AbortSignal;
   readonly systemImage: string | null;
   readonly deviceProfile?: string | null;
   readonly device: string | boolean | null;
   readonly wait: string | boolean | undefined;
   readonly waitConflict: boolean;
   readonly remote: string | null;
+  readonly buildMachine?: string;
 }
 
 type AndroidTargetPlan =
   | {
       readonly kind: 'hosted';
       readonly machine: string;
+      readonly placement?: AutomaticPlacement;
       readonly systemImage: string | null;
       readonly deviceProfile: string | null;
     }
@@ -149,10 +158,12 @@ export interface AndroidPlanDependencies extends Omit<AndroidBuildPlanDependenci
   readFlavors?: typeof readProductFlavors;
   variantProblem?: AndroidBuildPlanDependencies['variantProblem'];
   listSystemImages?: typeof listInstalledSystemImages;
-  listDeviceProfiles?: typeof listAvdDeviceProfiles;
+  listDeviceProfiles?: (options?: { signal?: AbortSignal }) => string[] | Promise<string[]>;
   parkedLimit?: typeof parkedMaxSetting;
   supportsFold?: (pkg: string) => boolean;
   ownedAvd?: typeof slotOwnedAvd;
+  preflight?: AndroidProject['preflight'];
+  buildMachines?: (selected: string) => readonly unknown[];
 }
 
 interface SlotAvd {
@@ -168,6 +179,16 @@ function slotOwnedAvd(projectPath: string, slot: string): SlotAvd | null {
   return systemImage
     ? { avdName: android.avdName, systemImage, deviceProfile: ownedAvdDeviceProfile(android.avdName) }
     : null;
+}
+
+function localBuildPreflight(
+  preflight: AndroidProject['preflight'],
+  target: AndroidTargetPlan,
+  { release, targetAbiOnly, variant }: AndroidBuildPlan['build'],
+): ReturnType<NonNullable<AndroidProject['preflight']>> {
+  if (target.kind !== 'emulator' && target.kind !== 'remote') return null;
+  const abi = targetAbiOnly && !release ? (androidSystemImageAbi(target.systemImage) ?? hostSystemImageArch()) : null;
+  return preflight?.({ abi, variant }) ?? null;
 }
 
 function fail(
@@ -193,17 +214,20 @@ function androidLayoutError(
 function androidCompilerCache({
   root,
   optimizations,
+  env,
   settingsContext,
   layout,
 }: {
   root: string;
   optimizations: Optimizations;
+  env?: NodeJS.ProcessEnv;
   settingsContext: SettingsContext;
   layout: AndroidLayout;
 }): { cas: ReturnType<typeof resolveAndroidCas>; optimizations: Optimizations; warning: string | null } {
   const { cas, optimizations: resolved } = resolveAndroidCompilerCache({
     optimizations,
-    use: (manifest) => resolveAndroidCas(root, { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: manifest }, layout),
+    env,
+    use: (manifest) => resolveAndroidCas(root, { ...env, STIM_ANDROID_CAS_TOOLCHAIN: manifest }, layout),
   });
   const fallback = resolved.android.compilerCacheFallback;
   if (!fallback) return { cas, optimizations: resolved, warning: null };
@@ -219,6 +243,7 @@ export function resolveAndroidBuildPlan(
   {
     settings,
     settingsContext,
+    env,
     easProfile,
     variant: variantFlag,
     buildCache: requestedBuildCache,
@@ -240,15 +265,15 @@ export function resolveAndroidBuildPlan(
   if (layoutError) return fail('STIM_BAD_ARG', layoutError, SETTING_SHAPE_REMEDY);
   const layout = resolveAndroidLayout(settings, root, bound);
   for (const key of unknownSettingKeys(settings)) {
-    warn('setting', `Warning: setting "${key}" is not read by Stim and will be ignored.`);
+    warn('setting', inertSettingWarning(settings, key));
   }
   let optimizations: Optimizations;
   try {
-    optimizations = resolveOptimizations(settings);
+    optimizations = resolveOptimizations(settings, env);
   } catch (error) {
     return fail('STIM_BAD_ARG', `Could not configure Android build: ${(error as Error).message}`, SETTING_SHAPE_REMEDY);
   }
-  const compilerCache = resolveCompilerCache({ root, optimizations, settingsContext, layout });
+  const compilerCache = resolveCompilerCache({ root, optimizations, settingsContext, layout, env });
   const cas = compilerCache.cas;
   optimizations = compilerCache.optimizations;
   if (compilerCache.warning) warn('cache', compilerCache.warning);
@@ -285,11 +310,13 @@ export function resolveAndroidBuildPlan(
   };
 }
 
-export function resolveAndroidRunPlan(
+export async function resolveAndroidRunPlan(
   {
     settings,
     settingsContext,
+    env,
     slot,
+    signal,
     easProfile,
     variant: variantFlag,
     systemImage: systemImageFlag,
@@ -299,6 +326,7 @@ export function resolveAndroidRunPlan(
     waitConflict,
     remote: commandRemoteBackend,
     buildCache: requestedBuildCache,
+    buildMachine,
   }: AndroidPlanInputs,
   {
     warn,
@@ -320,12 +348,14 @@ export function resolveAndroidRunPlan(
       }),
     detectExpo = () => detectIsExpo(settingsContext.projectPath),
     listSystemImages = listInstalledSystemImages,
-    listDeviceProfiles = listAvdDeviceProfiles,
+    listDeviceProfiles = listAvdDeviceProfilesAsync,
     parkedLimit = parkedMaxSetting,
     supportsFold = systemImageSupportsFold,
     ownedAvd = slotOwnedAvd,
+    preflight,
+    buildMachines = (selected) => buildPlacementCandidates(selected).machines,
   }: AndroidPlanDependencies,
-): AndroidPlanResult {
+): Promise<AndroidPlanResult> {
   const root = settingsContext.projectPath;
   const [shapeError, ...moreShapeErrors] = [parkedLimit('android').error, ...settingShapeErrors(settings)].filter(
     (error): error is string => Boolean(error),
@@ -334,7 +364,7 @@ export function resolveAndroidRunPlan(
     return fail('STIM_BAD_ARG', shapeError, SETTING_SHAPE_REMEDY, { lines: moreShapeErrors });
   }
   const plannedBuild = resolveAndroidBuildPlan(
-    { settings, settingsContext, easProfile, variant: variantFlag, buildCache: requestedBuildCache },
+    { settings, settingsContext, env, easProfile, variant: variantFlag, buildCache: requestedBuildCache },
     { warn, runtimeKind, resolveCompilerCache, resolveCacheProvider, variantProblem, detectExpo },
   );
   if (!plannedBuild.ok) return plannedBuild;
@@ -366,11 +396,11 @@ export function resolveAndroidRunPlan(
         '`--device <serial>` to name one.',
     );
   }
-  if (physical && commandRemoteBackend) {
+  if (physical && commandRemoteBackend !== null && parseAndroidRemote(commandRemoteBackend)) {
     return fail(
       'STIM_BAD_ARG',
-      '--device installs on a device connected to this machine, and --remote installs on a remote one.',
-      'Pass only one of --device and --remote.',
+      `--device installs on a device connected to this machine, and --remote ${commandRemoteBackend} chooses where an emulator runs.`,
+      'Pass only one of --device and --remote, or --remote local with --device.',
     );
   }
   const noWait = waitFlag === false;
@@ -392,19 +422,18 @@ export function resolveAndroidRunPlan(
   const waitSeconds = waitParsed.seconds;
 
   const remoteTarget =
-    commandRemoteBackend !== null ? parseAndroidRemote(commandRemoteBackend) : remoteAndroidSetting(settings);
-  if (physical && remoteTarget?.kind === 'machine')
-    return fail(
-      'STIM_BAD_ARG',
-      '--device installs on a phone connected to this machine, and --remote installs on a remote one.',
-      'Pass only one of --device and --remote; unset android.remote for a local phone.',
-    );
+    commandRemoteBackend !== null
+      ? parseAndroidRemote(commandRemoteBackend)
+      : physical
+        ? null
+        : remoteAndroidSetting(settings);
   const machine = remoteTarget?.kind === 'machine' ? remoteTarget.machine : null;
   const remoteBackend = !physical && remoteTarget?.kind === 'backend' ? remoteTarget.backend : null;
   if (!machine) {
-    const refusal = androidDeviceSelectorRefusal(
+    const refusal = await androidDeviceSelectorRefusal(
       {
         settingsContext,
+        signal,
         slot,
         systemImageFlag,
         deviceProfileFlag,
@@ -420,10 +449,21 @@ export function resolveAndroidRunPlan(
   const target: AndroidTargetPlan = physical
     ? { kind: 'physical', serial: typeof deviceFlag === 'string' ? deviceFlag : null, lease: { waitSeconds, noWait } }
     : machine
-      ? { kind: 'hosted', machine, systemImage, deviceProfile }
+      ? {
+          kind: 'hosted',
+          machine,
+          ...(remoteTarget?.kind === 'machine' && remoteTarget.placement ? { placement: remoteTarget.placement } : {}),
+          systemImage,
+          deviceProfile,
+        }
       : remoteBackend
         ? { kind: 'remote', backend: remoteBackend, systemImage, deviceProfile }
         : { kind: 'emulator', systemImage, deviceProfile };
+  const preflightRefusal =
+    preflight && easProfile === undefined && buildMachines(buildMachine ?? 'local').length === 0
+      ? localBuildPreflight(preflight, target, plannedBuild.plan.build)
+      : null;
+  if (preflightRefusal) return fail(preflightRefusal.code, preflightRefusal.reason, preflightRefusal.remedy);
   return {
     ok: true,
     plan: {
@@ -439,8 +479,9 @@ export function resolveAndroidRunPlan(
   };
 }
 
-export function androidDeviceSelectorRefusal(
+export async function androidDeviceSelectorRefusal(
   {
+    signal,
     settingsContext,
     slot,
     systemImageFlag,
@@ -451,6 +492,7 @@ export function androidDeviceSelectorRefusal(
     remoteBackend,
   }: {
     settingsContext: SettingsContext;
+    signal?: AbortSignal;
     slot: string;
     systemImageFlag: string | null;
     deviceProfileFlag?: string | null;
@@ -461,11 +503,11 @@ export function androidDeviceSelectorRefusal(
   },
   {
     listSystemImages = listInstalledSystemImages,
-    listDeviceProfiles = listAvdDeviceProfiles,
+    listDeviceProfiles = listAvdDeviceProfilesAsync,
     supportsFold = systemImageSupportsFold,
     ownedAvd = slotOwnedAvd,
   }: Pick<AndroidPlanDependencies, 'listSystemImages' | 'listDeviceProfiles' | 'supportsFold' | 'ownedAvd'> = {},
-): Extract<AndroidPlanResult, { ok: false }> | null {
+): Promise<Extract<AndroidPlanResult, { ok: false }> | null> {
   const root = settingsContext.projectPath;
   const settingsLayersForOrigin = settingsLayers(settingsContext);
   const imageRefusal = systemImageRefusal({
@@ -478,13 +520,14 @@ export function androidDeviceSelectorRefusal(
     listImages: listSystemImages,
   });
   if (imageRefusal) return fail(imageRefusal.code, imageRefusal.message, imageRefusal.remedy);
-  const profileRefusal = deviceProfileRefusal({
+  const profileRefusal = await deviceProfileRefusal({
     flag: deviceProfileFlag,
     resolved: deviceProfile,
     origin: settingOriginScope(settingsLayersForOrigin, 'android.deviceProfile'),
     physical,
     remoteBackend,
     listProfiles: listDeviceProfiles,
+    signal,
   });
   if (profileRefusal) return fail(profileRefusal.code, profileRefusal.message, profileRefusal.remedy);
   const avdFlagRefusal = remoteAvdFlagRefusal({

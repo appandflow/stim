@@ -21,6 +21,7 @@ minimumReleaseAgeExclude:
   - '@stim-cli/*'
   - unique-pid@0.1.1
   - react-native-unistyles@3.5.0
+  - react-native-screens@4.30.0
 allowBuilds:
   '@sentry/cli': false
   '@swc/core': false
@@ -43,6 +44,8 @@ overrides:
   uuid: ^11.1.1
   serialize-javascript: '>=7.0.5'
   qs: '>=6.16.0'
+  # stim reaches brace-expansion 5 through @expo/fingerprint (minimatch, glob); 5.0.9 is affected (#3255).
+  brace-expansion@5: ^5.0.10
 
 # AGP 9 (React Native 0.88) registers the Kotlin plugin itself, and these packages
 # apply it again unconditionally, which fails Gradle configuration. Drop each
@@ -55,7 +58,7 @@ patchedDependencies:
   react-native-mmkv@4.3.2: patches/react-native-mmkv@4.3.2.patch
   react-native-nitro-modules@0.37.1: patches/react-native-nitro-modules@0.37.1.patch
   react-native-transformer-text-input@0.4.2: patches/react-native-transformer-text-input@0.4.2.patch
-  react-native-screens@4.28.0: patches/react-native-screens@4.28.0.patch
+  react-native-screens@4.30.0: patches/react-native-screens@4.30.0.patch
   # Expo #50052 adds versionless Android publications; later autolinkers also require
   # a macro package absent from this SDK core. Backport the resolver until the SDK updates.
   expo-modules-autolinking@58.0.4: patches/expo-modules-autolinking@58.0.4.patch
@@ -63,3 +66,7 @@ patchedDependencies:
   # React Native 0.88 declares it std::optional<SharedColor>, so the iOS build fails in
   # ShadowTreeDiagnostics.cpp. Drop the patch once a release compiles against 0.88.
   react-native-unistyles@3.5.0: patches/react-native-unistyles@3.5.0.patch
+  # react-native-nitro-websockets 1.3.1 keeps NSURLSessionWebSocketTask's 1 MiB message limit on
+  # iOS, which closes the connection with 1009; Android allows 16 MiB. Raise iOS to match.
+  # Recheck on upgrade: later releases default iOS to a Network.framework transport with its own limit.
+  react-native-nitro-websockets@1.3.1: patches/react-native-nitro-websockets@1.3.1.patch

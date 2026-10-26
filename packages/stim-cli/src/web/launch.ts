@@ -27,8 +27,8 @@ export async function resolveWebUrl(
   return url;
 }
 
-const VERIFY_WAIT_MS = 20_000;
-const LOADING_WAIT_MS = 60_000;
+export const VERIFY_WAIT_MS = 20_000;
+export const LOADING_WAIT_MS = 60_000;
 
 const METRO_WEB_BUNDLE = /\bWeb\s+Bundl(?:ing|ed)\b/i;
 

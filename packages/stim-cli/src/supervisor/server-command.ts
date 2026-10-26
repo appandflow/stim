@@ -8,6 +8,7 @@ import { METRO_COMMAND_PORT } from '../workspace/settings.ts';
 import { type ChildServerHandle, superviseChildServer } from './child-server.ts';
 import { recordFromLine } from './server-expo.ts';
 import { MODE_COMMAND } from './state.ts';
+import { projectNodeLine, withProjectNode } from './project-node.ts';
 
 function processGroupAlive(pgid: number): boolean {
   try {
@@ -56,11 +57,20 @@ export async function startCommandServer({
   });
   // A wrapper such as yarn runs Metro in a grandchild, so the command gets its own process group to stop as one.
   const group = platform !== 'win32';
+  const node = withProjectNode(root, process.env);
+  if (node.pinned) {
+    log.write({
+      src: 'metro',
+      level: 'info',
+      event: 'project_node',
+      msg: `Metro runs on ${projectNodeLine(node.pinned)}`,
+    });
+  }
   const child = spawn(program as string, args, {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: group,
-    env: { ...process.env, FORCE_COLOR: '0' },
+    env: { ...node.env, FORCE_COLOR: '0' },
   });
 
   return superviseChildServer({

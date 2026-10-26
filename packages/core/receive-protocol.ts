@@ -54,7 +54,7 @@ export function rpcResultIssue<M extends Method>(method: M, value: unknown): Rpc
   return issueOf(responses[method] as Validator, value);
 }
 
-/** The first schema violation of a phone event, or null when it is valid. */
+/** The first schema violation of a phone event, checked against the schema of its own `event` name, or null when it is valid. */
 export function rpcEventIssue(value: unknown): RpcIssue | null {
   return issueOf(event as Validator, value);
 }

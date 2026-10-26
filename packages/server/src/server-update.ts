@@ -4,18 +4,12 @@ import { appendFileSync, closeSync, mkdirSync, openSync, readdirSync, readFileSy
 import { join } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
 import type { ProtocolError, ServerUpdatePackage, ServerUpdateProgress, ServerUpdateStatus } from './protocol.ts';
-import { validateRelease, type ServerBuild } from './service-plist.ts';
-import {
-  describeSource,
-  readLastUpdate,
-  runsAsService,
-  serviceRoot,
-  type UpdateOutcome,
-  type UpdateSource,
-} from './service.ts';
+import { compareVersions, validateRelease, type ServerBuild } from './service-plist.ts';
+import { serviceManagerOrNull, serviceRoot } from './service-manager.ts';
+import { describeSource, readLastUpdate, runsAsService, type UpdateOutcome, type UpdateSource } from './service.ts';
 
 const UPDATE_CHUNK_CHARS = 32 * 1024;
-const MAX_PACKAGES = 8;
+const MAX_PACKAGES = 16;
 const MAX_PACKAGE_BYTES = 64 * 1024 ** 2;
 const MAX_UPLOAD_BYTES = 128 * 1024 ** 2;
 const UPLOAD_IDLE_MS = 10 * 60_000;
@@ -43,12 +37,13 @@ export interface ServerUpdateOptions {
     message: string;
   }) => void;
   runsAsService?: (label: string, port: number) => Promise<boolean>;
+  /** How to start the updater so it outlives this server's restart; the service manager's way by default. */
+  detached?: (node: string, args: string[]) => { file: string; args: string[] };
 }
 
 interface Upload {
   packages: (ServerUpdatePackage & { received: number; hash: ReturnType<typeof createHash> })[];
   dir: string;
-  touched: number;
 }
 
 const refused = (code: ProtocolError['code'], message: string): { error: ProtocolError } => ({
@@ -90,7 +85,7 @@ export function parseUpdateStart(params: unknown): { release: string } | { packa
 }
 
 /**
- * Runs `stim-server service update` for a client this Mac approved for builds or device hosting. The update runs
+ * Runs `stim-server service update` for a client this machine approved for builds or device hosting. The update runs
  * as a detached process with this server's own node and script, so it survives the restart it causes; its output
  * goes to a log file rather than a pipe, which would break when this server exits.
  */
@@ -170,17 +165,23 @@ export class ServerUpdates {
   async start(by: ServerUpdateProgress['by'], params: unknown): Promise<Answer> {
     const parsed = parseUpdateStart(params);
     if (typeof parsed === 'string') return refused('bad-request', parsed);
+    if ('release' in parsed && compareVersions(parsed.release, this.options.build.version) < 0) {
+      return refused(
+        'bad-request',
+        `This server runs ${this.options.build.version}; it does not install the older release ${parsed.release} on a client's request. To downgrade it, run \`stim-server service update --release ${parsed.release}\` on the machine it runs on.`,
+      );
+    }
     const label = this.options.label;
     if (!label || !(await (this.options.runsAsService ?? runsAsService)(label, this.options.port))) {
       return refused(
         'forbidden',
-        'This stim-server does not run as a `stim-server service` LaunchAgent, so it cannot update itself. Update it where it runs.',
+        'This stim-server was not started by `stim-server service install`, so it cannot update itself. Update it where it runs.',
       );
     }
     if ('packages' in parsed && !this.options.acceptsClientBuilds()) {
       return refused(
         'forbidden',
-        'This Mac installs only stim-server releases from npm. To take this build, run `stim settings set server.acceptClientBuilds true` on it.',
+        'This machine installs only stim-server releases from npm. To take this build, run `stim settings set server.acceptClientBuilds true` on it.',
       );
     }
     if (this.running)
@@ -202,7 +203,6 @@ export class ServerUpdates {
     }
     this.upload = {
       dir,
-      touched: Date.now(),
       packages: parsed.packages.map(({ name, size, sha256 }) => ({
         name,
         size,
@@ -218,7 +218,7 @@ export class ServerUpdates {
   chunk(client: string, params: unknown): Answer {
     const upload = this.upload;
     if (!upload || !this.running || this.running.by.id !== client) {
-      return refused('bad-request', 'No package upload from this Mac is running; call server.update.start first.');
+      return refused('bad-request', 'No package upload from this machine is running; call server.update.start first.');
     }
     if (this.running.state !== 'uploading') {
       return refused('action-busy', 'Every package arrived; the update is installing them.');
@@ -256,7 +256,7 @@ export class ServerUpdates {
     }
     entry.hash.update(bytes);
     entry.received += bytes.length;
-    upload.touched = Date.now();
+    this.idle?.refresh();
     if (entry.received === entry.size && entry.hash.digest('hex') !== entry.sha256) {
       return this.abandon('bad-request', `${entry.name} does not match the sha256 it offered.`);
     }
@@ -279,20 +279,20 @@ export class ServerUpdates {
     if (this.upload) rmSync(this.upload.dir, { recursive: true, force: true });
     this.upload = null;
     this.running = null;
-    if (this.idle) clearInterval(this.idle);
+    if (this.idle) clearTimeout(this.idle);
     this.idle = null;
   }
 
   private watchIdle(): void {
-    this.idle = setInterval(() => {
-      if (this.upload && this.running?.state === 'uploading' && Date.now() - this.upload.touched > UPLOAD_IDLE_MS) {
-        this.abandon('bad-request', 'The package upload stopped for 10 minutes.');
-      }
-    }, 30_000);
+    this.idle = setTimeout(() => {
+      this.abandon('bad-request', 'The package upload stopped for 10 minutes.');
+    }, UPLOAD_IDLE_MS);
     this.idle.unref();
   }
 
   private launch(source: UpdateSource): { error: ProtocolError } | null {
+    if (this.idle) clearTimeout(this.idle);
+    this.idle = null;
     const running = this.running!;
     const target = describeSource(source);
     const log = this.logFile();
@@ -312,11 +312,19 @@ export class ServerUpdates {
       message: `Started the update to ${target}.`,
     });
     const args = [this.options.script, 'service', 'update', '--label', this.options.label!];
-    const child = spawn(
+    const detached =
+      this.options.detached ??
+      serviceManagerOrNull()?.detached ??
+      ((file: string, rest: string[]) => ({ file, args: rest }));
+    const command = detached(
       this.options.node,
       'release' in source ? [...args, '--release', source.release] : [...args, '--from', source.from],
-      { detached: true, stdio: ['ignore', out, out], env: this.options.env },
     );
+    const child = spawn(command.file, command.args, {
+      detached: true,
+      stdio: ['ignore', out, out],
+      env: this.options.env,
+    });
     closeSync(out);
     child.unref();
     const settle = (ok: boolean, message: string) => {
@@ -345,7 +353,7 @@ export class ServerUpdates {
   }
 
   close(): void {
-    if (this.idle) clearInterval(this.idle);
+    if (this.idle) clearTimeout(this.idle);
     if (this.running?.state === 'uploading' && this.upload) rmSync(this.upload.dir, { recursive: true, force: true });
   }
 }

@@ -3,21 +3,126 @@
 A macOS app for supervising Stim workspaces: every worktree on the machine,
 grouped by project, with its Metro port, supervisor health, errors, build cache
 stats, live frames from its iOS simulators and Android emulators, and its CPU
-and memory (the physical footprint `stim status` measures, or resident memory
-from an older `stim`).
+and memory (the physical footprint `stim status` measures).
 
-It reads Stim state only through `stim status --watch --json`, the local server's `status.subscribe` feed, `stim status --json`, `stim stats --json`,
-`stim logs --json`, `stim settings --json`, `stim ios|android|macos --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
+It reads live status and explicit refreshes only through the matching local server's workspace, machine and archive views. Refresh requests fresh subscriptions and coalesces repeated requests; connection or view errors retain the last good display and report the error until fresh data arrives. It never starts a CLI status child. Other reads use `stats.get`,
+`logs.query` / `logs.subscribe` / `desktop.logs.subscribe`, `desktop.settings.get` / `desktop.settings.schema`, `desktop.plan.get`, `stim doctor --json` for remaining setup flows, and the local server's `desktop.reports` doctor and GC dry runs, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
-server session is open, allows reads, and serves the same canonical Stim home as the CLI. Otherwise they use
-the CLI; reading stats never starts the server. An RPC failure is shown without
-retrying through the CLI. Cancelling a stats refresh stops waiting and ignores its late reply, keeping device
+server session is open, allows reads, and serves the same canonical Stim home as the CLI. An unavailable or ineligible session shows a read error; reading stats never starts the server. Cancelling a stats refresh stops waiting and ignores its late reply, keeping device
 viewing connected. The server job can continue until it finishes or reaches its existing limits (normally
 60 seconds), occupying a request slot until then. The shared connection accepts complete WebSocket messages
 up to 16 MiB, including the JSON envelope; an oversized stats response fails the read without a CLI retry.
 
+Storage previews also require the matching local server, with `desktop-reports` support. A refresh
+invalidates the server report before reading it so the preview measures current storage. Every report
+read shares one request per report target on the connection: a second read of a target joins the one in
+flight instead of sending another, and invalidates only that target when the server offers
+`desktop-report-invalidate-target` (every report otherwise). Report, settings and stats reads that the
+server refuses with `limit-exceeded` retry after 0.25, 0.5, 1, 2 and 4 seconds, then fail with a message
+that the local stim-server is busy. The shared
+GC report store keeps its existing demand-driven refreshes, coalesces callers, and retains its last
+good report and measurement age when a read fails. An older server shows an update error. Reads
+never retry through the CLI. Cancelling stops waiting without disconnecting the shared session, and
+a shared report read whose callers have all cancelled sends nothing further;
+the server report can continue within its execution and cleanup limits (up to 150 seconds at the
+request boundary). The same 16 MiB response limit applies.
+
+Sidebar setup findings also use the matching local server's doctor report. Desktop checks setup-file
+changes and the server's Stim version at its existing 60-second cadence; a successful report stays
+current for seven days unless those inputs change or a Desktop action invalidates it. Reads invalidate
+the server report before measuring and send a new read even while one for that project is in flight, retain the last good findings on failure, and retry a failed report
+at the next check. They do not subscribe to periodic report refreshes or retry through the CLI.
+
+The setup guide's explicit project check runs through `desktop.doctor.run` on the
+matching-home local server. It records a completed native doctor check and can
+register the chosen project. Its Activity result and setup completion still use
+the full JSON report. It requires `desktop-doctor-run` support and has no CLI
+fallback; cached doctor report reads remain read-only.
+
+Add Machine and reconnect access requests use `desktop.machine-access.subscribe`
+on the matching-home bundled server with private Desktop authority and
+`desktop-machine-access` support. The optional setup ticket stays in the private
+request, never CLI arguments or progress. The server requests build and device-host
+access without applying project repairs; a person still approves each capability on
+the worker. Cancellation waits for owned cleanup, and an unresolved cleanup refuses
+another action in that workspace. Reconnecting never repeats the request automatically.
+
+Whole-workspace and named-slot stops, including tutorial and sample cleanup, use
+`desktop.stop.subscribe` on the matching-home bundled server with private Desktop
+authority and `desktop-stop` support. Activity retains ordered progress and the
+terminal result. A connection failure ends the local action without replaying it
+on reconnect; cancellation unsubscribes while server-owned teardown already started
+finishes. An unavailable or incompatible server reports an error without a CLI fallback.
+
+Dev-server starts, including the sample build, use `desktop.start.subscribe`
+with private Desktop authority, the matching Stim home and `desktop-start`
+support. Activity keeps ordered progress and the flat start result or typed
+refusal. The server admits both the selected folder and resolved app against
+other mutations. Cancellation, unsubscribe, disconnect and server shutdown drain
+owned work before releasing admission; unconfirmed cleanup retains it. After
+verifying no child remains and clearing the exact claims in the refusal's remedy,
+retry the action; the server rechecks those claims and releases the reservation.
+Desktop waits for a startup cancellation acknowledgement before stopping the sample;
+an unresolved cleanup refusal includes the exact claim recovery remedy.
+The 120-second deadline cancels startup and waits for owned cleanup; an unresolved
+claim refusal takes precedence over the timeout so its recovery remedy remains visible.
+Requests have a 1 MiB output limit. Older or adopted servers show
+an error, and reconnect does not replay a start. The supervisor continues running
+after a successful handoff to its workspace.
+
+Worktree warming from the menus and setup-before-run flow uses
+`desktop.worktree.warm.subscribe` on the matching-home bundled server, requiring
+private Desktop authority and `desktop-worktree-warm` support. It copies missing
+ignored entries and preserves existing files. Activity keeps ordered progress and
+failure diagnostics; cancellation waits for cleanup acknowledgement. Reconnect
+never replays the copy, and an unavailable or older server fails without a CLI
+fallback. This path does not refresh the source checkout or install dependencies.
+
+Platform runs, including the sample build test, use `desktop.run.subscribe` with
+private Desktop authority and `desktop-run` support on the matching-home bundled
+server. Named slots, hosted machines, remote build selection, uncached test builds
+and headed web retain their selectors. Activity keeps ordered progress, flat
+platform facts and typed refusals. Cancellation waits for server cleanup; a
+retained claim refusal keeps its recovery remedy. A lost connection never replays
+the run. Older, adopted or unavailable servers report an error without a CLI fallback.
+
+Reload actions also use the matching-home bundled server's private authority,
+through `desktop.reload.subscribe` with `desktop-reload` support. Activity keeps
+ordered progress and the flat CLI JSON or typed refusal. Cancellation,
+unsubscribe and disconnect stop pending work; reconnect never replays the action.
+A dispatched reload cannot be retracted and does not prove completion. Metro
+broadcasts can reach other connected clients. The in-process operation has a
+60 second execution budget and 35 second cleanup budget; an unresolved cleanup
+keeps its server admission reserved. Older or adopted servers report an error
+without falling back to a CLI process.
+
+Cleanup actions use `desktop.gc.subscribe` with private Desktop authority,
+the matching Stim home and `desktop-gc` support. Cache, worktree, age and idle
+selectors retain their existing behavior. Activity keeps ordered progress and
+the complete JSON report, including partial failures. Cancellation waits for
+server cleanup and preserves an unresolved claim's recovery remedy. The
+operation has a 60-second execution budget and 35-second cleanup budget;
+the server's request deadline can cancel it earlier. Older, adopted or
+unavailable servers report an error without a CLI fallback. Reconnect never
+repeats the cleanup.
+
+Worktree removal, including tutorial restart and sample teardown, uses the
+same-home bundled server's private `desktop.worktree.remove.subscribe` action.
+It preserves the CLI's dirty-worktree refusal and explicit force choice. Source
+checkout cleanup succeeds without deleting the source; linked-worktree deletion
+and a later branch-cleanup failure remain separate results. Cancellation waits
+for owned cleanup and preserves unresolved-claim remedies. An unavailable,
+adopted or older server fails the action without a CLI fallback; reconnect never
+repeats removal. Tutorial restart leaves the clone in place if stop or removal
+fails.
+
+Help > Copy Diagnostics reads both running versions and a fresh complete doctor report through the
+matching local server. Unknown report fields are preserved. When the server is unavailable or does
+not support reports, the copied diagnostics include the reason without a CLI fallback. Pasteboard
+redaction and workspace selection stay the same.
+
 Device replay and a leased physical device's screen, which only stim-server serves, come from the stim-server Desktop runs or found, over loopback (see [stim-server](#stim-server)); see [Replay](#replay) and [Physical devices](#physical-devices). Its
-actions run the `stim` executable with an argument list, never a shell string,
+remaining actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
 
 - Needs you notifications: a notification in **Notifications** whose category
@@ -42,7 +147,7 @@ in the workspace directory:
   menus offer the platforms `stim status` reports in `platforms`, plus any
   with a device or a last build; an older `stim` that does not report them
   offers the used ones, or iOS and Android when none is recorded. Run is disabled while a build runs in the workspace.
-  **Reload App** runs `stim reload` and is disabled unless the dev server and a
+  **Reload App** requests the equivalent of `stim reload` through the local server and is disabled unless the dev server and a
   local device are running.
 - Workspace page: the "..." menu beside the stage line runs `stim stop`, and `stim worktree remove` after a
   confirmation that names the worktree and its branch. Each running device's
@@ -50,7 +155,7 @@ in the workspace directory:
   default device) so the shared server and other slots keep running --
   `--slot` is per slot, not per platform, so it also stops that slot's
   Android device if the slot holds one.
-- Idle devices: when the `stim gc --json` preview lists idle devices, the
+- Idle devices: when the storage preview lists idle devices, the
   sheet offers **Shut Down Idle** with a duration (30 minutes to 1 day), then
   runs `stim gc --idle <duration> --json` after a confirmation. That shuts the devices
   down like `stim stop` and never deletes them. The preview marks idle and
@@ -63,6 +168,9 @@ While details are open, hover another resource figure to switch the contents. Cl
 CPU covers active workspace processes; memory covers the whole Mac.
 
 The bell at the top right opens **Notifications** and shows the unread count.
+Notifications remain available under the bell. New-workspace cards in the bottom-left stack dismiss
+after one minute. Other notices in that stack stay until acted on or dismissed. Workspace cards keep
+the same layout for short and long names.
 **Overview**, **Active Workspaces** and **Machines** stay pinned at the top of
 the sidebar; only the list below them scrolls.
 
@@ -261,7 +369,7 @@ It holds the workspace's details, in this order:
   phase or build tool step with counts, elapsed time over the estimate, a phase
   bar, the remote host, the wait holder, compile output and the cache miss summary.
   Otherwise it separates **Last Build**, with compiler errors, from **Next Build**,
-  predicted by `stim <platform> --plan --json`. Plans check automatically while
+  predicted by the bundled server's next-build read. Plans check automatically while
   visible, reusing a completed build or check for 60 seconds and skipping running
   builds; there is no manual Check button. **Run** starts the app. The next-build prediction keeps **Cache miss details**.
   **Details** opens a build sheet with a platform switch and recent runs.
@@ -277,6 +385,7 @@ It holds the workspace's details, in this order:
   to open its run in the sheet, or the header's running-build progress to follow
   the current run. **Recent builds** keeps its disclosure, which animates unless
   Reduce Motion is enabled.
+  A computer icon marks an offload fallback; hover over it for the reason.
 - **Resources**: CPU (100% is one core) and memory with charts over the last
   10 minutes the app sampled while on screen, every process that counts
   toward the workspace (simulators and emulators, Chrome, Metro, builds) and
@@ -403,6 +512,14 @@ them in a drawer below the devices, resized by dragging its top edge; the app
 remembers both. **Open Logs** from a notification or a
 workspace menu opens the drawer too.
 
+Live logs use the matching-home local server without a CLI fallback. Ordinary
+queries retain the server's bounded tail and default error-source scope. A scoped
+build uses the private Desktop full-log subscription and applies its actual build
+time, platform and legacy slot bounds to the complete retained backfill. Source
+changes, regex filters and interrupted-run bounds remain available. Reconnecting
+replaces the backfill so rows do not duplicate. Sample Build reads its offload
+timings through `logs.query`.
+
 A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
 of `stim status --json`, appears under its project when Not set up is selected.
 It is marked "Not set up". The project comes from the entry's `repository`, so
@@ -439,7 +556,7 @@ Status follows from the status watch. A finished command triggers a one-shot
 `stim status --json` only while the watch is not running, or after a
 `stim worktree` command, which can change git worktrees the watch does not
 observe. The Machine page,
-the toolbar and the autopilot share one `stim gc --json` report. It is marked
+the toolbar and the disk pressure check share one `stim gc --json` report. It is marked
 stale when an action that can change it finishes (a cleanup, a run, start or
 stop, a worktree, port, device lease or setting change), and runs again 2
 seconds after the last such action unless a run started since. A reload or a
@@ -453,8 +570,7 @@ serves the same canonical Stim home as the CLI, the app subscribes to the server
 `status --watch`. The app ends its own watcher with the feed's first payload, so one
 `status --watch` runs per Stim home, and starts it again when the server session
 closes, errors or stops reading. At launch the watcher runs until the server delivers. If the watcher exits, the app restarts it after a delay that
-doubles from 1 to 30 seconds. A `stim` without `--watch` makes the app run
-`stim status --json` every 10 seconds instead.
+doubles from 1 to 30 seconds.
 
 A running build's progress bar carries its resolved cache outcome: "Cache hit"
 or "Cold build" / "Cache miss". Historical outcome estimates do not appear as
@@ -469,8 +585,8 @@ fingerprint sources. **Recent builds** under it discloses the platform's last
 10 runs from status `builds`, newest first: how each ended (local cache,
 remote cache, compiled, failed, cancelled or interrupted), its duration, miss reason, age and
 slot. Clicking a run shows its configuration, fingerprint, phase times,
-compiler errors and miss reason popover. When the section opens, it runs
-`stim <platform> --plan --json` in the workspace for each platform with a last
+compiler errors and miss reason popover. When the section opens, it requests
+`desktop.plan.get` from the same-home bundled server for each platform with a last
 build or a device, and shows the result on the platform's row: "Next build:
 cache hit (local)", "cache hit (remote)" or "cold build, ~5m 40s", or the
 refusal with its remedy. A predicted cold build also shows why from the
@@ -481,6 +597,16 @@ stays for 60 seconds unless that platform's last build changes, closing the
 section stops the plan, and nothing is checked while a build runs; the row
 shows the running build instead. **Check** runs the plan again, and the row
 shows when it was last checked.
+
+Preview reads require private Desktop authority and `desktop-plan` support. Unavailable,
+adopted, wrong-home or older servers report an error without a CLI fallback. Closing a
+check waits for its connection-scoped cancellation to drain without blocking other controls.
+A retained cleanup refusal keeps its code, message and remedy in Notifications even when a
+new check replaces the cancelled one or completion races cancellation. Desktop acknowledges
+those refusals after receiving them; the server retains at most four unacknowledged plans
+per connection and refuses new checks rather than discarding a recovery remedy.
+Failed or timed-out requests also drain before returning their original error or retained
+cleanup refusal. Shared feeds stay connected, and reconnect never replays a check.
 
 When `stim status` reports a device's `app` as `stopped` (the device is up but
 the workspace's app process is gone), its tile shows **App not running**, and
@@ -517,9 +643,9 @@ version with `gc --json`.
 ## Machines
 
 **Machines** has a selector for **This Mac** and its configured remote Macs
-(see [Remote Macs](#remote-macs)), with visible choices across the top and
+(see [Remote Machines](#remote-machines)), with visible choices across the top and
 a menu when they do not fit. **Link Machine** opens **Settings >
-Remote Macs**. Select **This Mac** for **Now**, where its builds ran and
+Remote Machines**. Select **This Mac** for **Now**, where its builds ran and
 **Disk on this Mac**; select a remote Mac for its readiness, capacity and
 build history. Removing a selected machine returns the page to **This Mac**.
 **Now** is what uses the Mac's CPU and memory at this
@@ -621,91 +747,73 @@ With a `stim` that reports no inventory, the device and runtime sections say to
 update `stim`, each workspace's simulators read a dash, and the headline shows
 those categories as unknown.
 
-## Autopilot
+## Automatic maintenance
 
-The **Autopilot** section of the App preferences is on by default. It checks
-every minute while the app runs, uses the same action slot as the cleanup the
-user starts, so the two never overlap, and records every run with its exit
-status under **Autopilot Activity**.
+Stim's CLI cleans up on its own (`maintenance.mode`, on by default), on every
+Mac, whether this app runs or not: stim commands, dev server supervisors and
+this app's status watch start its passes. It shuts down owned simulators and
+emulators idle for `devices.idleShutdownMinutes`, never deleting them, and once
+a day clears the build outputs of workspaces and the cache entries unused for
+`maintenance.olderThanDays` and deletes devices parked that long. It removes
+the worktrees of merged or closed pull requests, and reclaims more space when
+free disk falls under `budget.minFreeDiskGb`. Run `stim guide cleanup` for the
+rules.
 
-- **Shut down idle devices** after 30 minutes to 4 hours (1 hour by default)
-  runs `stim gc --idle <minutes>m --json` when `stim status` shows a booted device idle
-  that long. It waits while a device the CLI counts as idle has a screen the app
-  saw change more recently, because `gc --idle` would shut that device down too.
-- **Clean up every night** runs at the chosen hour (3:00 by default), or at
-  the next check when the Mac slept through it. It runs
-  `stim gc --delete --worktrees --older-than <days> --json`, and **Only what is
-  unused for** sets the days, 7 by default. The run removes merged worktrees
-  and clean, pushed worktrees idle that long, clears the build outputs of
-  workspaces no Stim command has used that long, trims shared cache entries
-  unused that long, and deletes owned devices of workspaces unused that long
-  and devices parked that long. A workspace used since keeps its build
-  outputs, and recently parked devices stay in the pool. The first launch, turning the option on and changing the
-  hour only record the time, so none of them starts a cleanup.
-- **Reclaim space when free disk is under the Stim budget** compares the free
-  space on the volumes Stim writes to, without purgeable space, with
-  `budget.minFreeDiskGb` and `budget.hardFloorDiskGb` from `stim settings --json`.
-  0 turns the check off, as in the CLI. Under it, the app previews `stim gc
---json` and runs `stim gc --delete --json` at most once an hour. This run has no age
-  limit: it clears the build outputs of every workspace not in use and empties
-  the parked device pool. It still keeps a merged worktree in use or active
-  within the CLI's `gc.worktreeGraceMinutes`, 2 hours by default, so an agent
-  that just merged can finish `stim stop` and `stim worktree remove`.
-- **Remove worktrees whose pull request was merged or closed** checks every 5
-  minutes and when the app becomes active, at most once a minute. It runs
-  `gh pr list --state closed --limit 100 --json headRefName` (the 100 newest
-  closed pull requests) in each repository
-  with a Stim environment. Only when a linked worktree's branch is among those
-  pull requests does it run `stim gc --json`, and it runs it again only when
-  that set of worktrees changes, a kept one becomes eligible, or 30 minutes
-  pass. It then runs `stim worktree remove <path>` on each worktree gc reports
-  as removable because its pull request, whose head is or contains HEAD, was
-  merged or closed: clean, with no commit that exists only locally except
-  those a merged pull request holds, no live Metro, build or device, and past
-  `gc.worktreeGraceMinutes`. Right before that it skips a worktree the latest
-  `stim status` shows active, building or on another branch; a `stim start` in the seconds
-  between that and `stim worktree remove` would still be stopped. A worktree with a finished pull request that gc
-  keeps for another reason notifies in the **Needs you** category, as "PR #123 merged, 2 uncommitted or untracked files", with
-  **Open pull request** and **Show in Finder**; the autopilot never forces a removal.
-  Each run is logged, and the **Autopilot removes worktrees of finished pull
-  requests** notification, on by default, reads "Removed 3 worktrees for
-  merged PRs". Without `gh`, or signed out, nothing is removed by this option;
-  the nightly cleanup still removes worktrees git shows as merged.
-
-**Stim's automatic maintenance.** When `stim status --json` reports
-`maintenance.mode` `on` (the default from stim 1.18.0) with valid settings and
-no unresolved claim, the CLI clears build outputs, trims caches and removes
-finished worktrees on its own. The app then skips two of the options above: the
-disk-pressure `stim gc --delete` run, and `stim worktree remove` for finished
-pull requests (it still polls `gh` and notifies in **Needs you** about the
-finished worktrees `stim gc` keeps). Idle shutdown and the nightly cleanup keep
-running, because the CLI does not do them: the nightly run is also what deletes
-unused and parked devices and removes clean idle worktrees by age. With a `stim`
-older than 1.18.0, or `maintenance.mode` set to `report` or `off`, or while the
-status payload has not loaded, the app runs everything as before. It also
-removes finished worktrees itself when the CLI's worktree check has not run in
-the last hour (sustained load, or `maintenance.removeFinishedWorktrees false`),
-and when the CLI's last pass was blocked while disk is still under the budget it
-posts the pressure notification with **Do it** instead of running `stim gc
---delete` on its own. The
-**Autopilot** section shows the last pass (actions and bytes freed) while the
-CLI cleans automatically.
+The **Automatic Maintenance** section of the App preferences shows the mode
+and the last pass (when, actions and bytes freed, and why it was blocked) from
+`stim status --json`, read only. **Clean up what is unused for** sets
+`maintenance.olderThanDays` (7 days by default; Never is 0) and **Shut down
+idle devices after** sets `devices.idleShutdownMinutes` (30 minutes by
+default; Never is 0), and **Also remove clean, pushed worktrees unused that
+long** sets `maintenance.removeIdleWorktrees` (off by default; it removes
+unmerged linked worktrees no Stim command used that long, git-ignored files
+included, and only while `maintenance.removeFinishedWorktrees` is on and the
+age is not Never), all with `stim settings set ... --scope machine`. Every
+other `maintenance.*` setting is under **Stim Settings**. A `stim` whose status
+has no `maintenance` block cleans up nothing on its own; the section then says
+to update `stim`, and the app does not clean up in its place. Idle device
+shutdown without a dev server, the daily cleanup of parked devices,
+**Never** for the cleanup age and the worktree switch need a `stim` newer than
+1.25.0; with an older one the switch is disabled with an update note, and
+`on` mode does the rest. A project's own `devices.idleShutdownMinutes`
+overrides the machine value the picker writes. **Cleanup
+History** (below) lists what each cleanup removed.
 
 While free disk is under the budget, the Machine page shows the plan, such as
 "Clear the build outputs of 3 idle workspaces and remove 1 merged worktree to
 free about 300 MB", with a **Do it** button that runs `stim gc --delete`, and
-the sidebar marks Machine. **Do it** in a notification runs only while disk
-is still under the budget, and otherwise opens Machine; the app removes its
-delivered pressure notifications once free disk is back above the budget. With
-autopilot reclaiming, the app posts a
-notification after each run that says what the run did, built from the `gc`
-JSON result, such as "Freed 3.8 GB. Archived 2 removed worktrees: fix-login,
-add-dark-mode. Deleted 1 device." It names worktrees by branch or folder, lists
-at most three and ends with "+N more". The autopilot log entry has the same
-text, and a notification that archived worktrees opens the Archived filter
-when clicked. Without it, the app posts the plan once per
-episode with a **Do it** button. The **Free disk falls under the Stim budget**
-notification is on by default and needs the bundled app.
+the sidebar marks Machine. When the CLI's maintenance is not on, or its last
+pass was blocked while disk is still under the budget, the app posts the plan
+once per episode as a notification with **Do it**. **Do it** in a notification
+runs only while disk is still under the budget, and otherwise opens Machine;
+the app removes its delivered pressure notifications once free disk is back
+above the budget. The **Free disk falls under the Stim budget** notification
+is on by default and needs the bundled app.
+
+## Cleanup History
+
+The **Cleanup History** section of the App preferences lists every run that deleted or changed
+something, newest first: `stim gc`, Stim's automatic maintenance and the budget check before a
+build, whoever started them (this app, an agent or a terminal). It runs
+`stim logs --source gc --json` from the home directory every 30 seconds while the App tab is showing
+and never reads `$STIM_HOME`. A row shows what started the run, when, how many items it cleared,
+kept and failed, and the bytes freed; expanding it lists each item with its path and the reason a
+kept or failed item was left. A **Do it** from the bundled app appears as Cleanup from Stim
+Desktop, and from an unbundled development build as Cleanup from stim gc. With a `stim` that has
+no gc log (1.25.0 or older), the section says to update `stim`.
+
+## Builds
+
+The **Builds** item in the sidebar (Command-5) lists the native builds Stim recorded on this Mac, newest
+first and grouped by day. It runs `stim logs --source builds --json` from the home directory every 30
+seconds while the page is showing and never reads `$STIM_HOME`. A row shows the project and platform, the
+branch and target, where the build ran (this Mac, a build machine, or this Mac after an offload fell
+back), the cache result, the duration and the outcome. The filters choose a project, a platform, a
+machine (**This Mac** or a build machine) and an outcome. Clicking a row opens its phases as bars, the
+failure code, message and remedy of a failed build, and the device, cache key and fingerprint. The model
+is `BuildLedger` in `StimKit` (parsing, filters, day groups and the phase timeline), which the tests in
+`BuildLedgerTests` cover. With a `stim` that has no build ledger (1.25.0 or older), the page says to
+update `stim`.
 
 ## Logs
 
@@ -718,8 +826,7 @@ Agent (`agent`, what agent-device did on the workspace's devices) sources, a
 slot, a minimum level, a regular expression search (`--grep`), and `--errors`.
 With every source selected no `--source` is passed, so **Errors only** keeps
 the CLI's default scope, which leaves general device logs and agent actions
-out. The Agent source needs a `stim` that has it; an older one refuses
-`--source agent` once any chip is off.
+out.
 Changing a filter or the workspace restarts the command; hiding the logs or
 quitting the app terminates it.
 
@@ -810,6 +917,10 @@ Hardware frames retain the same screen scale through rotation. Android accurate
 modes request native-resolution images; Fit and wall previews retain their 960-pixel limit.
 Duo's projected housing and folded screen, replay, physical devices, web and
 remote previews retain **Fit**.
+
+While controlling a local iPhone simulator, drag up from the bottom edge and
+release to go Home, or pause before releasing to open the app switcher. iOS
+handles the gesture timing, including when the simulator is rotated.
 
 While controlling a local iOS simulator or Android emulator, hold **Option** and
 drag to pinch or rotate two fingers around their center. Hold **Option-Shift**
@@ -914,21 +1025,17 @@ endpoint, such as Playwright MCP, shows as the driver.
 While Desktop's stim-server runs (see [stim-server](#stim-server)),
 each simulator, emulator and web page's device viewer offers a replay bar
 once the server has recorded it,
-like the phone app's device viewer. Stim Desktop connects to that server at
-`ws://127.0.0.1:7787`. The first time, it runs `stim-server pair --json --control` for a
-token, spends it as a device named "Stim Desktop", and keeps the
-device token in a file only you can read under `~/Library/Application
-Support/Stim Desktop/stim-server/`, one per Stim home. A Stim Dev build (see
-[Build the app](#build-the-app)) pairs as "Stim Dev" and keeps its token under
-`~/Library/Application Support/Stim Dev/stim-server/`, so revoking one app's
-pairing leaves the other's. A source build or `swift run` from before Stim Dev
-paired as "Stim Desktop"; Stim Dev does not reuse that pairing, which stays in
-`stim-server devices` until you revoke it. The server issued it to
-a loopback connection, so it refuses the token from any other node. When the
-server no longer knows the token, the app pairs once more, so revoking it with
-`stim-server devices revoke` lasts only until the next connection. A read-only pairing from an earlier version gets
-control through `stim-server devices grant <id> --control` once, then the app
-reconnects. The Phones list leaves both apps' devices out.
+like the phone app's device viewer. Stim Desktop connects to that server over
+its Unix socket with a WebSocket that carries the protocol's JSON in the clear.
+The socket is normally `server/local.sock` under the Stim home `/health` reports.
+Paths longer than macOS's 103-byte limit use
+`/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock` instead. The socket is mode
+0600 in a 0700 directory, so only your user can connect, and the server gives
+that connection every local capability without pairing or a token. The app names
+itself "Stim Desktop", or "Stim Dev" for a Stim Dev build (see
+[Build the app](#build-the-app)), and is not listed in `stim-server devices`. A
+stim-server older than protocol 2 has no socket; the app does not connect to it
+and says to update it.
 
 The app polls `replay.range` every 10 seconds while the viewer shows. The bar has
 **Live**, play and pause, a 1x or 2x speed, and a track of the recorded spans
@@ -956,8 +1063,8 @@ paused at the frame shown.
 The bar shows **Recording** while the server records the device, and **Replay
 off** when `stim status --json` reports `recording.enabled` false for the
 workspace. Physical and remote devices have no replay. **Record device screens
-for replay** in **Stim > Settings > Advanced** runs `stim settings set
-recording.enabled true|false --scope machine`; turning it off asks first,
+for replay** in **Stim > Settings > Advanced** changes the machine's
+`recording.enabled` through the bundled server; turning it off asks first,
 because it deletes the recordings.
 
 ## Remote sessions
@@ -995,8 +1102,9 @@ Instead of a screen, the tile says:
 
 - **Connecting to stim-server** while it starts, or why the server is
   unreachable.
-- **Update stim-server** with the install command when the server's hello
-  lacks `physical-ios` or `physical-android` for the device.
+- **The stim-server on this port is older than Stim Desktop** when the server's
+  hello lacks `physical-ios` or `physical-android` for the device: Desktop adopted
+  a server it did not start. Updating or stopping that server lets Desktop start its own.
 - **Disconnected** when `stim status` reads the device as disconnected.
 - **The workspace's lease on this device ended**, with the `--device` command
   that leases it again, once the lease's end time passes, before `stim status`
@@ -1008,8 +1116,12 @@ ended), Control turns off and the tile says why.
 
 ## stim-server
 
-Desktop runs a local `stim-server` from `@stim-cli/server` while it is open; there
-is no switch. Replay, the diff viewer, archived logs, hosted app and simulator
+Desktop runs a local `stim-server` while it is open; there is no switch. The app
+bundles it: `Contents/Resources/stim-server` holds a pinned official Node.js LTS
+(universal, `strip -x`, signed with the hardened runtime) and `@stim-cli/server` with the `stim`
+packages it runs, so the server always matches the app and needs no global install,
+Node version manager or login shell to start. A Mac that serves without Desktop, such
+as a build worker, still installs `@stim-cli/server` from npm. Replay, the diff viewer, archived logs, hosted app and simulator
 views and device recordings all read from it. At launch the app checks
 `http://127.0.0.1:7787/health`. When a server answers, the app uses it if
 Desktop uses the default home or the server serves Desktop's resolved
@@ -1029,8 +1141,16 @@ interrupts. `--loopback-only` removes the server's own Tailscale listeners and m
 request that a `tailscale serve --https` route forwards to the port, so paired phones and other
 Macs cannot reach it; Desktop never removes or edits the route. Turning the Phone app flag off, or **Serve to phones** off, restarts the
 server Desktop started in loopback-only mode, which disconnects paired phones until
-they are served again. `stim-server` is found on the login shell's `PATH`, or at the path you
-choose in **Settings > Advanced**. A test copy can move the port from 7787 with
+they are served again. The bundled server runs unless you choose another `stim-server` in
+**Settings > Advanced**, such as a checkout's build; a build without the bundle, such as a
+`stim macos` copy or `swift run`, finds `stim-server` on the login shell's `PATH`. When
+no server answers, Desktop starts the bundled server at once with the launch environment,
+the Stim home and the environment overrides from **Settings > Advanced > Environment**
+(see [Environment](#environment)); the server discovers the toolchain for the commands it
+runs itself. The bundled server keeps V8's compile cache for its own
+scripts in `~/Library/Caches/<bundle id>/node-compile-cache`; it removes
+`NODE_COMPILE_CACHE` from its environment before it starts anything, so commands it
+runs, such as Metro or Gradle, never write there. A test copy can move the port from 7787 with
 `defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
 the Mac's own server. While a server runs, the Phones tab re-checks it every 5
 seconds and the app every 10 seconds while it is active, otherwise every 60
@@ -1050,7 +1170,13 @@ adopted as not started by the app, whatever **Serve to phones** says, so build a
 device-host requests from other Macs reach the Allow / Deny dialog. If Desktop's own
 server fails and a LaunchAgent server comes up, the next retry (every 30 seconds or
 more) adopts it. A server with another Stim home is not adopted: the sidebar footer
-shows the mismatch and Desktop keeps retrying. Turning **Serve to phones** off restarts a
+shows the mismatch and Desktop keeps retrying. Before its environment is ready, Desktop
+adopts a ready server provisionally when the Stim home it runs with would adopt it, so the
+sidebar shows its status feed right away. A provisional adoption only reads: Desktop
+connects with a stored token, and does not pair, grant, save or delete a token, run
+`stim-server` commands or send control requests. Once the environment is ready, Desktop
+checks the server again and keeps it only when it still serves the same home and version;
+otherwise it drops the server and looks for one again. Turning **Serve to phones** off restarts a
 server the app started in loopback-only mode and never touches one it did not start;
 turning it on after a failed start tries again.
 
@@ -1109,7 +1235,7 @@ Advanced** holds **Record device screens for replay** and a **stim-server**
 section with the server's status, **Try Again** after a failure and the
 executable override.
 
-Macs that build or host devices here are listed on the Remote Macs tab, see
+Macs that build or host devices here are listed on the Remote Machines tab, see
 [Macs using this Mac](#macs-using-this-mac).
 
 When Tailscale runs, the wizard's **Turn On Serving** step (or **Set up
@@ -1123,9 +1249,9 @@ unreadable or timed-out route probe changes nothing. A route exposing this serve
 through Funnel refuses setup and pairing. The wizard verifies the connection
 before showing its QR code.
 
-## Remote Macs
+## Remote Machines
 
-**Add Remote Machine...** in **Settings > Remote Macs** opens the five-step
+**Add Remote Machine...** in **Settings > Remote Machines** opens the five-step
 setup wizard. Each step has an illustration in the first-run guide's style. The
 wizard refreshes in the background and has no Check again button: tailnet peers
 every 5 seconds on step 1, existing approvals every 10 seconds on step 2, the
@@ -1133,56 +1259,100 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
 10 seconds on step 4. `SetupWizard.refreshes(page:)` and
 `SetupRefreshClock` decide what is due.
 
-1. **Pick a Mac.** The Tailscale check comes first. `Tailnet.Install` tells the
+1. **Pick a Machine.** The Tailscale check comes first. `Tailnet.Install` tells the
    Tailscale app (`/Applications/Tailscale.app`) from a CLI-only install. Its
    `status` fails while the app is quit, so an installed app with no answer is
    off, not missing.
    - App off: art of the menu bar switch turning on.
    - CLI only: `tailscale up`.
    - Not installed: a **Download Tailscale** button.
-   - Running: the macOS peers, each marked **Reachable** or **Offline**. It does
-     not show stim-server state, which setup installs later.
+   - Running: the macOS, Linux and Windows peers, each marked **Reachable** or
+     **Offline**, a Linux or Windows one also **Linux · Android builds only** or
+     **Windows · Android builds only**. Other peers are left out. It does not show stim-server state, which setup
+     installs later. With no such peer, the step links to the Tailscale
+     downloads for a Mac, for Linux and for Windows.
+     A peer already in `remote.machines` (`OffloadMachines.added`) is marked
+     **Added** and shows the pill the Remote Machines list shows for it
+     (`BuildMachineStatus.listStatus`, with the doctor diagnosis text when it is
+     not healthy), not Tailscale's `Online` flag, which can read false while the
+     machine answers. It is not a setup target: choosing it only says it is
+     already added and offers **Show in Remote Machines**. Next and the
+     offline-only hint consider the other peers.
 2. **What it does.** Builds and Hosted simulators checkboxes and the animated
    preview of what setup will do. Both can be off. Then Next is disabled and
-   the preview holds only `$ stim-server setup` and a cursor.
+   the preview holds only `$ stim-server setup` and a cursor. A Linux or Windows machine
+   gets Builds only (Android Debug builds); Hosted simulators is disabled with
+   its reason, and the preview names a systemd user service (Linux) or a
+   scheduled task (Windows) and no Stim Host.
 3. **Set it up.**
    - While nothing has reached the journal yet, the art shows this Mac and the
-     build Mac linked by a travelling dot (still under Reduce Motion).
-   - The copyable command, which needs Node 22.12+ on the build Mac. Run it in
+     remote machine linked by a travelling dot (still under Reduce Motion).
+   - The copyable command, which needs Node 22.12+ on the remote machine. Run it in
      Terminal while signed in there; answering each Y/n request approves
      access. Permission prompts appear on that Mac's screen. There is no SSH
-     option.
+     option. For a Linux machine the command starts with
+     `sudo tailscale set --operator=$USER` and `sudo loginctl enable-linger $USER`,
+     which `tailscale serve` and the systemd user service need, and it also
+     needs JDK 17 and the Android SDK there. For a Windows machine it is a
+     PowerShell command (`npx.cmd`, so the script execution policy does not
+     matter; a backtick continues each line, and the package is quoted) that
+     needs no administrator rights and installs a scheduled task.
    - A live mirror in the preview's wording: no node or request ids, and no
      tool details or JSON. It shows skipped and failed steps as recorded.
+   - Needs no Next press. Once the remote machine's journal shows the command
+     started, Desktop sends this Mac's build and hosted-simulator requests with
+     the ticket and keeps reading `stim doctor` every 5 seconds, one read at a
+     time. When the journal says the remote machine
+     approved and waits for this Mac, Desktop sends the request at once and the
+     status line reads "<machine> approved this Mac. Stim is connecting to it". The
+     reads only deliver the ticket; approval stays the Y/n on the remote
+     machine. After the ticket expires Desktop stops asking, says so, and
+     offers New Command; the read continues for 30 more seconds so an
+     approval recorded just before expiry still shows.
    - When setup finishes with no failed step and every chosen capability is
-     approved, a success view replaces the mirror; a failed step keeps the
-     mirror and its fix. It lists the approvals and the current
-     Screen recording and Device control permissions (with the fix for a
-     skipped one); it has no log. The expiry line shows only until the
+     approved, the wizard moves to Tools by itself ("Approved. Waiting for
+     <machine> to finish setup..." shows until the journal is done). A skipped
+     permission or a failed step keeps this step and its Next button, so the
+     warning and its fix are read first. The success view lists the approvals
+     and the current Screen recording and Device control permissions (with the
+     fix for a skipped one); it has no log. The expiry line shows only until the
      command starts.
-4. **Tools.** The build Mac's tools compared with this Mac, from doctor and
-   the setup journal. When Builds is chosen, Android tools are always compared
-   and never block Next. Only a problem that stops the chosen capability blocks
-   Next (red): a Stim build mismatch, no Xcode, a different CPU or an
+4. **Tools.** The remote machine's tools compared with this Mac, from doctor and
+   the setup journal. Read-only checks use fresh, platform-filtered reports from
+   a matching-home local server advertising `desktop-report-platform`; an older or
+   unavailable server is reported without a CLI fallback. Cancelling a check leaves
+   the shared connection open; reports retain the server's execution and cleanup
+   budget of up to 150 seconds. When Builds is chosen, Android tools are always compared
+   and are amber. Next is never disabled by a tool row: approval is finished, a
+   failed offload falls back to a local build, and the machine stays added.
+   A machine's page in Settings > Remote Machines shows every problem and note,
+   including the Android ones, grouped by platform.
+   A problem that stops the chosen capability is red: a Stim build mismatch, no Xcode, a different CPU or an
    unreachable or unapproved Mac for Builds, and no iOS simulator runtime for
    Hosted simulators when doctor reports it. With only Hosted simulators, setup
    records no tool checks, so rows without data read "Checked when a hosted
-   simulator starts" and never block. **Install This Mac's Build** updates a mismatched Stim build
+   simulator starts". **Install This Mac's Build** updates a mismatched Stim build
    through the existing machine update action. Every other problem is an amber
    warning that names its cost, such as a different Xcode or runtime, missing
    Android tools or a different global CocoaPods. Doctor compares the global
    `pod --version` only for projects whose `Gemfile.lock` does not pin
    CocoaPods. The CocoaPods row offers `bundle add cocoapods --version <here>`
-   with `bundle install`, or `gem install cocoapods -v <here>` on the build
-   Mac. Shell commands have Copy buttons; prose fixes appear as text. Desktop
-   never runs these fixes.
+   with `bundle install`, or `gem install cocoapods -v <here>` on the remote
+   machine. Shell commands have Copy buttons; prose fixes appear as text. Desktop
+   never runs these fixes. A Linux or Windows machine is compared with
+   `stim doctor --platform android` only: it shows the Stim build and Android
+   rows, and a missing Android SDK or any JDK difference is red, since no
+   build could offload there.
 5. **Done.**
    - The approvals.
    - A **Try it** card with a copyable agent prompt and
-     `stim ios --remote-build <machine>`.
-   - **Builds**: Auto / Always / Never for `remote.buildMode`. It defaults to
-     Auto when the wizard added the first remote Mac, and otherwise keeps the
-     current mode.
+     `stim ios --remote-build <machine>`, or `stim android` for a Linux or Windows machine.
+   - **Builds**: Auto / Remote first / This Mac for `remote.build` (`auto`,
+     `remote` or `local`). It defaults to Auto when the wizard added the first
+     remote Mac, and otherwise keeps the current choice. A current value the
+     wizard does not offer, such as `remote-only` or one Mac's name, selects
+     nothing and Done keeps it unless you choose. The caption under the choice
+     says where builds run.
    - **Simulators**, shown when Hosted simulators was chosen: This Mac / Auto /
      Always on the Mac. Done writes `ios.remote` and `android.remote` at machine
      scope (unset, `auto`, or the `remote.machines` entry with its port), and
@@ -1198,21 +1368,23 @@ user projects and Stim's state directory. It also uses this checkout for setup
 requests when no workspace is listed. In that case preparation starts when a Mac
 is picked, and Next waits for the sample and checks existing approvals before
 generating the setup command. Failed preparation shows **Retry Sample** without
-a setup command. The test requires a build on the selected Mac and a verified
-launch, then forces a local build to prove the fallback path. Both runs bypass
-the build cache. When the wizard closes, it stops the sample, removes its Stim
-workspace and sample folder, and releases its owned simulator (parked for reuse
-within the parked-simulator limit, deleted otherwise), quietly and on a best-effort
-basis.
+a setup command. The test requires a build on the selected machine and a verified
+launch. It builds for iOS, or for Android on a Linux or Windows machine, bypasses
+the build cache and runs no local build. It shows the phase times (Upload / sync,
+Build, Download / fetch, Total) and notes that the first build on a new machine
+is cold, so later builds are faster. When the wizard closes, it stops the sample,
+removes its Stim workspace and sample folder, and releases its owned simulator or
+emulator (parked for reuse within the parked-simulator limit, deleted otherwise),
+quietly and on a best-effort basis.
 
-Cancel removes entries added by the wizard, restores `remote.buildMode` only if the
+Cancel removes entries added by the wizard, restores `remote.build` only if the
 wizard changed it, and runs doctor to forget the pairing. A failed undo shows
 **Retry Undo**; it does not repeat on its own, because each run asks doctor to
 forget the pairing. It shows revoke commands for grants created during this run,
 preserving pre-existing approvals. When the pre-state is unknown, only grants
 recorded in the setup journal appear.
 
-**Remove** in Remote Macs takes the Mac out of `remote.machines`. Its sheet
+**Remove** in Remote Machines takes the Mac out of `remote.machines`. Its sheet
 shows the optional cleanup on that Mac: `stim-server devices revoke <id>` for
 this Mac's build and hosting requests, and `stim-server service uninstall`. It
 also says that an `ios.remote` or `android.remote` naming the Mac needs
@@ -1221,37 +1393,88 @@ changing.
 Another Mac on the tailnet can build for this one once a person on it approves
 this Mac (see [Build access](../../packages/server/README.md#build-access)).
 
-On the Mac that wants to build elsewhere, **Stim > Settings > Remote Macs**
-is a list of the entries of the `remote.machines` machine setting. Each row
-shows the Mac's name, one status pill, its MagicDNS name with its cores and
+On the Mac that wants to build elsewhere, **Stim > Settings > Remote Machines**
+is a list of the entries of the `remote.machines` machine setting, in that order.
+The order is the placement priority for builds, simulators, emulators and macOS apps:
+each goes to the first Mac that has room and a load under its own
+`server.maxLoadPerCore`, and to the next only when it has none. With two or more Macs
+each row shows its place, and the up and down buttons write the new order to
+`remote.machines` at machine scope. The list's footer says the same. Each row
+shows its place in the list, the Mac's name, one status pill, its MagicDNS name with its cores and
 offloaded builds, a detail line, what it does (**Builds**, plus **Simulators**
-when its device-host access is approved), and **Remove...**. The pill reads **Approved**, **Waiting for
-approval** (the row keeps the approval command to copy and says when the
-request lapses, such as "Waiting for approval until 21:05", in local time),
-**Unreachable**,
-**Needs update** (it runs another Stim build; **Updating** while an update runs),
+when its device-host access is approved), up and down buttons that move the Mac, **Details** and **Remove...**. The pill
+shows only a state that stops this Mac using the machine; the machine's page holds
+the rest. It reads **Approved**, **Waiting for
+approval** (someone on that machine approves it by running the setup command
+there; the row says when the request lapses, such as "Waiting for approval
+until 21:05", in local time),
+the title of the layer doctor's `diagnosis` names when the machine cannot be used
+(**Tailscale is off**, **Mac is offline**, **No serve route**, **Server not running**,
+**Server not ready** and so on; **Unreachable** when an older `stim` reports none), with its
+message and remedy as the detail line,
+**Needs update** (it runs an incompatible Stim build; **Updating** while an update runs),
 the short title of doctor's first reason the approved machine is not offloadable,
 such as **CocoaPods differs** or **Low on disk** (**Not offloading** for a reason
 this Desktop does not know), or the machine's other readiness or
 pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked or
 denied), **Request lapsed** (nobody on the remote Mac approved it in time;
-**Ask Again** is available), **Different Mac** (the name now belongs to another
-tailnet node than the one this Mac asked, so Stim does not connect to it),
+**Ask Again** is available), **Different machine** (it answered with another stim-server key than the one
+this Mac pinned at approval, so Stim does not connect to it),
 **Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The
-states come from the `remoteMachines` field of `stim doctor --json --platform
-ios`.
+states come from the local server's fresh doctor report (`remoteMachines` and `deviceHosts`).
+The Machines page and Add Machine wizard require a read-capable session serving the same Stim
+home, invalidate the report before reading, and never fall back to a CLI process. A cancelled
+check leaves the shared connection open; the report follows the server's existing execution and
+cleanup limit (up to 150 seconds). Explicit **Ask** actions keep their CLI setup-ticket flow.
 
 For an approved machine the detail line gives the builds it runs and how many
 it takes (`builds` and `maxBuilds`, such as "0/2 builds"; the offloaded
 `running` and `max` for a stim-server that reports no `builds`) and its free
 disk. Doctor reports no Xcode or Stim version per machine, so the line has
-neither. When the machine is not offloadable, each of doctor's `problems`
-appears under the line in amber, in doctor's order, with its fix: a command to
-copy for CocoaPods (`gem install cocoapods -v <this Mac's version>`, or `brew
-install cocoapods` when there is none), the remedy sentence for the other known
-reasons. While a check runs, the row keeps the last state and shows a small
-spinner next to the pill; **Checking...** appears only for a row with no state
-yet.
+neither. A row prints no per-problem lines: the pill carries the first problem's short
+title, and **Details** opens the machine's page. While a check runs, the row keeps
+the last state and shows a small spinner next to the pill; **Checking...** appears
+only for a row with no state yet.
+
+**Details** (or **Remote Machines** at the top of the page, to go back) swaps the
+list for the page of one machine. It shows, from the list's doctor report and one
+`--platform android` report:
+
+- the state that stops the machine, with doctor's diagnosis title, message and remedy,
+  and a Copy button for each command the remedy names in backticks;
+- **Stim version**: **Install This Mac's Build** and the update's progress, as on the
+  row;
+- one section for each of **Machine** (Stim build, free disk, load, an unreachable
+  offer), **iOS**, **Android** and **macOS** that has anything to say, listing every
+  `problems` entry (amber **Problem**) and every `notes` entry (**Note**: a build there
+  does something without stopping, such as Gradle downloading an SDK package on its
+  first build). Each shows doctor's reason and its fix: the command lines of doctor's
+  finding, each with a Copy button that copies only the command, or the remedy sentence
+  for a reason with no command. A note's command installs the package ahead of the first
+  build. The **Update this Mac** pill replaces the pill text only; every other problem
+  stays listed here. A newer remote Stim drops the "update the remote machine" advice
+  from the Stim build problem, since only updating Stim Desktop fixes it;
+- **Capacity**: load per core, RAM and free disk as on the row, cores, the builds it
+  runs and takes, and its offloaded builds;
+- **Versions**: this Mac's Stim, the machine's stim-server version (its `/health`),
+  and whether its Stim build matches this Mac's;
+- **Approvals**: the build approval and, for a machine that can host simulators, the
+  device-host approval;
+- **Builds on This Machine**: the ten newest recorded builds that ran there (from
+  `stim logs --source builds --json`, read while the page is open), each opening to its
+  phases and failure as on the **Builds** page, with a note when none ran, the stim is
+  too old to record builds, or the read has not finished;
+- **Use This Machine For**: the **Builds enabled** and **Simulators enabled**
+  switches, as on the row; and **Remove...**, **Ask** and **Ask Again**.
+
+The Android report is read when the page opens and every 60 seconds while it stays
+open, never on the list's poll: it is a second doctor run through the matching local
+server (`desktop-report-platform`, no CLI fallback), reused for 30 seconds. Until it
+answers the Android section says "Checking the Android tools...", and when it fails, why,
+while the Android problems of the list's own report stay listed. When it answers, its
+Android problems and notes replace the list's, since a checkout without an Android
+project has none in the list's report. The **Machines** page lists the same problems and
+notes under a selected machine.
 
 **Add Remote Machine...** opens the wizard, which owns tailnet discovery and the
 setup; the tab has no separate list of tailnet Macs. With no machines, the tab
@@ -1266,18 +1489,41 @@ listed, the tab says to start one. **Ask** and **Ask Again** run `stim doctor
 --json --platform ios --fix`, which also asks again any listed Mac that has not
 approved this one. **Remove** takes a Mac out of the setting with `stim settings
 set remote.machines <list> --scope machine` after a confirmation, unsetting it
-when the list is empty; removing a **Different Mac** also runs `--fix`, which
-forgets the old node so the Mac can be asked again.
+when the list is empty; removing a **Different machine** also runs `--fix`, which
+forgets the old key so the Mac can be set up again.
 While a `--fix` run goes, the row shows "Asking <machine>…" or "Removing
 <machine>…" beside the spinner. A `--fix` run stops after 2 minutes and a
 plain check after 30 seconds, and the tab shows that stim did not answer.
 
-A remote Mac that runs another Stim build than this Mac (doctor's
-`stim-build` reason) offers **Install This Mac's Build**, here and on its
-**Machines** page. Desktop asks the local stim-server, over its local control connection,
+A remote Mac whose Stim build is incompatible with this Mac's (doctor's
+`stim-build` reason, raised when the build compatibility versions differ, or the build digests
+differ for a Mac that reports no version) offers
+**Install This Mac's Build**, here and on its **Machines** page. For each such
+Mac Desktop first reads `machines.update.status`, a read that never installs, and
+compares the Stim release it reports with this Mac's stim-server. An install only
+moves a remote Mac forward, so the button is disabled, with the reason beside it, while
+the read or this Mac's stim-server connection is pending and when the Mac would refuse:
+
+- this Mac runs an npm release and the Mac runs a newer Stim: the button gives way to "<machine> runs
+  Stim 1.25.0, newer than this Mac (1.24.0). Update Stim Desktop to match.", the pill reads
+  **Update this Mac**, and **Check for Updates...** starts Sparkle (builds without
+  an update key, such as Stim Dev, show only the message). A build from a checkout is
+  not blocked by version, since stim-server checks versions only for releases;
+- this Mac runs a build from a checkout and the Mac has `server.acceptClientBuilds`
+  off: the row shows `stim settings set server.acceptClientBuilds true`, with a
+  copy button labeled for running it on that Mac;
+- its stim-server does not run as a service, so it cannot update itself;
+- it did not answer the read (not approved for builds or device hosting, no update
+  capability, unreachable): the row shows the reason its stim-server gave.
+
+Desktop takes the connected stim-server for an npm release unless Desktop started
+it from a path outside `node_modules`. Keeping remote machines on this Mac's
+version never installs on a Mac that is disabled this way.
+
+An install asks the local stim-server, over its local control connection,
 to update that machine with `machines.update.start`. The local server connects
-to the machine's pinned tailnet node with the credential `stim doctor --fix`
-stored. It asks for the same npm release when this Mac runs one, or, when it
+to the machine with the credential `stim doctor --fix` stored and goes ahead only
+with the stim-server that proves it holds the key pinned at approval. It asks for the same npm release when this Mac runs one, or, when it
 runs from a Stim checkout, sends the checkout's packed packages, which the
 machine takes only with `server.acceptClientBuilds`. Its stim-server then waits for
 its offloaded builds and hosted sessions, installs the update beside the current
@@ -1291,7 +1537,7 @@ follows `machines.update.status` every 2 seconds:
 - the outcome, or the refusal (for example, the setting the machine needs, or
   another update already running there).
 
-A failure shows its full text, selectable, with a **Copy** button.
+A failure shows its full text, selectable.
 
 While the update waits for hosted simulators that this Mac's workspaces run on
 that machine, the row offers **Stop and Update...**. After a confirmation that
@@ -1305,21 +1551,8 @@ even when another update installed it. If the machine stops answering for 5 minu
 Then the row checks the machine again. **Keep remote machines on this Mac's Stim
 version** (off by default; "When this Mac's Stim changes, update stim-server on
 approved remote Macs so builds can keep offloading.") does the same the next time Desktop
-checks a machine that reports another Stim build. It runs once per machine and
-reason each time Desktop launches. Either way, the machine gets this Mac's build,
-whether it is newer or older than the one it runs.
-
-On the Mac that builds, the app checks `stim-server devices --json` every 10
-seconds while a server runs, including one it did not start while **Serve to
-phones** is off. Each new build request adds "<Mac> wants to build
-on this Mac" to **Notifications** (category **A Mac asks to build here**,
-Alert by default) and shows it as a card or a macOS notification. Its
-**Review** opens a dialog with the Mac's name, its tailnet node and user, the
-request id and when it lapses, and what building here allows. **Allow** runs
-`stim-server devices grant <id> --build`, **Deny** runs `stim-server devices
-revoke <id>`, and **Later** closes the dialog; Allow is never the default
-button, and nothing approves a request without it. The card and the macOS
-notification go away once the request is answered or lapses.
+checks a machine that reports an incompatible Stim build. It runs once per machine and
+reason each time Desktop launches. Either way, the machine gets this Mac's build.
 
 The **Machines** page shows where builds ran. While `remote.machines` names a
 machine, **Where Builds Ran** under **This Mac** counts today's compiling builds that built here, on a remote Mac, or
@@ -1327,29 +1560,27 @@ here after trying one, and lists the latest placements with the reason Stim
 gave, such as `load 0.6/core, 1 of 3 build slots busy here`. Selecting an
 `remote.machines` entry shows its state and first reason from
 doctor (the same check as Settings, each minute while the page is open), its
+problems and notes by platform (as on the machine's page in Settings), its
 load per core, cores, offloaded builds running and free disk from its offer,
 and the builds it ran for this Mac today and in total, their average time, the
 time they saved against this project's last build here (an estimate), and the
 fallbacks. Below are its latest placements. The counts and placements come from
-fresh `stats.get` requests through the matching local server session, or `stim stats --json` run in the
-home directory when that session is unavailable. The page keeps checking once a
+fresh `stats.get` requests through the matching local server session. An unavailable session shows a read error. The page keeps checking once a
 minute regardless of the selection. Pending, unreachable and failed checks stay
-visible. **Link Machine** opens **Settings > Remote Macs** for pairing and
+visible. **Link Machine** opens **Settings > Remote Machines** for pairing and
 removal; the selector itself changes no settings. Remote selections have no
 local disk cleanup actions.
 
 ### Macs using this Mac
 
-Below this Mac's own remote Macs, the Remote Macs tab lists the host side of this
+Below this Mac's own remote Macs, the Remote Machines tab lists the host side of this
 Mac while there is something to show, including while the tab is still loading.
-**Macs Using This Mac** lists other tailnet Macs approved, or asking, to build
-here or to host simulator and emulator sessions here, with their tailnet node. A
-Mac waiting for approval shows **Waiting for you** with the time its request
-lapses, **Review...** and **Deny**; an approved one shows **Can build** or
-**Approved for devices** and **Revoke**. **Allow** runs `stim-server devices
-grant <id> --build` or `--device-host`; **Deny** and **Revoke** run `stim-server
-devices revoke <id>`. A device-host approval grants no read, control or build
-access, and does not start a device.
+**Macs Using This Mac** lists other Macs approved to build here or to host
+simulator and emulator sessions here, from `stim-server devices --json`, with
+where they were approved from. Only `stim-server setup` on this Mac approves
+them. Each shows **Can build** or **Approved for devices** and **Revoke**, which
+runs `stim-server devices revoke <id>`. A device-host approval grants no read,
+control or build access, and does not start a device.
 
 **Running Here** lists the simulators, emulators and apps approved Macs run on
 this Mac, with the client, device, app, state and session age. **Stop** asks for
@@ -1372,7 +1603,7 @@ you** lists what agents cannot handle, from the needs-attention rule
 (`StimKit/NeedsAttention.swift`): `stim doctor` findings that cost time, a port
 held by another app, a supervisor or browser Stim cannot verify, a signing or
 provisioning failure, an expired device lease, a billable EAS session left
-running, and a finished pull request's worktree the autopilot keeps. Each item
+running. Each item
 notifies once per episode, and the ids still active are kept in the app's
 preferences so a restart does not repeat them. Each
 workspace notifies once per episode, and a later notification replaces the
@@ -1396,8 +1627,7 @@ through stim-server counts as an agent driving it, because Desktop cannot read
 stim-server's leases. The phone app and stim-server do read them, and do not count such a phone as an agent.
 
 Each category has a level, with the phone's names: **Alert**, **Silent** or
-**Off**. **Work started** is Off by default, and **A Mac asks to build here**
-is Alert because a request lapses after 15 minutes; every other category is
+**Off**. **Work started** is Off by default; every other category is
 Silent. A level you set yourself is kept. While the main
 window is in front, every new Alert or Silent entry gives the top-right bell one
 small wiggle and turns it purple for under a second, and bumps its unread count;
@@ -1426,8 +1656,6 @@ and **Clear** apply to every matching notification, including unloaded rows. The
 history keeps the last 200 notifications from the last 7 days in
 `notifications.json` in Stim Desktop's Application Support folder.
 
-Build requests from other Macs also land here; see [Remote Macs](#remote-macs).
-
 **Settings > App > Notify when** sets each category's level, the stuck threshold
 (5 to 60 minutes, 15 by default) and quiet hours, stored in `UserDefaults`.
 During quiet hours an Alert is delivered as Silent. The rules always run every
@@ -1441,32 +1669,44 @@ preferences.
 
 The **Stim Settings** tab holds a **Machine**, **Repository**, **Workspace** and
 **.stim.json** scope switch, with a line saying where the selected scope applies.
-Its editor is generated from `settings.schema.json`, which the `stim` package
-ships beside `dist/cli.mjs`; the app reads the one next to the resolved `stim` executable,
-or `packages/stim-cli/dist` under `swift run`. Choices are pickers, booleans
+Its editor reads the registry-derived schema from the same local server through
+`desktop.settings.schema`, with `desktop-settings-schema` support, instead of locating
+files beside an external CLI. Each load refreshes the fields; an unavailable, older or
+invalid schema shows a load error and no editable fields. Choices are pickers, booleans
 toggles, numbers steppers, paths file pickers, string lists token fields, and
-objects JSON fields. Values come from `stim settings --json` run in the chosen
-workspace: each row shows the effective value and its layer, the lower layer a
+objects JSON fields. Values come from fresh `desktop.settings.get` reads for the chosen
+folder, including unregistered folders. Settings, setup, tutorial and machine views
+require a read-capable local session for the same canonical Stim home advertising
+`desktop-settings`; unavailable or older servers fail these reads without a CLI fallback.
+The shared machine store, open Settings window, setup and tutorial reads refresh when
+the session opens, including after cold launch or reconnection.
+Cancellation leaves the shared session open; the existing server read limit is 60 seconds.
+Each row shows the effective value and its layer, the lower layer a
 value there overrides, an environment override when one is set, and a
 **Reset** that unsets the layer. A default `stim` picks per machine, such as
 `stim-desktop` for `iosSimulatorApp` while Stim Desktop is installed, shows the
-reason `stim` reports, for example `default (Stim Desktop installed)`. Edits run
-`stim settings set|unset <key> --scope <layer> --json`, and a refusal shows
+reason `stim` reports, for example `default (Stim Desktop installed)`. Edits use
+`desktop.settings.write` on the proved local connection of Desktop's bundled
+server, for the same canonical Stim home, with `desktop-settings-write` support.
+An unavailable, older, external or adopted server reports an error without a CLI
+fallback. A refusal's message and remedy show
 under the field. `android.keystorePassword` is never shown. Keys Stim does not
 read are listed read-only.
+Cancellation ends the local await while the bounded server operation can finish;
+Desktop never automatically retries a write after cancellation or connection loss.
 
 The **App** tab holds preferences kept in `UserDefaults`, never in Stim's
 config: appearance (Auto, Light, Dark), the sidebar's Status option, opening to all
 devices or the last project, device tile size, a live frame rate cap, pausing
 frames while the window is hidden, the editor and terminal the workspace
 inspector opens, notifications, a menu bar extra with the active workspace count
-and quick open, launch at login, the autopilot (see Autopilot), and a `stim` executable override that applies
+and quick open, launch at login, automatic maintenance (see Automatic maintenance), and a `stim` executable override that applies
 at the next launch. Notifications and launch at login need the bundled app.
 
 ## Window and shortcuts
 
 Closing the main window, with Command-W or the close button, leaves the app
-running: the Dock icon stays, the status watch, notifications, autopilot and
+running: the Dock icon stays, the status watch, notifications, the disk pressure check and
 `stim-server` keep working, and clicking the Dock icon or choosing **Open Stim**
 in the menu bar extra reopens the window. There is one main window; Command-N
 does not open another. **Quit Stim** (Command-Q) is the only way to stop the app,
@@ -1487,19 +1727,39 @@ so Back does not return to Overview from it.
 
 News the user can act on later shows as a card at the main window's bottom
 left: a title, one line of detail, a primary action and a dismiss button. A
-card stays until it is acted on or dismissed, with or without VoiceOver. Several
-cards stack, newest first, with a counter and previous and next buttons.
-Two things use them. When `stim ios` or `stim android` launches on a device
-Desktop lists, the card reads "<device> launched for <workspace>" with **Show**.
-Desktop keeps the current page and opens the launched device only when **Show**
-is clicked. A newer `stim` shows a card with
+new-workspace card expires after one minute; other cards stay until acted on or
+dismissed, with or without VoiceOver. Several cards stack, newest first, with a
+counter and previous and next buttons.
+Two things use them. When `stim status` first lists a workspace, the card reads
+"New workspace <workspace>" with **Show**, which opens the workspace and focuses
+the device of its running build. Each path gets one card per Desktop session:
+workspaces listed in the first status after launch get none, and a path that
+leaves and comes back gets none again. While the workspace's build runs, the
+card's detail reads "Building <platform>" instead of the path. A
+`stim-desktop://open` device URL from `stim ios` or `stim android` only opens
+the main window when it is closed.
+Desktop keeps the current page and opens the workspace only when **Show** is
+clicked. A newer `stim` shows a card with
 **Update** (see below); dismissing it keeps it away until a newer version is
 released. Agent and build notifications keep appearing as cards at the top right.
+Turn off **Settings > App > Show new workspace cards** to stop the "New workspace" cards. It hides only
+those cards: the workspace still appears in the sidebar, and Notifications, system notifications and the
+other cards are unchanged. A workspace link still shows its "workspace started" card.
 
 ## Workspace links
 
+Shared links use `https://stim.appandflow.com/open?v=1&machine=<home-id>&workspace=<workspace-id>`.
+The optional `platform` and `slot` select a device. The authenticated local server's
+home ID must match, and status must list the workspace ID before Desktop navigates
+to its trusted path. A foreign home, unsupported server or stale workspace shows a
+message instead. Opening a link never starts a build or device control. The website
+provides a small fallback page; iOS resolves the same IDs through its existing pairings.
+Universal links require signed native builds and the hosted Apple association file.
+
+Legacy local links remain supported:
+
 `stim-desktop://workspace?path=<workspace>[&platform=<ios|android|web>][&slot=<name>][&archive=<id>]`,
-which `stim worktree warm`, `start`, `ios`, `android` and `web` print, shows a
+shows a
 card for a live workspace with **Open**; the app navigates to it only when Open is
 clicked. The optional `archive` ID opens that archive at once if it belongs to that
 path and no live workspace matches; an ID that does not belong to that path does not
@@ -1512,13 +1772,30 @@ next minute, its card replaces that one. Another link to the same workspace
 replaces its card. With the main window closed, the link reopens it.
 
 - macOS 14 or later and Xcode 27, selected with `xcode-select` or `DEVELOPER_DIR`. Stim Desktop falls back to `/Applications/Xcode.app` when the selected developer directory has no simulator support.
-- `stim` on the login shell's `PATH`, `STIM_BIN` set to its path, or the override in Settings. The cleanup
-  preview needs a `stim` with `gc --json`. At launch the app reads the
-  environment of `zsh -lic` once and runs every `stim` command with it, so
-  commands see the same `PATH` and variables such as `ANDROID_HOME` as a
-  terminal. A non-empty launch `STIM_HOME` overrides the login shell's value for
-  the CLI and servers Desktop starts; **Settings > App > Stim CLI** shows the
-  resolved home, and the sidebar shows non-default homes.
+- `stim` on the `PATH` described below, `STIM_BIN` set to its path, or the override in Settings. The cleanup
+  preview needs a `stim` with `gc --json`.
+
+  <a id="environment"></a>Stim Desktop runs no login shell. At launch it runs Stim's
+  toolchain discovery, the one stim-server and `stim doctor`'s **Toolchain** section
+  use, once with the bundled Node (about 50 ms), and runs every `stim` command with the
+  result: the launch environment with the default Node of nvm, fnm, Volta, mise or asdf,
+  Homebrew, `~/.local/bin`, pnpm's and bun's global directories and the Android SDK
+  tools appended to `PATH`, `ANDROID_HOME` when `~/Library/Android/sdk` exists, and
+  `JAVA_HOME` set to a Homebrew `openjdk`, else Android Studio's runtime, when no JDK is
+  installed under `/Library/Java/JavaVirtualMachines`. A shell profile's variables do not reach it:
+  **Settings > Advanced > Environment** holds the Stim home, which replaces a profile's
+  `STIM_HOME`, and `KEY=VALUE` lines, such as `STIM_*` settings or
+  `NODE_USE_SYSTEM_CA=0`, that Desktop adds to the environment of every `stim` command
+  and of the server it starts; both apply when Desktop restarts. The first launch of
+  this version moves a non-default Stim home that the previous version saw in the login
+  shell into that setting. A launch `STIM_HOME` wins over the setting, and Desktop never
+  exports `~/.stim`, because an explicit `STIM_HOME` turns on the scoped-home defaults.
+  A build without the bundled server, such as a `stim macos` copy or `swift run`, reads
+  `zsh -lic` once instead and logs that it did; the `login-environment` launch milestone
+  marks it, where a bundled build reaches `toolchain-environment`.
+  **Settings > App > Stim CLI** shows the resolved home, and the sidebar shows non-default homes.
+  Homes whose local socket path exceeds macOS's 103-byte limit use the private
+  per-user socket directory described in [Replay](#replay).
   It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
   tells `stim` that Stim Desktop is installed without a Launch Services lookup.
   It runs `stim` and `stim-server` as their JavaScript file under the Node that
@@ -1547,7 +1824,7 @@ replaces its card. With the main window closed, the link reopens it.
   default runs without a restart. Without a launcher for `stim-server`, it
   tries again at most once a minute.
 
-At launch the app runs `stim --version` and needs 1.11.0 or later. When
+At launch the app runs `stim --version` and needs 1.21.0 or later. When
 `stim` is missing, too old, or reports no version, a banner explains Stim and
 offers **Install stim** or **Update stim**, and **Choose stim Executable…**.
 **Update stim** runs the package manager that owns the resolved `stim`: the
@@ -1558,9 +1835,10 @@ it against `npm prefix -g`, `pnpm root -g` and `bun pm bin -g`, and runs
 linked checkout or a project-local copy, gets no Run button and a note, since
 the app cannot tell what installed it. **Install stim** uses the manager picked
 in the setup guide's tabs; the banner uses the default, pnpm or bun when its
-global bin directory is on the login shell's `PATH`, else npm. A pnpm whose
+global bin directory is on Stim Desktop's `PATH`, else npm. A pnpm whose
 global bin directory is not on the `PATH` is not offered, because pnpm refuses
-global installs then. `stim-server` is still installed and updated with npm.
+global installs then. `stim-server` ships inside the app; with an override in
+**Settings > Advanced**, that one is still installed and updated with npm.
 
 Once a day, and at launch, the app also reads the
 `latest` version of `stim` from `registry.npmjs.org/stim/latest`; it skips the
@@ -1574,55 +1852,58 @@ background, because replacing `stim` while agents run commands would break them,
 and a `stim` that no package manager owns, such as a linked checkout, is never
 offered an update. A newly found `stim` at another path asks for a
 restart, because the app resolves `stim` once at launch. While phones are
-served, `stim-server --version` gets the same check, installing
-`@stim-cli/server@latest`. Once `stim` is recent enough, the banner offers once
-to set `iosSimulatorApp` and `androidEmulatorApp` to `stim-desktop` with
-`stim settings set … --scope machine`. It skips a key that is already set or
+served, `stim-server --version` gets the same check; the bundled server always passes
+it, and an outdated override is offered `@stim-cli/server@latest`. Once `stim` is recent enough, the banner offers once
+to set `iosSimulatorApp` and `androidEmulatorApp` to `stim-desktop` through the
+same private local settings transport. It skips a key that is already set or
 that the installed `stim` does not list. **Not Now** hides the offer for good.
 
 ### Suggestions and tips
 
-Desktop suggestions offer a remote Mac, cache review, or phone pairing when
+Desktop suggestions offer a remote machine, cache review, or phone pairing when
 recent activity makes them useful. A low-disk banner points to the Machine page,
-where caches are reviewed and cleared. Suggestions to add a Mac appear only
-while no Mac is paired in `remote.machines`. A build waiting for a build slot or
+where caches are reviewed and cleared. Suggestions to add a remote machine appear
+only while `remote.machines` is empty. A new tailnet peer and a build waiting
+for a build slot consider Macs, Linux and Windows machines (a Linux or Windows machine only after an
+Android build waited); the device limit offers only a Mac, since only a Mac
+hosts. A build waiting for a build slot or
 the device limit suggests one at most once, ever, across both. The X snoozes a suggestion for
 7 days; **Don't Suggest Again** dismisses that kind permanently. Suggestions
 wait for completed setup and the second launch, never appear during a running
 build, and appear at most once per day.
 
-The **Tip** card at the bottom of the sidebar appears after setup is complete and
-Desktop has been used on at least **3 calendar days**, with either **3 distinct
-workspaces seen running** or **5 builds observed**. It stays hidden while a build
-runs, the setup guide or tutorial is open, the main window is closed, or any
-notice is showing. Only builds that start after Desktop first sees status count.
-Usage is stored locally in Desktop preferences: the latest 30 active days and,
-until the thresholds are met, the workspace paths and build IDs counted.
+**Explore Stim's features** at the bottom of the sidebar opens **Discover Stim**.
+You can also open it from **Help > Discover Stim** or **Settings > App > Features**.
+The page starts with a tutorial banner, followed by Everyday workflows,
+Use more devices, and Other workflows. Each card explains the benefit
+and opens an existing action or offers a copyable agent prompt. The full prompt appears
+in a container with a Copy button. Phone access appears only when the Phone app feature
+flag is enabled.
 
-Tips cover remote Macs, phone pairing, the tutorial, hiding workspaces when
-there are more than 10 workspace rows and none are hidden, status filters, replay, and hosted
-simulators. The replay tip appears when an archived workspace still has recordings and opens it.
-Three tips offer **Copy Prompt** for your coding agent instead of a button that opens a page: EAS
-development builds when a project has an `eas.json`, `stim macos` when a project has a Swift
-package app that has not run as a macOS app yet, and `stim logs --errors` when a workspace has
-errors. Only applicable tips appear. One tip stays for the calendar day;
-the next day picks the least recently shown applicable tip, with unseen tips
-first. **Next Tip** cycles through the remaining choices. The X hides the card
-until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
+Discover is always available, without waiting for usage milestones. Replay opens
+the newest eligible archived workspace with recordings. When recordings are not
+available, the card explains why and disables its action. View Options opens the
+sidebar's existing controls for hiding and filtering workspaces. Discover replaces
+the rotating sidebar tips; opening it does not mark tips as seen or suppress
+contextual suggestions.
 
-Tips and suggestions share state for remote Macs, phone pairing, and
-hosted simulators. A shown, permanently dismissed, or currently snoozed
-suggestion suppresses the matching tip. Once that tip has been shown, the
-matching suggestions (new Mac, build slot waits, away
-builds, device limit) no longer appear. Disk-pressure suggestions are
-unaffected. Suggestions keep their own once-per-day limit.
+The Machine page's remote-machine suggestion still requires completed setup and
+at least **3 calendar days** of usage, with either **3 distinct workspaces seen
+running** or **5 builds observed**. Only builds that start after Desktop first
+sees status count. This usage stays in local Desktop preferences.
+
+Turn off **Settings > App > Offer the tutorial** to hide the setup guide's
+**Take the Tutorial** button and stop the tutorial from opening automatically.
+**Help > Stim Tutorial** and Discover Stim still let you open it manually.
 
 **File > Add Remote Machine…** (**Cmd+Shift+B**) always opens the existing build
-machine wizard. After the same usage threshold, **Machines > This Mac** shows a
-card when no remote Mac is configured. With another Mac on the tailnet it
-offers **Add Remote Machine…**; otherwise it explains how to connect both Macs
-with Tailscale. The existing **Link Machine** button is also available. Build
-machines are not a step in the first-run setup guide.
+machine wizard. After this usage threshold, **Machines > This Mac** shows a
+card when no remote machine is configured. With another Mac, Linux or Windows machine
+online on the tailnet it offers **Add Remote Machine…**; otherwise it explains
+how to connect both machines with Tailscale. The remote machines tip also
+counts an online Linux or Windows peer; the hosted simulators tip counts only Macs. The
+existing **Link Machine** button is also available. Build machines are not a
+step in the first-run setup guide.
 
 ### Setup guide
 
@@ -1637,7 +1918,7 @@ button, or **Continue** once the step is done, and never skips a step; Escape is
 Later**.
 
 1. **Welcome**.
-2. **Install the CLI**: `node` from the login shell, run in the home folder,
+2. **Install the CLI**: `node` from Stim Desktop's `PATH`, run in the home folder,
    must report 22.12.0 or later; an older one is shown with its path. Without it, the step offers `brew install node` when
    `brew` is on the `PATH`, else a link to nodejs.org. Then it
    shows tabs for npm, pnpm and bun, only for the managers on the `PATH`
@@ -1728,7 +2009,7 @@ Choose live or archived Workspaces, Notifications, Builds, Simulator controls, S
 its applicable named scenarios: ready, loading, empty, error, long text and large data.
 Notifications includes 200 entries; Builds includes the retained maximum of 10 runs per platform. Local inboxes and fixed
 simulator forms omit loading/error or large-list scenarios that their production views do not have.
-Settings covers the four configuration scopes, not the App, Phones or Remote Macs tabs.
+Settings covers the four configuration scopes, not the App, Phones or Remote Machines tabs.
 
 **Compact** sets the fixture viewport to 380 points; regular is 900 points. Switch light/dark,
 large text and increased contrast without changing system preferences. Reduce Motion follows the Mac's current accessibility setting because SwiftUI does not expose a writable override. Filters,
@@ -1756,14 +2037,43 @@ item, notification permission and notification history, and pairs with
 stim-server under its own name (see [Replay](#replay)). Both apps use port
 7787, so the one that starts second uses the other's server instead of starting
 one; when that app quits, the remaining one starts its own within two minutes. Paired phones and the `tailscale serve` route keep working
-because they belong to the Stim home, not to either app. Both apps run their
-autopilot. `stim ios` and `stim android` open device links with `open -a Stim`,
+because they belong to the Stim home, not to either app. Both apps check disk
+pressure. `stim ios` and `stim android` open device links with `open -a Stim`,
 which reaches the release app, never Stim Dev.
 
 `bundle.sh --release` builds the release variant, `build/Stim.app` with bundle
 id `dev.stim.desktop`, which `scripts/release.sh` and the release workflow use.
 
 The bundle copies Inter, JetBrains Mono, and the brand artwork, including the animated jar's and the build animation's Lottie files, from `website/`, and embeds `Lottie.framework` from the `lottie-spm` package and `Sparkle.framework` from the `Sparkle` package in `Contents/Frameworks`. Sentry is linked into the executable. Resolving the `sentry-cocoa` package downloads every xcframework it declares, about 450 MB, and extracts about 3 GB into `.build/artifacts` ([getsentry/sentry-cocoa#9146](https://github.com/getsentry/sentry-cocoa/issues/9146)).
+
+`bundle.sh` needs the repository's pnpm workspace installed (`pnpm install`).
+`scripts/server-runtime.mjs` stages the bundled server into
+`Contents/Resources/stim-server`: it downloads the Node.js release it pins
+(`NODE_VERSION`) from nodejs.org once into `.build/node`, checks the tarball
+against the SHA-256 the script pins and against that release's `SHASUMS256.txt`,
+keeps `bin/node` and its `LICENSE`, strips local symbols, and joins the arm64 and
+x64 binaries with `lipo` for `--universal`. It builds `@stim-cli/server` and the
+workspace packages it imports, packs them with `pnpm pack`, and lays out their
+third-party dependencies at the versions `pnpm-lock.yaml` resolves, without
+symbolic links, keeping only the darwin `unique-pid` prebuilds. It refuses a
+layout in which any package would load a dependency other than the one the
+lockfile names, and a staged server whose `--version` does not match
+`packages/server`. `bundle.sh --server <dir>` copies a server staged earlier
+instead; the release workflow stages it before any secret is loaded and
+`release.sh` reuses it through `DESKTOP_SERVER_RUNTIME`. To move to a
+newer Node, change `NODE_VERSION` and both hashes from that release's
+`SHASUMS256.txt`. Universal costs about 199 MB on disk (98 MB arm64 + 101 MB
+x86_64); the app and its Sparkle feed are universal, so it ships both.
+
+`release.sh` signs each `unique-pid` addon and then `bin/node` with the
+hardened runtime and `Support/Node/node.entitlements`:
+`com.apple.security.cs.allow-jit`, which V8 needs, and
+`com.apple.security.cs.disable-library-validation`, because the `stim`
+commands the server runs on this Node can load a project's own native addons,
+signed by another team or not at all. Both are in the set Node.js signs its own
+macOS release with. The Desktop workflow stages the server on every run, signs
+it the same way ad hoc and checks that it answers `/health` under an empty
+environment.
 
 ## Updates
 
@@ -1831,63 +2141,78 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 
 ## Tutorial panel
 
+Longer steps show a short instruction with an expandable **Why this step?**
+explanation. Waiting messages name the next action. Completed stepper segments
+are green; skipped segments stay gray. Prompt buttons briefly show **Copied**.
+The summary includes a copyable prompt to try Stim with your own app.
+
 **Help > Stim Tutorial…** and the setup guide's **Take the Tutorial** button open
-an inspector-width trailing column. It replaces the inspector until closed;
-Cmd-Opt-I returns to the inspector. A new tutorial path opens it once, after open
-sheets close. UserDefaults stores progress, skipped steps and whether the Commands section is open.
+a floating window beside the main app window, kept within the screen and on the
+same desktop Space as that window. It stays
+freely draggable while open; reopening positions it beside the app again.
+Until you drag it, resizing Stim keeps the tutorial beside the app with a 12-point
+gap where screen space permits. The pin at the bottom right docks it in the sidebar;
+click it again to float the tutorial. In full-screen mode, the tutorial docks inside
+the right side of the main window and the pin is disabled. Leaving full screen
+restores the floating tutorial with the same progress. The tutorial hides during
+the transition and fades back in when it finishes, respecting Reduce Motion.
+It uses the same window level as Stim, so other apps can cover both windows.
+While a popup is open in the Stim window, the tutorial stays visible but its controls
+and arrow-key navigation are disabled until the popup closes.
+A new tutorial path opens it once, after open
+sheets close. UserDefaults stores progress and skipped steps.
 Unfinished tours resume at launch when status lists the tracked path; archived
 ones show Done. Closing preserves progress. Restart shows the agent prompt and
 resets progress at once; see below for which worktrees count afterwards.
 The three-minute workspace warning starts at the first Copy of the run prompt
-and survives relaunch. Copying commands does not start it. Only archives
+and survives relaunch. Only archives
 removed after this run started can complete the tutorial.
 
 The panel clones appandflow/stim-tutorial and follows: a tutorial workspace
 appearing (Get the Test App; the clone only, which is never the tour), the first
 linked worktree of the clone and its first iOS build (Make a Change, `tourPath`),
 the next linked worktree created after that step began and its first iOS build,
-which must start after the step began and be a cache hit (Change It Again in
-Parallel, `secondPath`), optional live view, agent actions and logs steps,
+which must start after the step began (Change It Again in Parallel,
+`secondPath`). Both steps complete when their build starts running; the stats
+record each build when it succeeds, and a later failed iOS build of that
+worktree shows as a warning under the completed step. The steps continue with optional live view, agent actions and logs steps,
 optional phone and remote Mac steps, an optional Share Your Finish prompt, then
 removal and Archived of both tracked worktrees (Finish; the clone stays). The
 tutorial version is 2, from the repository's `expo.extra.stimTutorial`. A stored
 version 1 record is dropped and starts over on a version 2 workspace. Restart and
 "take the tutorial" start a fresh record at the current time that forgets the old tour paths even
 while the old worktrees are still registered; only linked worktrees whose creation time is after
-that start count, and the oldest one becomes the tour. Both optional steps
-keep Skip available.
+that start count, and the oldest one becomes the tour. Every step has one Skip step
+button: it records the step as done when its non-optional ticks are all done or
+its checkpoint completed, and as skipped otherwise. Detected steps advance on
+their own, including Agent Actions after viewing and replaying. The first step explains automatic advancement. Waiting states show a spinner; blocked or interactive steps show an information icon and guidance.
+The summary distinguishes completed required steps from an ended tour with skipped steps, shows completed/skipped counts and time in the tutorial, and keeps Restart only in the footer. Open Archived selects the newest archive from either tracked worktree removed after this run began; when unavailable, the summary explains why. Stepper tooltips include the number, title and status, with the viewing ring separate from the current-step dot.
 Pair a Phone opens the Pair a Phone wizard, which
 turns on serving itself when the server is off. A pairing that exists when the step starts shows Done Already,
 followed by "Open Stim on your phone: the tutorial workspaces are there".
 
 Add Remote Machine opens the existing wizard using the tour workspace as its
-checkout. With no machine configured, Skip is the primary action. Once a machine
+checkout. Once a machine
 is approved, the step shows a prompt that names the approved machine, or asks you to
-name it when none is recorded. The commands include that name. Approval completes the step and preserves its handoff across status polls;
+name it when none is recorded. Approval completes the step and preserves its handoff across status polls;
 an iOS build offloaded after the step started ticks the optional "Build ran on another
 Mac" check. Completed optional steps stay expanded so their handoff remains
-visible. The tutorial never starts the server or pairs or grants access. Mark done
-appears after two minutes.
+visible. The tutorial never starts the server or pairs or grants access.
 
-Each step with a prompt shows it first, then a collapsed "Commands your agent will run"
-section; whether it is open is a per-user `tutorial.commandsExpanded` preference. The prompts and the
-short command lists come from `TUTORIAL_ASKS` and each step's `commands` in
-`tutorial-data.ts`, with the tracked paths, the agent-device state directory and the
-simulator UDID substituted; the guide's own `manual` lists are unchanged. Create the
-Tutorial has no commands. Desktop never runs the commands. Make a Change has a Run iOS button that calls the same `ActionCenter.runApp` as the
-Build section's Run, and is disabled while a build or action runs in the workspace.
+A step with a prompt shows it with a Copy button. The prompts come from `TUTORIAL_ASKS` in
+`tutorial-data.ts`, with the tracked paths substituted.
 The panel cannot see a removal refusal from an agent-run command: the finish
 step keeps showing the finish prompt. Check the agent's output and revert the
 tutorial edit before retrying.
 The Make a Change step shows an agent-device card when status reports `agentDevice.installed: false`.
 Removals started through Desktop's workspace actions can show a refusal in the panel.
 
-All tutorial Stim reads go through the CLI: the panel waits for the first loaded
+The tutorial panel waits for the first loaded
 status snapshot, which supplies live workspaces and archive removal times.
 `stim logs --json --follow --grep '\[stim:tutorial\]'` supplies app signals,
 and `stim logs --json --follow --source agent` supplies the same records as the
 agent feed. Both followers run only while the panel is open on a live tutorial
-workspace. The panel reads `stim settings --json` for `archive.enabled`; when
+workspace. The panel reads `desktop.settings.get` for `archive.enabled`; when
 unavailable it assumes enabled, then permits finish after a ten-second
 disappearance grace period only when a stop was observed. Viewer events and
 paired-phone counts come from the existing Desktop controllers. No tutorial
@@ -1907,7 +2232,7 @@ The fixture test skips without the variable and never starts the CLI or a device
 
 ## Layout
 
-- `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI and `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the status machine section, the Machine report, free plan and worktree lifecycle, the autopilot schedule, pressure plan and log, and the crash report scrubber. Unit-tested.
+- `Sources/StimKit`: models for the CLI's JSON, the toolchain environment, the CLI and `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the status machine section, the Machine report, free plan and worktree lifecycle, the pressure plan and activity log, and the crash report scrubber. Unit-tested.
 - `Sources/StimStores`: the observable stores whose ordering and staleness rules have tests: the status refresh and watch, the gc report and the action runs. They take the `stim` call, and the clock where they decide staleness, as closures, so `Tests/StimStoresTests` can order results by hand. The DEBUG visual fixture target imports `StimDesktop` to capture its production views.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator, and input through the simulator's CoreDevice HID service (`dtuhidd`) or, when a simulator has none, SimulatorKit's legacy HID client. All of them are private Apple interfaces. Expect Xcode releases to break it.
 - `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo from the phone.
@@ -1933,6 +2258,14 @@ STIM_WORKSPACE_SHOTS=/tmp/stim-workspace-shots swift test --filter VisualFixture
 
 On a native 1x window, add `STIM_ARCHIVE_REFERENCE_SHOTS=1` to also export the four
 archive comparison captures at their reference dimensions. Inspect them before replacing references.
+
+To render the toolbar status pill with a status error inside a real window toolbar item, in light and dark:
+
+```sh
+STIM_TOOLBAR_STATUS_SHOTS=/tmp/stim-toolbar-status swift test --filter ToolbarStatusErrorScreenshotTests
+```
+
+The test skips without the variable. A toolbar draws a `Label` as its icon only, so check that the images show the message beside the icon.
 
 These fixtures use failed iOS and successful Android build history with phase timings,
 a merged PR, ended agents, expired logs and two recording slots. The real archive sidebar,

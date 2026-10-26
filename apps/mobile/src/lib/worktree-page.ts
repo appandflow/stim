@@ -34,7 +34,7 @@ function projectLabel(env: EnvironmentState): string {
 }
 
 function stageRank(env: EnvironmentState, now: number): number {
-  const stage = workspaceStage(env, orderDevices(devicesOf(env)), now);
+  const stage = workspaceStage(env, now);
   if (stage.kind === 'build-failed' || (stage.kind === 'running' && stage.tone === 'error')) return 0;
   return { building: 1, warming: 2, running: 3, ready: 4, stopped: 5, unknown: 6 }[stage.kind];
 }
@@ -97,23 +97,24 @@ export function buildEntries(apps: EnvironmentState[], tabs = false) {
       const native = supportedPlatforms(env).filter(
         (platform): platform is Platform => platform === 'ios' || platform === 'android',
       );
-      const platforms: (Platform | 'macos')[] =
-        tabs && env.macos
-          ? ['macos']
-          : [
-              ...(tabs ? ['ios' as const, 'android' as const] : native),
-              ...(!tabs && env.macos ? ['macos' as const] : []),
-            ];
+      const platforms: (Platform | 'macos')[] = [
+        ...(tabs && !env.macos ? ['ios' as const, 'android' as const] : native),
+        ...(env.macos ? ['macos' as const] : []),
+      ];
       return platforms.map((platform) => ({ path: env.path, platform, env }));
     })
     .sort((a, b) => PLATFORMS.indexOf(a.platform) - PLATFORMS.indexOf(b.platform));
+}
+
+export function hasBuildTabs(apps: EnvironmentState[]) {
+  return apps.length > 1 || (apps.some((env) => env.macos) && buildEntries(apps, true).length > 1);
 }
 
 export function worktreeDevices(apps: EnvironmentState[], now: number) {
   const owners = new Map<DeviceRef, EnvironmentState>();
   for (const env of apps) {
     const devices = orderDevices(devicesOf(env));
-    const stopped = workspaceStage(env, devices, now).kind === 'stopped';
+    const stopped = workspaceStage(env, now).kind === 'stopped';
     for (const device of devices) if (!stopped || device.platform === 'macos') owners.set(device, env);
   }
   return orderDevices([...owners.keys()]).map((device) => ({

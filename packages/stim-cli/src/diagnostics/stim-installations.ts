@@ -1,6 +1,8 @@
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
+import type { StimContext } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
+import { reportSignal } from '../report-runtime.ts';
 
 const VERSION_OUTPUT_LIMIT = 4096;
 
@@ -98,12 +100,12 @@ function stimExecutablePaths(
   return found;
 }
 
-function canonicalPath(path: string | undefined): string | null {
+function canonicalPath(path: string | undefined, cwd: string): string | null {
   if (!path) return null;
   try {
-    return realpathSync(resolve(path));
+    return realpathSync(resolve(cwd, path));
   } catch {
-    return resolve(path);
+    return resolve(cwd, path);
   }
 }
 
@@ -131,7 +133,24 @@ export function analyzeStimVersions(
   };
 }
 
-function probeStimVersion(path: string, timeoutMs: number): Promise<string | null> {
+function probeStimVersion(
+  path: string,
+  timeoutMs: number,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  operation?: StimContext,
+): Promise<string | null> {
+  if (reportSignal(operation)) {
+    return getExecutor()
+      .runFileQuietAsync(path, ['--version'], {
+        timeoutMs,
+        cwd,
+        env: Object.fromEntries(
+          Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+        ),
+      })
+      .then((output) => (output === null ? null : parseStimVersionOutput(output.slice(0, VERSION_OUTPUT_LIMIT))));
+  }
   return new Promise((resolveProbe) => {
     let settled = false;
     let output = '';
@@ -144,6 +163,8 @@ function probeStimVersion(path: string, timeoutMs: number): Promise<string | nul
     let child;
     try {
       child = getExecutor().spawn(path, ['--version'], {
+        cwd,
+        env,
         stdio: ['ignore', 'pipe', 'ignore'],
         detached: process.platform !== 'win32',
       });
@@ -169,17 +190,35 @@ function probeStimVersion(path: string, timeoutMs: number): Promise<string | nul
 export async function inspectStimVersions(
   runningVersion: string,
   {
-    pathValue = process.env.PATH ?? '',
+    cwd = process.cwd(),
+    env = process.env,
+    pathValue = env[
+      process.platform === 'win32'
+        ? (Object.keys(env)
+            .toSorted()
+            .find((key) => key.toUpperCase() === 'PATH') ?? 'PATH')
+        : 'PATH'
+    ] ?? '',
     runningPath = process.argv[1],
     probeTimeoutMs = 5000,
-  }: { pathValue?: string; runningPath?: string; probeTimeoutMs?: number } = {},
+    operation,
+  }: {
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+    pathValue?: string;
+    runningPath?: string;
+    probeTimeoutMs?: number;
+    operation?: StimContext;
+  } = {},
 ): Promise<StimVersionReport> {
-  const paths = stimExecutablePaths(pathValue);
-  const versions = await Promise.all(paths.map((entry) => probeStimVersion(entry.path, probeTimeoutMs)));
+  const paths = stimExecutablePaths(pathValue, { cwd });
+  const versions = await Promise.all(
+    paths.map((entry) => probeStimVersion(entry.path, probeTimeoutMs, cwd, env, operation)),
+  );
   const installations = paths.map((entry, index) => ({
     path: entry.path,
     realPath: entry.realPath,
     version: versions[index] ?? null,
   }));
-  return analyzeStimVersions(runningVersion, canonicalPath(runningPath), installations);
+  return analyzeStimVersions(runningVersion, canonicalPath(runningPath, cwd), installations);
 }

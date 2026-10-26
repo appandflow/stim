@@ -81,6 +81,7 @@ export function makeBuildSlot(overrides: Partial<BuildSlotInfo> = {}): BuildSlot
     projectRoot: '/w/project',
     startedAt: '2026-01-01T00:00:00.000Z',
     logFile: '/w/.stim/logs/build.log',
+    client: null,
     alive: true,
     unresolved: false,
     ...overrides,
@@ -139,10 +140,20 @@ export function makeExecutor(overrides: Partial<Executor> = {}): Executor {
     runFileAsync: async () => '',
     runQuiet: () => null,
     runFileQuiet: (file) => (file === 'ps' ? '' : null),
+    runFileQuietAsync: async (file) => (file === 'ps' ? '' : null),
     spawn: () => makeChildProcess(),
     findExecutable: () => null,
   };
-  return { ...base, ...overrides };
+  const merged = { ...base, ...overrides };
+  return {
+    ...merged,
+    ...(overrides.runFile && !overrides.runFileAsync
+      ? { runFileAsync: async (...args: Parameters<Executor['runFile']>) => merged.runFile(...args) }
+      : {}),
+    ...(overrides.runFileQuiet && !overrides.runFileQuietAsync
+      ? { runFileQuietAsync: async (...args: Parameters<Executor['runFileQuiet']>) => merged.runFileQuiet(...args) }
+      : {}),
+  };
 }
 
 export function makeChildProcess(overrides: Partial<ChildProcess> = {}): ChildProcess {

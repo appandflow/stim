@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { rotatedLogPath } from '@stim-cli/core';
-import { WEB_VIEWPORTS, type WebPageState, type WebViewport } from '@stim-cli/core/state';
+import { isJsonObject, WEB_VIEWPORTS, type WebPageState, type WebViewport } from '@stim-cli/core/state';
 import { inspectProcessIdentity, sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
-import { chromeProcessState } from './profile.ts';
+import { chromeProcessState, chromeProcessStateAsync } from './profile.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import {
   clearWorkspaceStateKey,
@@ -74,8 +74,8 @@ function processRecord(value: unknown): OwnedProcess | undefined {
 }
 
 function parseWebRecord(value: unknown): WebRecord | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
+  if (!isJsonObject(value)) return null;
+  const record = value;
   const owner = processRecord(record);
   if (!owner || typeof record.cdpPort !== 'number' || typeof record.profile !== 'string') return null;
   if (typeof record.url !== 'string' || typeof record.chrome !== 'string') return null;
@@ -138,7 +138,23 @@ export interface WebFacts {
 export function webFacts(record: WebRecord | null): WebFacts | null {
   if (!record) return null;
   const supervisor = inspectProcessIdentity(record);
-  const chrome = record.chromeProcess ? chromeProcessState(record.chromeProcess) : 'gone';
+  const chrome = record.chromeProcess ? chromeProcessState(record.chromeProcess, record.profile) : 'gone';
+  return classifyWebFacts(record, supervisor, chrome);
+}
+
+/** The same ownership facts as webFacts, without blocking on Chrome's surviving process-group probe. */
+export async function webFactsAsync(record: WebRecord | null): Promise<WebFacts | null> {
+  if (!record) return null;
+  const supervisor = inspectProcessIdentity(record);
+  const chrome = record.chromeProcess ? await chromeProcessStateAsync(record.chromeProcess, record.profile) : 'gone';
+  return classifyWebFacts(record, supervisor, chrome);
+}
+
+function classifyWebFacts(
+  record: WebRecord,
+  supervisor: ReturnType<typeof inspectProcessIdentity>,
+  chrome: ReturnType<typeof chromeProcessState>,
+): WebFacts {
   if (supervisor === 'unknown' || chrome === 'unknown') return { record, status: 'unverified' };
   if (chrome === 'gone') return { record, status: 'stopped' };
   return { record, status: supervisor === 'same' && chrome === 'running' ? 'running' : 'orphaned' };
@@ -158,12 +174,13 @@ export function latestPageLoad(lines: readonly string[]): WebPageState | null {
   let loaded = false;
   let route: string | null = null;
   for (let i = lines.length - 1; i >= 0; i--) {
-    let record: { event?: unknown; msg?: unknown; url?: unknown };
+    let record: unknown;
     try {
-      record = JSON.parse(lines[i]!) as typeof record;
+      record = JSON.parse(lines[i]!);
     } catch {
       continue;
     }
+    if (!isJsonObject(record)) continue;
     if (record.event === 'web_navigation' && typeof record.url === 'string') {
       const moved = route !== null && route !== record.url ? { route } : {};
       if (failure !== null) return { url: record.url, state: 'failed', error: failure, ...moved };

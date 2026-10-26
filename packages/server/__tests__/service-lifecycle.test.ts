@@ -3,7 +3,14 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { installJob, installService, recordServiceRoute, rollbackService, uninstallService } from '../src/service.ts';
+import {
+  installJob,
+  installService,
+  recordServiceRoute,
+  rollbackService,
+  uninstallService,
+  updateService,
+} from '../src/service.ts';
 import { parseInstalledPlist, renderPlist } from '../src/service-plist.ts';
 
 const launchd = vi.hoisted(() => ({
@@ -24,6 +31,7 @@ const launchd = vi.hoisted(() => ({
   spawnUntil: 0,
   failRestore: false,
   failBootout: false,
+  busyWork: false,
   bootstraps: [] as { plist: string; portBusy: boolean }[],
 }));
 
@@ -37,6 +45,23 @@ vi.mock('node:child_process', async (importOriginal) => {
       options: object,
       callback: (error: Error | null, stdout: string, stderr: string) => void,
     ) => {
+      if (file.endsWith('/npm') && args.includes('--prefix')) {
+        const staging = args[args.indexOf('--prefix') + 1]!;
+        if (args[0] === 'install') {
+          for (const [name, manifest, entry] of [
+            ['@stim-cli/server', { version: '1.0.0' }, 'stim-server.mjs'],
+            ['stim', { bin: { stim: 'dist/cli.mjs' } }, 'cli.mjs'],
+          ] as const) {
+            const pkg = join(staging, 'node_modules', name);
+            mkdirSync(join(pkg, 'dist'), { recursive: true });
+            writeFileSync(join(pkg, 'package.json'), JSON.stringify(manifest));
+            writeFileSync(join(pkg, 'dist', entry), 'console.log("1.0.0");');
+          }
+        }
+        return callback(null, args[0] === 'audit' ? '{"invalid":[],"missing":[]}' : '', '');
+      }
+      if (file === process.execPath && args[0]?.includes('.install-') && args[1] === '--version')
+        return callback(null, '1.0.0\n', '');
       if (file === 'launchctl') {
         if (args[0] === 'print') {
           if (!launchd.job) return callback(new Error('Could not find service'), '', 'Could not find service');
@@ -145,11 +170,12 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
       spawnUntil: 0,
       failRestore: false,
       failBootout: false,
+      busyWork: false,
       bootstraps: [],
     });
     launchd.original = renderPlist({
       label,
-      host: '/tmp/stim-host',
+      host: '/tmp/Stim Host.app/Contents/MacOS/stim-host',
       node: process.execPath,
       script: join(home, 'old-server.mjs'),
       port: launchd.port,
@@ -175,6 +201,10 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
           JSON.stringify({
             server: 'stim-server',
             version: '1.0.0',
+            busy: {
+              builds: launchd.job === 'old' && launchd.busyWork ? 1 : 0,
+              hostedSessions: launchd.job === 'old' && launchd.busyWork ? 1 : 0,
+            },
             startup: { state: launchd.startup, reason: 'Stim home unavailable' },
           }),
         );
@@ -382,6 +412,24 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     );
     expect(launchd.job).toBe('new');
   });
+
+  it.each([undefined, false])(
+    'updates with active work only when idle waiting is disabled (wait=%s)',
+    async (waitForWork) => {
+      const wait = waitForWork !== false;
+      launchd.busyWork = true;
+      const lines: string[] = [];
+      const updating = updateService(label, { release: '1.0.0' }, (line) => lines.push(line), waitForWork);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(launchd.job).toBe(wait ? 'old' : 'new');
+      expect(lines.some((line) => line.startsWith('Waiting for'))).toBe(wait);
+      launchd.busyWork = false;
+      await finish(updating);
+      expect(launchd.job).toBe('new');
+      const updated = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' }));
+      expect(parseInstalledPlist(updated)?.previousScript).toBe(join(home, 'old-server.mjs'));
+    },
+  );
 
   it('restores the current service when the rollback job exits despite matching stale health', async () => {
     const target = join(home, 'previous', 'dist', 'stim-server.mjs');

@@ -42,6 +42,8 @@ strict parser and reader.
 shared by stim-server and the phone. It imports no Node APIs; mobile consumers
 import this subpath without loading the Node-only root or state entry points.
 Build core before typechecking, testing or bundling the phone app.
+Its `wakeAt` includes physical-device lease expiry and unattended EAS-session age;
+callers retain their clock and quiet-hours reevaluation.
 
 The npm scope remains `@stim-cli` until the `@stim` scope is available.
 

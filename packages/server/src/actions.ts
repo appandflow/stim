@@ -40,11 +40,6 @@ export function parseAction(params: unknown): ParsedAction {
   return { action: { action: 'reload', workspace, ...(platform ? { platform: platform as ReloadPlatform } : {}) } };
 }
 
-export function actionArgs(action: ActionParams): string[] {
-  if (action.action === 'stop') return ['stop', '--json'];
-  return ['reload', ...(action.platform ? [action.platform] : []), '--json'];
-}
-
 /** The JSON object the command printed, and on failure the message and remedy it printed, if any. */
 export function actionOutcome(
   outcome: CommandOutcome,
@@ -78,6 +73,8 @@ export interface AuditRecord {
   workspace: string | null;
   platform?: string;
   slot?: string;
+  setting?: string;
+  scope?: string;
   ok: boolean;
   error?: ProtocolError;
   durationMs?: number;

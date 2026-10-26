@@ -94,8 +94,15 @@ final class ServerController: ObservableObject {
       } else {
         hasDeviceList = false
       }
+      syncAdoption()
     }
   }
+  /// True while `state` comes from a server adopted, or started from the bundle, before the login environment
+  /// arrived; see `ServerAdoption`.
+  @Published private(set) var provisional = false {
+    didSet { syncAdoption() }
+  }
+  let adoption = ServerAdoptionGate()
   @Published private(set) var devices: [PairedDevice] = []
   private var hasDeviceList = false
   @Published private(set) var devicesError: String?
@@ -105,6 +112,10 @@ final class ServerController: ObservableObject {
   @Published private(set) var connectionError: String?
 
   private var environment: Task<[String: String], Never>?
+  private var resolvedEnvironment: [String: String]?
+  private var provisionalHome = StimHome.path(environment: [:])
+  /// The launch environment with the Settings Stim home and overrides, read once at launch like the CLI's.
+  private var settingsEnvironment = ProcessInfo.processInfo.environment
   private var process: Process?
   private var exiting: Process?
   private var output: [String] = []
@@ -118,6 +129,12 @@ final class ServerController: ObservableObject {
   private var retriesFailure = true
   static let retryAfter: TimeInterval = 30
   private var serverLauncher: (executable: String?, launcher: NodeLauncher?, resolved: Date)?
+  private var bootstrap: DesktopBootstrapKey?
+
+  var desktopBootstrap: DesktopBootstrapKey? {
+    guard case .running(_, owned: true) = state, process?.isRunning == true else { return nil }
+    return bootstrap
+  }
 
   static let devicesInterval: Duration = .seconds(10)
   static let inactiveDevicesInterval: Duration = .seconds(60)
@@ -179,8 +196,14 @@ final class ServerController: ObservableObject {
       servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones))
   }
 
-  func configure(environment: Task<[String: String], Never>) {
+  func configure(environment: Task<[String: String], Never>, settingsEnvironment: [String: String]) {
     self.environment = environment
+    self.settingsEnvironment = settingsEnvironment
+    provisionalHome = StimHome.path(environment: settingsEnvironment)
+    Task {
+      resolvedEnvironment = await environment.value
+      await verifyAdoption()
+    }
     start()
     devicesPoller.start()
     NotificationCenter.default.addObserver(
@@ -195,11 +218,16 @@ final class ServerController: ObservableObject {
     }
   }
 
+  /// Waits for the login environment and for a provisional adoption to be confirmed or dropped.
   func cli() async -> StimServerCLI {
     var environment = await environment?.value ?? ProcessInfo.processInfo.environment
-    if case .running(let health, _) = state { environment["STIM_HOME"] = health.stimHome }
+    repeat { await adoption.settled() } while adoption.isProvisional
+    if case .running(let health, _) = state, adoption.allowsWrites(home: health.stimHome) {
+      environment["STIM_HOME"] = health.stimHome
+    }
     let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable)
     let plain = StimServerCLI(environment: environment, override: override)
+    guard plain.bundled == nil else { return plain }
     let stale = serverLauncher.map { $0.launcher?.script == nil && Date().timeIntervalSince($0.resolved) > 60 } ?? true
     if stale || serverLauncher?.executable != plain.executable {
       let launcher = await NodeLauncher.resolve(
@@ -216,6 +244,8 @@ final class ServerController: ObservableObject {
     }
     generation += 1
     let current = generation
+    bootstrap = nil
+    provisional = false
     state = .starting
     retriesFailure = true
     missedProbes = 0
@@ -223,12 +253,24 @@ final class ServerController: ObservableObject {
       await waitForExiting()
       guard current == generation else { return }
       if let probe = await StimServerCLI.health(port: port) {
+        guard current == generation else { return }
+        if resolvedEnvironment == nil, let health = ServerAdoption.provisional(probe, provisionalHome: provisionalHome) {
+          provisional = true
+          state = .running(health, owned: false)
+          return
+        }
         let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
         guard current == generation else { return }
         state = State(probe: probe, owned: false, resolvedHome: resolved, port: port)
         return
       }
-      let cli = await cli()
+      let cli: StimServerCLI
+      if let bundled = bundledCLI() {
+        cli = bundled
+        bootstrap = DesktopBootstrapKey()
+      } else {
+        cli = await self.cli()
+      }
       guard current == generation else { return }
       output = []
       startedLoopbackOnly = wantsLoopbackOnly
@@ -236,6 +278,7 @@ final class ServerController: ObservableObject {
         process = try cli.serve(
           port: port,
           loopbackOnly: startedLoopbackOnly,
+          bootstrap: bootstrap,
           onLine: { line in
             DispatchQueue.main.async { MainActor.assumeIsolated { self.record(line.text, generation: current) } }
           },
@@ -243,6 +286,7 @@ final class ServerController: ObservableObject {
             DispatchQueue.main.async { MainActor.assumeIsolated { self.exited(status, generation: current) } }
           })
       } catch {
+        bootstrap = nil
         failureKind = .launchFailed
         state = .failed(error.localizedDescription)
         return
@@ -274,6 +318,49 @@ final class ServerController: ObservableObject {
     generation += 1
     terminate()
     state = .off
+    provisional = false
+  }
+
+  /// The bundled server, started with the launch environment and the Stim home and overrides from Settings, so it
+  /// waits for nothing. It discovers the toolchain for the commands it runs itself. Nil with an override.
+  private func bundledCLI() -> StimServerCLI? {
+    guard UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable)?.isEmpty ?? true,
+      let bundled = BundledServer.inApp()
+    else { return nil }
+    var environment = settingsEnvironment
+    if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
+    return StimServerCLI(environment: environment, bundled: bundled)
+  }
+
+  /// Confirms or drops a provisional adoption once the login environment has arrived. A dropped server is looked
+  /// for again from the start, now with the login environment's Stim home.
+  private func verifyAdoption() async {
+    guard provisional, case .running(let adopted, owned: false) = state, let resolved = resolvedEnvironment else { return }
+    let current = generation
+    let probe = await StimServerCLI.health(port: port)
+    guard current == generation, provisional else { return }
+    if let health = ServerAdoption.confirmed(
+      adopted: adopted, probe: probe, loginHome: StimHome.path(environment: resolved))
+    {
+      state = .running(health, owned: false)
+      provisional = false
+      LaunchMilestones.reach("server-adoption-verified")
+      return
+    }
+    DebugLog.warning(.server, "dropped the provisionally adopted stim-server for \(adopted.stimHome)")
+    generation += 1
+    state = .off
+    provisional = false
+    start()
+  }
+
+  private func syncAdoption() {
+    switch state {
+    case .running(let health, _):
+      adoption.set(provisional ? .provisional(home: health.stimHome) : .verified(home: health.stimHome))
+    case .off, .starting, .notReady, .failed:
+      adoption.set(.none)
+    }
   }
 
   /// Restarts the server Desktop started when the phone setting changes which addresses it should listen on. A
@@ -331,6 +418,13 @@ final class ServerController: ObservableObject {
       )
     }
     if before.tailscale.isRunning && before.route?.state != "routed" {
+      if let route = before.route, route.state == "unknown" {
+        throw ServerError(
+          code: "not-connected",
+          message:
+            "The server is running, but its private Tailscale route could not be verified: \(route.reason ?? "the route check did not answer"). Try again."
+        )
+      }
       throw ServerError(
         code: "not-connected",
         message: "Pairing needs a verified tailnet-only route. Turn on serving first.")
@@ -348,7 +442,7 @@ final class ServerController: ObservableObject {
   }
 
   func refresh() {
-    if case .notReady = state {} else { reloadDevices() }
+    if case .notReady = state {} else if !provisional { reloadDevices() }
     let owned: Bool
     switch state {
     case .running(_, let value), .notReady(_, let value): owned = value
@@ -358,7 +452,7 @@ final class ServerController: ObservableObject {
     Task {
       let probe = await StimServerCLI.health(port: port)
       let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
-      guard current == generation, isResponding else { return }
+      guard current == generation, isResponding, !provisional else { return }
       switch probe {
       case .notReady(let startup, let stimHome)
       where owned || (stimHome.map { StimHome.adopts(serverHome: $0, resolved: resolved) } ?? true):
@@ -391,13 +485,13 @@ final class ServerController: ObservableObject {
     let health: ServerHealth? = if case .running(let health, _) = state { health } else { nil }
     Task {
       let cli = await cli()
+      guard epoch == devicesEpoch, current == generation else { return }
       let result = await Result.awaiting { try await cli.devices() }
       guard epoch == devicesEpoch, current == generation else { return }
       switch result {
       case .success(let devices):
         hasDeviceList = health != nil
-        let own = health.flatMap { ServerSession.ownDeviceID(home: $0.stimHome) }
-        self.devices = devices.filter { $0.id != own }.map { device in
+        self.devices = devices.map { device in
           guard let control = pendingGrants[device.id] else { return device }
           var device = device
           device.capabilities = Self.capabilities(control: control)
@@ -432,24 +526,6 @@ final class ServerController: ObservableObject {
     control ? ["read", "control"] : ["read"]
   }
 
-  func allowMachine(_ device: PairedDevice) {
-    Task {
-      let cli = await cli()
-      switch await Result.awaiting({
-        if device.isDeviceHostClient {
-          try await cli.grantDeviceHost(device.id)
-        } else {
-          try await cli.grantBuild(device.id)
-        }
-      }) {
-      case .success: changeError = nil
-      case .failure(let error): changeError = error.localizedDescription
-      }
-      devicesEpoch += 1
-      reloadDevices()
-    }
-  }
-
   func revoke(_ device: PairedDevice) {
     Task {
       let cli = await cli()
@@ -470,6 +546,7 @@ final class ServerController: ObservableObject {
   }
 
   private func terminate() {
+    bootstrap = nil
     if let process, process.isRunning {
       process.terminate()
       exiting = process
@@ -493,13 +570,15 @@ final class ServerController: ObservableObject {
 
   private func exited(_ status: Int32, generation: Int) {
     guard generation == self.generation else { return }
+    bootstrap = nil
     process = nil
+    provisional = false
     let detail = output.filter { !$0.isEmpty }.joined(separator: "\n")
     retriesFailure = !detail.contains("Unknown option '--loopback-only'")
     if !retriesFailure {
       failureKind = .tooOld
       state = .failed(
-        "This stim-server is too old to run on loopback only. Update it with npm install --global @stim-cli/server.")
+        "This stim-server is too old to run on loopback only. Update it, or clear the stim-server override in Settings.")
       return
     }
     failureKind = .exited

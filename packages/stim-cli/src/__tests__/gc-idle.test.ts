@@ -86,11 +86,11 @@ test('parses minute, hour, and day durations and rejects the rest', () => {
   expect(parseIdleDuration('90')).toBeNull();
 });
 
-test('shuts down through teardown, never deleting, and keeps a device that became active since the report', () => {
+test('shuts down through teardown, never deleting, and keeps a device that became active since the report', async () => {
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   try {
     const report = collect({ A: idle(3), 'emulator-5554': idle(3) });
-    const result = shutDownIdleDevices(report, 2 * HOUR, () => collect({ A: idle(3) }));
+    const result = await shutDownIdleDevices(report, 2 * HOUR, async () => collect({ A: idle(3) }));
     expect(result.failures).toBe(0);
     expect(result.shutDown.map((device) => device.id)).toEqual(['A']);
     expect(teardown.teardownOwnedIosSim).toHaveBeenCalledWith('A', { label: 'stim-a (iPhone 27.0)' });
@@ -99,3 +99,53 @@ test('shuts down through teardown, never deleting, and keeps a device that becam
     log.mockRestore();
   }
 });
+
+test('a caller output receives the shutdown lines and records instead of console.log and gc results', async () => {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const lines: string[] = [];
+  const records: string[] = [];
+  try {
+    const report = collect({ A: idle(3), 'emulator-5554': idle(3) });
+    await shutDownIdleDevices(report, 2 * HOUR, () => collect({ A: idle(3) }), {
+      log: (line) => lines.push(line),
+      error: (line) => lines.push(line),
+      record: (_kind, status, label) => records.push(`${status} ${label}`),
+      fail: () => {},
+    });
+    expect(lines.join('\n')).toMatch(/Shut down ios stim-a/);
+    expect(records).toEqual(['done stim-a (iPhone 27.0)', 'kept stim-a']);
+    expect(log).not.toHaveBeenCalled();
+  } finally {
+    log.mockRestore();
+  }
+});
+
+test.each(['recollection', 'teardown'] as const)(
+  'cancellation during %s prevents the next device shutdown',
+  async (phase) => {
+    teardown.teardownOwnedIosSim.mockClear();
+    teardown.teardownOwnedAvd.mockClear();
+    const abort = new AbortController();
+    const reason = new Error('cancel idle shutdown');
+    const report = collect({ A: idle(3), 'emulator-5554': idle(3) });
+    if (phase === 'teardown')
+      teardown.teardownOwnedIosSim.mockImplementationOnce(() => {
+        abort.abort(reason);
+        return { status: 'torn-down' };
+      });
+    await expect(
+      shutDownIdleDevices(
+        report,
+        2 * HOUR,
+        async () => {
+          if (phase === 'recollection') abort.abort(reason);
+          return report;
+        },
+        { log: () => {}, error: () => {}, record: () => {}, fail: () => {} },
+        abort.signal,
+      ),
+    ).rejects.toThrow(reason);
+    expect(teardown.teardownOwnedIosSim).toHaveBeenCalledTimes(phase === 'teardown' ? 1 : 0);
+    expect(teardown.teardownOwnedAvd).not.toHaveBeenCalled();
+  },
+);

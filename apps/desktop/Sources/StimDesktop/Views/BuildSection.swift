@@ -1,6 +1,7 @@
 import StimKit
 import StimStores
 import SwiftUI
+import SystemConfiguration
 
 struct BuildSection: View {
   var cli: Task<StimCLI, Never>
@@ -220,12 +221,15 @@ struct RunningBuildDetail: View {
         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
           Text(phase).font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.primary)
           if let counts { Text(counts).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1) }
+          if let activityMs = build.activityElapsedMs(at: context.date) {
+            Text(Format.clock(ms: activityMs)).font(.stim(.footnote)).foregroundStyle(Palette.secondary).monospacedDigit()
+          }
           Spacer(minLength: Space.sm)
           (Text(elapsed) + Text(estimate).foregroundStyle(Palette.tertiary))
             .font(.stim(.footnote))
             .monospacedDigit()
         }
-        PhaseBar(steps: barSteps(steps), key: build.key)
+        PhaseBar(steps: barSteps(steps), key: build.key, indeterminate: build.waitsWithoutProgress)
       }
       .accessibilityElement(children: .combine)
     }
@@ -334,21 +338,17 @@ struct BuildHistoryRow: View {
   }
 }
 
-/// Why a run that considered offloading built here, in a few words; the tooltip holds the whole reason.
 struct OffloadFallbackLine: View {
   var build: LastBuild
-  var inlineReason = false
+
+  private static let thisMac =
+    (SCDynamicStoreCopyComputerName(nil, nil) as String?) ?? ProcessInfo.processInfo.hostName
 
   var body: some View {
-    if let line = build.fallbackLine {
-      VStack(alignment: .leading, spacing: Space.xs) {
-        Label(line.text, systemImage: "desktopcomputer")
-          .foregroundStyle(Palette.secondary)
-          .help(line.reason)
-        if inlineReason {
-          Text(line.reason).foregroundStyle(Palette.secondary).textSelection(.enabled)
-        }
-      }
+    if let reason = build.offloadFallback, !reason.isEmpty {
+      Label(Self.thisMac, systemImage: "desktopcomputer")
+        .foregroundStyle(Palette.secondary)
+        .help(reason)
     }
   }
 }
@@ -449,7 +449,6 @@ struct BuildOutcomeBadge: View {
   var body: some View {
     if let label = build.outcomeLabel {
       Pill(label, tone: build.outcome == "hit" ? .success : .warning, size: .small)
-        .tutorialAnchor(.cacheBadge)
     }
   }
 }

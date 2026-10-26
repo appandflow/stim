@@ -1,4 +1,6 @@
+import type { StimContext } from '@stim-cli/core';
 import type { BuildCacheCapability } from '@stim-cli/cache';
+import type { FingerprintCheck } from '../cache/fingerprint-memo.ts';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { IosRuntimeKind, IosRuntimePlan } from '../commands/ios/launch.ts';
 import type { FailArgs, IosCommandOptions } from '../commands/ios/types.ts';
@@ -26,28 +28,36 @@ export interface IosSourcePreparation {
 
 export interface IosArtifactRecipe {
   identity(): Promise<IosArtifactIdentity | { cacheIneligible: string }>;
+  /** The background check of a memoized fingerprint that identity() used, if any. */
+  fingerprintCheck?(): FingerprintCheck | null;
   cache(): BuildCacheCapability;
   prepare(beforePrepare: () => void): Promise<void>;
   reconcile(): Promise<IosSourcePreparation>;
   validate(): Promise<IosArtifactIdentity | null>;
-  validateExternal(path: string): void;
+  validateExternal(path: string): void | Promise<void>;
   materialize(path: string, options: { fresh: boolean; ownTemporary(directory: string): void }): Promise<string | null>;
   compile(): Promise<BuildIosResult>;
   explain(rekeyedBy: string[]): { reason: BuildMissReason; diff: Record<string, unknown> | null };
   untrackedLine(): string | null;
-  legacyCache: {
+  expoCache: {
     load(): Promise<LoadProjectProviderResult>;
     runOptions: { configuration?: string; arch?: string } | null;
   } | null;
   offload: {
-    context(): { runtime: string | null; unsupported: string | null };
-    target(runtime: string): Parameters<typeof chooseBuildMachine>[0]['target'];
+    context():
+      | { runtime: string | null; unsupported: string | null }
+      | Promise<{ runtime: string | null; unsupported: string | null }>;
+    target(
+      runtime: string,
+    ): Parameters<typeof chooseBuildMachine>[0]['target'] | Promise<Parameters<typeof chooseBuildMachine>[0]['target']>;
     request(runtime: string): Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'ios' }>;
+    fingerprintInputs?: Parameters<typeof offloadBuild>[0]['fingerprintInputs'];
     unchanged(): Promise<boolean>;
   } | null;
 }
 
 export interface IosArtifactContext {
+  operation?: StimContext;
   root: string;
   logFile: string;
   configuration: string | null;
@@ -82,10 +92,14 @@ export interface IosArtifactContext {
 }
 
 export interface IosProject {
-  plan?(options: IosCommandOptions, resolved: ResolvedProjectSettings): Promise<ProjectPlanResult>;
+  plan?(
+    options: IosCommandOptions,
+    resolved: ResolvedProjectSettings,
+    operation?: StimContext,
+  ): Promise<ProjectPlanResult>;
   isExpo: boolean;
-  bundleId(): string | null;
-  schemeProblem(scheme: string | undefined, configuration?: string | null): FailArgs | null;
+  bundleId(): string | null | Promise<string | null>;
+  schemeProblem(scheme: string | undefined, configuration?: string | null): FailArgs | null | Promise<FailArgs | null>;
   targets: readonly ('simulator' | 'physical' | 'remote' | 'hosted')[];
   eas: boolean;
   runtimeKind(configuration: string | null): IosRuntimeKind;

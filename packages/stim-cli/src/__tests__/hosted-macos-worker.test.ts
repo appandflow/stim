@@ -33,6 +33,7 @@ const native = vi.hoisted(() => ({
   pressure: vi.fn<() => string | null>(),
   identity: vi.fn<(record: unknown) => string>(),
   stop: vi.fn<(root: string) => Promise<boolean>>(),
+  stopApps: vi.fn<(area: string) => Promise<void>>(),
 }));
 vi.mock('../exec.ts', () => ({
   getExecutor: () => ({ runFile: native.runFile, runFileQuiet: native.quiet, spawn: native.spawn }),
@@ -46,7 +47,10 @@ vi.mock('../process-identity.ts', async (original) => ({
   ...(await original<typeof import('../process-identity.ts')>()),
   inspectProcessIdentity: (record: unknown) => native.identity(record),
 }));
-vi.mock('../macos/stop.ts', () => ({ stopMacosAppHeld: (root: string) => native.stop(root) }));
+vi.mock('../macos/stop.ts', () => ({
+  stopMacosAppHeld: (root: string) => native.stop(root),
+  stopHostedBundleInstances: (area: string) => native.stopApps(area),
+}));
 
 let root: string;
 let home: string;
@@ -334,6 +338,35 @@ test('stop retains app data and preferences when process shutdown cannot be veri
   expect(existsSync(join(home, 'app-home'))).toBe(true);
   expect(existsSync(join(area, 'App.app'))).toBe(true);
   expect(existsSync(join(home, '..', 'blobs'))).toBe(true);
+});
+
+test('stop ends copies of the session bundles before deleting them, and keeps them when one will not stop', async () => {
+  receipt();
+  await runHostedMacosApp('install', request, { attempt: 'app' });
+  native.stopApps.mockClear();
+  native.stopApps.mockRejectedValueOnce(new Error('Copy did not exit'));
+  expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'unknown', notice: 'Copy did not exit' });
+  expect(existsSync(join(area, 'App.app'))).toBe(true);
+  expect(existsSync(join(home, 'app-home'))).toBe(true);
+  native.stopApps.mockImplementationOnce(() => {
+    expect(existsSync(join(area, 'App.app'))).toBe(true);
+    return Promise.resolve();
+  });
+  expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'stopped' });
+  expect(native.stopApps).toHaveBeenLastCalledWith(realpathSync(root));
+  expect(existsSync(join(area, 'App.app'))).toBe(false);
+});
+
+test('installing a replacement ends copies of earlier attempts before it launches', async () => {
+  receipt();
+  const launchesWhenStopped: number[] = [];
+  native.stopApps.mockImplementation(() => {
+    launchesWhenStopped.push(native.spawn.mock.calls.length);
+    return Promise.resolve();
+  });
+  expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({ state: 'installed' });
+  expect(launchesWhenStopped).toEqual([0]);
+  expect(native.spawn).toHaveBeenCalledTimes(1);
 });
 
 test('a preference plist removal failure leaves stop unresolved and app data intact', async () => {

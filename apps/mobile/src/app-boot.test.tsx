@@ -3,9 +3,11 @@ import 'react-native-gesture-handler/jestSetup';
 
 import { act, renderRouter, screen } from 'expo-router/testing-library';
 import { AppState } from 'react-native';
+import { router } from 'expo-router';
 
 import '@/design/unistyles';
 
+import { statusViews } from '@stim-cli/core/phone-protocol';
 import statusFixture from '../mock-server/fixtures/status.json';
 
 // expo-router/testing-library mocks Reanimated with `react-native-reanimated/mock`, which throws while loading under
@@ -68,6 +70,7 @@ jest.mock('react-native-drawer-layout', () => ({
 }));
 
 jest.mock('lottie-react-native', () => () => null);
+jest.mock('@/lib/socket', () => ({ createSocket: () => new MockSocket() }));
 
 const mockStores = new Map<string, Map<string, string>>();
 const mockStore = (id: string) => {
@@ -115,32 +118,40 @@ jest.mock('expo-notifications', () => ({
 const MAC_ID = 'mac1';
 const ENDPOINT = 'ws://mock-mac:7787';
 
-/** Answers `hello` and `status.subscribe` like stim-server, with the mock server's captured status. */
-class FakeSocket {
+/** Answers `hello` and the status feeds like stim-server, with the mock server's captured status. */
+class MockSocket {
   static sent: string[] = [];
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
+  static features = ['status-views'];
+  static fullStatus: object = statusFixture.payload;
+  static viewStatus = statusFixture.payload;
+  static homeId: string | undefined;
+  static holdWorkspaces = false;
+  static latest: MockSocket | null = null;
+  onopen: ((serverKey: string) => void) | null = null;
+  onmessage: ((text: string) => void) | null = null;
   onclose: ((event: { code: number; reason: string }) => void) | null = null;
-  onerror: (() => void) | null = null;
   readyState = 0;
+  feed: ReturnType<typeof setInterval> | undefined;
 
   constructor() {
+    MockSocket.latest = this;
     setTimeout(() => {
       this.readyState = 1;
-      this.onopen?.();
+      this.onopen?.('server-key');
     }, 0);
   }
 
   send(raw: string) {
     const { id, method } = JSON.parse(raw) as { id: number; method: string };
-    FakeSocket.sent.push(method);
-    const reply = (message: object) => setTimeout(() => this.onmessage?.({ data: JSON.stringify(message) }), 0);
+    MockSocket.sent.push(method);
+    const reply = (message: object) => setTimeout(() => this.onmessage?.(JSON.stringify(message)), 0);
     if (method === 'hello') {
       reply({
         id,
         result: {
           protocol: 1,
           server: {
+            id: MockSocket.homeId,
             name: 'Mock Mac',
             version: '0.0.0-mock',
             stim: statusFixture.stimVersion,
@@ -149,17 +160,36 @@ class FakeSocket {
           capabilities: ['read', 'control'],
           actions: ['reload', 'stop'],
           device: { id: 'phone', name: 'Phone' },
+          features: MockSocket.features,
         },
       });
     } else if (method === 'status.subscribe') {
-      reply({ id, result: { subscription: 's1' } });
-      reply({ event: 'status', subscription: 's1', payload: statusFixture.payload });
+      reply({ id, result: { subscription: 's0' } });
+      this.feed = setInterval(
+        () => reply({ event: 'status', subscription: 's0', payload: MockSocket.fullStatus }),
+        1000,
+      );
+    } else if (method === 'workspaces.subscribe' || method === 'machine.subscribe') {
+      const views = statusViews(MockSocket.viewStatus as Parameters<typeof statusViews>[0]);
+      const subscription = method === 'workspaces.subscribe' ? 's1' : 's2';
+      reply({ id, result: { subscription } });
+      const { workspaces, worktrees, archived, machine } = views;
+      if (method === 'workspaces.subscribe' && MockSocket.holdWorkspaces) return;
+      reply(
+        method === 'workspaces.subscribe'
+          ? { event: 'workspaces', subscription, seq: 0, snapshot: { workspaces, worktrees, archived } }
+          : { event: 'machine', subscription, seq: 0, machine },
+      );
+    } else if (method === 'archived.list') {
+      const archivedList = statusFixture.payload.archived ?? [];
+      reply({ id, result: { archived: archivedList, usage: statusFixture.payload.archivedUsage, next: null } });
     } else {
       reply({ id, error: { code: 'not-implemented', message: `The boot test does not serve ${method}.` } });
     }
   }
 
   close() {
+    clearInterval(this.feed);
     this.readyState = 3;
   }
 }
@@ -188,9 +218,16 @@ function seedPreviousInstall() {
   const secure = mockStore('secure-store');
   secure.set(
     'stim.macs',
-    JSON.stringify([{ id: MAC_ID, name: 'Mock Mac', endpoint: ENDPOINT, pairedAt: '2026-09-01T00:00:00.000Z' }]),
+    JSON.stringify([
+      {
+        id: MAC_ID,
+        name: 'Mock Mac',
+        endpoint: ENDPOINT,
+        pairedAt: '2026-09-01T00:00:00.000Z',
+        serverKey: 'server-key',
+      },
+    ]),
   );
-  secure.set(`stim.mac.${MAC_ID}.token`, 'device-token');
   mockStore('stim.status').set(
     `status:${MAC_ID}`,
     JSON.stringify({ v: 1, name: 'Mock Mac', seenAt: Date.now() - 60_000, status: olderStatus() }),
@@ -226,18 +263,24 @@ function launchInactive() {
 }
 
 it("clears the previous release's derived data, keeps the pairing, and renders the live machine", async () => {
-  (globalThis as { WebSocket?: unknown }).WebSocket = FakeSocket;
   seedPreviousInstall();
   const activate = launchInactive();
   const errors: string[] = [];
   const consoleError = jest
     .spyOn(console, 'error')
     .mockImplementation((...args) => void errors.push(args.map(String).join(' ')));
+  const info = jest.spyOn(console, 'info').mockImplementation(() => {});
+  const readyLogs = () => info.mock.calls.filter(([message]) => message === '[stim:readiness] ready').length;
 
   await renderRouter('./src/app', { initialUrl: '/' });
   expect(screen.getByTestId('splash-overlay')).toBeTruthy();
-  await act(() => jest.advanceTimersByTimeAsync(1000));
-  expect(FakeSocket.sent).toContain('status.subscribe');
+  await act(() => jest.advanceTimersByTimeAsync(0));
+  expect(readyLogs()).toBe(0);
+  await act(() => jest.advanceTimersByTimeAsync(400));
+  expect(screen.getByTestId('splash-overlay')).toBeTruthy();
+  expect(readyLogs()).toBe(1);
+  await act(() => jest.advanceTimersByTimeAsync(600));
+  expect(MockSocket.sent).toContain('workspaces.subscribe');
   await act(async () => {
     activate();
     await jest.advanceTimersByTimeAsync(1000);
@@ -246,6 +289,7 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
 
   expect(errors).toEqual([]);
   expect(screen.queryByTestId('splash-overlay')).toBeNull();
+  expect(readyLogs()).toBe(1);
   expect(screen.getAllByText('Mock Mac').length).toBeGreaterThan(0);
   expect(mockStore('stim.app').get('marker')).not.toBe(PREVIOUS_MARKER);
   expect(mockStore('stim.status').has(`status:${MAC_ID}`)).toBe(false);
@@ -257,7 +301,6 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
 it('opens a workspace directly without relying on Home to provide the gesture root', async () => {
   jest.restoreAllMocks();
   mockStores.clear();
-  (globalThis as { WebSocket?: unknown }).WebSocket = FakeSocket;
   seedPreviousInstall();
   const activate = launchInactive();
   const errors: string[] = [];
@@ -276,4 +319,89 @@ it('opens a workspace directly without relying on Home to provide the gesture ro
 
   expect(errors).toEqual([]);
   expect(screen.getByText('Work')).toBeTruthy();
+}, 60_000);
+
+afterEach(() => {
+  MockSocket.features = ['status-views'];
+  MockSocket.fullStatus = statusFixture.payload;
+  MockSocket.viewStatus = statusFixture.payload;
+  MockSocket.homeId = undefined;
+  MockSocket.holdWorkspaces = false;
+});
+
+it('follows the full status feed of a Mac whose server does not serve the status views', async () => {
+  jest.restoreAllMocks();
+  mockStores.clear();
+  MockSocket.sent = [];
+  MockSocket.features = [];
+  const [first, ...rest] = statusFixture.payload.environments;
+  if (!first) throw new Error('the captured status lists a workspace');
+  MockSocket.fullStatus = { ...statusFixture.payload, environments: [{ ...first, memoryMb: 9216 }, ...rest] };
+  seedPreviousInstall();
+  const activate = launchInactive();
+
+  await renderRouter('./src/app', {
+    initialUrl: `/mac/${MAC_ID}/workspace?path=${encodeURIComponent(first.path)}`,
+  });
+  await act(() => jest.advanceTimersByTimeAsync(1000));
+  await act(async () => {
+    activate();
+    await jest.advanceTimersByTimeAsync(1000);
+  });
+
+  expect(MockSocket.sent).toContain('status.subscribe');
+  expect(MockSocket.sent).not.toContain('workspaces.subscribe');
+  await act(() => jest.advanceTimersByTimeAsync(1000));
+  expect(screen.getByText(/^9\.0\sGB$/)).toBeTruthy();
+}, 60_000);
+
+it('does not resolve a shared link from previous workspace views after reconnect', async () => {
+  jest.restoreAllMocks();
+  mockStores.clear();
+  MockSocket.homeId = '871c7262-f6bc-469a-b822-15da928350ee';
+  const workspace = '0123456789abcdef';
+  const [first, ...rest] = statusFixture.payload.environments;
+  if (!first) throw new Error('the captured status lists a workspace');
+  const identified = { ...first, workspaceId: workspace };
+  MockSocket.viewStatus = { ...statusFixture.payload, environments: [identified, ...rest] };
+  seedPreviousInstall();
+  const activate = launchInactive();
+  const result = renderRouter('./src/app', { initialUrl: '/' });
+  await result;
+  await act(async () => {
+    activate();
+    await jest.advanceTimersByTimeAsync(2000);
+  });
+  const previous = MockSocket.latest;
+  if (!previous) throw new Error('the paired Mac connected');
+  MockSocket.holdWorkspaces = true;
+  MockSocket.viewStatus = { ...statusFixture.payload, environments: [] };
+  await act(async () => {
+    previous.close();
+    previous.onclose?.({ code: 1006, reason: 'reconnect' });
+    router.push(`/open?v=1&machine=${MockSocket.homeId}&workspace=${workspace}`);
+    await jest.advanceTimersByTimeAsync(100);
+  });
+  expect(screen.getByText('Reconnect')).toBeTruthy();
+  await act(async () => {
+    router.replace('/');
+    await jest.advanceTimersByTimeAsync(4900);
+    router.push(`/open?v=1&machine=${MockSocket.homeId}&workspace=${workspace}`);
+    await jest.advanceTimersByTimeAsync(1000);
+  });
+  expect(result.getPathname()).toBe('/open');
+  const current = MockSocket.latest;
+  if (!current || current === previous) throw new Error('the paired Mac reconnected');
+  await act(async () => {
+    current.onmessage?.(
+      JSON.stringify({
+        event: 'workspaces',
+        subscription: 's1',
+        seq: 0,
+        snapshot: { workspaces: [], worktrees: [], archived: null },
+      }),
+    );
+    await jest.advanceTimersByTimeAsync(1000);
+  });
+  expect(result.getPathname()).toBe('/open');
 }, 60_000);

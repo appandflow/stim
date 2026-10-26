@@ -190,12 +190,6 @@ public enum SimulatorPosture {
   /// call it off the main thread.
   public static func isAvailable(udid: String) -> Bool { connection(udid: udid) != nil }
 
-  /// The posture Stim Desktop last moved this simulator to, if any.
-  public static func lastPosture(udid: String) -> DuoPosture? {
-    guard let angle = lastAngle(udid: udid) else { return nil }
-    return DuoPosture.allCases.first { $0.hingeAngle == angle }
-  }
-
   /// The hinge angle Stim Desktop last moved this simulator to, in degrees.
   public static func lastAngle(udid: String) -> Double? {
     lock.lock()

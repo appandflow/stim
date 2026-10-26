@@ -1,14 +1,15 @@
 import { isRpcEvent } from '@stim-cli/core/receive-protocol';
-import { writeHostedIos, writeHostedAndroid } from '../device-host/ios-state.ts';
+import { writeHostedNative } from '../device-host/ios-state.ts';
+import type { HostedIosPlacement, HostedAndroidPlacement } from '@stim-cli/core/state';
 import * as hostedClient from '../device-host/hosted-client.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { tmpdir } from 'os';
+import { availableParallelism, loadavg, tmpdir } from 'os';
 import { join } from 'path';
 import { createServer } from 'http';
 import { Command } from 'commander';
-import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { saveConfig, loadConfig } from '../workspace/config.ts';
 import type { AddressInfo } from 'node:net';
@@ -29,8 +30,15 @@ import { recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 import { startBuildProgress } from '../engine/build-progress.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 
+const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | null): void =>
+  writeHostedNative(root, slot, host, 'ios');
+const writeHostedAndroid = (root: string, slot: string, host: HostedAndroidPlacement | null): void =>
+  writeHostedNative(root, slot, host, 'android');
+
 let tmpHome: string;
 const realExecutor = getExecutor();
+
+const initialCwd = process.cwd();
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
@@ -78,6 +86,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  process.chdir(initialCwd);
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
@@ -195,6 +204,47 @@ test('status reports simctl as unreadable instead of warning that every sim is g
   expect(simctlLine).toMatch(/simctl not found/);
   expect(logs.some((l) => /ios:.*unknown/.test(l))).toBeTruthy();
 });
+
+test('plain status shows the load and a set cap even with no projects registered', async () => {
+  saveConfig(makeConfig({ concurrency: { maxBuilds: 2 } }));
+  const logs = await runStatus();
+  expect(logs.some((l) => /No projects registered/.test(l))).toBe(true);
+  expect(logs.some((l) => /load [\d.]+\/core \(busy at 2\)/.test(l))).toBe(true);
+  expect(logs.some((l) => /builds 0\/2 \(concurrency\.maxBuilds\)/.test(l))).toBe(true);
+});
+
+test.skipIf(process.platform !== 'darwin')(
+  'device slot usage is unknown when simctl fails, and counts no simulators when simctl is absent, as admission does',
+  async () => {
+    const usageWhen = async (failure: Error) => {
+      setExecutor({
+        runFile: () => '',
+        async runFileAsync(_file, args = []) {
+          if (args.join(' ').includes('simctl list devices --json')) throw failure;
+          return '';
+        },
+        runQuiet: () => null,
+        runFileQuiet: () => null,
+        spawn() {
+          throw new Error('spawn should not be called from status');
+        },
+      });
+      return (await runStatusJson()).capacity.devices;
+    };
+    saveConfig(makeConfig({ concurrency: { maxDevices: 2 } }));
+
+    expect(await usageWhen(new Error('simctl timed out'))).toMatchObject({
+      max: 2,
+      inUse: null,
+      unknown: expect.stringContaining('simctl timed out'),
+    });
+    expect(await usageWhen(Object.assign(new Error('spawn xcrun ENOENT'), { code: 'ENOENT' }))).toEqual({
+      max: 2,
+      inUse: 0,
+      holders: [],
+    });
+  },
+);
 
 test('status still warns about a recorded sim missing from a readable listing', async () => {
   saveConfig(
@@ -345,6 +395,21 @@ test('status --json sets memoryMb from the footprint helper, compiling it once i
   await runStatusJson();
   expect(calls.filter((call) => call === 'swiftc')).toHaveLength(1);
   expect(calls.filter((call) => call === 'stim-footprint')).toHaveLength(2);
+});
+
+test('status --json reports the machine load against server.maxLoadPerCore, and slot usage only for a set cap', async () => {
+  saveConfig(makeConfig({ concurrency: { maxBuilds: 2 }, server: { maxLoadPerCore: 1.5 } }));
+  const cpus = availableParallelism();
+  const before = (loadavg()[1] ?? 0) / cpus;
+  const { capacity } = await runStatusJson();
+  const after = (loadavg()[1] ?? 0) / cpus;
+
+  expect(capacity.load).toMatchObject({ cpus, busyAt: 1.5, limit: null });
+  expect(capacity.load.loadPerCore).toBeGreaterThanOrEqual(Math.floor(Math.min(before, after) * 10) / 10);
+  expect(capacity.load.loadPerCore).toBeLessThanOrEqual(Math.ceil(Math.max(before, after) * 10) / 10);
+  expect(capacity.load.state).toBe(capacity.load.loadPerCore >= 1.5 ? 'busy' : 'free');
+  expect(capacity.builds).toEqual({ max: 2, inUse: 0, holders: [] });
+  expect(capacity).not.toHaveProperty('devices');
 });
 
 test('without the helper, owners carry RSS and environments keep the estimate', async () => {
@@ -630,7 +695,7 @@ test('status reports a recorded EAS session with its preview URL', async () => {
         },
       }),
     );
-    recordEasSessionClaim({
+    await recordEasSessionClaim({
       sessionId: 'drs_9',
       name: 'stim-agent-1',
       platform: 'ios',
@@ -797,15 +862,14 @@ function dfExecutor(byVolume: Record<string, string>) {
     run() {
       return '';
     },
-    runQuiet(cmd) {
-      const m = /^df -k '(.*)'$/.exec(cmd);
-      if (!m) return null;
-      const vol = m[1];
+    runQuiet: () => null,
+    runFileQuiet(file: string, args: string[]) {
+      if (file !== 'df' || args.length !== 2 || args[0] !== '-k') return null;
+      const vol = args[1];
       assert(vol !== undefined);
       asked.push(vol);
       return byVolume[vol] ?? null;
     },
-    runFileQuiet: () => null,
     spawn() {
       throw new Error('spawn should not be called from status');
     },
@@ -983,9 +1047,12 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
       },
       runQuiet(cmd) {
         commands.push(cmd);
-        return cmd.includes('-s emulator-5556 emu avd name') ? 'stim-app\nOK' : null;
+        return null;
       },
-      runFileQuiet: () => null,
+      runFileQuiet(file: string, args: string[] = []) {
+        commands.push([file, ...args].join(' '));
+        return args.join(' ') === '-s emulator-5556 emu avd name' ? 'stim-app\nOK' : null;
+      },
       spawn() {
         throw new Error('status must not spawn a device');
       },
@@ -1085,7 +1152,7 @@ test('status lists worktrees with no environment for every registered repository
         },
       }),
     );
-    const real = (fallback: unknown) => (file: string, args: string[], opts: object) =>
+    const real = (fallback: unknown) => (file: string, args: string[], opts: ExecOptions) =>
       file === 'git' ? realExecutor.runFile(file, args, opts) : fallback;
     const bootedSims = JSON.stringify({
       devices: {
@@ -1099,13 +1166,13 @@ test('status lists worktrees with no environment for every registered repository
       },
     });
     setExecutor({
-      runFileAsync: (file: string, args: string[], opts: object) =>
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
         file === 'git'
           ? realExecutor.runFileAsync(file, args, opts)
           : Promise.resolve(args.join(' ').includes('simctl list devices --json') ? bootedSims : ''),
       runFile: real(''),
       runQuiet: () => null,
-      runFileQuiet: (file: string, args: string[], opts: object) =>
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
         file === 'git' ? realExecutor.runFileQuiet(file, args, opts) : null,
       spawn() {
         throw new Error('spawn should not be called from status');
@@ -1361,7 +1428,7 @@ test('status emits one archive payload and links earlier runs to a live environm
     saveConfig(makeConfig({ projects: { [root]: {} } }));
     ensureWorkspaceStorage(root);
     writeFileSync(workspaceStateFile(root), '{}');
-    archiveWorkspace(root, 'worktree-remove');
+    await archiveWorkspace(root, 'worktree-remove');
     const payload = await runStatusJson();
     expect(payload.archived).toHaveLength(1);
     expect(payload.archived[0]).toMatchObject({ projectRoot: root, replacedBy: root, removedBy: 'worktree-remove' });

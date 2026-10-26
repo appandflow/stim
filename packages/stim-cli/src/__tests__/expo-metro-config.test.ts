@@ -157,6 +157,51 @@ describe('the Expo Metro config adapter', () => {
     },
   );
 
+  test('records a manifest request that Expo answers ahead of Metro, even when it is the first request', () => {
+    const script = `
+      const http = require('node:http');
+      const net = require('node:net');
+      const probe = net.createServer().listen(0, '127.0.0.1', () => {
+        const port = probe.address().port;
+        probe.close(() => {
+          process.env.STIM_METRO_PORT = String(port);
+          Promise.resolve(require(process.env.ADAPTER)).then(config => {
+            const metro = config.server.enhanceMiddleware((req, res) => res.end('metro'), {});
+            setTimeout(() => {
+              const server = http.createServer((req, res) => {
+                if (req.url === '/') return res.end('{}');
+                metro(req, res, error => { res.statusCode = 500; res.end(String(error)); });
+              });
+              server.listen(port, '127.0.0.1', () => {
+                setTimeout(() => {
+                  http.get({ host: '127.0.0.1', port, path: '/', headers: { 'expo-platform': 'android' } }, res => {
+                    res.resume();
+                    res.on('end', () => setTimeout(() => process.exit(0), 100));
+                  });
+                }, 1500);
+              });
+            }, 400);
+          });
+        });
+      });
+    `;
+    const result = spawnSync(process.execPath, ['-e', script], {
+      cwd: project,
+      encoding: 'utf8',
+      env: { ...process.env, ADAPTER: adapter, STIM_PROJECT_ROOT: project },
+      timeout: 10000,
+    });
+    expect(result.status).toBe(0);
+    const records = result.stderr
+      .split('\n')
+      .filter((line) => line.startsWith('stim-bundle-response: '))
+      .map((line) => JSON.parse(line.slice('stim-bundle-response: '.length)));
+    expect(records.map((record) => [record.event, record.platform])).toEqual([
+      ['manifest_request_started', 'android'],
+      ['manifest_request_finished', 'android'],
+    ]);
+  });
+
   test('ships with Stim and is discoverable from source builds', () => {
     expect(adapter.endsWith(join('shim', 'expo-metro-config.cjs'))).toBe(true);
     expect(expoMetroConfigPath(pathToFileURL(resolve('/nowhere/at/all/x.js')).href)).toBe(null);

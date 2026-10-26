@@ -11,7 +11,7 @@ jest.mock('expo-secure-store', () => ({
 
 const wrapper = ({ children }: { children: ReactNode }) => <HomeFiltersProvider>{children}</HomeFiltersProvider>;
 
-test('restores Archived at launch and saves later activity selections', async () => {
+test('restores Archived at launch and saves later status selections', async () => {
   jest
     .mocked(SecureStore.getItemAsync)
     .mockImplementation(async (key) =>
@@ -19,7 +19,7 @@ test('restores Archived at launch and saves later activity selections', async ()
     );
   const { result } = await renderHook(useHomeFilters, { wrapper });
   expect(result.current.filters).toEqual({
-    activity: 'archived',
+    statuses: ['archived'],
     macs: ['mac'],
     projects: ['stim'],
     errorsOnly: false,
@@ -28,11 +28,11 @@ test('restores Archived at launch and saves later activity selections', async ()
     buildingOnly: false,
     sort: 'recent',
   });
-  await act(async () => result.current.update({ activity: 'all' }));
+  await act(async () => result.current.update({ statuses: ['live', 'idle', 'notSetUp', 'archived'] }));
   const saved = jest.mocked(SecureStore.setItemAsync).mock.calls.at(-1)!;
   expect(saved[0]).toBe('stim.homeFilters');
   expect(JSON.parse(saved[1])).toEqual({
-    activity: 'all',
+    statuses: ['live', 'idle', 'notSetUp', 'archived'],
     macs: ['mac'],
     projects: ['stim'],
     errorsOnly: false,
@@ -41,6 +41,6 @@ test('restores Archived at launch and saves later activity selections', async ()
     buildingOnly: false,
     sort: 'recent',
   });
-  await act(async () => result.current.update({ activity: 'archived' }));
-  expect(JSON.parse(jest.mocked(SecureStore.setItemAsync).mock.calls.at(-1)![1]).activity).toBe('archived');
+  await act(async () => result.current.update({ statuses: ['archived'] }));
+  expect(JSON.parse(jest.mocked(SecureStore.setItemAsync).mock.calls.at(-1)![1]).statuses).toEqual(['archived']);
 });

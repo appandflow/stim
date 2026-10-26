@@ -20,7 +20,7 @@
 #   all     loop, caches and pool, as separate parallel matrix jobs.
 #
 # Per platform: iOS runs smoke, loop, caches and pool; Linux Android smoke,
-# loop and caches; Windows Android smoke only, until #3086 is fixed.
+# loop and caches; Windows Android smoke and loop (one emulator at a time, no named slots).
 #
 # WHAT RUNS WHEN. A cold native build is ~10-20 minutes and occasionally flaky
 # (device boot, toolchain), so nothing native runs on an unlabeled pull request:
@@ -51,6 +51,7 @@
 # GitHub PREVIEW image (actions/runner-images#14404): capacity and stability are
 # weaker than a GA image, which is the price of covering the on-path at all.
 name: Native E2E
+run-name: ${{ github.event.action == 'labeled' && !contains(fromJSON('["e2e-smoke","e2e-loop","e2e-caches","e2e-pool","e2e-all"]'), github.event.label.name) && 'Native E2E (unrelated label)' || 'Native E2E' }}
 
 on:
   push:
@@ -82,11 +83,6 @@ on:
         type: choice
         default: fixture
         options: [fixture, food-truck]
-      native_ios_runner:
-        description: 'Native Xcode fixture host and toolchain'
-        type: choice
-        default: preview
-        options: [preview, ga-large]
 
       native_gradle:
         description: Run only native Gradle provider validation
@@ -119,7 +115,7 @@ on:
 concurrency:
   # The event name keeps a push to main from cancelling the nightly loop, which
   # runs on the same ref.
-  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.native_gradle && '-gradle' || '' }}${{ inputs.hosted_native_android && '-hosted-android' || '' }}
+  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ github.event.action == 'labeled' && !contains(fromJSON('["e2e-smoke","e2e-loop","e2e-caches","e2e-pool","e2e-all"]'), github.event.label.name) && '-unrelated-label' || '' }}${{ inputs.native_gradle && '-gradle' || '' }}${{ inputs.hosted_native_android && '-hosted-android' || '' }}
   cancel-in-progress: ${{ !inputs.hosted_native_android }}
 
 permissions:
@@ -146,6 +142,8 @@ jobs:
       - id: plan
         env:
           E2E_PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          E2E_PR_ACTION: ${{ github.event.action }}
+          E2E_PR_LABEL: ${{ github.event.label.name }}
           E2E_SUITE: ${{ inputs.suite }}
         # An explicit `shell: bash` runs with `-o pipefail`; the runner's
         # default shell does not, and tee would turn a script error into
@@ -193,6 +191,15 @@ jobs:
       # caching while keeping the preview SDK out of other fixture lanes.
       STIM_E2E_EXPO_INIT: npx --yes create-expo-app@latest {dir} --template expo-template-blank@sdk-58 --no-install
     steps:
+      # The xcode-27 image indexes with Spotlight, and mds_stores competes with
+      # each simulator's first boot for the runner's 3 vCPUs and 7 GB. Turn it off
+      # before the install and the fixture write thousands of files.
+      - name: Turn off Spotlight indexing
+        continue-on-error: true
+        run: |
+          sudo mdutil -a -i off
+          mdutil -a -s
+
       - uses: actions/checkout@v4
       - run: mkdir -p "$TMPDIR" "$STIM_BUILD_CACHE"
 
@@ -616,15 +623,15 @@ jobs:
             D:\e\stim-home\workspaces\**\logs\*
             D:\e\stim-home\logs\debug\*
             D:\e\stim-home\archive\**\logs\*
+            D:\e\adb.log
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
 
   native-xcode:
-    name: native Xcode acceptance (${{ inputs.native_ios_runner || 'preview' }})
+    name: native Xcode acceptance
     if: github.event_name == 'workflow_dispatch' && !inputs.hosted_native_android && (inputs.native_ios_only || (!inputs.native_gradle && inputs.suite == 'all'))
-    # ga-large selects macos-26-xlarge, a larger runner billed per minute even on public repositories.
-    runs-on: ${{ inputs.native_ios_runner == 'ga-large' && 'macos-26-xlarge' || 'xcode-27' }}
+    runs-on: xcode-27
     timeout-minutes: 45
     env:
       CI: '1'
@@ -632,7 +639,7 @@ jobs:
       LC_ALL: en_US.UTF-8
       STIM_NATIVE_XCODE_EVIDENCE: ${{ github.workspace }}/artifacts/native-xcode
       STIM_NATIVE_XCODE_PROJECT: ${{ inputs.native_ios_project || 'fixture' }}
-      NATIVE_XCODE_VERSION: ${{ inputs.native_ios_runner == 'ga-large' && '26.6' || '27.0' }}
+      NATIVE_XCODE_VERSION: '27.0'
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-stim

@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import {
   inspectNestedWorktrees,
   mergeIgnoreDirs,
@@ -101,7 +102,8 @@ function git(cwd: string, ...args: string[]): void {
   execFileSync('git', ['-C', cwd, ...args], { stdio: 'ignore' });
 }
 
-test('a real repository: canonical containment through a symlinked temp dir, then the written file is clean', () => {
+test('a real repository: canonical containment through a symlinked temp dir, then the written file is clean', async () => {
+  resetExecutor();
   const dir = mkdtempSync(join(tmpdir(), 'stim-watchman-'));
   try {
     git(dir, 'init', '-q', '-b', 'main');
@@ -123,7 +125,41 @@ test('a real repository: canonical containment through a symlinked temp dir, the
     git(dir, 'worktree', 'add', '-q', '-b', 'b', join(dir, '.worktrees', 'b'));
     writeFileSync(join(dir, '.watchmanconfig'), '{"ignore_vcs": [".git"]}');
 
-    const [entry, ...rest] = inspectNestedWorktrees(join(dir, '.worktrees', 'a'));
+    const executor = getExecutor();
+    const delayed = (file: string, args: string[]) =>
+      file === 'git' && args.includes('ls-files')
+        ? {
+            file: process.execPath,
+            args: [
+              '-e',
+              "setTimeout(() => { const { spawnSync } = require('node:child_process'); const result = spawnSync('git', process.argv.slice(1), { stdio: 'inherit' }); process.exit(result.status ?? 1); }, 200)",
+              '--',
+              ...args,
+            ],
+          }
+        : { file, args };
+    setExecutor({
+      ...executor,
+      runFileQuiet(file, args, options) {
+        const call = delayed(file, args);
+        return executor.runFileQuiet(call.file, call.args, options);
+      },
+      runFileAsync(file, args, options) {
+        const call = delayed(file, args);
+        return executor.runFileAsync(call.file, call.args, options);
+      },
+    });
+    const started = Date.now();
+    let finished = false;
+    const pending = Promise.resolve(inspectNestedWorktrees(join(dir, '.worktrees', 'a'))).then((entries) => {
+      finished = true;
+      return entries;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(Date.now() - started).toBeLessThan(150);
+    expect(finished).toBe(false);
+    const [entry, ...rest] = await pending;
+    resetExecutor();
     expect(rest).toEqual([]);
     expect(entry?.add).toEqual(['.worktrees']);
     expect(entry && writeIgnoreDirs(entry)).toEqual({ status: 'updated' });
@@ -131,8 +167,14 @@ test('a real repository: canonical containment through a symlinked temp dir, the
       ignore_vcs: ['.git'],
       ignore_dirs: ['.worktrees'],
     });
-    expect(inspectNestedWorktrees(dir)).toEqual([]);
+    expect(await inspectNestedWorktrees(dir)).toEqual([]);
+
+    writeFileSync(join(dir, '.watchmanconfig'), '{"ignore_vcs": [".git"]}');
+    writeFileSync(join(dir, '.worktrees', 'source.ts'), 'export const source = true;');
+    git(dir, 'add', '.worktrees/source.ts');
+    expect((await inspectNestedWorktrees(dir))[0]?.add).toEqual(['.worktrees/a', '.worktrees/b']);
   } finally {
+    resetExecutor();
     rmSync(dir, { recursive: true, force: true });
   }
 });

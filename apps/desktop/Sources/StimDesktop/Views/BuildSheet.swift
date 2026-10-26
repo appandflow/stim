@@ -87,7 +87,6 @@ struct BuildSheet: View {
               cli: cli, env: app, run: run, archive: archive, logsExpired: logsExpired, readsServer: readsServer,
               dismiss: { dismiss() }
             )
-            .tutorialAnchor(.buildSection, workspace: app.path)
             .id(page == nil ? run.id : "\(app.path)|\(run.id)")
             .padding(Space.xxl)
             if archive == nil, run.running == nil, run.id == runs.first?.id { nextBuild }
@@ -103,7 +102,6 @@ struct BuildSheet: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
-    .tutorialHighlights(showFallback: false)
     .font(.stim(.callout))
     .background(Palette.background)
     .frame(minWidth: 980, idealWidth: 980, minHeight: 720, idealHeight: 720)
@@ -309,14 +307,16 @@ private struct BuildRunDetail: View {
             remote.map { "Building on \($0.host), \($0.phase)" }
               ?? run.offloadedTo.map { "Built on \(machineName($0))" } ?? "This Mac", systemImage: "desktopcomputer")
         }
-        if let last = run.last { OffloadFallbackLine(build: last, inlineReason: true) }
+        if let reason = run.last?.offloadFallback, !reason.isEmpty {
+          Text(reason).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        }
       }
       if let build = run.running {
         section("Phases") {
           TimelineView(.buildSeconds(build)) { context in
             let steps = build.phaseSteps(history: env.builds?.builds(for: run.platform) ?? [], now: context.date)
             VStack(alignment: .leading, spacing: Space.md) {
-              PhaseBar(steps: barSteps(steps), key: build.key)
+              PhaseBar(steps: barSteps(steps), key: build.key, indeterminate: build.waitsWithoutProgress)
               PhaseChecklist(steps: steps, cacheOutcome: build.cacheLookupOutcome)
             }
           }
@@ -342,7 +342,6 @@ private struct BuildRunDetail: View {
               tone: run.running?.cacheLookupOutcome == "hit" || run.last?.cacheHit == .local || run.last?.cacheHit == .remote
                 ? .success : .warning
             )
-            .tutorialAnchor(.cacheBadge, workspace: env.path)
           }
           if let reason = run.missReason { MissReasonView(reason: reason) }
           if let note = run.running?.recheckNote { Text(note).foregroundStyle(Palette.tertiary) }

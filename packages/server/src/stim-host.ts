@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isJsonObject } from '@stim-cli/core/state';
 import { ServiceError } from './service-plist.ts';
@@ -22,9 +22,9 @@ const FLAVORS = {
 };
 const SOURCES = fileURLToPath(new URL('./stim-host/', import.meta.url));
 
-function run(file: string, args: string[], timeout: number): Promise<string> {
+function run(file: string, args: string[], timeout: number, env?: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { timeout, killSignal: 'SIGKILL', encoding: 'utf8' }, (error, stdout, stderr) => {
+    execFile(file, args, { timeout, killSignal: 'SIGKILL', encoding: 'utf8', env }, (error, stdout, stderr) => {
       if (error) reject(new ServiceError(`${file} ${args[0]} failed: ${stderr.trim() || error.message}`));
       else resolve(stdout);
     });
@@ -84,6 +84,8 @@ async function buildDev(candidate: string, sources: string): Promise<void> {
   }
   const contents = join(candidate, 'Contents');
   mkdirSync(join(contents, 'MacOS'), { recursive: true });
+  const scratch = join(dirname(candidate), 'clang-tmp');
+  mkdirSync(scratch, { recursive: true });
   writeFileSync(
     join(contents, 'Info.plist'),
     readFileSync(join(sources, 'Info.plist'), 'utf8')
@@ -112,6 +114,8 @@ async function buildDev(candidate: string, sources: string): Promise<void> {
       join(sources, 'stim-host.c'),
     ],
     180_000,
+    // A universal clang build leaves <output>-<6 hex> directories in TMPDIR; keep them in the install's temporary dir.
+    { ...process.env, TMPDIR: scratch },
   );
   await run('/usr/bin/codesign', ['--force', '--sign', '-', candidate], 30_000);
 }

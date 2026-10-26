@@ -79,19 +79,45 @@ public func isScratchPath(_ path: String) -> Bool {
   ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"].contains { path == $0 || path.hasPrefix($0 + "/") }
 }
 
+/// Whether `path` is inside a git checkout that still exists: a `.git` folder, or a `.git` file whose gitdir is there.
+public func isGitCheckout(_ path: String) -> Bool {
+  let fileManager = FileManager.default
+  guard fileManager.fileExists(atPath: path) else { return false }
+  var directory = path
+  while true {
+    let dotGit = (directory as NSString).appendingPathComponent(".git")
+    var isFolder: ObjCBool = false
+    if fileManager.fileExists(atPath: dotGit, isDirectory: &isFolder) {
+      if isFolder.boolValue { return true }
+      guard let text = try? String(contentsOfFile: dotGit, encoding: .utf8),
+        let line = text.split(separator: "\n").first(where: { $0.hasPrefix("gitdir:") })
+      else { return false }
+      let target = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+      let resolved = target.hasPrefix("/") ? target : (directory as NSString).appendingPathComponent(target)
+      return fileManager.fileExists(atPath: resolved)
+    }
+    let parent = (directory as NSString).deletingLastPathComponent
+    if parent == directory || parent.isEmpty { return false }
+    directory = parent
+  }
+}
+
 /// One workspace per app to run `stim doctor` in, the most recently active app first: the app's folder in the
 /// project's own checkout when status lists it, else the first worktree workspace of that folder. Only listed
 /// workspaces qualify, because doctor records its run in the Stim project registry and would add an unlisted
-/// checkout to `stim status`. A workspace in a scratch folder never qualifies.
-public func doctorCheckouts(_ environments: [Workspace], project: (String) -> Project) -> [DoctorCheckout] {
-  doctorCheckoutsBySource(environments, project: project).map(\.checkout)
+/// checkout to `stim status`. A workspace in a scratch folder, or outside a git checkout, never qualifies.
+public func doctorCheckouts(
+  _ environments: [Workspace], project: (String) -> Project, isCheckout: (String) -> Bool = isGitCheckout
+) -> [DoctorCheckout] {
+  doctorCheckoutsBySource(environments, project: project, isCheckout: isCheckout).map(\.checkout)
 }
 
 /// The checkout doctor runs in for `workspace`'s app, else the first one.
 public func doctorCheckout(
-  for workspace: String?, in environments: [Workspace], project: (String) -> Project
+  for workspace: String?, in environments: [Workspace], project: (String) -> Project,
+  isCheckout: (String) -> Bool = isGitCheckout
 ) -> DoctorCheckout? {
-  let checkouts = doctorCheckoutsBySource(environments, project: project)
+  let checkouts = doctorCheckoutsBySource(environments, project: project, isCheckout: isCheckout)
   let source = environments.first { $0.path == workspace }.map { doctorSource(of: $0, project: project) }
   return (checkouts.first { $0.source == source } ?? checkouts.first)?.checkout
 }
@@ -105,9 +131,9 @@ private func doctorSource(of env: Workspace, project: (String) -> Project) -> St
 }
 
 private func doctorCheckoutsBySource(
-  _ environments: [Workspace], project: (String) -> Project
+  _ environments: [Workspace], project: (String) -> Project, isCheckout: (String) -> Bool
 ) -> [(source: String, checkout: DoctorCheckout)] {
-  let usable = environments.filter { !isScratchPath($0.path) }
+  let usable = environments.filter { !isScratchPath($0.path) && isCheckout($0.path) }
   let listed = Set(usable.map(\.path))
   var order: [String] = []
   var chosen: [String: DoctorCheckout] = [:]
@@ -127,10 +153,10 @@ private func doctorCheckoutsBySource(
   return ranked.compactMap { _, source in chosen[source].map { (source, $0) } }
 }
 
-/// When Stim Desktop last ran `stim doctor` in a checkout.
+/// When Stim Desktop last read a doctor report for a checkout.
 public struct DoctorRun: Hashable, Sendable {
   public var at: Date
-  /// What `stim --version` printed then.
+  /// The Stim version that produced the report.
   public var version: String?
   /// The newest modification time of the checkout's setup files then.
   public var inputsChangedAt: Date?
@@ -168,4 +194,17 @@ public func doctorInputs(checkout: String, repository: String) -> [String] {
 /// The newest modification time among `paths` that exist.
 public func newestModification(_ paths: [String]) -> Date? {
   paths.compactMap { (try? FileManager.default.attributesOfItem(atPath: $0))?[.modificationDate] as? Date }.max()
+}
+
+extension DoctorReport {
+  /// This report of an ask (`--fix --platform ios`) with each remote machine that `refreshed`, a plain
+  /// `stim doctor --json` for every platform of the app, reports approved taken from it. Every other machine keeps
+  /// what the ask reported, such as unreachable or pending.
+  public func refreshingApproved(from refreshed: DoctorReport) -> DoctorReport {
+    var merged = self
+    merged.remoteMachines = remoteMachines?.map { asked in
+      refreshed.remoteMachines?.first { $0.machine == asked.machine && $0.state == .approved } ?? asked
+    }
+    return merged
+  }
 }

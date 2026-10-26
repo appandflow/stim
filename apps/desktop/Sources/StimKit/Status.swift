@@ -43,6 +43,65 @@ public struct Capacity: Decodable, Sendable {
   public var committedMb: Int
   public var totalMemoryMb: Int
   public var overCapacity: Bool
+  /// `concurrency.maxBuilds` usage; present only while that cap is set.
+  public var builds: BuildSlots?
+  /// `concurrency.maxDevices` usage; present only while that cap is set.
+  public var devices: DeviceSlots?
+  /// Absent from a `stim` that predates it.
+  public var load: CapacityLoad?
+}
+
+/// The Mac's 5-minute load average per core, and the state `stim` placed it in.
+public struct CapacityLoad: Decodable, Hashable, Sendable {
+  public enum State: String, Decodable, Hashable, Sendable {
+    case free, busy, holding, other
+
+    public init(from decoder: Decoder) throws {
+      self = State(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .other
+    }
+  }
+
+  public var cpus: Int
+  public var loadPerCore: Double
+  /// `server.maxLoadPerCore`: at or over it, placement prefers another machine.
+  public var busyAt: Double
+  /// The load per core at which new local native work waits; nil while no limit is configured.
+  public var limit: Double?
+  public var state: State
+}
+
+public struct BuildSlots: Decodable, Hashable, Sendable {
+  public var max: Int
+  public var inUse: Int
+  public var holders: [BuildSlotHolder]
+}
+
+public struct BuildSlotHolder: Decodable, Hashable, Sendable {
+  public var slot: Int
+  /// The root of the local build holding the slot.
+  public var workspace: String?
+  /// The device id of the client whose offloaded build this Mac runs in the slot.
+  public var client: String?
+  public var since: String?
+  /// A slot whose holder `stim` cannot read; `workspace` and `client` are nil.
+  public var unresolved: Bool?
+}
+
+public struct DeviceSlots: Decodable, Hashable, Sendable {
+  public var max: Int
+  /// Nil when `stim` could not count the owned devices; `unknown` says why.
+  public var inUse: Int?
+  public var unknown: String?
+  public var holders: [DeviceSlotHolder]
+}
+
+public struct DeviceSlotHolder: Decodable, Hashable, Sendable {
+  public var platform: String
+  /// The label of the workspace that records the device, or the device's name when none does.
+  public var label: String
+  public var workspace: String?
+  public var slot: String?
+  public var booting: Bool?
 }
 
 public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
@@ -62,6 +121,7 @@ public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
 
 public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var path: String
+  public var workspaceId: String?
   public var tutorial: TutorialMarker?
   public var doctorRuns: DoctorRuns?
   public var agentDevice: AgentDevice?
@@ -73,13 +133,12 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var phaseSince: String?
   /// `refresh` or `copy` while `phase` is `warming`.
   public var warmStep: String?
-  /// Where the workspace is, as `stim` decided it; absent from an older `stim`, which leaves it to `stage(now:)`.
+  /// Where the workspace is, as `stim` decided it.
   public var stageFacts: StageFacts?
   public var memoryMb: Int?
-  /// How `memoryMb` was obtained; absent from an older `stim`, whose `memoryMb` is the estimate.
+  /// How `memoryMb` was obtained; absent from a payload written before it existed, whose `memoryMb` is the estimate.
   public var memorySource: MemorySource?
   public var warnings: [String]
-  /// Absent from a `stim` that reports only `warnings`.
   public var issues: [StatusIssue]?
   public var ios: IosDevice?
   public var android: AndroidDevice?
@@ -90,28 +149,29 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var logs: Logs?
   public var slots: [Slot]?
   public var remoteDevices: [RemoteDevice]?
-  /// The physical phones and tablets the workspace leases; absent from an older `stim` and when it leases none.
+  /// The physical phones and tablets the workspace leases; absent when it leases none.
   public var physicalDevices: [PhysicalDevice]?
   public var build: Build?
   public var lastBuilds: LastBuilds?
-  /// Each platform's last runs, newest first; absent from an older `stim`.
+  /// Each platform's last runs, newest first.
   public var builds: BuildHistory?
   public var worktree: WorktreeInfo?
   /// The coding-agent sessions working in the workspace, most recently active first; absent when none.
   public var agents: [AgentSession]?
   /// The sessions that stopped running in the workspace in the last 3 days, most recently ended first; absent when
-  /// none and from an older `stim`.
+  /// none.
   public var endedAgents: [AgentSession]?
   /// Whether stim-server may record this workspace's device screens; absent from a `stim` without replay.
   public var recording: Recording?
-  /// Disk use as a status watcher last measured it; absent until one has, and from an older `stim`.
+  /// Disk use as a status watcher last measured it; absent until one has.
   public var disk: WorkspaceDisk?
   /// The project Stim Desktop resolved for the workspace; not part of the payload.
   public var project: Project?
   public var titleOverride: String?
 
   enum CodingKeys: String, CodingKey {
-    case path, platforms, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
+    case path, workspaceId, platforms, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android,
+      web, metro
     case macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, worktree, recording
     case agents, endedAgents, disk, tutorial, doctorRuns, agentDevice
@@ -243,7 +303,7 @@ public struct WorktreeInfo: Decodable, Hashable, Sendable {
   public var merged: Bool?
   public var repository: String?
   public var git: WorktreeGit?
-  /// What the git chip shows, as `stim` decided it; absent from an older `stim` and without `git`.
+  /// What the git chip shows, as `stim` decided it; absent without `git`.
   public var gitChip: GitChipFacts?
   /// The branch's pull request as Stim last asked GitHub; nil when it has none or `stim` did not say.
   public var pullRequest: PullRequestFacts?
@@ -386,7 +446,7 @@ public struct IosDevice: Decodable, Hashable, Sendable {
   public var state: String
   public var activity: DeviceActivity?
   public var app: AppProcess?
-  /// `none`, `closed`, or nil; read only when the workspace carries `stageFacts`, as an older `stim` omits it.
+  /// `none`, `closed`, or nil, as `stim` decided it.
   public var appPresence: String?
   public var disk: DeviceDisk?
   /// Set only on a device built from `physicalDevices`, never decoded from the `ios` record.
@@ -440,7 +500,7 @@ public struct AndroidDevice: Decodable, Hashable, Sendable {
   public var deviceProfile: String?
   public var activity: DeviceActivity?
   public var app: AppProcess?
-  /// `none`, `closed`, or nil; read only when the workspace carries `stageFacts`, as an older `stim` omits it.
+  /// `none`, `closed`, or nil, as `stim` decided it.
   public var appPresence: String?
   public var disk: DeviceDisk?
   public var model: String?
@@ -559,7 +619,7 @@ public struct Supervisor: Decodable, Hashable, Sendable {
 }
 
 public struct Logs: Decodable, Hashable, Sendable {
-  public var dir: String
+  public var dir: String?
   public var errorsSinceMarker: Int?
 }
 

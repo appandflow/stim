@@ -2,6 +2,7 @@ import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { createHash } from 'node:crypto';
 import { Command } from 'commander';
 import logsCommand from '../commands/logs.ts';
+import { parseLogcatLine } from '../collector/android.ts';
 import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { syncHostedLogs, followHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
@@ -20,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   deviceHostMachinesFile,
+  queryLogs,
   readWorkspaceState,
   type HostedAndroidPlacement,
   type HostedAppOffer,
@@ -28,20 +30,21 @@ import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { BuildConnection } from '../offload/client.ts';
 import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
-import {
-  androidAgentRemoteConfig,
-  prepareHostedAndroid,
-  placeHostedAndroid,
-  stopHostedAndroid,
-} from '../device-host/hosted-android.ts';
-import { readHostedAndroid, writeHostedAndroid } from '../device-host/ios-state.ts';
+import { prepareHostedAndroid, placeHostedAndroid, stopHostedAndroid } from '../device-host/hosted-android.ts';
+import { androidAgentRemoteConfig } from '../device-host/hosted-native.ts';
+import { readHostedAndroid, writeHostedNative } from '../device-host/ios-state.ts';
 import { applyHostedAndroidProbe } from '../device-host/hosted-android-status.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { runReload } from '../commands/reload.ts';
 
+const writeHostedAndroid = (root: string, slot: string, host: HostedAndroidPlacement | null): void =>
+  writeHostedNative(root, slot, host, 'android');
+
 vi.mock('../offload/tailnet.ts', async (original) => ({
   ...(await original<typeof import('../offload/tailnet.ts')>()),
-  pinnedEndpoint: () => ({ url: 'ws://127.0.0.1:12345', host: 'mini', servername: 'mini' }),
+  realIo: { ...(await original<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },
+  tailscaleStatusAsync: async () => null,
+  resolveEndpoint: () => ({ url: 'ws://127.0.0.1:12345', host: 'mini', servername: 'mini' }),
 }));
 const session = '12345678-1234-1234-1234-123456789abc';
 const device = {
@@ -89,13 +92,13 @@ beforeEach(() => {
   writeFileSync(
     deviceHostMachinesFile(),
     JSON.stringify({
-      version: 1,
+      version: 2,
       machines: [
         {
           machine: 'mini',
-          nodeId: 'node',
-          dnsName: 'mini.tail.ts.net',
-          deviceToken: 'fixture-token',
+          transport: 'tailscale',
+          address: 'mini.tail.ts.net',
+          serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
           deviceId: 'client',
           state: 'approved',
           requestedAt: '2026-10-07T12:00:00Z',
@@ -216,7 +219,7 @@ test('offers before reserving, records the owner, and sends one APK and the clie
     metroPort: 8082,
     reserved: (value) => writeHostedAndroid(root, 'tablet', value),
     note: () => {},
-    metro: async () => ({ gatewayPort: 9090, secret: 'a'.repeat(64) }),
+    metro: async () => {},
   });
   expect(run.launched).toBe('unverified');
   expect(methods.find((entry) => entry.method === 'device-host.reserve')?.params).toMatchObject({
@@ -231,10 +234,9 @@ test('offers before reserving, records the owner, and sends one APK and the clie
   expect(JSON.parse(manifest.toString())).toEqual([
     { path: 'App.apk', kind: 'file', size: 11, sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
   ]);
-  expect(methods.find((entry) => entry.method === 'device-host.metro.open')?.params).toMatchObject({
+  expect(methods.find((entry) => entry.method === 'device-host.metro.open')?.params).toEqual({
     session,
     clientMetroPort: 8082,
-    gatewayPort: 9090,
   });
   expect(readHostedAndroid(root, 'tablet').tablet?.session).toBe(session);
   expect(getProject(root)?.platforms?.android).toBeUndefined();
@@ -342,7 +344,7 @@ test('stop clears a hosted slot and keeps successful siblings when another place
 });
 
 async function deliver(
-  handoff?: { nodeId: string; token: string; sha256: string },
+  handoff?: { serverKey: string; token: string; sha256: string },
   note: (line: string) => void = () => {},
   mode?: HostedAppOffer['mode'],
 ) {
@@ -375,7 +377,7 @@ test('an unchanged APK rerun sends no chunks and a changed APK sends its verifie
   expect(chunks.map((entry) => Buffer.from(entry.params.data as string, 'base64').toString())).toContain('changed APK');
 });
 
-test.each(['same-node', 'other-node', 'older-host', 'refused'])(
+test.each(['same-server', 'other-server', 'older-host', 'refused'])(
   'Android handoff %s retains verified upload fallback',
   async (scenario) => {
     await deliver();
@@ -389,15 +391,19 @@ test.each(['same-node', 'other-node', 'older-host', 'refused'])(
     handoffFailure = scenario === 'refused';
     const note = vi.fn<(line: string) => void>();
     await deliver(
-      { nodeId: scenario === 'other-node' ? 'other' : 'node', token: 'a'.repeat(64), sha256: 'b'.repeat(64) },
+      {
+        serverKey: scenario === 'other-server' ? 'O'.repeat(42) + 'A' : 'K'.repeat(42) + 'A',
+        token: 'a'.repeat(64),
+        sha256: 'b'.repeat(64),
+      },
       note,
     );
     expect(methods.some((entry) => entry.method === 'device-host.app.handoff')).toBe(
-      ['same-node', 'refused'].includes(scenario),
+      ['same-server', 'refused'].includes(scenario),
     );
     expect(
       methods.filter((entry) => entry.method === 'device-host.app.chunk' && entry.params.sha256 === apk.sha256),
-    ).toHaveLength(scenario === 'same-node' ? 0 : 1);
+    ).toHaveLength(scenario === 'same-server' ? 0 : 1);
     expect(note.mock.calls.some(([line]) => line.includes('uploading the app instead'))).toBe(
       ['older-host', 'refused'].includes(scenario),
     );
@@ -425,10 +431,31 @@ test('Android errors are paged into the workspace once per slot and stop copies 
   methods = [];
   await stopHostedAndroid(root, 'tablet');
   const stop = methods.findIndex((entry) => entry.method === 'device-host.stop');
-  expect(methods.slice(0, stop).some((entry) => entry.method === 'device-host.logs.query')).toBe(true);
+  expect(methods.slice(0, stop).some((entry) => entry.method === 'device-host.logs.query')).toBe(false);
   expect(methods.slice(stop + 1).some((entry) => entry.method === 'device-host.logs.query')).toBe(true);
   expect(readFileSync(file, 'utf8')).toContain('stop-time native tail');
   expect(readHostedAndroid(root)).toEqual({});
+});
+
+test('hosted Android --errors keeps a crash run whole and leaves other error lines to --source device', async () => {
+  writeHostedAndroid(root, 'default', placement);
+  const lines = [
+    '1.001 E/Choreographer(10): Skipped 40 frames!',
+    '1.002 E/Choreographer(10): Skipped 41 frames!',
+    '2.001 E/AndroidRuntime(10): FATAL EXCEPTION: main',
+    '2.002 E/AndroidRuntime(10): Process: dev.fixture, PID: 10',
+    '3.001 E/Choreographer(10): Skipped 50 frames!',
+  ];
+  logRecords = lines.map((line) => parseLogcatLine(line)).filter((record) => record !== null);
+  expect(logRecords).toHaveLength(5);
+  const target = await prepareHostedAndroid('mini', {}, placement);
+  await pullHostedNativeLogs(root, 'default', placement, target.host, false, 'android');
+  const dir = workspaceLogsDir(root);
+  expect(queryLogs({ dir, errorsOnly: true }).map((record) => record.msg)).toEqual([
+    'FATAL EXCEPTION: main',
+    'Process: dev.fixture, PID: 10',
+  ]);
+  expect(queryLogs({ dir, errorsOnly: true, sources: ['device'] })).toHaveLength(5);
 });
 
 test('stim logs --errors --json pulls Android native records without progress on stdout', async () => {
@@ -642,7 +669,7 @@ test.each([true, 'unverified'] as const)(
     writeHostedAndroid(root, 'default', placement);
     writeWorkspaceState(root, {
       hostedMetroRequests: {
-        [session]: { id: session, machine: 'mini', address: '100.64.0.2', peer: '100.64.0.7', secret: 'a'.repeat(64) },
+        [session]: { id: session, machine: 'mini' },
       },
     });
     const result = await deliver(undefined, () => {}, 'process');

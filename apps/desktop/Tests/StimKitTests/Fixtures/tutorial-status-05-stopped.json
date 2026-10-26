@@ -11,7 +11,8 @@
           "cacheSkipped": false,
           "durationMs": 7665,
           "startedAt": "2026-10-07T05:04:57.981Z",
-          "finishedAt": "2026-10-07T05:05:05.646Z"
+          "finishedAt": "2026-10-07T05:05:05.646Z",
+          "fingerprint": null
         }
       },
       "builds": {
@@ -33,7 +34,9 @@
               "device": 7,
               "install": 289,
               "launch": 6092
-            }
+            },
+            "fingerprint": null,
+            "cacheKey": null
           },
           {
             "platform": "ios",
@@ -63,7 +66,9 @@
               "device": 29,
               "install": 9070,
               "launch": 7953
-            }
+            },
+            "fingerprint": null,
+            "cacheKey": null
           }
         ]
       },
@@ -93,8 +98,17 @@
         },
         "name": "Tutorial simulator",
         "udid": "tutorial-simulator"
-      }
+      },
+      "memoryMb": 0
     }
   ],
-  "archived": []
+  "archived": [],
+  "capacity": {
+    "liveCount": 1,
+    "committedMb": 0,
+    "totalMemoryMb": 49152,
+    "overCapacity": false
+  },
+  "deviceLeases": [],
+  "simctlAvailable": true
 }

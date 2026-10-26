@@ -1,8 +1,7 @@
 import Foundation
 import StimKit
 
-/// The Settings window's view of `stim settings`: the fields from the shipped
-/// schema and the values `stim settings --json` reports for one directory.
+/// The Settings window's fields and values for one directory, read from the matching local server.
 @MainActor
 final class SettingsModel: ObservableObject {
   @Published private(set) var fields: [SettingField] = []
@@ -22,7 +21,7 @@ final class SettingsModel: ObservableObject {
     init(fixtures: [SettingField], payload: SettingsPayload?, error: String? = nil) {
       let cli = Task { StimCLI(environment: [:]) }
       self.cli = cli
-      machine = MachineSettingsStore(cli: cli)
+      machine = MachineSettingsStore(cli: cli, server: { nil }, actions: { nil })
       fields = fixtures
       self.payload = payload
       loadError = error
@@ -48,25 +47,20 @@ final class SettingsModel: ObservableObject {
     #endif
     let cli = cli
     let cwd = directory ?? NSHomeDirectory()
-    let needsSchema = fields.isEmpty
     Task.detached {
       let cli = await cli.value
-      let schema: Result<[SettingField], Error>? =
-        needsSchema
-        ? Result {
-          guard let url = SettingsSchema.locate(executable: cli.launcher?.script ?? cli.executable) ?? Self.repositorySchema()
-          else {
-            throw SchemaMissing()
-          }
-          return try SettingsSchema.fields(from: Data(contentsOf: url))
-        } : nil
-      let payload = await Result.awaiting { try await cli.settings(cwd: cwd) }
+      let connection = await ServerSession.shared.statsConnection
+      let schema = await Result.awaiting { try await readServerSettingsSchema(cli: cli, connection: connection) }
+      let payload = await Result.awaiting { try await readServerSettings(cli: cli, connection: connection, cwd: cwd) }
       await MainActor.run {
         guard self.directory == directory else { return }
         switch schema {
-        case .success(let fields): self.fields = fields
-        case .failure(let error): self.schemaError = error.localizedDescription
-        case nil: break
+        case .success(let fields):
+          self.fields = fields
+          self.schemaError = nil
+        case .failure(let error):
+          self.fields = []
+          self.schemaError = error.localizedDescription
         }
         switch payload {
         case .success(let payload):
@@ -74,9 +68,7 @@ final class SettingsModel: ObservableObject {
           self.loadError = nil
         case .failure(let error):
           self.payload = nil
-          let message = "stim settings --json failed: \(error.localizedDescription)"
-          self.loadError =
-            message.contains("unknown command") ? message + " It needs a Stim version with the settings command." : message
+          self.loadError = "Could not load settings: \(error.localizedDescription)"
         }
       }
     }
@@ -117,18 +109,4 @@ final class SettingsModel: ObservableObject {
     }
   }
 
-  struct SchemaMissing: LocalizedError {
-    var errorDescription: String? {
-      "Could not find \(SettingsSchema.fileName) next to the stim executable. It ships with Stim versions that have the settings command."
-    }
-  }
-
-  /// `swift run` builds against this repository, whose CLI build writes the schema to `dist`.
-  nonisolated private static func repositorySchema() -> URL? {
-    let url = URL(fileURLWithPath: #filePath)
-      .deletingLastPathComponent()
-      .appendingPathComponent("../../../../packages/stim-cli/dist/\(SettingsSchema.fileName)")
-      .standardizedFileURL
-    return FileManager.default.fileExists(atPath: url.path) ? url : nil
-  }
 }

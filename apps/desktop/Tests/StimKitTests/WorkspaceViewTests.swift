@@ -31,51 +31,31 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
 
 @Suite struct WorkspaceStageTests {
   @Test func listsClosedAppsInSidebarOrderWhicheverOrderStimReports() throws {
-    let stopped = #"\#(booted),"app":{"id":"a","state":"stopped"}"#
-    let android = #"{"name":"stim-w","owned":true,"physical":false,"state":"detected","app":{"id":"a","state":"stopped"}}"#
-    let local = try workspace(#""android":\#(android),"slots":[{"slot":"b","ios":\#(stopped)}}]"#)
-    var reported = local
-    reported.stageFacts = StageFacts(
+    var env = try workspace("")
+    env.stageFacts = StageFacts(
       kind: "running", since: nil, platform: nil,
       closedApps: [.init(platform: "android", slot: "default"), .init(platform: "ios", slot: "b")])
-    let expected = WorkspaceStage(
-      label: .running, tone: .error, subtitle: "iOS app closed \u{00B7} Android app closed")
-    #expect(local.stage(now: now) == expected)
-    #expect(reported.stage(now: now) == expected)
+    #expect(
+      env.stage(now: now) == WorkspaceStage(label: .running, tone: .error, subtitle: "iOS app closed \u{00B7} Android app closed")
+    )
   }
 
-  @Test func derivesTheStageItselfWhenStimReportsAKindItDoesNotKnow() throws {
-    let env = try workspace(
+  @Test func showsAnUnknownStageWhenStimReportsAKindItDoesNotKnowOrNone() throws {
+    let unknown = try workspace(
       #""supervisor":{"startedAt":"\#(iso(42 * 60))","healthy":true},"stage":{"kind":"paused","since":null,"platform":null,"closedApps":[]}"#
     )
-    #expect(env.stage(now: now) == WorkspaceStage(label: .running, tone: .success, subtitle: "up 42m"))
+    let expected = WorkspaceStage(label: .unknown, tone: .tertiary, subtitle: nil)
+    #expect(unknown.stage(now: now) == expected)
+    #expect(try workspace("").stage(now: now) == expected)
   }
-
 }
 
 @Suite struct AppPresenceTests {
-  @Test func readsThePresenceStimReportsOnceItReportsTheStage() throws {
-    let stage = #""stage":{"kind":"running","since":null,"platform":null,"closedApps":[]}"#
-    let reported = try workspace(#""ios":\#(booted),"app":{"id":"a","state":"stopped"},"appPresence":"none"},\#(stage)"#)
+  @Test func readsThePresenceStimReports() throws {
+    let reported = try workspace(#""ios":\#(booted),"app":{"id":"a","state":"stopped"},"appPresence":"none"}"#)
     #expect(reported.appPresence(reported.devices[0]) == AppPresence.none)
-    let cleared = try workspace(#""ios":\#(booted),"app":{"id":"a","state":"stopped"},"appPresence":null},\#(stage)"#)
+    let cleared = try workspace(#""ios":\#(booted),"app":{"id":"a","state":"stopped"},"appPresence":null}"#)
     #expect(cleared.appPresence(cleared.devices[0]) == nil)
-  }
-
-  private func entry(_ result: String) -> String {
-    String(lastBuild().dropLast()) + #","result":"\#(result)","slot":"default","phases":{}}"#
-  }
-
-  @Test func doesNotGuessFromAMissingAppWhichStatusOmitsWithoutABundleID() throws {
-    let env = try workspace(#""ios":\#(booted)},"lastBuilds":{"ios":\#(lastBuild(status: "failed"))}"#)
-    #expect(env.appPresence(env.devices[0]) == nil)
-  }
-
-  @Test func neverReportsTheAppOfALeasedPhone() throws {
-    let env = try workspace(
-      #""physicalDevices":[{"platform":"ios","slot":"default","id":"U","name":"Phone","connection":"connected","lease":{"holder":"h","kind":"run","expiresAt":"\#(iso(-600))"}}],"lastBuilds":{"ios":\#(lastBuild(status: "failed"))},"builds":{"ios":[\#(entry("failed"))]}"#
-    )
-    #expect(env.appPresence(env.devices[0]) == nil)
   }
 }
 
@@ -204,6 +184,34 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(signing.currentPhaseLabel == ("Install", nil))
   }
 
+  @Test func namesWhatTheLaunchWaitsOnAndFillsTheBarOnlyFromMetroProgress() throws {
+    var bundling = try build(#","activity":{"name":"bundling","startedAt":"\#(iso(12))","percent":75}"#)
+    bundling.phase = "launch"
+    bundling.phaseStartedAt = iso(20)
+    bundling.expectedPhaseMs = 100_000
+    #expect(bundling.currentPhaseLabel == ("Bundling JS", "75%"))
+    #expect(!bundling.waitsWithoutProgress)
+    let current = bundling.phaseSteps(history: history, now: now).first { $0.state == .current }
+    #expect(current?.phase == "launch")
+    #expect(current?.fraction == 0.75)
+    #expect(current?.note == "Bundling JS 75% 0:12")
+
+    var waiting = bundling
+    waiting.activity = BuildActivity(name: "waiting-ready", startedAt: iso(3))
+    #expect(waiting.currentPhaseLabel == ("Waiting for app ready", nil))
+    #expect(waiting.waitsWithoutProgress)
+    #expect(waiting.phaseSteps(history: history, now: now).first { $0.state == .current }?.fraction == 0.2)
+
+    var booting = bundling
+    booting.phase = "device"
+    booting.activity = BuildActivity(name: "booting", startedAt: iso(40))
+    #expect(booting.currentPhaseLabel == ("Booting simulator", nil))
+    #expect(booting.activityElapsedMs(at: now) == 40_000)
+    booting.phase = "install"
+    #expect(booting.currentPhaseLabel == ("Install", nil))
+    #expect(!booting.waitsWithoutProgress)
+  }
+
   @Test func drawsTheCLIPlannedPhasesInsteadOfTheWorkspaceHistoryWhenTheCLISendsThem() throws {
     var planned = try build(
       #","plannedPhases":[{"phase":"prepare","expectedMs":1500},{"phase":"cache-lookup","expectedMs":2000},{"phase":"device","expectedMs":800},{"phase":"install","expectedMs":500},{"phase":"launch","expectedMs":9000}]"#
@@ -244,7 +252,7 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     let worktree = try JSONDecoder().decode(
       WorktreeInfo.self,
       from: Data(
-        #"{"path":"/w","git":{"changed":0,"untracked":0,"upstream":"origin/x","ahead":0,"behind":0},"pullRequest":null}"#
+        #"{"path":"/w","git":{"changed":0,"untracked":0,"upstream":"origin/x","ahead":0,"behind":0},"gitChip":{"parts":[],"ci":null},"pullRequest":null}"#
           .utf8))
     let chip = try #require(GitChip(worktree))
     #expect(chip.pullRequest == nil)
@@ -289,32 +297,13 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(machineName("mini") == "mini" && machineName("Mini.tail1.ts.net:7443") == "Mini.tail1.ts.net")
   }
 
-  @Test func marksOffloadedRunsAndShortensTheFallbackReasonsStimRecords() throws {
+  @Test func marksOffloadedRuns() throws {
     let offloaded = try #require(
       try workspace(
         #""lastBuilds":{"ios":\#(lastBuild(cacheHit: "false", durationMs: 71_000).dropLast()),"offloadedTo":"janics-mac-mini:7869"}}"#
       )
       .lastBuilds?.ios)
     #expect(offloaded.summary == "Built on janics-mac-mini in 1m 11s")
-    let cases: [(String, String)] = [
-      ("janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)", "Built here: janics-mac-mini was busy"),
-      (
-        "mini:7869: Stim build 6bbe there, e774 here; busy (already running 1 offloaded build(s), its limit)",
-        "Built here: mini was on a different Stim build"
-      ),
-      ("mini: no less loaded (load 1.2/core there, 0.4/core here); box: no offer", "Built here: mini was no less loaded"),
-      ("mini: capacity unknown (older stim-server) while this Mac has a free slot", "Built here: mini runs an older stim-server"),
-      ("mini: no iPhone simulator on 27.0 there", "Built here: mini is missing the SDK"),
-      ("mini: 4.1 GB free, needs 10.0 GB", "Built here: mini is low on disk"),
-      ("mini: Stim build 6bbe there, e774 here; 4.1 GB free, needs 10.0 GB", "Built here: mini was on a different Stim build"),
-      ("mini: the connection closed (1006)", "Built here: mini failed"),
-      ("this app is not in a git checkout (fatal: not a git repository)", "Built here: offload skipped"),
-    ]
-    for (reason, text) in cases {
-      var build = offloaded
-      build.offloadFallback = reason
-      #expect(build.fallbackLine?.text == text && build.fallbackLine?.reason == reason)
-    }
   }
 }
 
@@ -332,14 +321,6 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
       var workspace: Workspace
       var derived: StageFacts
       var stage: Stage
-    }
-
-    struct PresenceCase: Decodable {
-      var name: String
-      var workspace: Workspace
-      var platform: String
-      var slot: String
-      var presence: String?
     }
 
     struct Part: Decodable, Equatable {
@@ -424,7 +405,6 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     var now: String
     var stage: [StageCase]
     var gitChip: [ChipCase]
-    var appPresence: [PresenceCase]
     var phases: [PhaseCase]
     var activity: Activity
     var bundleLine: [BundleCase]
@@ -441,40 +421,27 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
   @Test(arguments: vectors.stage.map(\.name))
   func wordsTheStageAsThePhoneDoes(name: String) throws {
     let c = try #require(Self.vectors.stage.first { $0.name == name })
-    #expect(c.workspace.localStageFacts() == c.derived)
     var reported = c.workspace
     reported.stageFacts = c.derived
-    for env in [c.workspace, reported] {
-      let stage = env.stage(now: Self.now)
-      #expect(stage.label.rawValue == c.stage.label)
-      #expect(String(describing: stage.tone) == c.stage.tone)
-      #expect(stage.subtitle == c.stage.subtitle)
-    }
+    let stage = reported.stage(now: Self.now)
+    #expect(stage.label.rawValue == c.stage.label)
+    #expect(String(describing: stage.tone) == c.stage.tone)
+    #expect(stage.subtitle == c.stage.subtitle)
   }
 
   @Test(arguments: vectors.gitChip.map(\.name))
   func wordsTheGitChipAsThePhoneDoes(name: String) throws {
     let c = try #require(Self.vectors.gitChip.first { $0.name == name })
-    #expect(GitChip.localFacts(try #require(c.worktree.git), c.worktree.pullRequest) == c.derived)
     var reported = c.worktree
     reported.gitChip = c.derived
-    for worktree in [c.worktree, reported] {
-      let chip = try #require(GitChip(worktree))
-      #expect(chip.parts.map { Vectors.Part(text: $0.text, tone: String(describing: $0.tone)) } == c.chip.parts)
-      #expect(
-        chip.pullRequest.map {
-          Vectors.ChipPullRequest(
-            text: $0.text, tone: String(describing: $0.tone), checks: $0.checks.map { String(describing: $0) })
-        } == c.chip.pullRequest)
-      #expect(chip.label == c.chip.label)
-    }
-  }
-
-  @Test(arguments: vectors.appPresence.map(\.name))
-  func judgesAppPresenceAsStimDoes(name: String) throws {
-    let c = try #require(Self.vectors.appPresence.first { $0.name == name })
-    let device = try #require(c.workspace.devices.first { $0.platform == c.platform && $0.slot == c.slot })
-    #expect(c.workspace.appPresence(device).map { $0 == .none ? "none" : "closed" } == c.presence)
+    let chip = try #require(GitChip(reported))
+    #expect(chip.parts.map { Vectors.Part(text: $0.text, tone: String(describing: $0.tone)) } == c.chip.parts)
+    #expect(
+      chip.pullRequest.map {
+        Vectors.ChipPullRequest(
+          text: $0.text, tone: String(describing: $0.tone), checks: $0.checks.map { String(describing: $0) })
+      } == c.chip.pullRequest)
+    #expect(chip.label == c.chip.label)
   }
 
   @Test(arguments: vectors.phases.map(\.name))

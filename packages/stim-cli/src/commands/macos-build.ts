@@ -1,22 +1,25 @@
+import type { StimContext } from '@stim-cli/core';
+import type { PlatformBuildOptions } from '@stim-cli/core/protocol';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { MacosBuild } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
+import { workspaceShareURL } from '../devices/stim-desktop.ts';
+import { errorRemedy } from '../engine/build-ledger.ts';
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../engine/build-progress.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
+import { cancelledError, throwIfCancelled } from '../cancellation.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import { macosDir } from '../macos/state.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement } from '../offload/selection.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { resolveProjectSettings, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
-import { getProject, upsertProject } from '../workspace/config.ts';
-import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { ensureWorkspaceStorageAsync, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
+import { getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
+import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 
-export interface MacosBuildOptions {
-  remoteBuild?: string;
-}
+export type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'macos' }>, 'platform'>;
 
 export interface MacosBuildFacts {
   product: string;
@@ -26,11 +29,15 @@ export interface MacosBuildFacts {
   executable: string;
   build: MacosBuild;
   logs: { dir: string };
+  links: { workspace: string };
 }
 
-const note = (line: string) => console.error(line);
-
-export async function buildMacosOperation(root: string, options: MacosBuildOptions): Promise<MacosBuildFacts> {
+export async function buildMacosOperation(
+  context: StimContext,
+  root: string,
+  options: MacosBuildOptions,
+): Promise<MacosBuildFacts> {
+  const note = (line: string) => context.output('stderr', `${line}\n`);
   if (process.platform !== 'darwin') throw new Error('Building a macOS app requires a Mac with Swift installed.');
   root = realpathSync(root);
   const selected = projectRegistry.selectMacos(root);
@@ -39,19 +46,25 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
       code: 'STIM_NO_PROJECT',
       remedy: selected.problem.remedy,
     });
-  const { settings } = resolveProjectSettings(root);
+  const { settings } = await resolveProjectSettingsAsync(root, {
+    env: context.env,
+    signal: runCancellationSignal(context) ?? context.signal,
+  });
   const [shape] = settingShapeErrors(settings);
   if (shape) throw Object.assign(new Error(`${shape} ${SETTING_SHAPE_REMEDY}`), { code: 'STIM_BAD_ARG' });
   const placement = resolveBuildPlacement(options.remoteBuild);
   if (placement.failure) throw Object.assign(new Error(placement.failure.message), placement.failure);
-  const recipe = (await selected.load()).prepare(settings);
-  ensureWorkspaceStorage(root);
+  const recipe = await (await selected.load()).prepare(context, settings);
+  await ensureWorkspaceStorageAsync(root, context.signal);
   return withNativeBuildRun(
+    context,
     root,
     { command: 'build', platform: 'macos' },
     async (claim) => {
-      if (!getProject(root)) upsertProject(root, {});
-      recordWorkspaceUse(root);
+      await withConfigLockAsync(() => {
+        if (!getProject(root)) upsertProject(root, {});
+      });
+      await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
       const started = Date.now();
       const progress = startBuildProgress({ root, platform: 'macos', slot: 'default', claim, note });
       const logs = workspaceLogsDir(root);
@@ -66,12 +79,14 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
       };
       let directory: string | undefined;
       let succeeded = false;
+      let remedy: string | undefined;
       try {
         const artifacts = join(workspaceDir(root), 'artifacts');
         mkdirSync(artifacts, { recursive: true });
         directory = mkdtempSync(join(artifacts, 'macos-'));
         const bundle = join(directory, `${recipe.product}.app`);
         await buildMacosBundle({
+          context,
           root,
           recipe,
           bundle,
@@ -83,19 +98,33 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
           record: build,
           buildMachine: placement.selected,
         });
-        if (runCancellationSignal()?.aborted)
-          throw Object.assign(new Error('The macOS build was cancelled.'), { code: 'STIM_CANCELLED' });
+        throwIfCancelled(runCancellationSignal(context), 'macOS build');
         const executable = realpathSync(join(bundle, 'Contents', 'MacOS', recipe.product));
+        const links = {
+          workspace: await workspaceShareURL(
+            root,
+            { platform: 'macos' },
+            runCancellationSignal(context) ?? context.signal,
+          ),
+        };
+        throwIfCancelled(runCancellationSignal(context), 'macOS build');
         build.state = 'ok';
         succeeded = true;
-        return { product: recipe.product, bundle, bundleId: recipe.bundleId, executable, build, logs: { dir: logs } };
+        return {
+          product: recipe.product,
+          bundle,
+          bundleId: recipe.bundleId,
+          executable,
+          build,
+          logs: { dir: logs },
+          links,
+        };
       } catch (error) {
-        const failure = runCancellationSignal()?.aborted
-          ? Object.assign(new Error('The macOS build was cancelled.'), { code: 'STIM_CANCELLED', cause: error })
-          : error;
+        const failure = runCancellationSignal(context)?.aborted ? cancelledError('macOS build', error) : error;
         build.state = 'failed';
         build.error = failure instanceof Error ? failure.message : String(failure);
         build.errorCode = (failure as { code?: string }).code;
+        remedy = errorRemedy(failure);
         throw failure;
       } finally {
         build.finishedAt = new Date().toISOString();
@@ -107,10 +136,10 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
               platform: 'macos',
               status: build.state,
               configuration: 'Debug',
-              fingerprint: null,
-              cacheKey: null,
-              cacheHit: false,
-              cacheSkipped: false,
+              fingerprint: build.fingerprint ?? null,
+              cacheKey: build.cacheKey ?? null,
+              cacheHit: build.cacheHit ? (build.cacheSource === 'provider' ? 'remote' : 'local') : false,
+              cacheSkipped: !build.cacheKey,
               durationMs: build.durationMs,
               startedAt: build.startedAt,
               errorCode: build.errorCode,
@@ -119,6 +148,7 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
               offloadedTo: build.offloadedTo,
               offloadFallback: build.offloadFallback,
               compileSteps: progress.steps(),
+              ...(build.error ? { ledger: { message: build.error, remedy } } : {}),
             },
             { artifactOnly: true },
           );

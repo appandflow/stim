@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { hostname } from 'node:os';
+import { hostname, networkInterfaces } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { readHostedSessions } from '@stim-cli/core/state';
-import { bundledStim, loginShellEnvironment } from '../src/environment.ts';
+import { discoverToolchain } from '@stim-cli/core/toolchain';
+import { bundledStim } from '../src/environment.ts';
 import { formatHostedSessions, readHostedSessionRows } from '../src/hosted-sessions.ts';
 import { readAudit } from '../src/actions.ts';
 import {
@@ -26,6 +27,7 @@ import {
   validateServeEnvironment,
 } from '../src/service-plist.ts';
 import { PROTOCOL_VERSION } from '../src/protocol.ts';
+import { serviceManagerOrNull } from '../src/service-manager.ts';
 import {
   capabilitiesFor,
   createPairingToken,
@@ -34,54 +36,60 @@ import {
   readDeviceHostClients,
   readDevices,
   revokeDevice,
+  serverIdentity,
   type PairedDevice,
 } from '../src/registry.ts';
+import { keyFingerprint } from '@stim-cli/core/noise-session';
 import { hostFromExecutable, hostPermissionPanes } from '../src/stim-host.ts';
 import { defaultSetupDeps, runSetup } from '../src/setup.ts';
 import { startServer } from '../src/server.ts';
-import { watchTailscale } from '../src/tailscale-monitor.ts';
+import { readDesktopBootstrap } from '../src/desktop-bootstrap.ts';
+import type { ServeRoute } from '@stim-cli/core/protocol';
+import { loadTransport } from '@stim-cli/transport';
+import { localTransport, resolveLanAddresses } from '@stim-cli/transport-local';
+import { readLanAddresses, watchLanAddresses } from '../src/lan.ts';
 import {
   findTailscale,
   serveCommand,
   serveRoute,
   tailnetEndpoint,
   readTailscaleStatus,
-  type ServeRoute,
+  isTailscaleTransport,
   type TailscaleState,
-} from '../src/tailscale.ts';
+} from '@stim-cli/transport-tailscale';
 
 const USAGE = `Usage:
   stim-server [--port <n>] [--loopback-only] [--env KEY=VALUE]... [--path-prepend <dir>]...
                                     serve paired clients (default port ${DEFAULT_PORT});
-                                    --loopback-only serves this Mac only (127.0.0.1, no remote peers);
+                                    --loopback-only serves this machine only (127.0.0.1, no remote peers);
                                     --env and --path-prepend apply after the login shell's environment
-  stim-server setup --client <node-id> --ticket <t> --expires <iso>
+  STIM_SETUP_TICKET=<t> stim-server setup --expires <iso>
                     [--build] [--device-host] [--port <n>] [--label <name>]
-                    [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json] [--verbose]
-                                    worker-side approval for this node and ticket until expiry
+                    [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json] [--verbose] [--no-wait]
+                                    worker-side approval of the machine holding this ticket, until expiry
   stim-server service install [--port <n>] [--label <name>] [--serve]
                               [--env KEY=VALUE]... [--path-prepend <dir>]...
-                                    run stim-server as a macOS LaunchAgent that starts at login;
+                                    run stim-server as a macOS LaunchAgent that starts at login,
+                                    a Linux systemd user service, or a Windows scheduled task;
                                     --serve adds a tailnet-only \`tailscale serve\` route
   stim-server service status [--label <name>] [--json]
-  stim-server service update [--label <name>] --release <version>|--from <dir>
+  stim-server service update [--label <name>] [--no-wait] --release <version>|--from <dir>
                                     install that stim-server release from npm, or the .tgz
                                     packages in <dir>, beside the current one, switch the
-                                    LaunchAgent to it, and switch back if it does not answer
+                                    service to it, and switch back if it does not answer
+                                    --no-wait interrupts active builds and hosted sessions at restart
   stim-server service rollback [--label <name>]
-                                    switch the LaunchAgent back to the server it ran before
+                                    switch the service back to the server it ran before
   stim-server service uninstall [--label <name>]
-                                    remove the LaunchAgent (and the route install created)
+                                    remove the service (and the route install created)
   stim-server pair [--port <n>] [--control] [--json]
-                                    print a single-use pairing payload for the QR code;
-                                    --control lets the paired device run actions
+                                    print a single-use pairing payload for the QR code, with this
+                                    server's key fingerprint; --control lets the paired device run actions
   stim-server devices [list] [--json]
-                                    list paired devices, approved clients, access requests and hosted sessions
-  stim-server devices grant <id> --control|--read|--build|--device-host
-                                    let a paired device run actions, or only read;
-                                    --build approves a Mac's request to build here;
-                                    --device-host approves its device-host request
-  stim-server devices revoke <id>   revoke a paired device or client, or deny a request
+                                    list paired devices, approved clients and hosted sessions
+  stim-server devices grant <id> --control|--read
+                                    let a paired device run actions, or only read
+  stim-server devices revoke <id>   revoke a paired device or approved client and close its connections
   stim-server log [--json]          list the actions paired devices ran`;
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
@@ -117,23 +125,48 @@ function macName(tailscale: TailscaleState): string {
 }
 
 async function serve(port: number, extraEnv: string[], pathPrepend: string[], loopbackOnly: boolean): Promise<void> {
+  const bootstrapFd = process.env.STIM_DESKTOP_BOOTSTRAP_FD;
+  delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
+  if (bootstrapFd !== undefined && bootstrapFd !== '0') fail('Desktop bootstrap input is invalid or unavailable.');
+  const desktopInput =
+    bootstrapFd === '0'
+      ? await readDesktopBootstrap(process.stdin).catch(() =>
+          fail('Desktop bootstrap input is invalid or unavailable.'),
+        )
+      : undefined;
+  delete process.env.NODE_COMPILE_CACHE;
   const captureHost = hostFromExecutable(process.env.STIM_HOST_EXECUTABLE);
-  const login = loginShellEnvironment();
-  if (!login) console.error('stim-server: could not read the login shell environment; using this process environment.');
-  const env = applyServeEnvironment(login ?? process.env, extraEnv, pathPrepend);
-  delete env.CLAUDE_CODE_SESSION_ID;
-  delete env.CODEX_THREAD_ID;
+  const inherited = { ...process.env };
+  const serveEnvironment = (warn?: (line: string) => void) => {
+    const found = applyServeEnvironment(discoverToolchain(inherited).env, extraEnv, pathPrepend, process.env, warn);
+    delete found.CLAUDE_CODE_SESSION_ID;
+    delete found.CODEX_THREAD_ID;
+    return found;
+  };
+  const env = serveEnvironment();
   if (!process.env.STIM_HOME && env.STIM_HOME) process.env.STIM_HOME = env.STIM_HOME;
   if (process.env.STIM_HOME) env.STIM_HOME = process.env.STIM_HOME;
+  Object.assign(process.env, env);
+  const currentEnv = () => ({ ...serveEnvironment(() => {}), ...(env.STIM_HOME ? { STIM_HOME: env.STIM_HOME } : {}) });
 
-  const launchdLabel = process.env.XPC_SERVICE_NAME;
-  const tailscaleBinary = findTailscale(env);
-  const tailscale = await readTailscaleStatus(tailscaleBinary, env);
+  const loaded = await loadTransport({
+    reference: '@stim-cli/transport-tailscale',
+    load: () => import('@stim-cli/transport-tailscale'),
+    input: { env, options: {} },
+  });
+  if ('unavailable' in loaded) fail(`the Tailscale transport is unavailable: ${loaded.unavailable}`);
+  if (!isTailscaleTransport(loaded.transport))
+    fail('@stim-cli/transport-tailscale did not create a Tailscale transport');
+  const transport = loaded.transport;
+  const { state: tailscale } = transport.snapshot();
+  const lanSetting = watchLanAddresses();
+  await Promise.race([lanSetting.ready, new Promise((done) => setTimeout(done, 1000).unref())]);
+  const lan = localTransport({ entries: lanSetting.current });
   const stim = bundledStim();
-  const monitor = watchTailscale({ env, initial: { binary: tailscaleBinary, state: tailscale } });
   let server;
   try {
     server = await startServer({
+      desktopBootstrap: desktopInput?.bootstrap,
       name: macName(tailscale),
       host: captureHost,
       hosts: ['127.0.0.1'],
@@ -143,11 +176,10 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
       stimVersion: stim.version,
       serverVersion: pkg.version,
       env,
-      tailscale: tailscaleBinary,
-      tailscaleState: tailscale,
-      tailscaleMonitor: monitor,
+      currentEnv,
+      transports: [transport, lan],
       service: {
-        label: launchdLabel && !validateLabel(launchdLabel) ? launchdLabel : null,
+        label: serviceManagerOrNull()?.runningLabel(process.env) ?? null,
         node: process.execPath,
         script: realpathSync(process.argv[1] ?? ''),
       },
@@ -162,10 +194,10 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
   for (const { host, port: bound } of server.addresses) {
     console.log(`listening on ws://${host.includes(':') ? `[${host}]` : host}:${bound}`);
   }
-  const announce = async (binary: string | null, state: TailscaleState) => {
+  const announce = async (state: TailscaleState) => {
     let note = tailscaleNote(state);
     if (state.state === 'running' && state.dnsName) {
-      const route = await serveRoute(binary, env, port, state.ips);
+      const route = await transport.serveRoute(port);
       if (route.state !== 'funneled') console.log(`tailnet endpoint: ${tailnetEndpoint(state.dnsName, route.port)}`);
       note = routeNote(route, port);
       if (route.state === 'funneled') note = `${note} Pairing is refused until then.`;
@@ -173,15 +205,32 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
     if (note) console.error(note);
   };
   if (!loopbackOnly)
-    monitor.onChange((snapshot, previous) => {
+    transport.monitor?.onChange((snapshot, previous) => {
       const { state } = snapshot;
       if (state.state === 'running') console.log('Tailscale is running.');
       else if (previous.state.state === 'running') console.error('Tailscale stopped.');
-      if (state.state === 'running' || previous.state.state === 'running') void announce(snapshot.binary, state);
+      if (state.state === 'running' || previous.state.state === 'running') void announce(state);
     });
-  if (!loopbackOnly) await announce(tailscaleBinary, tailscale);
+  let lanProblems = '';
+  const announceLan = () => {
+    const { addresses, problems } = lan.lan();
+    const next = problems.join('\n');
+    if (next !== lanProblems && problems.length)
+      for (const problem of problems) console.error(`stim-server: server.lanAddresses: ${problem}.`);
+    lanProblems = next;
+    if (addresses.length)
+      console.log(`local network endpoints: ${addresses.map((host) => `ws://${host}:${port}`).join(', ')}`);
+  };
+  const stopLan = loopbackOnly ? () => {} : lan.watch(announceLan);
+  if (!loopbackOnly) announceLan();
+  let shuttingDown = false;
   const shutdown = () => {
-    monitor.stop();
+    if (shuttingDown) return;
+    shuttingDown = true;
+    stopLan();
+    lanSetting.stop();
+    lan.close?.();
+    transport.close?.();
     void server
       .close()
       .catch((error: unknown) => {
@@ -193,6 +242,8 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('SIGHUP', shutdown);
+  void desktopInput?.closed.then(shutdown);
+  if (!loopbackOnly) await announce(tailscale);
 }
 
 function reportShutdownFailure(failure: unknown): void {
@@ -208,16 +259,18 @@ type Scope = 'read' | 'control' | 'build' | 'device-host';
 const SCOPE_TEXT: Record<Scope, string> = {
   read: 'only read',
   control: 'run actions',
-  build: 'run its project code on this Mac to build',
-  'device-host': 'request session-owned device hosting on this Mac',
+  build: 'run its project code on this machine to build',
+  'device-host': 'request session-owned device hosting on this machine',
 };
 
 async function pair(port: number, json: boolean, control: boolean): Promise<void> {
   const binary = findTailscale(process.env);
   const tailscale = await readTailscaleStatus(binary, process.env);
-  let endpoint = `ws://127.0.0.1:${port}`;
+  const [lan] = resolveLanAddresses(await readLanAddresses(), networkInterfaces()).addresses;
+  let endpoint = `ws://${lan ?? '127.0.0.1'}:${port}`;
   let note = tailscaleNote(tailscale);
-  if (note) note = `${note} The endpoint above only works on this Mac.`;
+  if (note)
+    note = `${note} The endpoint above only works ${lan ? 'on this local network, while stim-server listens there (server.lanAddresses)' : 'on this machine'}.`;
   if (tailscale.state === 'running' && tailscale.dnsName) {
     const route = await serveRoute(binary, process.env, port, tailscale.ips);
     if (route.state === 'funneled') fail(`refusing to pair. ${routeNote(route, port)}`);
@@ -225,7 +278,8 @@ async function pair(port: number, json: boolean, control: boolean): Promise<void
     note = routeNote(route, port);
   }
   const { token, expiresAt } = createPairingToken(Date.now(), capabilitiesFor(control));
-  const payload = { v: 1, name: macName(tailscale), endpoint, pairingToken: token };
+  const fingerprint = keyFingerprint(serverIdentity().publicKey);
+  const payload = { v: 2, name: macName(tailscale), endpoint, pairingToken: token, fingerprint };
   if (json) return void console.log(JSON.stringify({ qr: payload, expiresAt }));
   console.log(JSON.stringify(payload));
   console.error(
@@ -235,13 +289,7 @@ async function pair(port: number, json: boolean, control: boolean): Promise<void
 }
 
 function describe(device: PairedDevice): string {
-  const from =
-    device.identity.kind === 'local'
-      ? 'this Mac'
-      : `${device.identity.nodeName || device.identity.nodeId}${device.identity.user ? ` (${device.identity.user})` : ''}`;
-  if (device.pendingUntil !== undefined) {
-    return `${device.id}  ${device.name}  pending ${device.requestedCapability ?? 'build'}  from ${from}  requested ${device.pairedAt}  lapses ${device.pendingUntil}`;
-  }
+  const from = `${device.from ?? 'unknown'}, key ${keyFingerprint(Buffer.from(device.publicKey, 'base64url')).slice(0, 12)}`;
   const scope = device.capabilities.includes('device-host')
     ? 'device-host'
     : device.capabilities.includes('build')
@@ -275,6 +323,7 @@ async function runService(
     'path-prepend'?: string[];
     release?: string;
     from?: string;
+    'no-wait'?: boolean;
   },
   env: string[],
   pathPrepend: string[],
@@ -288,6 +337,7 @@ async function runService(
   if (sub !== 'update' && (values.release !== undefined || values.from !== undefined)) {
     fail(`--release and --from apply only to \`service update\`.\n${USAGE}`);
   }
+  if (sub !== 'update' && values['no-wait']) fail(`--no-wait applies only to \`service update\`.\n${USAGE}`);
   if (sub !== 'install' && (values.serve || values.port !== undefined || values.env || values['path-prepend'])) {
     fail(`--port, --serve, --env and --path-prepend apply only to \`service install\`.\n${USAGE}`);
   }
@@ -307,7 +357,8 @@ async function runService(
       }
     } else if (sub === 'status') {
       const status = await serviceStatus(label);
-      console.log(values.json ? JSON.stringify(status) : statusLines(status, await hostPermissionPanes()).join('\n'));
+      const panes = status.manager === 'launchd' ? await hostPermissionPanes() : { screen: '', control: '' };
+      console.log(values.json ? JSON.stringify(status) : statusLines(status, panes).join('\n'));
     } else if (sub === 'update') {
       if ((values.release === undefined) === (values.from === undefined)) {
         fail(`service update takes exactly one of --release <version> or --from <dir>.\n${USAGE}`);
@@ -319,7 +370,8 @@ async function runService(
         fail(`--from takes a directory of .tgz packages, got ${values.from}.`);
       }
       const source = from === null ? { release: values.release! } : { from };
-      for (const line of await updateService(label, source, (progress) => console.log(progress))) console.log(line);
+      for (const line of await updateService(label, source, (progress) => console.log(progress), !values['no-wait']))
+        console.log(line);
     } else if (sub === 'rollback') {
       for (const line of await rollbackService(label, (progress) => console.log(progress))) console.log(line);
     } else {
@@ -331,25 +383,32 @@ async function runService(
   }
 }
 
-async function main(): Promise<void> {
-  if (process.argv[2] === 'setup') {
-    if (process.argv.slice(3).some((arg) => arg === '--help' || arg === '-h')) return void console.log(USAGE);
-    const controller = new AbortController();
-    const interrupt = () => controller.abort();
-    process.on('SIGINT', interrupt);
-    process.on('SIGTERM', interrupt);
-    try {
-      process.exitCode = await runSetup(process.argv.slice(3), pkg.version, {
-        ...defaultSetupDeps(),
-        signal: controller.signal,
-      });
-    } finally {
-      process.off('SIGINT', interrupt);
-      process.off('SIGTERM', interrupt);
-    }
-    if (controller.signal.aborted) process.exit(1);
-    return;
+async function setup(): Promise<void> {
+  if (process.argv.slice(3).some((arg) => arg === '--help' || arg === '-h')) return void console.log(USAGE);
+  const controller = new AbortController();
+  const interrupt = () => controller.abort();
+  process.on('SIGINT', interrupt);
+  process.on('SIGTERM', interrupt);
+  const ticket = process.env.STIM_SETUP_TICKET;
+  const fromDoctor = process.env.STIM_SETUP_ORIGIN === 'doctor';
+  delete process.env.STIM_SETUP_TICKET;
+  delete process.env.STIM_SETUP_ORIGIN;
+  try {
+    process.exitCode = await runSetup(process.argv.slice(3), pkg.version, {
+      ...defaultSetupDeps(),
+      ticket,
+      fromDoctor,
+      signal: controller.signal,
+    });
+  } finally {
+    process.off('SIGINT', interrupt);
+    process.off('SIGTERM', interrupt);
   }
+  if (controller.signal.aborted) process.exit(1);
+}
+
+async function main(): Promise<void> {
+  if (process.argv[2] === 'setup') return setup();
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
@@ -366,6 +425,7 @@ async function main(): Promise<void> {
       'path-prepend': { type: 'string', multiple: true },
       release: { type: 'string' },
       from: { type: 'string' },
+      'no-wait': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'V' },
     },
@@ -391,14 +451,19 @@ async function main(): Promise<void> {
   if ((values.release !== undefined || values.from !== undefined) && !service) {
     fail(`--release and --from apply only to \`service update\`.\n${USAGE}`);
   }
+  if (values['no-wait'] && !service) fail(`--no-wait applies only to \`service update\` or \`setup\`.\n${USAGE}`);
   if (values['loopback-only'] && command !== undefined) {
     fail(`--loopback-only applies only to serving.\n${USAGE}`);
   }
   if (command === undefined) return serve(port, extraEnv, pathPrepend, values['loopback-only'] === true);
   const grant = command === 'devices' && sub === 'grant';
   if (values.read && !grant) fail(`--read applies only to \`devices grant\`.\n${USAGE}`);
-  if (values.build && !grant) fail(`--build applies only to \`devices grant\`.\n${USAGE}`);
-  if (values['device-host'] && !grant) fail(`--device-host applies only to \`devices grant\`.\n${USAGE}`);
+  for (const flag of ['build', 'device-host'] as const) {
+    if (values[flag])
+      fail(
+        `--${flag} applies only to \`stim-server setup\`, which a person runs on this machine with the requesting machine's setup ticket.\n${USAGE}`,
+      );
+  }
   if (values.control && !grant && command !== 'pair') {
     fail(`--control applies only to \`pair\` and \`devices grant\`.\n${USAGE}`);
   }
@@ -406,22 +471,15 @@ async function main(): Promise<void> {
   const scope = scopeFlag(values);
   if (command === 'pair' && sub === undefined) return pair(port, values.json === true, values.control === true);
   if (grant && arg !== undefined && rest.length === 0) {
-    if (scope === null || scope === 'many')
-      fail('devices grant takes exactly one of --control, --read, --build or --device-host.');
-    const capabilities = scope === 'build' || scope === 'device-host' ? [scope] : capabilitiesFor(scope === 'control');
+    if (scope === null || scope === 'many') fail('devices grant takes exactly one of --control or --read.');
+    const capabilities = capabilitiesFor(scope === 'control');
     const outcome = grantDevice(arg, [...capabilities]);
     if (outcome === 'unknown') {
-      fail(
-        `no paired device ${arg}, and no pending access request with that id (requests lapse after 15 minutes). Run \`stim-server devices\` to list them.`,
-      );
+      fail(`no paired device or approved client ${arg}. Run \`stim-server devices\` to list them.`);
     }
     if (outcome === 'build-mismatch' || outcome === 'device-host-mismatch') {
       const requested = outcome === 'build-mismatch' ? 'build' : 'device-host';
-      fail(
-        scope === requested
-          ? `${arg} is a paired device, not a Mac that asked for ${requested} access.`
-          : `${arg} is a ${requested} client; it takes only --${requested}. Revoke it with \`stim-server devices revoke ${arg}\`.`,
-      );
+      fail(`${arg} is a ${requested} client, approved by setup; revoke it with \`stim-server devices revoke ${arg}\`.`);
     }
     console.log(`${arg} can now ${SCOPE_TEXT[scope]}.`);
     return;
@@ -449,18 +507,15 @@ async function main(): Promise<void> {
       console.error(`Could not read hosted sessions: ${(error as Error).message}`);
     }
     if (values.json) {
-      const listed = devices.map(
-        ({ id, name, identity, pairedAt, lastSeenAt, capabilities, pendingUntil, requestedCapability }) => ({
-          id,
-          name,
-          identity,
-          pairedAt,
-          lastSeenAt,
-          capabilities,
-          ...(pendingUntil ? { pendingUntil } : {}),
-          ...(requestedCapability ? { requestedCapability } : {}),
-        }),
-      );
+      const listed = devices.map(({ id, name, from, publicKey, pairedAt, lastSeenAt, capabilities }) => ({
+        id,
+        name,
+        ...(from ? { from } : {}),
+        keyFingerprint: keyFingerprint(Buffer.from(publicKey, 'base64url')),
+        pairedAt,
+        lastSeenAt,
+        capabilities,
+      }));
       return void console.log(JSON.stringify({ devices: listed, hostedSessions }));
     }
     if (!devices.length) console.log('No paired devices.');

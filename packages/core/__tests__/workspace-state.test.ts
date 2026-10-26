@@ -1,4 +1,15 @@
-import { BUILD_HISTORY_LIMIT, lastUseFrom, readBuildHistory, readLastBuilds } from '../state/workspace-state.ts';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { workspaceStateDir } from '../index.ts';
+import {
+  BUILD_HISTORY_LIMIT,
+  lastNativeUseFrom,
+  lastUseFrom,
+  readBuildHistory,
+  readLastBuilds,
+  workspaceLastUsed,
+} from '../state/workspace-state.ts';
 
 describe('last use of a workspace', () => {
   const at = (iso: string) => Date.parse(iso);
@@ -26,6 +37,45 @@ describe('last use of a workspace', () => {
   test('a workspace with no evidence of use has no last use', () => {
     expect(lastUseFrom(null, [])).toBeNaN();
     expect(lastUseFrom({ lastUsedAt: 'garbage' }, [])).toBeNaN();
+  });
+
+  test('a workspace that recorded no use was last used when it was created; corrupt state or no directory leaves it unknown', () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-last-use-'));
+    vi.stubEnv('STIM_HOME', home);
+    try {
+      const root = '/w/never-used';
+      expect(workspaceLastUsed(root)).toBeNaN();
+      mkdirSync(workspaceStateDir(root), { recursive: true });
+      const metadata = join(workspaceStateDir(root), 'workspace.json');
+      writeFileSync(metadata, '{}');
+      utimesSync(metadata, new Date('2026-09-01T00:00:00Z'), new Date('2026-09-01T00:00:00Z'));
+      expect(workspaceLastUsed(root)).toBe(at('2026-09-01T00:00:00Z'));
+      writeFileSync(join(workspaceStateDir(root), 'state.json'), '{not json');
+      expect(workspaceLastUsed(root)).toBeNaN();
+      writeFileSync(
+        join(workspaceStateDir(root), 'state.json'),
+        JSON.stringify({ lastUsedAt: '2026-09-04T00:00:00Z' }),
+      );
+      expect(workspaceLastUsed(root)).toBe(at('2026-09-04T00:00:00Z'));
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('last native run of a workspace', () => {
+  test('is when the newest ios, android or macos run finished, ignoring dev server use', () => {
+    const state = {
+      lastUsedAt: '2026-09-10T00:00:00Z',
+      supervisor: { startedAt: '2026-09-10T00:00:00Z' },
+      lastIosBuild: { platform: 'ios', status: 'success', startedAt: '2026-09-01T00:00:00Z', durationMs: 0 },
+      buildHistory: {
+        macos: [{ platform: 'macos', status: 'success', startedAt: '2026-09-05T00:00:00Z', durationMs: 60_000 }],
+      },
+    };
+    expect(lastNativeUseFrom(state)).toBe(Date.parse('2026-09-05T00:01:00Z'));
+    expect(lastNativeUseFrom({ lastUsedAt: '2026-09-10T00:00:00Z' })).toBeNaN();
   });
 });
 
@@ -60,6 +110,14 @@ describe('last build per platform', () => {
   test('a state written before the per-platform keys reports its single lastBuild under its platform', () => {
     expect(readLastBuilds({ lastBuild: ios })).toEqual({ ios: expect.objectContaining({ cacheHit: 'remote' }) });
     expect(readLastBuilds({ lastBuild: { ...ios, status: 'running' } })).toEqual({});
+  });
+
+  test('a hosted Android run written with status success reads as ok and succeeded', () => {
+    const written = { ...ios, platform: 'android', status: 'success' };
+    expect(readLastBuilds({ lastAndroidBuild: written, lastBuild: written }).android).toMatchObject({ status: 'ok' });
+    expect(
+      readBuildHistory({ buildHistory: { android: [{ ...written, result: 'failed', slot: 'default' }] } }).android?.[0],
+    ).toMatchObject({ status: 'ok', result: 'succeeded' });
   });
 
   test('a newer lastBuild wins over an older per-platform record, as after an older Stim ran', () => {

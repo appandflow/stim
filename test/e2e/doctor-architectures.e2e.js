@@ -13,7 +13,7 @@ import { getExecutor } from '../../packages/stim-cli/src/exec.ts';
 test(
   'doctor resolves inherited and SDK-conditioned Debug architecture settings with real Xcode',
   { skip: process.platform !== 'darwin' },
-  () => {
+  async () => {
     const root = mkdtempSync(join(tmpdir(), 'stim-architectures-e2e-'));
     const previousHome = process.env.STIM_HOME;
     process.env.STIM_HOME = join(root, 'state');
@@ -21,7 +21,7 @@ test(
       cpSync(fileURLToPath(new URL('../fixtures/doctor-architectures/ios', import.meta.url)), join(root, 'ios'), {
         recursive: true,
       });
-      const findings = inspectIosDebugArchitectures(root);
+      const findings = await inspectIosDebugArchitectures(root);
       assert.equal(findings.length, 1);
       assert.equal(findings[0].code, 'ios-debug-architectures');
       assert.match(findings[0].detail, /NativePod \(arm64, x86_64\)/);
@@ -54,9 +54,9 @@ test(
         join(root, 'ios', 'Debug.xcconfig'),
         'ONLY_ACTIVE_ARCH = NO\nEXCLUDED_ARCHS[sdk=iphonesimulator*] = x86_64\n',
       );
-      assert.deepEqual(inspectIosDebugArchitectures(root), []);
+      assert.deepEqual(await inspectIosDebugArchitectures(root), []);
       writeFileSync(join(root, 'ios', 'Debug.xcconfig'), 'ONLY_ACTIVE_ARCH = $(inherited)\n');
-      assert.deepEqual(inspectIosDebugArchitectures(root), []);
+      assert.deepEqual(await inspectIosDebugArchitectures(root), []);
     } finally {
       if (previousHome === undefined) delete process.env.STIM_HOME;
       else process.env.STIM_HOME = previousHome;

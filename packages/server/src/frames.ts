@@ -152,7 +152,7 @@ export function ownedDevice(
   const slot = target.slot ?? 'default';
   if (!Array.isArray(payload.environments)) return 'stim status printed a payload without environments.';
   const environment = payload.environments.find((candidate) => candidate.path === target.workspace);
-  if (!environment) return `${target.workspace} is not a Stim workspace on this Mac.`;
+  if (!environment) return `${target.workspace} is not a Stim workspace on this machine.`;
   const devices =
     slot === 'default'
       ? { ios: environment.ios, android: environment.android }

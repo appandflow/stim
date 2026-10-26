@@ -14,8 +14,13 @@ import { detectIsExpo, findServerWorkspace, isPackageResolvable, resolvePackageJ
 import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
 import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
 
-function runDoctor(root: string, options: DoctorInspectionOptions = {}) {
-  return inspectDoctor(root, options, [reactNativeDoctorFindings]).findings;
+vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../engine/ios-signing.ts')>()),
+  probeSigningIdentities: async () => [{ sha1: 'A'.repeat(40), name: 'Apple Development: Doctor Test (TEAMID5678)' }],
+}));
+
+async function runDoctor(root: string, options: DoctorInspectionOptions = {}) {
+  return (await inspectDoctor(root, options, [reactNativeDoctorFindings])).findings;
 }
 
 let home: string;
@@ -210,7 +215,7 @@ describe('detectIsExpo is the single source', () => {
         extra: { eas: { projectId: '439cfc57-af9a-461c-9d3c-89b985233942' } },
       }),
     );
-    const titles = runDoctor(app).map((f) => f.title);
+    const titles = (await runDoctor(app)).map((f) => f.title);
     expect(titles.some((t) => /build.?cache.?provider/i.test(t))).toBeTruthy();
   });
 
@@ -234,7 +239,7 @@ describe('detectIsExpo is the single source', () => {
         },
       });
       expect(startedBare).toBe(true);
-      const titles = runDoctor(bare).map((f) => f.title);
+      const titles = (await runDoctor(bare)).map((f) => f.title);
       expect(!titles.some((t) => /build.?cache.?provider|expo-dev-client/i.test(t))).toBeTruthy();
     } finally {
       rmSync(bare, { recursive: true, force: true });

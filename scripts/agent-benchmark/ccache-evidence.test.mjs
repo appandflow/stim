@@ -38,6 +38,15 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 const evidence = (capture = true) => ccacheLogEvidence({ runDir, meta, commands, worktree, capture });
 
 describe('captured compiler cache evidence', () => {
+  it('captures a literal temp-prefixed build and retains its original command identity', () => {
+    commands[0].command =
+      'env STIM_TMPDIR="/tmp/run space" stim android --system-image "system-images;android-36;arm64-v8a"';
+    const original = JSON.stringify(commands);
+    expect(evidence()).toMatchObject({ hits: 2, misses: 0, commandId: 'build' });
+    expect(benchmarkCcache(meta, commands, evidence(false))).toMatchObject({ status: 'measured', invalidReasons: [] });
+    expect(JSON.stringify(commands)).toBe(original);
+  });
+
   it('retains exact command identity for a scoped build with a reported launch failure', () => {
     commands[0].command = `cd ${worktree} && stim android --system-image "system-images;android-36;arm64-v8a"; echo "EXIT=$?"`;
     commands[0].exitCode = 0;
@@ -84,7 +93,7 @@ describe('captured compiler cache evidence', () => {
 
   it('keeps low-hit alerts and refuses to reuse the last log for multiple or ambiguous builds', () => {
     writeFileSync(statsLog, 'direct_cache_hit\ncache_miss\ncache_miss\n');
-    expect(benchmarkCcache(meta, commands, evidence()).invalidReasons).toContain('ccache-hit-rate-below-target');
+    expect(benchmarkCcache(meta, commands, evidence()).warnings).toContain('ccache-hit-rate-below-target');
     commands.push({ ...commands[0], id: 'second' });
     expect(evidence(false)).toBeNull();
     commands.pop();
@@ -106,7 +115,7 @@ describe('captured compiler cache evidence', () => {
       if (failure === 'chained') commands[0].command = 'stim android; echo done';
       if (failure === 'repeated build') commands[0].output += '\nbuild compiling debug\nbuild ok (1s)';
       expect(evidence()).toBeNull();
-      expect(benchmarkCcache(meta, commands).invalidReasons).toContain('ccache-evidence-missing');
+      expect(benchmarkCcache(meta, commands).warnings).toContain('ccache-evidence-missing');
     },
   );
 
@@ -128,10 +137,10 @@ describe('captured compiler cache evidence', () => {
   it('does not override unavailable command counters or excuse another attempt with missing evidence', () => {
     const measurement = evidence();
     commands.push({ id: 'unknown', command: 'stim android', exitCode: 1, output: 'unexpected failure' });
-    expect(benchmarkCcache(meta, commands, measurement).invalidReasons).toContain('ccache-evidence-missing');
+    expect(benchmarkCcache(meta, commands, measurement).warnings).toContain('ccache-evidence-missing');
     commands.pop();
     commands[0].output += '\ncompilation cache unavailable';
-    expect(benchmarkCcache(meta, commands, measurement).invalidReasons).toContain('ccache-evidence-missing');
+    expect(benchmarkCcache(meta, commands, measurement).warnings).toContain('ccache-evidence-missing');
     expect(readFileSync(join(runDir, 'ccache-evidence.log'), 'utf8')).toContain('preprocessed_cache_hit');
   });
 });

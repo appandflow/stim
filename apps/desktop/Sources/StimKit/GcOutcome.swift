@@ -21,7 +21,7 @@ public struct GcOutcome: Hashable, Sendable {
   public var done: [Item]
   public var kept: [Item]
   public var failed: [Item]
-  /// Entries the CLI counted as failed. It can exceed `failed.count` on a CLI that predates `results`.
+  /// Entries the CLI counted as failed.
   public var failures: Int
 
   static let memoryKinds: Set<String> = ["watchman", "gradleDaemon", "kotlinDaemon"]
@@ -46,41 +46,6 @@ public struct GcOutcome: Hashable, Sendable {
     return parts.joined(separator: " \u{00B7} ")
   }
 
-  static let worktreeKinds: Set<String> = ["worktree", "linkedWorktrees"]
-  static let projectKinds: Set<String> = ["project", "deadProjects", "invalidProjects"]
-  static let namesShown = 3
-
-  /// Removed worktrees the run archived.
-  public var archivedWorktrees: [Item] { done.filter { Self.worktreeKinds.contains($0.kind) } }
-
-  /// What the run did, in sentences such as "Freed 3.8 GB. Archived 2 removed worktrees: X, Y. Deleted 1 device.".
-  /// `name` turns a worktree or project path into its display name; a list longer than three ends in "+N more".
-  public func summary(name: (String) -> String) -> String {
-    var sentences: [String] = []
-    if freedBytes > 0 { sentences.append("Freed \(Format.fileSize(freedBytes))") }
-    if reclaimedMemoryBytes > 0 { sentences.append("Reclaimed \(Format.memory(reclaimedMemoryBytes)) of memory") }
-    let worktrees = archivedWorktrees
-    if !worktrees.isEmpty {
-      sentences.append("Archived \(Self.count(worktrees.count, "removed worktree")): \(Self.names(worktrees, name))")
-    }
-    let projects = done.filter { Self.projectKinds.contains($0.kind) }
-    if !projects.isEmpty {
-      sentences.append("Pruned \(Self.count(projects.count, "workspace")): \(Self.names(projects, name))")
-    }
-    let rest = done.filter { !Self.worktreeKinds.contains($0.kind) && !Self.projectKinds.contains($0.kind) }
-    for (phrase, count) in Self.phrases(rest) { sentences.append(phrase(count)) }
-    if failures > 0 { sentences.append("\(failures) failed") }
-    if sentences.isEmpty { return "Nothing to clean up." }
-    return sentences.map { $0 + "." }.joined(separator: " ")
-  }
-
-  private static func names(_ items: [Item], _ name: (String) -> String) -> String {
-    var seen = Set<String>()
-    let names = items.filter { seen.insert($0.label).inserted }.map { name($0.label) }
-    let shown = names.prefix(namesShown).joined(separator: ", ")
-    return names.count > namesShown ? "\(shown), +\(names.count - namesShown) more" : shown
-  }
-
   /// Whether `arguments` run a `stim gc` that acts and prints its outcome as JSON.
   public static func describes(_ arguments: [String]) -> Bool {
     arguments.first == "gc" && arguments.contains("--json")
@@ -95,22 +60,13 @@ public struct GcOutcome: Hashable, Sendable {
       throw GcPreview.Failure.refused(message: object["message"] as? String ?? code, remedy: object["remedy"] as? String)
     }
     let sections = object["sections"] as? [String: Any] ?? [:]
-    var items: [Item]
-    if let results = object["results"] as? [[String: Any]] {
-      items = results.compactMap { result in
-        guard let status = (result["status"] as? String).flatMap(Status.init(rawValue:)),
-          let label = result["label"] as? String
-        else { return nil }
-        return Item(
-          kind: result["kind"] as? String ?? "entry", status: status, label: label, id: result["id"] as? String,
-          bytes: (result["bytes"] as? NSNumber)?.int64Value, detail: result["detail"] as? String)
-      }
-    } else {
-      items = ((try? GcPreview(json: json))?.sections ?? []).flatMap { section in
-        section.entries.filter { $0.kept == nil }.map {
-          Item(kind: section.key, status: .done, label: $0.label, id: nil, bytes: $0.bytes, detail: nil)
-        }
-      }
+    var items: [Item] = (object["results"] as? [[String: Any]] ?? []).compactMap { result in
+      guard let status = (result["status"] as? String).flatMap(Status.init(rawValue:)),
+        let label = result["label"] as? String
+      else { return nil }
+      return Item(
+        kind: result["kind"] as? String ?? "entry", status: status, label: label, id: result["id"] as? String,
+        bytes: (result["bytes"] as? NSNumber)?.int64Value, detail: result["detail"] as? String)
     }
     if object["mode"] as? String == "delete" { items += Self.notes(sections) }
     var seen = Set<String>()

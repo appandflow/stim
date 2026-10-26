@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inject } from 'vitest';
-import { AgentDeviceDriver } from '../src/agent-device-driver.ts';
+import { AgentDeviceDriver } from '@stim-cli/agent-driver-agent-device';
 import { adbPath } from '../src/frame-helper.ts';
 
 declare module 'vitest' {

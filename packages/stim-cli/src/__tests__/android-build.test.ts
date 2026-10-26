@@ -1,8 +1,21 @@
+import * as artifacts from '../commands/android/artifact.ts';
+import { execFile } from 'node:child_process';
+import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
+import { testContext } from './_context.ts';
 import { ACTIVE_BUILD_KEY, parseActiveBuild } from '../engine/build-progress.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import * as results from '../commands/android/result.ts';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  promises as fs,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildAndroidOperation } from '../commands/android/build.ts';
@@ -13,8 +26,11 @@ import type { AndroidProject } from '../integrations/android-project.ts';
 import { readBuildHistory } from '@stim-cli/core/state';
 import { cacheEntryProtection } from '../maintenance/protect.ts';
 import { getProject } from '../workspace/config.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+
+let controller = new AbortController();
+const buildContext = () => testContext({ signal: controller.signal });
 
 let scratch: string;
 let root: string;
@@ -100,7 +116,7 @@ beforeEach(() => {
         },
         explain: () => ({ reason: skippedMissReason('fixture has no cached build'), diff: null }),
         untrackedLine: () => null,
-        legacyCache: null,
+        expoCache: null,
         offload: null,
       };
     },
@@ -116,7 +132,7 @@ afterEach(() => {
 });
 
 test('build-only keeps artifacts after temporary cleanup, reuses compatible input and preserves an existing runtime', async () => {
-  const cold = await buildAndroidOperation(root, { abi: 'x86_64', remoteBuild: 'local' });
+  const cold = await buildAndroidOperation(buildContext(), root, { abi: 'x86_64', remoteBuild: 'local' });
   expect(cold).toMatchObject({ androidPackage: 'org.example.native', abi: 'x86_64', cacheHit: false });
   expect(readWorkspaceState(root)).not.toHaveProperty('android');
   expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
@@ -125,8 +141,9 @@ test('build-only keeps artifacts after temporary cleanup, reuses compatible inpu
   writeWorkspaceState(root, { android: existing, lastBuild: running, lastAndroidBuild: running });
   const runningLog = join(workspaceLogsDir(root), 'build-android.ndjson');
   writeFileSync(runningLog, '{"msg":"running app build"}\n');
+  expect(parseWorkspaceLink(cold.links.workspace)).toMatchObject({ platform: 'android' });
   const bytes = readFileSync(cold.apkPath, 'utf8');
-  const warm = await buildAndroidOperation(root, { abi: 'x86_64', remoteBuild: 'local' });
+  const warm = await buildAndroidOperation(buildContext(), root, { abi: 'x86_64', remoteBuild: 'local' });
   expect(warm).toMatchObject({ cacheKey: cold.cacheKey, cacheHit: 'local' });
   expect(compilations).toBe(1);
   expect(readFileSync(warm.apkPath, 'utf8')).toBe(bytes);
@@ -134,12 +151,12 @@ test('build-only keeps artifacts after temporary cleanup, reuses compatible inpu
   expect(temporaryCopies.every((path) => !existsSync(path))).toBe(true);
   expect(readWorkspaceState(root)?.android).toEqual(existing);
   for (const options of [{ abi: 'arm64-v8a' as const }, { abi: 'x86_64' as const, variant: 'release' }]) {
-    const changed = await buildAndroidOperation(root, { ...options, remoteBuild: 'local' });
+    const changed = await buildAndroidOperation(buildContext(), root, { ...options, remoteBuild: 'local' });
     expect(changed.cacheHit).toBe(false);
     expect(changed.cacheKey).not.toBe(cold.cacheKey);
   }
   writeFileSync(join(root, 'Main.kt'), 'edited source');
-  const edited = await buildAndroidOperation(root, { abi: 'x86_64', remoteBuild: 'local' });
+  const edited = await buildAndroidOperation(buildContext(), root, { abi: 'x86_64', remoteBuild: 'local' });
   expect(edited.cacheKey).not.toBe(cold.cacheKey);
   expect(edited.cacheHit).toBe(false);
   expect(compilations).toBe(4);
@@ -154,12 +171,12 @@ test('a failed compiler releases the build claim so recovery works without stopp
   const existing = { serial: 'already-running', devicePlacement: { machine: 'paired-mini' } };
   writeWorkspaceState(root, { android: existing });
   failBuild = true;
-  await expect(buildAndroidOperation(root, { remoteBuild: 'local' })).rejects.toMatchObject({
+  await expect(buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
     code: 'COMPILER_REFUSED',
   });
   expect(readWorkspaceState(root)?.android).toEqual(existing);
   failBuild = false;
-  const recovered = await buildAndroidOperation(root, { remoteBuild: 'local' });
+  const recovered = await buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' });
   expect(existsSync(recovered.apkPath)).toBe(true);
   expect(readWorkspaceState(root)?.android).toEqual(existing);
   expect(compilations).toBe(2);
@@ -169,7 +186,9 @@ function cancelActiveBuild() {
   const active = parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]);
   if (!active) throw new Error('Expected an active claimed build');
   requestNativeRunCancel(root, active.claim.claimId);
-  process.emit('SIGINT');
+  const cancelled = controller;
+  controller = new AbortController();
+  cancelled.abort('SIGINT');
 }
 
 test.each(['compile', 'upload', 'materialize'])(
@@ -179,14 +198,14 @@ test.each(['compile', 'upload', 'materialize'])(
     writeWorkspaceState(root, { android: existing });
     if (during === 'compile') cancelCompile = true;
     else if (during === 'materialize') {
-      await buildAndroidOperation(root, { remoteBuild: 'local' });
+      await buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' });
       cancelMaterialize = true;
     } else
       vi.spyOn(results, 'finishAndroidUpload').mockImplementationOnce(async () => {
         cancelActiveBuild();
         return false;
       });
-    await expect(buildAndroidOperation(root, { remoteBuild: 'local' })).rejects.toMatchObject({
+    await expect(buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
       code: 'STIM_CANCELLED',
     });
     expect(readBuildHistory(readWorkspaceState(root)).android?.[0]).toMatchObject({
@@ -199,8 +218,146 @@ test.each(['compile', 'upload', 'materialize'])(
     expect(temporaryCopies.length > 0).toBe(during === 'materialize');
     cancelCompile = false;
     cancelMaterialize = false;
-    const recovered = await buildAndroidOperation(root, { remoteBuild: 'local' });
+    const recovered = await buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' });
     expect(existsSync(recovered.apkPath)).toBe(true);
     expect(readWorkspaceState(root)?.android).toEqual(existing);
   },
 );
+
+test('cancelling an APK export drains the copy before cleanup and permits recovery', async () => {
+  const existing = { serial: 'already-running' };
+  writeWorkspaceState(root, { android: existing });
+  const copy = fs.copyFile;
+  let began!: (value: boolean) => void;
+  const copying = new Promise<boolean>((resolve) => {
+    began = resolve;
+  });
+  let finish!: () => void;
+  const completion = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let destination = '';
+  vi.spyOn(fs, 'copyFile').mockImplementationOnce(async (...args) => {
+    destination = String(args[1]);
+    await copy(...args);
+    began(true);
+    await completion;
+  });
+  const operation = buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' });
+  let settled = false;
+  void operation.then(
+    () => {
+      return (settled = true);
+    },
+    () => {
+      return (settled = true);
+    },
+  );
+  try {
+    expect(await Promise.race([copying, operation.then(() => false)])).toBe(true);
+    controller.abort('SIGINT');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    expect(existsSync(destination)).toBe(true);
+  } finally {
+    finish();
+  }
+  await expect(operation).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(await fs.readdir(join(workspaceDir(root), 'artifacts'))).toEqual([]);
+  expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])).toBeNull();
+  expect(readBuildHistory(readWorkspaceState(root)).android).toEqual([
+    expect.objectContaining({ result: 'cancelled', errorCode: 'STIM_CANCELLED' }),
+  ]);
+  expect(readWorkspaceState(root)?.android).toEqual(existing);
+  controller = new AbortController();
+  const recovered = await buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' });
+  expect(existsSync(recovered.apkPath)).toBe(true);
+});
+
+test('a first CLI SIGINT during APK export drains the copy and cleanup before exit130', async () => {
+  const script = `
+    const { buildAndroidOperation } = await import(${JSON.stringify(new URL('../commands/android/build.ts', import.meta.url).href)});
+    const { projectRegistry } = await import(${JSON.stringify(new URL('../integrations/projects.ts', import.meta.url).href)});
+    const { runProcessOperation } = await import(${JSON.stringify(new URL('../cli-operation.ts', import.meta.url).href)});
+    const { workspaceDir } = await import(${JSON.stringify(new URL('../workspace/paths.ts', import.meta.url).href)});
+    const { readClaimSet } = await import(${JSON.stringify(new URL('../ownership-claim.ts', import.meta.url).href)});
+    const { promises: fs } = await import('node:fs');
+    const { join } = await import('node:path');
+    const root = process.argv[1];
+    const source = join(root, 'fixture.apk');
+    await fs.writeFile(source, 'fixture APK bytes');
+    projectRegistry.selectAndroid = () => ({ id: 'fixture', load: async () => ({
+      isExpo: false, targets: [], eas: false,
+      appIds: () => ({ androidPackage: 'org.example.native', bundleId: null }),
+      variantProblem: () => null, runtimeKind: () => 'process',
+      artifact: () => ({
+        identity: async () => ({ cacheIneligible: 'fixture' }), cache: () => null,
+        prepare: async () => {}, reconcile: async () => ({ identity: { cacheIneligible: 'fixture' }, rekeyedBy: [], cacheRefusal: null }),
+        validate: async () => ({ cacheIneligible: 'fixture' }),
+        compile: async () => ({ ok: true, apkPath: source, durationMs: 1, lastLines: [] }),
+        untrackedLine: () => null, expoCache: null, offload: null,
+      }),
+    }) });
+    const copy = fs.copyFile;
+    let closed = false;
+    let claimed = false;
+    fs.copyFile = async (...args) => {
+      await copy(...args);
+      claimed = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live.length === 1;
+      process.emit('SIGINT');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      closed = true;
+    };
+    const { value, interrupted } = await runProcessOperation(root, async (context) => {
+      try {
+        await buildAndroidOperation(context, root, { buildCache: false, remoteBuild: 'local' });
+        return { code: 'unexpected-success' };
+      } catch (error) {
+        return { code: error.code, closed, claimed, exports: await fs.readdir(join(workspaceDir(root), 'artifacts')), claims: readClaimSet(join(workspaceDir(root), 'native-run.lock')).live.length };
+      }
+    });
+    process.stdout.write(JSON.stringify(value));
+    process.exitCode = interrupted ?? 0;
+  `;
+  const result = await new Promise<{ code: number | string; stdout: string; stderr: string }>((resolve) => {
+    execFile(
+      process.execPath,
+      ['--experimental-strip-types', '--input-type=module', '-e', script, root],
+      {
+        env: { ...process.env, STIM_HOME: join(scratch, 'cli-state') },
+        timeout: 15_000,
+      },
+      (error, stdout, stderr) => resolve({ code: error?.code ?? 0, stdout, stderr }),
+    );
+  });
+  expect(result.stdout ? JSON.parse(result.stdout) : result.stderr).toEqual({
+    code: 'STIM_CANCELLED',
+    closed: true,
+    claimed: true,
+    exports: [],
+    claims: 0,
+  });
+  expect(result.code).toBe(130);
+}, 20_000);
+
+test('cancellation after exporting the APK still refuses the result and removes the export', async () => {
+  const acquire = artifacts.acquireAndroidArtifact;
+  vi.spyOn(artifacts, 'acquireAndroidArtifact').mockImplementationOnce(async (...args) => {
+    const result = await acquire(...args);
+    if (result.ok) {
+      const release = result.artifact.release.bind(result.artifact);
+      result.artifact.release = async () => {
+        controller.abort('SIGINT');
+        await release();
+      };
+    }
+    return result;
+  });
+  await expect(buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
+    code: 'STIM_CANCELLED',
+  });
+  expect(await fs.readdir(join(workspaceDir(root), 'artifacts'))).toEqual([]);
+  expect(readBuildHistory(readWorkspaceState(root)).android).toEqual([
+    expect.objectContaining({ result: 'cancelled', errorCode: 'STIM_CANCELLED' }),
+  ]);
+});

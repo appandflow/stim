@@ -12,8 +12,7 @@ import XCTest
   private func connection() async throws -> (ServerClient, ArchiveTransport) {
     var socket: ArchiveTransport?
     let client = ServerClient(
-      endpoint: URL(string: "ws://127.0.0.1:7787")!, clientName: "Archive test", clientVersion: "1",
-      auth: { .device(token: "test") },
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Archive test", clientVersion: "1",
       transport: { _, onEvent in
         let next = ArchiveTransport(onEvent: onEvent)
         socket = next

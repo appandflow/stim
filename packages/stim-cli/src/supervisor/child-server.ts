@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { createLineReader } from '../process-output.ts';
+import { cancellableSleep } from '../cancellation.ts';
 
 interface ChildExitInfo {
   code: number | null;
@@ -11,16 +12,10 @@ interface ChildExitInfo {
 export interface ChildServerHandle {
   mode: string;
   serverPid: number | null;
+  observesRequests?: boolean;
   child: ChildProcess;
   onExit(cb: (info: ChildExitInfo | null) => void): void;
   close(): Promise<void>;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    if (typeof timer.unref === 'function') timer.unref();
-  });
 }
 
 export function superviseChildServer({
@@ -98,13 +93,14 @@ export function superviseChildServer({
       const running = () => (alive ? alive() : !exited && Boolean(child.pid));
       const gone = async () => {
         const deadline = Date.now() + killTimeoutMs;
-        while (running() && Date.now() < deadline) await delay(25);
+        while (running() && Date.now() < deadline) await cancellableSleep(25, { ref: false });
         return !running();
       };
-      if (!running() || !signal('SIGTERM')) return;
+      if (!running()) return;
+      signal('SIGTERM');
       if (!(await gone())) {
         signal('SIGKILL');
-        await gone();
+        if (!(await gone())) throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid ?? 'unknown'}.`);
       }
     },
   };

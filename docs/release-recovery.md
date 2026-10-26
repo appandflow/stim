@@ -42,11 +42,13 @@ and `npx stim@1.9.0` failed with E404 until then. The `smoke` job waits up to
   [Stale or wrong dist-tags](#stale-or-wrong-dist-tags).
 - `npx stim@X.Y.Z --version` or `npx -p @stim-cli/server@X.Y.Z stim-server
 --version` that installs but fails or prints another version: the published package is broken. A published version cannot be
-  replaced, so fix it and release a new version.
+  replaced, so fix it and release a new version. First confirm that you ran it from a scratch directory: inside this
+  repository npx runs the workspace's own bin or a `stim` on `PATH` when the version matches the workspace's
+  (RELEASE.md section 4 step 8).
 
 ## Manual publish fallback
 
-For when the workflow cannot run: the same six publishes, by hand and in
+For when the workflow cannot run: the publishes below, by hand and in
 dependency order. `pnpm publish` packs with pnpm, so it substitutes the
 `workspace:` ranges the packages declare -- a bare `npm publish` from a package
 directory would upload them verbatim. Compute the dist-tag exactly as the
@@ -58,9 +60,15 @@ release, in which case `next`. 2FA is on, so each publish prompts for an OTP:
 npm whoami                                          # confirm login; if 401, `npm login` first
 pnpm --filter @stim-cli/core publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/cache publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/cache-s3 publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/agent-driver publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/agent-driver-agent-device publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/metro publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/expo-build-cache publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter stim publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/transport publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/transport-tailscale publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/transport-local publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/server publish --access public --tag <dist-tag> --otp <code>
 ```
 

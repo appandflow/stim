@@ -2,9 +2,10 @@ import Foundation
 
 /// The parts of stim-server's WebSocket protocol (`packages/server/src/protocol.ts`) that Stim Desktop speaks.
 public enum ServerProtocol {
-  public static let version = 1
   /// Error codes that refuse the client until it pairs again or updates; clients retry the others.
-  public static let refusalCodes: Set<String> = ["unauthorized", "pairing-expired", "protocol-unsupported"]
+  public static let refusalCodes: Set<String> = [
+    "unauthorized", "pairing-expired", "protocol-unsupported", "other-server",
+  ]
 }
 
 /// An error answer, or a subscription's `error` event.
@@ -21,24 +22,14 @@ public struct ServerError: Error, Equatable, Sendable, LocalizedError, Decodable
   public var refusesClient: Bool { ServerProtocol.refusalCodes.contains(code) }
 }
 
-/// How `hello` authenticates: a device token from an earlier pairing, or a single-use pairing token to spend.
-public enum ServerAuth: Equatable, Sendable {
-  case device(token: String)
-  case pairing(token: String, deviceName: String)
-
-  var json: JSONValue {
-    switch self {
-    case .device(let token): return .object(["deviceToken": .string(token)])
-    case .pairing(let token, let name): return .object(["pairingToken": .string(token), "deviceName": .string(name)])
-    }
-  }
-}
-
 public struct HelloResult: Decodable, Equatable, Sendable {
   public struct Server: Decodable, Equatable, Sendable {
+    public var id: String?
     public var name: String
     public var version: String
     public var stim: String
+    /// The server's TCP port, sent on the local socket only.
+    public var port: Int?
   }
 
   public struct Device: Decodable, Equatable, Sendable {
@@ -52,13 +43,16 @@ public struct HelloResult: Decodable, Equatable, Sendable {
   /// What the server serves beyond the base protocol, such as `physical-android`; nil from a server older than it.
   public var features: [String]?
   public var device: Device?
-  /// Present only when the hello spent a pairing token.
-  public var deviceToken: String?
+  public var desktopBootstrap: DesktopBootstrapChallenge?
 
   enum CodingKeys: String, CodingKey {
-    case server, capabilities, features, device, deviceToken
+    case server, capabilities, features, device, desktopBootstrap
     case protocolVersion = "protocol"
   }
+
+  /// Whether the server that answered on the socket is the one listening on `port`. Two servers that share a Stim
+  /// home also share its socket path, so the socket can belong to another server than the one Desktop adopted.
+  public func isServer(onPort port: Int) -> Bool { server.port == port }
 }
 
 /// A device slot of a workspace, as `replay.range` and `frames.subscribe` name it.

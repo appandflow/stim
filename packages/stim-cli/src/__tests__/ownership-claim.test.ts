@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import {
+  claimFailure,
   claimLiveness,
   claimRemoveCommand,
   clearClaimChild,
@@ -42,7 +43,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true });
+  rmSync(dirname(root), { recursive: true, force: true });
 });
 
 describe('exclusive claims', () => {
@@ -224,7 +225,7 @@ describe('refusing instead of guessing', () => {
             const err = refusal(() => tryAcquireClaim({ root: blocked, mode }));
             expect(err.claimPath).toBe(blocker);
             expect(err.removeCommand).toMatch(/^mv -i /);
-            getExecutor().run(err.removeCommand);
+            getExecutor().run(err.removeCommand, { timeoutMs: 60_000 });
             expect(readFileSync(`${blocker}.stim-backup`, 'utf8')).toBe('unrelated contents');
             expect(readFileSync(bystander, 'utf8')).toBe('keep');
             const acquired = tryAcquireClaim({ root: blocked, mode }).acquired;
@@ -249,12 +250,12 @@ describe('refusing instead of guessing', () => {
             const planted = plantClaim(set, 'exclusive', { pid: 4242, processToken: 'not-a-token' });
             const err = refusal(() => tryAcquireClaim({ root: set, mode: 'exclusive' }));
             expect(err.removeCommand).toBe(claimRemoveCommand(planted));
-            getExecutor().run(err.removeCommand);
+            getExecutor().run(err.removeCommand, { timeoutMs: 60_000 });
             expect(existsSync(planted)).toBe(false);
             expect(existsSync(join(bystander, 'artifact'))).toBe(true);
             expect(tryAcquireClaim({ root: set, mode: 'exclusive' }).acquired).toBeTruthy();
 
-            getExecutor().run(claimRemoveCommand(set));
+            getExecutor().run(claimRemoveCommand(set), { timeoutMs: 60_000 });
             expect(existsSync(set)).toBe(false);
             expect(existsSync(join(bystander, 'artifact'))).toBe(true);
           }
@@ -370,8 +371,9 @@ describe('shared and exclusive', () => {
 describe('a claim whose work runs in a spawned process group', () => {
   test.skipIf(process.platform === 'win32')(
     'the claim stays held while a descendant of the recorded child is alive, and is reaped once the group exits (POSIX process groups; skipped on win32)',
-    async () => {
+    async ({ onTestFinished }) => {
       const dir = mkdtempSync(join(tmpdir(), 'stim-claim-group-'));
+      onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
       const leader = join(dir, 'leader.mjs');
       const pidFile = join(dir, 'grandchild.pid');
       writeFileSync(
@@ -598,5 +600,14 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('claimFailure', () => {
+  test('an unavailable claim without a remedy still gives a retry instruction', () => {
+    const error = Object.assign(new Error('Cannot verify the child.'), { code: 'STIM_CLAIM_UNAVAILABLE' });
+    const failure = claimFailure(error, 'stim gc');
+    expect(failure?.remedy).not.toContain('undefined');
+    expect(failure?.remedy).toContain('`stim gc`');
   });
 });

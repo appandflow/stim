@@ -1,8 +1,11 @@
+import { runOperationFile } from '../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { ambientEnv, ambientWrite, type StimContext } from '@stim-cli/core';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
 import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
-import { phaseLine } from '../command-output.ts';
+import { phaseLine, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
 import { agentDeviceDaemon, readAgentDeviceRecords } from './activity.ts';
 
@@ -88,7 +91,7 @@ function canonical(path: string): string | null {
 }
 
 function deviceClaims(device: Device): SessionClaim[] {
-  return readAgentDeviceRecords(homedir())
+  return readAgentDeviceRecords(ambientEnv().HOME || ambientEnv().USERPROFILE || homedir(), ambientEnv())
     .filter((record) => record.kind === 'claim' && (device.id === null || record.deviceId === device.id))
     .map((record) => ({
       deviceId: record.deviceId,
@@ -97,33 +100,45 @@ function deviceClaims(device: Device): SessionClaim[] {
     }));
 }
 
+class AgentDeviceRefusal extends Error {
+  reason?: string;
+  stateDir?: string;
+}
+
 // agent-device writes its failure as a JSON envelope on stdout and exits non-zero, so the thrown
 // `Command failed` text carries none of its reason.
 function explainFailure(error: unknown): Error {
   const stdout = (error as { stdout?: unknown } | null)?.stdout;
-  let failure: { message?: unknown; details?: { reason?: unknown } } | undefined;
+  let failure: { message?: unknown; details?: { reason?: unknown; stateDir?: unknown } } | undefined;
   try {
     failure = typeof stdout === 'string' ? JSON.parse(stdout)?.error : undefined;
   } catch {
     failure = undefined;
   }
   if (typeof failure?.message !== 'string' || !failure.message) return error as Error;
-  const reason = typeof failure.details?.reason === 'string' ? ` (${failure.details.reason})` : '';
-  return new Error(`agent-device refused: ${failure.message}${reason}`);
+  const reason = typeof failure.details?.reason === 'string' ? failure.details.reason : undefined;
+  const stateDir = typeof failure.details?.stateDir === 'string' ? failure.details.stateDir : undefined;
+  const refusal = new AgentDeviceRefusal(`agent-device refused: ${failure.message}${reason ? ` (${reason})` : ''}`);
+  refusal.reason = reason;
+  refusal.stateDir = stateDir;
+  return refusal;
 }
 
 function report(message: string): void {
-  process.stderr.write(`${phaseLine('device', message)}\n`);
+  ambientWrite('stderr', `${phaseLine('device', message)}\n`);
 }
 
-export function closeOwnedDeviceSessions(
+export async function closeOwnedDeviceSessions(
   device: Device,
-  stillOwned: (id: string) => boolean,
+  stillOwned: (id: string) => boolean | Promise<boolean>,
   workspace?: string,
   repoRoot?: string,
-): void {
+  operation?: StimContext,
+  reportedBusy: Set<string> = new Set<string>(),
+): Promise<void> {
   const exec = getExecutor();
   try {
+    operation?.signal.throwIfAborted();
     if (!exec.findExecutable('agent-device')) return;
     const root = workspace === undefined ? undefined : canonical(workspace);
     if (root === null) return;
@@ -136,13 +151,16 @@ export function closeOwnedDeviceSessions(
       undefined,
       ...(stateDir && !['none', 'dead'].includes(agentDeviceDaemon(stateDir)) ? [stateDir] : []),
     ];
+    const busy = new Set<string>();
     for (const dir of stateDirs) {
       const deadline = Date.now() + 15000;
-      const run = (args: string[]) => {
+      const run = async (args: string[]) => {
         const remaining = deadline - Date.now();
         if (remaining <= 0) throw new Error('agent-device cleanup timed out');
         try {
-          return exec.runFile(
+          return await runOperationFile(
+            operation,
+            exec,
             'agent-device',
             [...args, ...(dir ? ['--state-dir', dir] : []), '--json', '--daemon-transport', 'socket'],
             {
@@ -151,16 +169,20 @@ export function closeOwnedDeviceSessions(
             },
           );
         } catch (error) {
+          if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+            throw error;
+          operation?.signal.throwIfAborted();
           throw explainFailure(error);
         }
       };
-      const list = () => parseAgentDeviceSessions(run(['session', 'list', '--session', 'stim-teardown-inventory']));
+      const list = async () =>
+        parseAgentDeviceSessions(await run(['session', 'list', '--session', 'stim-teardown-inventory']));
       try {
-        const sessions = list().filter((session) => isOwnDeviceSession(session, device, owner));
+        const sessions = (await list()).filter((session) => isOwnDeviceSession(session, device, owner));
         for (const session of sessions) {
           try {
             if (
-              !list().some(
+              !(await list()).some(
                 (current) =>
                   current.name === session.name &&
                   current.platform === session.platform &&
@@ -169,9 +191,9 @@ export function closeOwnedDeviceSessions(
               )
             )
               continue;
-            if (!stillOwned(session.id)) continue;
+            if (!(await stillOwned(session.id))) continue;
             const result = JSON.parse(
-              run([
+              await run([
                 'close',
                 '--session',
                 session.name,
@@ -186,18 +208,38 @@ export function closeOwnedDeviceSessions(
             if (result?.success !== true) throw new Error('agent-device did not confirm session close');
             report(`closed agent-device session ${session.name} on ${session.id}`);
           } catch (error) {
+            if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+              throw error;
+            operation?.signal.throwIfAborted();
             report(
               `could not close agent-device session ${session.name} on ${session.id}: ${(error as Error).message}`,
             );
           }
         }
       } catch (error) {
-        report(
-          `could not list agent-device sessions for ${device.platform === 'ios' ? device.id : (device.id ?? device.avdName)}: ${(error as Error).message}`,
-        );
+        if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+          throw error;
+        operation?.signal.throwIfAborted();
+        if (error instanceof AgentDeviceRefusal && error.reason === 'daemon-busy')
+          busy.add(error.stateDir ?? dir ?? '');
+        else
+          report(
+            `could not list agent-device sessions for ${device.platform === 'ios' ? device.id : (device.id ?? device.avdName)}: ${(error as Error).message}`,
+          );
       }
     }
+    const unreported = [...busy].filter((dir) => !reportedBusy.has(dir));
+    if (unreported.length > 0) {
+      for (const dir of unreported) reportedBusy.add(dir);
+      const stop = unreported.map((dir) => `agent-device daemon stop${dir ? ` --state-dir ${quotedPath(dir)}` : ''}`);
+      report(
+        `agent-device daemon is busy, so Stim did not check it for sessions on ${device.platform === 'ios' ? device.id : (device.id ?? device.avdName)}; any that name the device stay open until the daemon is idle or, if it is yours, stopped with ${stop.join(' and ')}`,
+      );
+    }
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
     report(
       `could not list agent-device sessions for ${device.platform === 'ios' ? device.id : (device.id ?? device.avdName)}: ${(error as Error).message}`,
     );

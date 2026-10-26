@@ -8,8 +8,10 @@ import StimStores
 final class TipCoordinator: ObservableObject {
   @Published private(set) var topic: TipTopic?
   @Published private(set) var hasNext = false
+  @Published private(set) var position = 0
+  @Published private(set) var total = 0
   @Published private(set) var established = false
-  var suppressed = false {
+  var suppressed = true {
     didSet { if suppressed != oldValue { evaluate() } }
   }
   private let status: StatusStore
@@ -78,7 +80,7 @@ final class TipCoordinator: ObservableObject {
   private func trackMachines() {
     withObservationTracking {
       _ = machines.entries
-      _ = machines.macs
+      _ = machines.peers
       _ = machines.settings.payload
       _ = machines.settings.error
     } onChange: { [weak self] in
@@ -106,10 +108,11 @@ final class TipCoordinator: ObservableObject {
       inputs.machines = machines.entries
       inputs.hosting = machines.settings.payload.map { $0.entry("remote.machines")?.value.strings ?? [] }
     }
-    inputs.macs = machines.macs
+    inputs.peers = machines.peers
     inputs.pairedPhones = ServerController.shared.pairedPhoneCount
     inputs.phoneApp = FeatureFlags.isEnabled(.phoneApp)
     inputs.tutorialCompleted = tutorial.completed
+    inputs.tutorialOffered = AppPreferences.offersTutorial(defaults)
     inputs.sidebar = SidebarPreferences().options
     inputs.rows = status.sidebarList(inputs.sidebar).count
     inputs.workspaces = status.payload?.environments ?? []
@@ -120,7 +123,7 @@ final class TipCoordinator: ObservableObject {
     return inputs
   }
 
-  private func evaluate(next: Bool = false) {
+  private func evaluate(direction: Tips.Direction? = nil) {
     let now = Date()
     let calendar = Calendar.current
     let inputs = inputs
@@ -137,23 +140,31 @@ final class TipCoordinator: ObservableObject {
     var state = persistence.state
     var selected: TipTopic?
     var showsNext = false
+    var available: [TipTopic] = []
     if Tips.visible(
       gate: gate, noticeCount: NoticeCenter.shared.notices.count, closedDay: state.closedDay, now: now,
       calendar: calendar)
     {
-      selected =
-        next
-        ? Tips.next(inputs: inputs, state: &state, discoveries: discovery.states, now: now, calendar: calendar)
-        : Tips.select(inputs: inputs, state: &state, discoveries: discovery.states, now: now, calendar: calendar)
+      if let direction {
+        selected = Tips.move(
+          direction: direction, inputs: inputs, state: &state, discoveries: discovery.states, now: now, calendar: calendar)
+      } else {
+        selected = Tips.select(inputs: inputs, state: &state, discoveries: discovery.states, now: now, calendar: calendar)
+      }
       persistence.state = state
-      showsNext =
-        Tips.available(inputs: inputs, state: state, discoveries: discovery.states, now: now, calendar: calendar).count > 1
+      available = Tips.available(inputs: inputs, state: state, discoveries: discovery.states, now: now, calendar: calendar)
+      showsNext = available.count > 1
     }
+    let position = selected.flatMap { available.firstIndex(of: $0) }.map { $0 + 1 } ?? 0
+    if self.position != position { self.position = position }
+    if total != available.count { total = available.count }
     if topic != selected { topic = selected }
     if hasNext != showsNext { hasNext = showsNext }
   }
 
-  func next() { evaluate(next: true) }
+  func next() { evaluate(direction: .forward) }
+
+  func previous() { evaluate(direction: .backward) }
 
   func close() {
     persistence.close(now: Date(), calendar: .current)
@@ -165,7 +176,8 @@ final class TipCoordinator: ObservableObject {
     switch topic {
     case .buildMachine, .hostedSimulators:
       OpenRequests.shared.addMachine = AddMachineRequest(
-        machineID: Tips.firstMac(machines.macs)?.id, hostedSimulators: topic == .hostedSimulators)
+        machineID: Tips.preselected(machines.peers, hostedSimulators: topic == .hostedSimulators)?.id,
+        hostedSimulators: topic == .hostedSimulators)
     case .phone: OpenRequests.shared.pairsPhone = true
     case .tutorial: OpenRequests.shared.showTutorial()
     case .replay:

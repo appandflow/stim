@@ -3,12 +3,12 @@ import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim
 import { formatBytes } from '../fs-util.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 
-export function maintenanceStatus(): MaintenanceStatus {
+export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): MaintenanceStatus {
   const state = readMaintenanceState();
   const claims = readClaimSet(maintenanceRunClaims());
   const holder = claims.live[0];
   const unresolved = claims.unresolved[0];
-  const settings = resolveMaintenanceSettings();
+  const settings = resolveMaintenanceSettings(undefined, env);
   return {
     mode: settings.mode,
     ...(settings.invalid ? { invalid: settings.invalid } : {}),
@@ -58,13 +58,17 @@ export function maintenanceLine(status: MaintenanceStatus, includeLabel = true):
   const disk = status.pressure?.disk
     .map((volume) => `disk ${(volume.freeMb / 1024).toFixed(1)} GB free on ${volume.volume}`)
     .join(', ');
+  const devices = status.sizes.filter((size) => size.category === 'owned-devices');
+  const deviceDisk = devices.length
+    ? `owned devices ${formatBytes(devices.reduce((sum, size) => sum + size.bytes, 0))}`
+    : null;
   const culprits = (status.mode === 'off' ? undefined : status.pressure?.memory.culprits)
     ?.map(
       (culprit) =>
         `${culprit.name} uses ${formatBytes(culprit.bytes)}${culprit.command ? ` (\`${culprit.command}\`)` : ''}`,
     )
     .join(', ');
-  return `${includeLabel ? `Auto maintenance (${status.mode === 'report' ? 'report only' : status.mode}): ` : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${culprits ? `; memory: ${culprits}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
+  return `${includeLabel ? `Auto maintenance (${status.mode === 'report' ? 'report only' : status.mode}): ` : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${deviceDisk ? `; ${deviceDisk}` : ''}${status.pressure?.diskLevel ? `; disk pressure level ${status.pressure.diskLevel}` : ''}${culprits ? `; memory: ${culprits}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
 }
 
 export function maintenanceLines(status: MaintenanceStatus): string[] {

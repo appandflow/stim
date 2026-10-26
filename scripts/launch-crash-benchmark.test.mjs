@@ -11,9 +11,92 @@ import {
 } from './launch-crash-benchmark.mjs';
 
 describe('launch crash benchmark', () => {
+  it.each(['ios', 'android'])(
+    'accepts literal temp-dir prefixes while retaining crash evidence gates on %s',
+    (platform) => {
+      const token = launchCrashToken('env-prefix-diagnosis');
+      const commands = [
+        {
+          id: 'warm',
+          command: 'env STIM_TMPDIR=/tmp/run stim worktree warm',
+          exitCode: 0,
+          startedAt: '2026-09-04T12:00:00Z',
+          endedAt: '2026-09-04T12:00:01Z',
+          output: '',
+        },
+        {
+          id: 'launch',
+          command: `env TMPDIR='/tmp/quoted path' STIM_TMPDIR=/tmp/run stim ${platform}`,
+          exitCode: 0,
+          startedAt: '2026-09-04T12:00:02Z',
+          endedAt: '2026-09-04T12:00:10Z',
+          output: 'launched',
+        },
+        {
+          id: 'logs',
+          command: 'env STIM_TMPDIR=/tmp/run stim logs --errors',
+          exitCode: 0,
+          startedAt: '2026-09-04T12:00:11Z',
+          endedAt: '2026-09-04T12:00:15Z',
+          output: `ERROR ${token}\nRootLayout (app/_layout.tsx:27:18)`,
+        },
+      ];
+      const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm: 'stim', platform, initialLaunchCapture: true };
+      expect(launchCrashDiagnosis(commands, options)).toMatchObject({
+        valid: true,
+        commandId: 'logs',
+        errorCaptureCommandId: 'logs',
+        dispatchToDiagnosisSeconds: 15,
+      });
+      expect(launchCrashDiagnosis([...commands.slice(0, 2), { ...commands[2], exitCode: 1 }], options)).toMatchObject({
+        valid: false,
+        reason: 'launch-crash-error-capture-missing',
+      });
+      for (const prefix of [
+        'env STIM_TMPDIR="$TMPDIR"',
+        'env PATH=/tmp/bin',
+        'env STIM_HOME=/tmp/home',
+        'env NODE_OPTIONS=--require=/tmp/hook',
+        'env -i TMPDIR=/tmp/run',
+      ]) {
+        expect(
+          launchCrashDiagnosis(
+            [...commands.slice(0, 2), { ...commands[2], command: `${prefix} stim logs --errors` }],
+            options,
+          ),
+        ).toMatchObject({ valid: false, reason: 'launch-crash-error-capture-missing' });
+        expect(
+          launchCrashDiagnosis(
+            [commands[0], { ...commands[1], command: `${prefix} stim ${platform}` }, commands[2]],
+            options,
+          ),
+        ).toMatchObject({ valid: false });
+      }
+      expect(
+        launchCrashDiagnosis(
+          [
+            commands[0],
+            commands[1],
+            {
+              id: 'read',
+              command: 'cat app/_layout.tsx',
+              exitCode: 0,
+              startedAt: '2026-09-04T12:00:10Z',
+              endedAt: '2026-09-04T12:00:11Z',
+              output: token,
+            },
+            commands[2],
+          ],
+          options,
+        ),
+      ).toMatchObject({ valid: false, reason: 'launch-crash-pre-capture-command-not-allowed', commandId: 'read' });
+    },
+  );
   it.each([
     ['stim', 'ios', 'stim ios', 'stim logs --errors'],
     ['stim', 'android', 'stim android', 'stim logs --errors'],
+    ['stim', 'ios', "env TMPDIR='/tmp/ios run' stim ios", 'env STIM_TMPDIR=/tmp/run stim logs --errors'],
+    ['stim', 'android', 'env STIM_TMPDIR=/tmp/run stim android', "env TMPDIR='/tmp/android run' stim logs --errors"],
     ['control', 'ios', 'npx expo run:ios', 'tail -40 /tmp/metro.log'],
     ['control', 'android', 'npx expo run:android', 'adb -s emulator-5554 logcat -d'],
   ])(
@@ -169,6 +252,81 @@ describe('launch crash benchmark', () => {
     expect(launchCrashDiagnosis([launch, { ...logs, exitCode: 1 }], options).valid).toBe(false);
     expect(
       launchCrashDiagnosis([{ ...launch, id: 'source', command: 'cat app/_layout.tsx' }, launch, logs], options),
+    ).toMatchObject({ valid: false, reason: 'launch-crash-pre-capture-command-not-allowed' });
+  });
+  it.each([
+    ['stim', 'ios'],
+    ['stim', 'android'],
+    ['control', 'ios'],
+    ['control', 'android'],
+  ])('attributes runtime error snapshots to the verified %s/%s session', (arm, platform) => {
+    const token = launchCrashToken('runtime-ui');
+    const prefix = 'env AGENT_DEVICE_STATE_DIR=/state AGENT_DEVICE_SESSION=run-1 agent-device';
+    const expected = {
+      command: `${prefix} open com.app --foreground --platform ${platform} ${platform === 'ios' ? '--udid U1' : '--serial emulator-5554'}`,
+      snapshotCommand: `${prefix} snapshot -i`,
+      appId: 'com.app',
+      sessionState: '/state/sessions/run-1',
+    };
+    const launch = {
+      id: 'open',
+      command: expected.command,
+      output: 'Opened: com.app\nSession state: /state/sessions/run-1',
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:01Z',
+      endedAt: '2026-09-04T12:00:05Z',
+    };
+    const snapshot = {
+      id: 'snapshot',
+      command: expected.snapshotCommand,
+      output: `App: com.app\n@e1 [other] "Render Error"\n@e2 [text] "${token}"\n@e3 [other] "RootLayout, _layout.tsx:27:18"`,
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:06Z',
+      endedAt: '2026-09-04T12:00:10Z',
+    };
+    const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm, platform, agentDeviceLaunch: expected };
+    const source = {
+      id: 'source',
+      command: 'cat app/_layout.tsx',
+      output: token,
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:11Z',
+      endedAt: '2026-09-04T12:00:12Z',
+    };
+    for (const command of [snapshot.command, `/bin/zsh -lc '${snapshot.command}'`]) {
+      expect(launchCrashDiagnosis([launch, { ...snapshot, command }, source], options)).toMatchObject({
+        valid: true,
+        commandId: 'snapshot',
+        errorCaptureCommandId: 'snapshot',
+        dispatchToDiagnosisSeconds: 10,
+      });
+    }
+    for (const replacement of [
+      { ...snapshot, command: snapshot.command.replace('run-1', 'other') },
+      { ...snapshot, command: snapshot.command.replace('/state', '/other') },
+      { ...snapshot, command: `echo '${snapshot.command}'` },
+      { ...snapshot, command: `${snapshot.command} && true` },
+      { ...snapshot, exitCode: 1 },
+      { ...snapshot, exitCode: null },
+      { ...snapshot, output: snapshot.output.replace('App: com.app', 'App: com.other') },
+      { ...snapshot, output: snapshot.output.replace(token, 'other-error') },
+      { ...snapshot, output: snapshot.output.replace('Render Error', 'Details') },
+      { ...snapshot, output: snapshot.output.replace('RootLayout, _layout.tsx:27:18', 'unknown location') },
+      { ...snapshot, startedAt: '2026-09-04T12:00:04Z' },
+    ])
+      expect(launchCrashDiagnosis([launch, replacement], options).valid).toBe(false);
+    expect(
+      launchCrashDiagnosis([launch, snapshot], {
+        ...options,
+        agentDeviceLaunch: { ...expected, snapshotCommand: undefined },
+      }).valid,
+    ).toBe(false);
+    expect(launchCrashDiagnosis([{ ...launch, output: 'Opened: com.other' }, snapshot], options).valid).toBe(false);
+    expect(
+      launchCrashDiagnosis(
+        [launch, { ...source, startedAt: '2026-09-04T12:00:05Z', endedAt: '2026-09-04T12:00:06Z' }, snapshot],
+        options,
+      ),
     ).toMatchObject({ valid: false, reason: 'launch-crash-pre-capture-command-not-allowed' });
   });
   it('requires explicit coordinator review for diagnostics falsely flagged as source inspection', () => {
@@ -366,6 +524,8 @@ done`;
       copy,
       `printf 'no\\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd -n Trailhead_run -k 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a'`,
       'printenv ANDROID_AVD_HOME',
+      `echo 'hw.keyboard=yes' >> ${setup.avdConfig}`,
+      `printf 'hw.keyboard=yes\\n' >> "${setup.avdConfig}"`,
       `rg '^disk\\.dataPartition\\.size=' ${setup.avdConfig} || true`,
       '"$ANDROID_HOME/emulator/emulator" -avd Trailhead_run 2>&1 | tee /tmp/emulator.log',
       './node_modules/.bin/expo start --dev-client --port 8081 2>&1 | tee /tmp/metro.log',
@@ -562,6 +722,9 @@ done`;
       './node_modules/.bin/expo start | tee /tmp/metro.log; cat package.json',
       './node_modules/.bin/expo start --port $(cat private-port) | tee /tmp/metro.log',
       'rg anything /tmp/other.avd/config.ini',
+      "echo 'hw.keyboard=yes' >> /tmp/other.avd/config.ini",
+      `echo 'hw.keyboard=no' >> ${setup.avdConfig}`,
+      `echo 'hw.keyboard=yes' >> ${setup.avdConfig}; cat package.json`,
       `cat package.json ${setup.avdConfig}`,
       `rg -n . package.json ${setup.avdConfig}`,
       `tool:file_change ${JSON.stringify([{ path: '/tmp/other.avd/config.ini', kind: 'update' }])}`,

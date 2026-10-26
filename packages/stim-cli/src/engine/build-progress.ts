@@ -6,15 +6,18 @@ import { clearWorkspaceStateKey, updateWorkspaceState } from '../workspace/works
 import { readStats, type RunHistory, type RunOutcomeKind, type RunSample } from './stats.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createBuildDetailParser } from './build-detail.ts';
+import { writeBuildLedger } from './build-ledger.ts';
 import {
   BUILD_HISTORY_KEY,
   BUILD_HISTORY_LIMIT,
   BUILD_PHASES,
   LAST_BUILD_KEYS,
   isJsonObject,
+  loadPerCore,
   parseMissReason,
   workspaceBuildDetailFile,
   type ActiveBuildState,
+  type BuildActivity,
   type BuildDetail,
   type BuildMissReason,
   type BuildPhase,
@@ -23,7 +26,9 @@ import {
   type BuildReport,
   type BuildWaitingFor,
   type BuildResult,
+  type MetroBundleState,
   type PlannedPhase,
+  trace,
   type WorkspaceState,
 } from '@stim-cli/core/state';
 
@@ -49,6 +54,8 @@ export interface ActiveBuildRecord {
   missReason?: BuildMissReason;
   missProvisional?: true;
   placement?: Exclude<BuildPlacement, 'local'>;
+  /** The build machine the run offloaded to and the time spent in each of its finished phases there. */
+  offload?: { host: string; phaseMs: Record<string, number> };
   /** The workspace whose identical build this run waits on, while its phase is `wait`. */
   waitingOn?: { path: string };
   waitingFor?: BuildWaitingFor;
@@ -58,6 +65,12 @@ export interface ActiveBuildRecord {
   outcome?: RunOutcomeKind;
   /** The estimate the run made when it knew its project, and again when it knew its outcome. */
   estimate?: BuildEstimate;
+  /** What the current `device` or `launch` phase waits on; a phase change clears it. */
+  activity?: Omit<BuildActivity, 'percent'>;
+  /** This machine's 5-minute load per core when the run started. */
+  loadPerCore?: number;
+  /** When the run's first owned-device boot started, and the load per core then. */
+  boot?: { startedAt: string; loadPerCore: number };
 }
 
 /**
@@ -74,6 +87,8 @@ export interface BuildEstimate {
 
 export interface BuildProgress {
   step(phase: BuildPhase): void;
+  /** Records what the current phase waits on, from the evidence recorded at `at`; null when it no longer waits on one. */
+  activity(name: BuildActivity['name'] | null, at?: number): void;
   /** Estimates the run from the recent runs of the project with `projectKey`, and again once its outcome is known. */
   estimate(projectKey: string): void;
   /**
@@ -87,14 +102,18 @@ export interface BuildProgress {
   deviceSetup(setup: boolean | undefined): void;
   /** What `deviceSetup` recorded, or undefined before the run knows. */
   deviceSetupKnown(): boolean | undefined;
-  /** Records the remote Mac the run compiles on and its phase there; null when it compiles here again. */
+  /** Records the remote machine the run compiles on and its phase there; null when it compiles here again. */
   place(remote: { host: string; phase: string } | null): void;
   /** Records the workspace root whose build of the same artifact the run waits on; null when it is not known. */
   waitingOn(root: string | null): void;
   waitingFor(info: BuildWaitingFor | null, kind?: BuildWaitingFor['kind']): void;
+  /** Records that the run's owned-device boot starts now; a later boot of the same run keeps the first. */
+  bootStarted(): void;
   /** Reads one record the run writes to its build log, for the native tool's progress. */
   output(record: unknown): void;
   durations(): Record<string, number>;
+  /** The phase the run is in, or null when the run reports no progress. */
+  phase(): BuildPhase | null;
   /** The SwiftPM step total the build reported, or null when it reported none. */
   steps(): number | null;
   clear(): void;
@@ -102,6 +121,7 @@ export interface BuildProgress {
 
 export const NO_BUILD_PROGRESS: BuildProgress = {
   step: () => {},
+  activity: () => {},
   estimate: () => {},
   miss: () => {},
   hit: () => {},
@@ -110,8 +130,10 @@ export const NO_BUILD_PROGRESS: BuildProgress = {
   place: () => {},
   waitingOn: () => {},
   waitingFor: () => {},
+  bootStarted: () => {},
   output: () => {},
   durations: () => ({}),
+  phase: () => null,
   steps: () => null,
   clear: () => {},
 };
@@ -138,6 +160,36 @@ export function tapBuildLog(writer: NdjsonWriter, progress: BuildProgress): Ndjs
       return writer.lastError;
     },
   };
+}
+
+export function runFailureRecord({
+  code,
+  message,
+  phase,
+}: {
+  code?: string | null;
+  message?: string | null;
+  phase: BuildPhase | null;
+}): Record<string, unknown> {
+  return {
+    src: 'build',
+    level: 'error',
+    event: 'run_failed',
+    ...(code ? { code } : {}),
+    ...(phase ? { phase } : {}),
+    msg: [code, message].filter(Boolean).join(': ') || 'the run failed',
+  };
+}
+
+export function thrownRunFailureRecord(error: unknown, phase: BuildPhase | null): Record<string, unknown> {
+  return runFailureRecord({
+    code:
+      typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+        ? error.code
+        : undefined,
+    message: error instanceof Error ? error.message : String(error),
+    phase,
+  });
 }
 
 const DETAIL_WRITE_MS = 2000;
@@ -179,6 +231,7 @@ export function startBuildProgress({
   slot,
   claim,
   now = Date.now,
+  load = () => loadPerCore().loadPerCore,
   note = () => {},
 }: {
   root: string;
@@ -186,6 +239,7 @@ export function startBuildProgress({
   slot: string;
   claim: ClaimHandle;
   now?: () => number;
+  load?: () => number;
   note?: (line: string) => void;
 }): BuildProgress {
   const startedAt = new Date(now()).toISOString();
@@ -197,6 +251,7 @@ export function startBuildProgress({
     phaseStartedAt: startedAt,
     phases: [{ phase: 'prepare', startedAt }],
     claim: { root: claim.root, path: claim.path, claimId: claim.claimId, pid: claim.owner.pid },
+    loadPerCore: load(),
   };
   let warned = false;
   const guard = (fn: () => void): void => {
@@ -211,6 +266,8 @@ export function startBuildProgress({
   const write = (before: (state: WorkspaceState) => WorkspaceState = (state) => state) =>
     guard(() => updateWorkspaceState(root, (state) => ({ ...before(state), [ACTIVE_BUILD_KEY]: record })));
   write(withInterruptedBuild);
+  const phases = trace.phases(`${platform} build`);
+  phases.enter('prepare');
   let projectKey: string | null = null;
   const parser = createBuildDetailParser();
   let detailWrittenAt = -Infinity;
@@ -234,9 +291,17 @@ export function startBuildProgress({
       record.phase = phase;
       record.phaseStartedAt = at;
       record.phases.push({ phase, startedAt: at });
+      phases.enter(phase);
       if (phase !== 'wait') delete record.waitingOn;
+      delete record.activity;
       const outcome = record.outcome || platform === 'macos' ? null : settledOutcome(phase, record.phases);
       if (outcome) settle(outcome);
+      write();
+    },
+    activity(name, at) {
+      if ((record.activity?.name ?? null) === name) return;
+      if (name) record.activity = { name, startedAt: new Date(at ?? now()).toISOString() };
+      else delete record.activity;
       write();
     },
     estimate(key) {
@@ -276,12 +341,13 @@ export function startBuildProgress({
     },
     place(remote) {
       const current = record.placement;
+      if (remote && current?.host === remote.host && current.phase === remote.phase) return;
+      if (current) record.offload = withOffloadPhase(record.offload, current, now());
       if (!remote) {
         if (!current) return;
         delete record.placement;
         return write();
       }
-      if (current?.host === remote.host && current.phase === remote.phase) return;
       const at = new Date(now()).toISOString();
       record.placement = {
         host: remote.host,
@@ -298,6 +364,11 @@ export function startBuildProgress({
       const first = [...waits.values()].toSorted((a, b) => Date.parse(a.since) - Date.parse(b.since))[0];
       if (first) record.waitingFor = first;
       else delete record.waitingFor;
+      write();
+    },
+    bootStarted() {
+      if (record.boot) return;
+      record.boot = { startedAt: new Date(now()).toISOString(), loadPerCore: load() };
       write();
     },
     waitingOn(holder) {
@@ -321,11 +392,15 @@ export function startBuildProgress({
     durations() {
       return phaseDurations(record.phases, now());
     },
+    phase() {
+      return record.phase;
+    },
     steps() {
       const detail = parser.detail('');
       return detail?.unit === 'steps' ? detail.total : null;
     },
     clear() {
+      phases.end();
       if (detailTimer) clearTimeout(detailTimer);
       detailTimer = null;
       guard(() => rmSync(workspaceBuildDetailFile(root), { force: true }));
@@ -338,6 +413,18 @@ export function startBuildProgress({
       });
     },
   };
+}
+
+/** `offload` with the time `placement` has spent in its current phase as of `now` added to that phase. */
+export function withOffloadPhase(
+  offload: ActiveBuildRecord['offload'],
+  placement: Exclude<BuildPlacement, 'local'>,
+  now: number,
+): NonNullable<ActiveBuildRecord['offload']> {
+  const phaseMs = { ...offload?.phaseMs };
+  const ms = Math.max(0, now - Date.parse(placement.phaseStartedAt));
+  if (Number.isFinite(ms)) phaseMs[placement.phase] = (phaseMs[placement.phase] ?? 0) + ms;
+  return { host: placement.host, phaseMs };
 }
 
 function phaseDurations(phases: ActiveBuildRecord['phases'], now: number): Record<string, number> {
@@ -400,22 +487,63 @@ function finishedResult(record: Record<string, unknown>): BuildResult {
 
 export function recordFinishedBuild(
   root: string,
-  record: Record<string, unknown>,
+  recorded: Record<string, unknown>,
   {
     update = updateWorkspaceState,
     now = Date.now,
     artifactOnly = false,
-  }: { update?: typeof updateWorkspaceState; now?: () => number; artifactOnly?: boolean } = {},
+    ledger = writeBuildLedger,
+  }: {
+    update?: typeof updateWorkspaceState;
+    now?: () => number;
+    artifactOnly?: boolean;
+    ledger?: typeof writeBuildLedger;
+  } = {},
+): void {
+  const { ledger: extras, ...record } = recorded;
+  const ran: Partial<Parameters<typeof writeBuildLedger>[1]> = {};
+  try {
+    updateFinishedBuild(root, record, ran, { update, now, artifactOnly });
+  } finally {
+    ledger(root, {
+      now: now(),
+      outcome: finishedResult(record),
+      record,
+      extras: isJsonObject(extras) ? extras : {},
+      phases: {},
+      phase: null,
+      ...ran,
+    });
+  }
+}
+
+function updateFinishedBuild(
+  root: string,
+  record: Record<string, unknown>,
+  ran: Partial<Parameters<typeof writeBuildLedger>[1]>,
+  { update, now, artifactOnly }: { update: typeof updateWorkspaceState; now: () => number; artifactOnly: boolean },
 ): void {
   const platform = record.platform as BuildPlatform;
   update(root, (state) => {
     const active = parseActiveBuild(state[ACTIVE_BUILD_KEY]);
     const own = active?.platform === platform ? active : null;
+    const phases = own ? phaseDurations(own.phases, now()) : {};
+    if (own) {
+      const offload = own.placement ? withOffloadPhase(own.offload, own.placement, now()) : own.offload;
+      Object.assign(ran, {
+        id: own.claim.claimId,
+        phases,
+        phase: own.phase,
+        ...(offload ? { offload } : {}),
+        ...(own.loadPerCore === undefined ? {} : { loadPerCore: own.loadPerCore }),
+        ...(own.boot ? { boot: own.boot } : {}),
+      });
+    }
     const entry: Record<string, unknown> = {
       ...Object.fromEntries(HISTORY_FIELDS.filter((key) => key in record).map((key) => [key, record[key]])),
       result: finishedResult(record),
       slot: own?.slot ?? 'default',
-      phases: own ? phaseDurations(own.phases, now()) : {},
+      phases,
     };
     if (artifactOnly || platform === 'macos') return withHistoryEntry(state, platform, entry);
     const slot = own?.slot ?? 'default';
@@ -495,6 +623,9 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
   const waitingOn = parseWaitingOn(record.waitingOn);
   const waitingFor = parseWaitingFor(record.waitingFor);
   const estimate = parseEstimate(record.estimate);
+  const activity = parseActivity(record.activity);
+  const offload = parseOffload(record.offload);
+  const boot = parseBoot(record.boot);
   return {
     platform: record.platform,
     slot: typeof record.slot === 'string' ? record.slot : 'default',
@@ -505,11 +636,15 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     ...(missReason ? { missReason } : {}),
     ...(missReason && record.missProvisional === true ? { missProvisional: true as const } : {}),
     ...(placement ? { placement } : {}),
+    ...(offload ? { offload } : {}),
     ...(waitingOn ? { waitingOn } : {}),
     ...(waitingFor ? { waitingFor } : {}),
     ...(typeof record.deviceSetup === 'boolean' ? { deviceSetup: record.deviceSetup } : {}),
     ...(record.outcome === 'hit' || record.outcome === 'cold' ? { outcome: record.outcome } : {}),
     ...(estimate ? { estimate } : {}),
+    ...(activity ? { activity } : {}),
+    ...(isLoad(record.loadPerCore) ? { loadPerCore: record.loadPerCore } : {}),
+    ...(boot ? { boot } : {}),
     claim: {
       root: claim.root,
       path: typeof claim.path === 'string' ? claim.path : '',
@@ -517,6 +652,24 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
       pid: typeof claim.pid === 'number' ? claim.pid : 0,
     },
   };
+}
+
+function isLoad(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function parseBoot(value: unknown): ActiveBuildRecord['boot'] | null {
+  if (!isJsonObject(value) || typeof value.startedAt !== 'string' || !isLoad(value.loadPerCore)) return null;
+  return { startedAt: value.startedAt, loadPerCore: value.loadPerCore };
+}
+
+function parseOffload(value: unknown): ActiveBuildRecord['offload'] | null {
+  if (!isJsonObject(value) || typeof value.host !== 'string' || !isJsonObject(value.phaseMs)) return null;
+  const phaseMs: Record<string, number> = {};
+  for (const [phase, ms] of Object.entries(value.phaseMs)) {
+    if (typeof ms === 'number' && Number.isFinite(ms) && ms >= 0) phaseMs[phase] = ms;
+  }
+  return { host: value.host, phaseMs };
 }
 
 function parsePlacement(value: unknown): ActiveBuildRecord['placement'] | null {
@@ -538,6 +691,13 @@ function parseWaitingFor(value: unknown): BuildWaitingFor | null {
   if (!Number.isInteger(inUse) || inUse < 0 || !Number.isInteger(max) || max <= 0) return null;
   if (typeof since !== 'string' || !Number.isFinite(Date.parse(since))) return null;
   return { kind, inUse, max, since };
+}
+
+function parseActivity(value: unknown): ActiveBuildRecord['activity'] | null {
+  if (!value || typeof value !== 'object') return null;
+  const { name, startedAt } = value as Record<string, unknown>;
+  if (name !== 'booting' && name !== 'bundling' && name !== 'waiting-ready') return null;
+  return typeof startedAt === 'string' ? { name, startedAt } : null;
 }
 
 function parseWaitingOn(value: unknown): ActiveBuildRecord['waitingOn'] | null {
@@ -663,11 +823,38 @@ export function buildReport(
     placement: record.placement ?? 'local',
     ...(record.waitingOn ? { waitingOn: record.waitingOn } : {}),
     ...(record.waitingFor ? { waitingFor: record.waitingFor } : {}),
+    ...(record.activity ? { activity: { ...record.activity } } : {}),
   };
+}
+
+/**
+ * The run's `bundling` activity with Metro's percent, when the request Metro reports in flight is the one the activity
+ * started on: same platform and same start, since both come from the request's `bundle_response_started` record.
+ */
+export function bundlingActivity(
+  activity: BuildActivity | undefined,
+  platform: BuildPlatform,
+  bundle: MetroBundleState | undefined,
+): BuildActivity | undefined {
+  if (activity?.name !== 'bundling' || !bundle?.bundling || bundle.percent === undefined) return activity;
+  if (bundle.platform !== platform || bundle.startedAt !== activity.startedAt) return activity;
+  return { ...activity, percent: bundle.percent };
 }
 
 function remainingText(remainingMs: number): string {
   return remainingMs < 60_000 ? 'under a minute left' : `about ${Math.ceil(remainingMs / 60_000)} min left`;
+}
+
+function activityText({ name, percent, startedAt }: BuildActivity, now: number): string {
+  const what =
+    name === 'booting'
+      ? 'booting'
+      : name === 'waiting-ready'
+        ? 'waiting for app ready'
+        : percent === undefined
+          ? 'bundling JS'
+          : `bundling JS ${percent}%`;
+  return `${what}, ${formatElapsed(Math.max(0, now - Date.parse(startedAt)))}`;
 }
 
 export function buildStatusLine(report: BuildReport, now: number): string {
@@ -681,7 +868,8 @@ export function buildStatusLine(report: BuildReport, now: number): string {
       ? ` on ${report.placement.host} (${report.placement.phase}, ${formatElapsed(Math.max(0, now - Date.parse(report.placement.phaseStartedAt)))})`
       : '';
   const waiting = report.waitingOn ? ` on ${report.waitingOn.path}` : '';
-  const head = `build: ${report.platform}${slot} ${report.phase}${waiting}${remote}, ${formatElapsed(elapsedMs)} elapsed`;
+  const activity = report.activity ? ` (${activityText(report.activity, now)})` : '';
+  const head = `build: ${report.platform}${slot} ${report.phase}${activity}${waiting}${remote}, ${formatElapsed(elapsedMs)} elapsed`;
   if (report.state === 'unknown') return `${head} (its native-run claim cannot be resolved, so it may not be running)`;
   if (report.expectedMs === null) return head;
   const basis = `median of ${plural(report.basis, `${report.outcome} run`)}`;

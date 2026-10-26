@@ -34,17 +34,21 @@ vi.mock('../devices/android.ts', () => ({
     images.find((image) => !request.systemImage || image.pkg === request.systemImage),
   listAvdDeviceProfiles: () => ['pixel_6', 'pixel_7'],
   listAvds: () => native.avds(),
+  listAvdsAsync: async () => native.avds(),
   ownedAvdName: (label: string) => `stim-${label}`,
   listAdbDevices: () => native.adb(),
+  listAdbDevicesAsync: async () => native.adb(),
   createOwnedAvd: (label: string, options: { spawn: Executor['spawn'] }) => native.create(label, options),
   bootAndroidEmulator: (...args: unknown[]) => native.boot(...args),
   waitForBoot: () => native.wait(),
   getAvdNameForSerial: () => native.name(),
+  getAvdNameForSerialAsync: async () => native.name(),
   androidDeviceAbi: () => native.abi(),
   avdStorageRoots: () => [home],
   assertOwnedAvdStopped: () => native.stopped(),
   ownedAvdSystemImage: () => native.image(),
   resolveOwnedAvdSerial: () => native.resolved(),
+  resolveOwnedAvdSerialAsync: async () => native.resolved(),
   resetAdoptedAvd: (avd: string, serial: string, keep: string) => native.reset(avd, serial, keep),
   avdPathExists: (path: string) => existsSync(path),
 }));
@@ -184,7 +188,7 @@ test('AVD creation remains in the worker process group', { skip: process.platfor
   });
   expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({ state: 'ready' });
   const workerGroup = getExecutor()
-    .runFile('ps', ['-o', 'pgid=', '-p', String(process.pid)])
+    .runFile('ps', ['-o', 'pgid=', '-p', String(process.pid)], { timeoutMs: 60_000 })
     .trim();
   expect(readFileSync(groupFile, 'utf8').trim()).toBe(workerGroup);
 });

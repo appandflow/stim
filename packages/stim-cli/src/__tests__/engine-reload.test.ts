@@ -1,5 +1,6 @@
 import { once } from 'node:events';
 import { createServer } from 'node:net';
+import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocketServer } from 'ws';
 import { reloadThroughMetro } from '../engine/reload.ts';
 
@@ -15,7 +16,10 @@ function peerServer(reply: (id: string | undefined) => unknown) {
     socket.on('message', (raw) => {
       const message = JSON.parse(raw.toString()) as { id?: string; method?: string };
       messages.push(message);
-      if (message.method === 'getpeers') socket.send(JSON.stringify(reply(message.id)));
+      if (message.method === 'getpeers') {
+        const response = reply(message.id);
+        if (response !== undefined) socket.send(JSON.stringify(response));
+      }
       if (message.method === 'reload') sawReload();
     });
   });
@@ -61,6 +65,60 @@ test.each([
       expect.objectContaining({ version: 2, method: 'getpeers', target: 'server' }),
       { version: 2, method: 'reload', target: 'client#1' },
     ]);
+  });
+});
+
+test('cancelling while Metro lists peers closes the socket without a late reload', async () => {
+  let received!: () => void;
+  let requestId: string | undefined;
+  const requested = new Promise<void>((resolve) => {
+    received = resolve;
+  });
+  const harness = peerServer((id) => {
+    requestId = id;
+    received();
+  });
+  await withServer(harness, async (port) => {
+    const controller = new AbortController();
+    const pending = reloadThroughMetro(port, { role: 'ios', appId: 'com.example.ios', signal: controller.signal });
+    await requested;
+    const [socket] = harness.server.clients;
+    if (!socket) throw new Error('Metro never accepted the client');
+    const closed = once(socket, 'close');
+    controller.abort();
+    socket.send(JSON.stringify(peers({ 'client#1': IOS_PEER })(requestId)));
+    await expect(pending).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    await closed;
+    expect(harness.messages).toEqual([expect.objectContaining({ method: 'getpeers' })]);
+  });
+});
+
+test('Metro closing before its peer reply settles even when cancellation follows the close', async () => {
+  let received!: () => void;
+  const requested = new Promise<void>((resolve) => {
+    received = resolve;
+  });
+  const harness = peerServer(() => {
+    received();
+  });
+  await withServer(harness, async (port) => {
+    const controller = new AbortController();
+    const pending = reloadThroughMetro(port, {
+      role: 'ios',
+      appId: 'com.example.ios',
+      signal: controller.signal,
+      timeoutMs: 60_000,
+    });
+    await requested;
+    const [socket] = harness.server.clients;
+    if (!socket) throw new Error('Metro never accepted the client');
+    const closed = once(socket, 'close');
+    socket.close();
+    await closed;
+    await delay(25);
+    controller.abort();
+    expect(await Promise.race([pending, delay(200, 'pending')])).toMatchObject({ failed: true, unreachable: true });
+    expect(harness.messages).toEqual([expect.objectContaining({ method: 'getpeers' })]);
   });
 });
 
@@ -248,4 +306,58 @@ test('a refused connection reports itself unreachable rather than a missing peer
   expect(result).toMatchObject({ failed: true, unreachable: true });
   expect(result.reason).toContain('Metro reload failed:');
   expect(result.noPeer).toBeUndefined();
+});
+
+test('without an app id, a reload for Android reaches every non-iOS peer and leaves iOS alone', async () => {
+  const harness = peerServer(peers({ 'client#1': IOS_PEER, 'client#2': ANDROID_PEER, 'client#3': ANDROID_PEER_RAW }));
+
+  await withServer(harness, async (port) => {
+    await expect(reloadThroughMetro(port, { role: 'android' })).resolves.toEqual({ ok: true, peers: 3, targets: 2 });
+    await harness.reloadSeen;
+    expect(harness.messages).toEqual([
+      expect.objectContaining({ method: 'getpeers' }),
+      { version: 2, method: 'reload', target: 'client#2' },
+      { version: 2, method: 'reload', target: 'client#3' },
+    ]);
+  });
+});
+
+test('without a platform, a reload reaches every peer and names the platforms they reported', async () => {
+  const harness = peerServer(peers({ 'client#1': IOS_PEER, 'client#2': ANDROID_PEER }));
+
+  await withServer(harness, async (port) => {
+    await expect(reloadThroughMetro(port, {})).resolves.toEqual({
+      ok: true,
+      peers: 2,
+      targets: 2,
+      platforms: ['ios', 'android'],
+    });
+    await harness.reloadSeen;
+    expect(harness.messages).toEqual([
+      expect.objectContaining({ method: 'getpeers' }),
+      { version: 2, method: 'reload', target: 'client#1' },
+      { version: 2, method: 'reload', target: 'client#2' },
+    ]);
+  });
+});
+
+test('without a platform, Metro with no peers reports no app instead of an iOS or Android one', async () => {
+  const harness = peerServer(peers({}));
+
+  await withServer(harness, async (port) => {
+    const result = await reloadThroughMetro(port, { peersOnly: true });
+    expect(result).toMatchObject({ failed: true, noPeer: true, peers: 0 });
+    expect(result.reason).toMatch(/^No React Native app is connected/);
+  });
+});
+
+test('an exact reload that finds no matching peer broadcasts nothing to the other clients', async () => {
+  const harness = peerServer(peers({ 'client#1': ANDROID_PEER }));
+
+  await withServer(harness, async (port) => {
+    const result = await reloadThroughMetro(port, { role: 'ios', exact: true });
+    expect(result).toMatchObject({ failed: true, noPeer: true, peers: 1 });
+    await delay(50);
+    expect(harness.messages).toEqual([expect.objectContaining({ method: 'getpeers' })]);
+  });
 });

@@ -52,6 +52,7 @@ export interface VerifyLaunchResultLike {
   processAlive?: boolean | null;
   errors?: LaunchErrorRecord[];
   waitedMs?: number;
+  jsRunning?: boolean;
 }
 
 export interface IosCommandOptions {
@@ -79,6 +80,7 @@ export interface WaitedForBuild {
 }
 
 export interface FailArgs {
+  retainedClaimRoots?: string[];
   setup?: boolean;
   code: string;
   message?: string | null;

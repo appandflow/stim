@@ -134,7 +134,7 @@ upsertProject(process.argv[2], { label: 'other workspace' });
 `;
 
 test('another process can write config during AVD creation while cleanup preserves the reservation', async () => {
-  beforeCreate = () => {
+  beforeCreate = async () => {
     expect(existsSync(join(process.env.STIM_HOME!, 'config.lock'))).toBe(false);
     expect(getProject(project)?.platforms?.android).toMatchObject({ avdName, owned: true, setupIncomplete: true });
     execFileSync(
@@ -152,8 +152,8 @@ test('another process can write config during AVD creation while cleanup preserv
     const partial = join(avdRoot, `${avdName}.avd`);
     mkdirSync(partial);
     writeFileSync(join(partial, 'partial'), 'keep');
-    expect(teardownOwnedAvd(avdName, { del: true }).status).toBe('failed');
-    expect(deleteProjectDevices([], [], [{ kind: 'android', id: avdName, project, owned: true }])).toBe(1);
+    expect((await teardownOwnedAvd(avdName, { del: true })).status).toBe('failed');
+    expect(await deleteProjectDevices([], [], [{ kind: 'android', id: avdName, project, owned: true }])).toBe(1);
     expect(() => removeProject(project)).toThrow(/another operation/);
     expect(readFileSync(join(partial, 'partial'), 'utf8')).toBe('keep');
     expect(getProject(project)?.platforms?.android?.setupIncomplete).toBe(true);
@@ -176,7 +176,7 @@ test('recovery probes outside the config lock and preserves a replacement reserv
 test('a stale missing-device scan cannot clear a newly completed AVD', async () => {
   const stale = { kind: 'android' as const, id: avdName, project, owned: true };
   await prepare();
-  expect(deleteProjectDevices([], [], [stale])).toBe(0);
+  expect(await deleteProjectDevices([], [], [stale])).toBe(0);
   expect(getProject(project)?.platforms?.android?.avdName).toBe(avdName);
   expect(existsSync(join(avdRoot, `${avdName}.ini`))).toBe(true);
 });
@@ -184,7 +184,7 @@ test('a stale missing-device scan cannot clear a newly completed AVD', async () 
 test('a stale registered-orphan scan cannot delete an AVD after recovery assigns it', async () => {
   createFiles();
   expect((await prepare()).created).toBe(false);
-  expect(deleteProjectDevices([{ kind: 'android', id: avdName, name: avdName }], [], [])).toBe(1);
+  expect(await deleteProjectDevices([{ kind: 'android', id: avdName, name: avdName }], [], [])).toBe(1);
   expect(getProject(project)?.platforms?.android?.avdName).toBe(avdName);
   expect(existsSync(join(avdRoot, `${avdName}.ini`))).toBe(true);
 });
@@ -193,19 +193,19 @@ test('cleanup revalidates the slot that owns an AVD', async () => {
   await prepare();
   clearDevice(project, 'android');
   setDevice(project, 'android', { avdName, owned: true }, 'qa');
-  expect(teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project } })).toMatchObject({
+  expect(await teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project } })).toMatchObject({
     status: 'failed',
     reason: expect.stringContaining('(qa)'),
   });
   expect(existsSync(join(avdRoot, `${avdName}.ini`))).toBe(true);
-  expect(teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project, slot: 'qa' } }).status).toBe(
+  expect((await teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project, slot: 'qa' } })).status).toBe(
     'torn-down',
   );
 });
 
 test('record removal stays inside the teardown claim', async () => {
   await prepare();
-  const outcome = teardownOwnedAvd(avdName, {
+  const outcome = await teardownOwnedAvd(avdName, {
     del: true,
     owner: { projectPath: project },
     onRemoved: () => {
@@ -227,13 +227,13 @@ test.each([true, false])(
         configure: () => {
           throw new Error('disk full');
         },
-        teardown: (name, options) => {
+        teardown: async (name, options) => {
           setDevice(project, 'android', { avdName, owned: true, deviceName: 'replacement' });
           if (!artifactsExist) {
             rmSync(join(avdRoot, `${avdName}.ini`));
             rmSync(join(avdRoot, `${avdName}.avd`), { recursive: true });
           }
-          return teardownOwnedAvd(name, options);
+          return await teardownOwnedAvd(name, options);
         },
       }),
     ).rejects.toThrow(/remains tracked for cleanup/);
@@ -279,20 +279,20 @@ function runCreator(stage: 'create' | 'configure' | 'complete', projectPath = pr
   );
 }
 
-test('an interrupted native creation retains its reservation and refuses cleanup without a child identity', () => {
+test('an interrupted native creation retains its reservation and refuses cleanup without a child identity', async () => {
   runCreator('create');
   expect(getProject(project)?.platforms?.android).toMatchObject({ avdName, setupIncomplete: true });
   expect(() => removeProject(project)).toThrow(/killed before recording/);
-  expect(teardownOwnedAvd(avdName, { del: true }).status).toBe('failed');
-  expect(deleteProjectDevices([], [], [{ kind: 'android', id: avdName, project, owned: true }])).toBe(1);
+  expect((await teardownOwnedAvd(avdName, { del: true })).status).toBe('failed');
+  expect(await deleteProjectDevices([], [], [{ kind: 'android', id: avdName, project, owned: true }])).toBe(1);
   expect(readFileSync(join(avdRoot, `${avdName}.avd`, 'partial'), 'utf8')).toBe('keep');
   expect(readdirSync(join(process.env.STIM_HOME!, 'avd-locks'))).toHaveLength(1);
 });
 
-test('an interruption after native creation returns permits cleanup once the creator is gone', () => {
+test('an interruption after native creation returns permits cleanup once the creator is gone', async () => {
   runCreator('configure');
   expect(getProject(project)?.platforms?.android).toMatchObject({ avdName, setupIncomplete: true });
-  expect(teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project } }).status).toBe('torn-down');
+  expect((await teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project } })).status).toBe('torn-down');
   expect(existsSync(join(avdRoot, `${avdName}.avd`))).toBe(false);
 });
 
@@ -418,12 +418,12 @@ test('an AVD created with only ANDROID_EMULATOR_HOME set resolves and deletes fr
   let deleteEnv: Record<string, string> | undefined;
   setExecutor({
     ...getExecutor(),
-    run(command, options) {
-      if (command.includes('delete avd')) deleteEnv = options?.env;
+    runFile(_file, args = [], options) {
+      if (args.join(' ').startsWith('delete avd')) deleteEnv = options?.env;
       return '';
     },
   });
-  deleteAvd(created.avdName);
+  await deleteAvd(created.avdName);
   expect(deleteEnv).toEqual({ ANDROID_AVD_HOME: join(home, '.android', 'avd') });
 });
 
@@ -501,17 +501,19 @@ await prepareOwnedAvd({ projectPath: process.argv[3], label: 'setup', configurat
       caller.kill('SIGKILL');
       await callerDone;
       expect(claimState().live[0]?.child?.pid).toBe(nativePid);
-      expect(teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project } }).status).toBe('failed');
+      expect((await teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project } })).status).toBe('failed');
       expect(getProject(project)?.platforms?.android?.setupIncomplete).toBe(true);
       expect(readFileSync(join(avdRoot, `${avdName}.avd`, 'partial'), 'utf8')).toBe('keep');
       writeFileSync(join(avdRoot, 'finish'), 'done');
       await until(() => !processGroupAlive(nativePid!));
       expect(
-        teardownOwnedAvd(avdName, {
-          del: true,
-          owner: { projectPath: project },
-          onRemoved: () => clearDevice(project, 'android'),
-        }).status,
+        (
+          await teardownOwnedAvd(avdName, {
+            del: true,
+            owner: { projectPath: project },
+            onRemoved: () => clearDevice(project, 'android'),
+          })
+        ).status,
       ).toBe('torn-down');
       expect(getProject(project)?.platforms?.android).toBeUndefined();
       expect(existsSync(join(avdRoot, `${avdName}.avd`))).toBe(false);

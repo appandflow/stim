@@ -1,5 +1,20 @@
+import * as artifacts from '../commands/ios/artifact.ts';
+import { readBuildHistory } from '@stim-cli/core/state';
+import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
+import { testContext } from './_context.ts';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  promises as fs,
+  readFileSync,
+  readlinkSync,
+  symlinkSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildIosOperation } from '../commands/ios/build.ts';
@@ -14,9 +29,12 @@ import type { IosProject } from '../integrations/ios-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { cacheEntryProtection } from '../maintenance/protect.ts';
 import { getProject } from '../workspace/config.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+
+let controller = new AbortController();
+const buildContext = () => testContext({ signal: controller.signal });
 
 let scratch: string;
 let root: string;
@@ -25,6 +43,7 @@ let failBuild: boolean;
 let cancelBuild: boolean;
 let copies: string[];
 let projectBundleId: string | null;
+let linkedApp: boolean;
 
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), 'stim-ios-build-'));
@@ -39,8 +58,9 @@ beforeEach(() => {
   cancelBuild = false;
   copies = [];
   projectBundleId = 'org.example.native';
-  const runFile = getExecutor().runFile;
-  vi.spyOn(getExecutor(), 'runFile').mockImplementation((command, args, options) => {
+  linkedApp = false;
+  const runFile = getExecutor().runFileAsync;
+  vi.spyOn(getExecutor(), 'runFileAsync').mockImplementation(async (command, args, options) => {
     if (command === 'plutil') {
       const plist = readFileSync(String(args?.at(-1)), 'utf8');
       return JSON.stringify({ CFBundleIdentifier: plist.match(/<string>([^<]+)<\/string>/)?.[1] });
@@ -81,7 +101,7 @@ beforeEach(() => {
           copies.push(directory);
           ownTemporary(directory);
           const app = join(directory, 'Native.app');
-          cpSync(path, app, { recursive: true });
+          cpSync(path, app, { recursive: true, verbatimSymlinks: true });
           return app;
         },
         compile: async () => {
@@ -92,7 +112,9 @@ beforeEach(() => {
             const active = parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]);
             if (!active) throw new Error('Expected an active build claim');
             requestNativeRunCancel(root, active.claim.claimId);
-            process.emit('SIGINT');
+            const cancelled = controller;
+            controller = new AbortController();
+            cancelled.abort('SIGINT');
           }
           if (cancelBuild || failBuild)
             throw Object.assign(new Error('Compiler interrupted'), { code: 'COMPILER_FAILED' });
@@ -106,6 +128,8 @@ beforeEach(() => {
             join(appPath, 'Native'),
             `${readFileSync(join(root, 'Main.swift'), 'utf8')}:${configuration}:${target.arch}`,
           );
+          const alias = join(appPath, 'Alias');
+          if (linkedApp && !existsSync(alias)) symlinkSync('Native', alias);
           return {
             ok: true,
             appPath,
@@ -127,7 +151,7 @@ beforeEach(() => {
         },
         explain: () => ({ reason: skippedMissReason('No matching native app'), diff: null }),
         untrackedLine: () => null,
-        legacyCache: null,
+        expoCache: null,
         offload: null,
       };
     },
@@ -144,7 +168,8 @@ afterEach(() => {
 
 test('native Release builds retain independent artifacts and cache without JS-swap or runtime setup', async () => {
   const options = { configuration: 'Release', arch: 'arm64', remoteBuild: 'local' } as const;
-  const cold = await buildIosOperation(root, options);
+  const cold = await buildIosOperation(buildContext(), root, options);
+  expect(parseWorkspaceLink(cold.links.workspace)).toMatchObject({ platform: 'ios' });
   const bytes = readFileSync(join(cold.appPath, 'Native'), 'utf8');
   expect(cold.cacheHit).toBe(false);
   expect(readWorkspaceState(root)).not.toHaveProperty('ios');
@@ -155,18 +180,18 @@ test('native Release builds retain independent artifacts and cache without JS-sw
   const runningLog = join(workspaceLogsDir(root), 'build-ios.ndjson');
   writeFileSync(runningLog, '{"msg":"running app build"}\n');
   projectBundleId = null;
-  const warm = await buildIosOperation(root, options);
+  const warm = await buildIosOperation(buildContext(), root, options);
   expect(warm).toMatchObject({ bundleId: 'org.example.native', cacheKey: cold.cacheKey, cacheHit: 'local' });
   expect(compilations).toBe(1);
   expect(readFileSync(join(warm.appPath, 'Native'), 'utf8')).toBe(bytes);
   expect(copies.length).toBeGreaterThan(0);
   expect(copies.every((path) => !existsSync(path))).toBe(true);
   expect(readWorkspaceState(root)?.ios).toEqual(existing);
-  const differentArch = await buildIosOperation(root, { ...options, arch: 'x86_64' });
+  const differentArch = await buildIosOperation(buildContext(), root, { ...options, arch: 'x86_64' });
   expect(differentArch.cacheKey).not.toBe(cold.cacheKey);
   expect(differentArch.cacheHit).toBe(false);
   writeFileSync(join(root, 'Main.swift'), 'edited');
-  const edited = await buildIosOperation(root, options);
+  const edited = await buildIosOperation(buildContext(), root, options);
   expect(edited.cacheKey).not.toBe(cold.cacheKey);
   expect(readFileSync(join(cold.appPath, 'Native'), 'utf8')).toBe(bytes);
   expect(readWorkspaceState(root)).toMatchObject({ ios: existing, lastBuild: running, lastIosBuild: running });
@@ -182,13 +207,13 @@ test.each(['failure', 'cancellation'])(
     writeWorkspaceState(root, { ios: existing });
     failBuild = mode === 'failure';
     cancelBuild = mode === 'cancellation';
-    await expect(buildIosOperation(root, { remoteBuild: 'local' })).rejects.toMatchObject({
+    await expect(buildIosOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
       code: cancelBuild ? 'STIM_CANCELLED' : 'COMPILER_FAILED',
     });
     expect(readWorkspaceState(root)?.ios).toEqual(existing);
     expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])).toBeNull();
     failBuild = cancelBuild = false;
-    const recovered = await buildIosOperation(root, { remoteBuild: 'local' });
+    const recovered = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
     expect(existsSync(recovered.appPath)).toBe(true);
     expect(readWorkspaceState(root)?.ios).toEqual(existing);
   },
@@ -198,15 +223,101 @@ test('a build whose record cannot be written still returns its retained app', as
   vi.spyOn(buildProgress, 'recordFinishedBuild').mockImplementation(() => {
     throw new Error('disk full');
   });
-  const built = await buildIosOperation(root, { remoteBuild: 'local' });
+  const built = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
   expect(existsSync(join(built.appPath, 'Native'))).toBe(true);
 });
 
 test('an unusable optimizations setting is refused as a setting error before the build', async () => {
   writeFileSync(join(root, '.stim.json'), JSON.stringify({ optimizations: { buildCache: 'yes' } }));
-  await expect(buildIosOperation(root, { remoteBuild: 'local' })).rejects.toMatchObject({
+  await expect(buildIosOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
     code: 'STIM_BAD_ARG',
     remedy: SETTING_SHAPE_REMEDY,
   });
   expect(compilations).toBe(0);
+});
+
+test('cancelling an app export drains the copy before cleanup and permits recovery', async () => {
+  const existing = { udid: 'existing' };
+  writeWorkspaceState(root, { ios: existing });
+  const copy = fs.cp;
+  let began!: (value: boolean) => void;
+  const copying = new Promise<boolean>((resolve) => {
+    began = resolve;
+  });
+  let finish!: () => void;
+  const completion = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let destination = '';
+  vi.spyOn(fs, 'cp').mockImplementationOnce(async (...args) => {
+    destination = String(args[1]);
+    await copy(...args);
+    began(true);
+    await completion;
+  });
+  const operation = buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
+  let settled = false;
+  void operation.then(
+    () => {
+      return (settled = true);
+    },
+    () => {
+      return (settled = true);
+    },
+  );
+  try {
+    expect(await Promise.race([copying, operation.then(() => false)])).toBe(true);
+    controller.abort('SIGINT');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    expect(existsSync(join(destination, 'Native'))).toBe(true);
+  } finally {
+    finish();
+  }
+  await expect(operation).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(await fs.readdir(join(workspaceDir(root), 'artifacts'))).toEqual([]);
+  expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])).toBeNull();
+  expect(readWorkspaceState(root)?.ios).toEqual(existing);
+  controller = new AbortController();
+  const recovered = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
+  expect(existsSync(join(recovered.appPath, 'Native'))).toBe(true);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'retained app links remain relative to their own exported bytes',
+  async () => {
+    linkedApp = true;
+    const cold = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
+    const bytes = readFileSync(join(cold.appPath, 'Alias'), 'utf8');
+    expect(readlinkSync(join(cold.appPath, 'Alias'))).toBe('Native');
+    const warm = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
+    expect(warm.cacheHit).toBe('local');
+    expect(readlinkSync(join(warm.appPath, 'Alias'))).toBe('Native');
+    writeFileSync(join(root, 'Main.swift'), 'changed source');
+    await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
+    expect(readFileSync(join(cold.appPath, 'Alias'), 'utf8')).toBe(bytes);
+    expect(readFileSync(join(warm.appPath, 'Alias'), 'utf8')).toBe(bytes);
+  },
+);
+
+test('cancellation after exporting the app still refuses the result and removes the export', async () => {
+  const acquire = artifacts.acquireIosArtifact;
+  vi.spyOn(artifacts, 'acquireIosArtifact').mockImplementationOnce(async (...args) => {
+    const result = await acquire(...args);
+    if (result.ok) {
+      const release = result.artifact.release.bind(result.artifact);
+      result.artifact.release = async () => {
+        controller.abort('SIGINT');
+        await release();
+      };
+    }
+    return result;
+  });
+  await expect(buildIosOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
+    code: 'STIM_CANCELLED',
+  });
+  expect(await fs.readdir(join(workspaceDir(root), 'artifacts'))).toEqual([]);
+  expect(readBuildHistory(readWorkspaceState(root)).ios).toEqual([
+    expect.objectContaining({ result: 'cancelled', errorCode: 'STIM_CANCELLED' }),
+  ]);
 });

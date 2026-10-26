@@ -59,12 +59,20 @@ The isolated shell restores the locale for login and non-login commands.
 Preflight checks it, and preparation/run metadata records it. An older golden
 without matching locale provenance needs requalification before dispatch.
 
-Each machine has targets for every platform, change kind, and arm. The
-screen-ready target is a visible performance signal, not a validity gate,
-because agent reasoning time is part of what the benchmark measures. A Stim
-platform-command target is a validity gate for abnormal host/build work, and a
-larger run timeout terminates a runaway attempt. This separates slow model
-behavior from a missing or ineffective cache.
+Each machine has targets for every platform, change kind, and arm. Screen-ready
+and platform-command targets are performance signals. A slow run remains a valid
+measurement when its outcome and evidence pass validation, so regressions stay
+in the results. The larger run timeout still terminates and invalidates a runaway
+attempt.
+
+Run records, reports, and the benchmark viewer expose `measurementWarnings` for
+missed targets, unavailable compiler-cache counters, low cache hit rates, and
+missing diagnosis token usage. Unknown measurements stay null; they are not zero
+or a successful cache result. These warnings do not invalidate a proven outcome.
+Device identity, artifact and evidence hashes, visual proof, allowed source
+changes, and crash capture before source inspection remain required. Benign
+setup-command warnings do not require a separate manual publication review when
+those checks pass; evidence corrections and auxiliary sessions still do.
 
 Give the campaign its own `AGENT_DEVICE_STATE_DIR`, separate from the
 operator's normal sessions, and set `AGENT_DEVICE_SESSION` to the exact run id.
@@ -116,6 +124,10 @@ and sibling-run file contents and writes, while permitting parent-directory
 listings. Each run retains its own worktree, proof, temporary files, runner
 home, selected tools, and the configured shared native-cache/device state.
 Coordinator metadata and transcripts remain outside those writable grants.
+Launch-crash runs hide the original application source but allow read-only access
+to the original fixture's prepared dependency directories for both arms. This
+keeps `stim worktree warm` dependency links usable without exposing a clean copy
+of the faulty application source. Dependency writes remain blocked.
 Before timing starts, real read/write and child-process probes must verify the
 policy; an unavailable sandbox or overbroad grant refuses dispatch. Dispatch
 also probes toolchain compatibility under the exact policy: the macOS kernel
@@ -353,6 +365,11 @@ logs. Existing control runs without this integration can remain: record
 comparison. This measures integrated Stim against the standard toolchain,
 not identical startup logging. Do not imply that retained controls were rerun.
 
+Platform timing, cache checks, and crash diagnosis recognize literal `env STIM_TMPDIR=/path`
+or `env TMPDIR=/path` prefixes, including quoted paths. They do not infer values
+from shell expansion or accept environment overrides that change executable
+resolution or Stim ownership state.
+
 Invalid attempts are immutable audit records. Fix only a coordinator defect or
 environmental prerequisite, then reschedule the same cell under a new run id.
 Never relabel an invalid attempt to improve a result. Collector-only proof
@@ -365,8 +382,12 @@ After collection, close the exact run-scoped `agent-device` session and verify
 that the campaign session inventory is empty before a simulator can be parked
 or reused. If closure cannot be proven, stop and clean only the campaign-owned
 daemon. Remove the temporary screenshot and terminate only benchmark-owned
-processes. For Stim, run `stim stop` and `stim worktree remove --force`. On iOS,
-then verify that the same simulator is shut down, renamed as parked, and is the
+processes. For Stim, run `stim stop` and `stim worktree remove --force`.
+Before each workspace removal, check all registered and parked devices against
+that run's golden identity. An unexpected, missing, duplicate, or unowned device
+refuses removal and retains the run and crash-fixture worktrees for inspection;
+cleanup must not evict a golden device to make room for a failed run's device.
+On iOS, then verify that the same simulator is shut down, renamed as parked, and is the
 sole pool record. On Android, verify that the same AVD is stopped and remains
 the sole compatible parked record, ready for the next sequential run. For
 control, remove its worktree and branch and shut down and delete only the newly
@@ -384,6 +405,11 @@ parked emulator before the next agent starts.
 
 ## JavaScript launch-crash extension
 
+Crash runners can read the original checkout's prepared dependency paths and
+only their ancestor `.gitignore` files, so Git can discover what `worktree warm`
+needs to copy. Original application source remains unreadable, and the original
+checkout remains read-only outside its Git metadata.
+
 A launch-crash diagnostic is a separate suite, not a fifth performance cell.
 Inject a deterministic root-render JavaScript exception before the first app
 screen, then give each agent the same repair task. Compare first recorded activity to the
@@ -399,7 +425,11 @@ the earlier successful launch command does not have to print the token inline.
 When that launch response already contains the runtime error and root-layout
 context, its completion establishes diagnosis time rather than a later log
 query. New dispatches accept that response as the capture itself; a separate
-log query is required only when launch output is not actionable. Older recorded
+log query is required only when launch output is not actionable and no qualifying
+on-device error snapshot is captured. Under the minimal prompt, either arm can
+capture the runtime error with `agent-device snapshot -i` from the exact run
+session after its verified app open. The snapshot must name the app and contain
+an error, the unique token, and root-layout source location. Older recorded
 prompts retain their original separate-capture validation contract.
 Before capture, normal guide, doctor, worktree warming, and narrowly scoped
 installed-dependency resolution are setup, not application-source inspection.

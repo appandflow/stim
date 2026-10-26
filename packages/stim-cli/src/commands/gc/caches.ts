@@ -1,14 +1,17 @@
-import { readdirSync, rmSync } from 'fs';
-import { homedir, tmpdir } from 'os';
-import { dirname, isAbsolute, join, relative } from 'path';
+import { readdir, rm } from 'node:fs/promises';
+import { isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
+import { cacheDirRefusal, type StimContext } from '@stim-cli/core';
 import { getConfigDir } from '../../workspace/config.ts';
 import { formatBytes } from '../../fs-util.ts';
-import { pruneCache, type CacheDescriptor } from '../../cache/caches.ts';
+import { pruneCacheAsync, type CacheDescriptor } from '../../cache/caches.ts';
+import { claimForEmptying } from '../../cache/cache-claim.ts';
+import { releaseClaim } from '../../ownership-claim.ts';
 import { canonicalPath } from './paths.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { memoryCacheKind } from './memory.ts';
 import { parseArchiveSelector } from './archive-selector.ts';
+import { includesGradleVersions } from './gradle-versions.ts';
 
 export interface GcCache extends CacheDescriptor {
   machineGlobal?: string | null;
@@ -19,8 +22,8 @@ export interface GcCache extends CacheDescriptor {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function cacheSweepIsScoped() {
-  return Boolean(process.env.STIM_HOME);
+function cacheSweepIsScoped(env: NodeJS.ProcessEnv) {
+  return Boolean(env.STIM_HOME);
 }
 
 function isInsideConfigDir(dir: string) {
@@ -30,8 +33,8 @@ function isInsideConfigDir(dir: string) {
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
-function machineGlobalReason(cache: CacheDescriptor): string | null {
-  if (!cacheSweepIsScoped()) return null;
+function machineGlobalReason(cache: CacheDescriptor, env: NodeJS.ProcessEnv): string | null {
+  if (!cacheSweepIsScoped(env)) return null;
   if (cache.source === 'registered') return null;
   if (isInsideConfigDir(cache.dir)) return null;
   return `STIM_HOME scopes this config, but ${cache.dir} is outside it and therefore machine-global`;
@@ -67,7 +70,11 @@ export function includesWorkspaceOutputs(name: string | null | undefined): boole
 /** Whether a --cache name selects something besides shared caches: recordings, parked devices or a memory kind. */
 export function selectsBeyondCaches(name: string | null | undefined): boolean {
   return (
-    includesArchives(name) || includesRecordings(name) || includesParkedDevices(name) || memoryCacheKind(name) !== null
+    includesArchives(name) ||
+    includesRecordings(name) ||
+    includesParkedDevices(name) ||
+    includesGradleVersions(name) ||
+    memoryCacheKind(name) !== null
   );
 }
 
@@ -80,6 +87,7 @@ export function selectCaches(caches: CacheDescriptor[], name: string | null | un
     wanted === WORKSPACE_OUTPUTS ||
     wanted === RECORDINGS ||
     wanted === PARKED_DEVICES ||
+    includesGradleVersions(wanted) ||
     memoryCacheKind(wanted)
   ) {
     return [];
@@ -98,128 +106,164 @@ function emptyVerdict(c: GcCache): { willEmpty: boolean; emptySkipped: string | 
   return { willEmpty: true, emptySkipped: null };
 }
 
-export function planCacheEmptying(caches: CacheDescriptor[], all: boolean): GcCache[] {
-  const annotated = caches.map((c) => Object.assign({}, c, { machineGlobal: machineGlobalReason(c) }));
+export function planCacheEmptying(
+  caches: CacheDescriptor[],
+  all: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): GcCache[] {
+  const annotated = caches.map((c) => Object.assign({}, c, { machineGlobal: machineGlobalReason(c, env) }));
   return all ? annotated.map((c) => Object.assign({}, c, emptyVerdict(c))) : annotated;
 }
 
 /** What `gc --delete --cache <name>` would do to each cache, for a report that does not run that scope. */
-export function previewScopedEmptying(caches: CacheDescriptor[]): GcCache[] {
-  return planCacheEmptying(caches, false).map((c) => Object.assign({}, c, { scopedEmpty: emptyVerdict(c) }));
+export function previewScopedEmptying(caches: CacheDescriptor[], env: NodeJS.ProcessEnv = process.env): GcCache[] {
+  return planCacheEmptying(caches, false, env).map((c) => Object.assign({}, c, { scopedEmpty: emptyVerdict(c) }));
 }
 
 // Metro file maps share os.tmpdir() with other processes and do not own that directory.
 function ownsItsDirectory(cache: CacheDescriptor): boolean {
-  if (Array.isArray(cache.files)) return false;
-  const dir = canonicalPath(cache.dir);
-  if (dirname(dir) === dir) return false;
-  return ![homedir(), tmpdir(), getConfigDir()].map(canonicalPath).includes(dir);
+  return !Array.isArray(cache.files) && !cacheDirRefusal(cache.dir);
 }
 
-function emptyCache(cache: CacheDescriptor): {
+async function emptyCache(
+  cache: CacheDescriptor,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<{
   removed: number;
   bytes: number;
   skipped: string | null;
   failed?: number;
-} {
+}> {
   if (cache.prune === 'report-only') {
     return { removed: 0, bytes: 0, skipped: 'report-only shared cache; Stim never deletes it' };
   }
   if (cache.prune !== 'atomic') {
-    return pruneCache(cache, { olderThanDays: 0, now: Date.now() + DAY_MS });
+    return pruneCacheAsync(cache, { olderThanDays: 0, now: Date.now() + DAY_MS, signal, operation });
   }
 
-  let names: string[];
+  const claim = claimForEmptying(cache.dir);
+  if (typeof claim === 'string') return { removed: 0, bytes: 0, skipped: claim };
   try {
-    names = readdirSync(cache.dir);
-  } catch (e) {
-    return { removed: 0, bytes: 0, skipped: `could not read ${cache.dir}: ${(e as Error).message}` };
-  }
-  let removed = 0;
-  let failed = 0;
-  for (const name of names) {
+    let names: string[];
     try {
-      rmSync(join(cache.dir, name), { recursive: true, force: true });
-      removed++;
-    } catch {
-      failed++;
+      names = await readdir(cache.dir);
+    } catch (e) {
+      signal?.throwIfAborted();
+      return { removed: 0, bytes: 0, skipped: `could not read ${cache.dir}: ${(e as Error).message}` };
     }
+    let removed = 0;
+    let failed = 0;
+    for (const name of names) {
+      signal?.throwIfAborted();
+      try {
+        await rm(join(cache.dir, name), { recursive: true, force: true });
+        removed++;
+      } catch {
+        failed++;
+      }
+    }
+    signal?.throwIfAborted();
+    return { removed, bytes: failed ? 0 : (cache.bytes ?? 0), failed, skipped: null };
+  } finally {
+    releaseClaim(claim);
   }
-  return { removed, bytes: failed ? 0 : (cache.bytes ?? 0), failed, skipped: null };
 }
 
-function reportFailures(cache: CacheDescriptor, failed: number | undefined): void {
-  if (!failed) return;
-  const message = `${failed} entr${failed === 1 ? 'y' : 'ies'} in ${cache.dir} could not be removed`;
-  console.log(chalk.red(`${cache.name}: ${message}`));
-  recordGcResult('cache', 'failed', cache.name, { id: cache.dir, detail: message });
-  process.exitCode = 1;
+function reportFailures(cache: CacheDescriptor, failed: number | undefined, { log, record, fail }: GcOutput): boolean {
+  if (!failed) return false;
+  const message = `${failed} entr${failed === 1 ? 'y' : 'ies'} in ${cache.dir} could not be read or removed`;
+  log(chalk.red(`${cache.name}: ${message}`));
+  record('cache', 'failed', cache.name, { id: cache.dir, detail: message });
+  fail();
+  return true;
 }
 
-export function trimCaches(caches: GcCache[], olderThan: number): GcCache[] {
+export async function trimCaches(
+  caches: GcCache[],
+  olderThan: number,
+  output: GcOutput = GC_OUTPUT,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<{ trimmed: GcCache[]; failures: number }> {
+  const { log, record } = output;
   let cacheBytes = 0;
+  let failures = 0;
   const trimmed: GcCache[] = [];
+  let unchanged = 0;
   for (const c of caches) {
+    signal?.throwIfAborted();
     if (c.machineGlobal) {
-      console.log(chalk.yellow(`Left ${c.name} alone: ${c.machineGlobal}`));
-      recordGcResult('cache', 'kept', c.name, { id: c.dir, detail: c.machineGlobal });
+      log(chalk.yellow(`Left ${c.name} alone: ${c.machineGlobal}`));
+      record('cache', 'kept', c.name, { id: c.dir, detail: c.machineGlobal });
       continue;
     }
-    const r = pruneCache(c, { olderThanDays: olderThan });
+    const r = await pruneCacheAsync(c, { olderThanDays: olderThan, signal, operation });
     if (r.skipped) {
-      console.log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
-      recordGcResult('cache', 'kept', c.name, { id: c.dir, detail: r.skipped });
+      log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
+      record('cache', 'kept', c.name, { id: c.dir, detail: r.skipped });
     } else if (r.removed) {
       cacheBytes += r.bytes;
       trimmed.push(c);
-      recordGcResult('cache', 'done', c.name, { id: c.dir, bytes: r.bytes });
-      console.log(
+      record('cache', 'done', c.name, { id: c.dir, bytes: r.bytes });
+      log(
         chalk.green(`Trimmed ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`),
       );
     } else if (!r.failed) {
-      console.log(chalk.dim(`${c.name}: nothing older than ${olderThan}d`));
+      unchanged++;
     }
-    reportFailures(c, r.failed);
+    if (reportFailures(c, r.failed, output)) failures++;
   }
 
+  if (unchanged) log(chalk.dim(`${unchanged} cache${unchanged === 1 ? '' : 's'}: nothing older than ${olderThan}d`));
+
   if (cacheBytes) {
-    console.log(
+    log(
       chalk.dim(
         `Trimmed ${formatBytes(cacheBytes)} of shared cache. The next build that wanted those entries pays to rebuild them.`,
       ),
     );
   }
-  return trimmed;
+  return { trimmed, failures };
 }
 
-export function emptyCaches(caches: GcCache[]): void {
+export async function emptyCaches(
+  caches: GcCache[],
+  output: GcOutput = GC_OUTPUT,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<number> {
+  const { log, record } = output;
   let cacheBytes = 0;
+  let failures = 0;
   for (const c of caches) {
+    signal?.throwIfAborted();
     if (!c.willEmpty) {
-      console.log(chalk.yellow(`Left ${c.name} alone: ${c.emptySkipped}`));
-      recordGcResult('cache', 'kept', c.name, { id: c.dir, detail: c.emptySkipped ?? null });
+      log(chalk.yellow(`Left ${c.name} alone: ${c.emptySkipped}`));
+      record('cache', 'kept', c.name, { id: c.dir, detail: c.emptySkipped ?? null });
       continue;
     }
-    const r = emptyCache(c);
+    const r = await emptyCache(c, signal, operation);
     if (r.skipped) {
-      console.log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
-      recordGcResult('cache', 'kept', c.name, { id: c.dir, detail: r.skipped });
+      log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
+      record('cache', 'kept', c.name, { id: c.dir, detail: r.skipped });
     } else if (r.removed) {
       cacheBytes += r.bytes;
-      recordGcResult('cache', 'done', c.name, { id: c.dir, bytes: r.bytes });
-      console.log(
+      record('cache', 'done', c.name, { id: c.dir, bytes: r.bytes });
+      log(
         chalk.green(`Emptied ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`),
       );
     } else if (!r.failed) {
-      console.log(chalk.dim(`${c.name}: already empty`));
+      log(chalk.dim(`${c.name}: already empty`));
     }
-    reportFailures(c, r.failed);
+    if (reportFailures(c, r.failed, output)) failures++;
   }
   if (cacheBytes) {
-    console.log(
+    log(
       chalk.dim(
         `Emptied ${formatBytes(cacheBytes)} of shared cache. Every build that wanted any of it now pays to rebuild it.`,
       ),
     );
   }
+  return failures;
 }

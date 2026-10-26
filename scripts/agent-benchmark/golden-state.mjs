@@ -1,3 +1,9 @@
+export const ANDROID_BENCHMARK_AVD_CONFIG = Object.freeze({
+  'disk.dataPartition.size': String(8 * 1024 ** 3),
+  'hw.device.name': 'pixel_6',
+  'hw.keyboard': 'yes',
+});
+
 export function matchesGoldenPreparation(actual, expected) {
   return (
     actual !== null &&
@@ -17,7 +23,7 @@ export function preparedAndroidEmulator({ config, avds, activeNames, systemImage
     !/^stim-[A-Za-z0-9._-]+$/.test(record.name) ||
     record.udid !== record.name ||
     typeof record.parkedAt !== 'string' ||
-    record.configuration !== JSON.stringify([['disk.dataPartition.size', String(8 * 1024 ** 3)]]) ||
+    record.configuration !== JSON.stringify(Object.entries(ANDROID_BENCHMARK_AVD_CONFIG)) ||
     record.deletionClaim !== undefined ||
     (expectedName && record.name !== expectedName)
   ) {
@@ -43,4 +49,41 @@ export function preparedAndroidEmulator({ config, avds, activeNames, systemImage
   }
   if (activeNames.includes(record.name)) throw new Error('parked Android emulator is still running');
   return { ...record, deviceTypeIdentifier: avd.deviceTypeIdentifier, runtimeIdentifier: avd.runtimeIdentifier };
+}
+
+function refuseCleanup() {
+  throw new Error(
+    'benchmark cleanup cannot preserve the expected golden device; retain worktrees and inspect Stim state',
+  );
+}
+
+export function assertGoldenCleanup({ config, platform, expectedIdentity }) {
+  if (!['ios', 'android'].includes(platform) || typeof expectedIdentity !== 'string' || !expectedIdentity)
+    refuseCleanup();
+  if (!config?.projects || typeof config.projects !== 'object' || Array.isArray(config.projects)) refuseCleanup();
+  let matches = 0;
+  const inspect = (candidatePlatform, record, parked) => {
+    const identity = parked ? record?.udid : candidatePlatform === 'ios' ? record?.deviceUdid : record?.avdName;
+    if (
+      candidatePlatform !== platform ||
+      identity !== expectedIdentity ||
+      (!parked && record?.owned !== true) ||
+      (parked && record?.deletionClaim !== undefined) ||
+      (parked && platform === 'android' && record?.name !== expectedIdentity)
+    )
+      refuseCleanup();
+    matches += 1;
+  };
+  for (const project of Object.values(config.projects)) {
+    if (!project || typeof project !== 'object') refuseCleanup();
+    for (const records of [project.platforms ?? {}, ...Object.values(project.deviceSlots ?? {})]) {
+      if (!records || typeof records !== 'object' || Array.isArray(records)) refuseCleanup();
+      for (const [candidatePlatform, record] of Object.entries(records)) inspect(candidatePlatform, record, false);
+    }
+  }
+  for (const [candidatePlatform, records] of Object.entries(config.parked ?? {})) {
+    if (!Array.isArray(records)) refuseCleanup();
+    for (const record of records) inspect(candidatePlatform, record, true);
+  }
+  if (matches !== 1) refuseCleanup();
 }

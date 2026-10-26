@@ -197,7 +197,20 @@ public func sidebarTrees(
   environments: [Workspace], unprovisioned: [UnprovisionedWorktree], project: (String) -> Project,
   options: SidebarOptions, archived: [ArchivedWorkspace] = []
 ) -> [ProjectTree] {
-  let grouped = Dictionary(grouping: visibleEntries(environments, unprovisioned, project, options, archived)) {
+  let entries = sidebarEntries(
+    environments: environments, unprovisioned: unprovisioned, project: project, options: options,
+    newestArchives: ArchivedWorkspace.newestFirst(archived))
+  return sidebarTrees(
+    visible: visibleSidebarEntries(entries, options), environments: environments, unprovisioned: unprovisioned,
+    project: project, options: options)
+}
+
+/// `sidebarTrees` built from `visible`, the rows `visibleSidebarEntries` keeps.
+public func sidebarTrees(
+  visible: [SidebarEntry], environments: [Workspace], unprovisioned: [UnprovisionedWorktree],
+  project: (String) -> Project, options: SidebarOptions
+) -> [ProjectTree] {
+  let grouped = Dictionary(grouping: visible) {
     if let archiveProject = $0.archiveProject { return archiveProject }
     return project($0.path)
   }
@@ -233,16 +246,24 @@ public func sidebarList(
   environments: [Workspace], unprovisioned: [UnprovisionedWorktree], project: (String) -> Project,
   options: SidebarOptions, archived: [ArchivedWorkspace] = []
 ) -> [SidebarEntry] {
-  let entries = visibleEntries(environments, unprovisioned, project, options, archived)
-  return orderedEntries(entries, options, project)
+  let entries = sidebarEntries(
+    environments: environments, unprovisioned: unprovisioned, project: project, options: options,
+    newestArchives: ArchivedWorkspace.newestFirst(archived))
+  return sidebarList(visible: visibleSidebarEntries(entries, options), project: project, options: options)
 }
 
-private func visibleEntries(
-  _ environments: [Workspace], _ unprovisioned: [UnprovisionedWorktree], _ project: (String) -> Project,
-  _ options: SidebarOptions, _ archived: [ArchivedWorkspace]
+/// `sidebarList` built from `visible`, the rows `visibleSidebarEntries` keeps.
+public func sidebarList(visible: [SidebarEntry], project: (String) -> Project, options: SidebarOptions) -> [SidebarEntry] {
+  orderedEntries(visible, options, project)
+}
+
+/// Every row outside the hidden projects, whatever its status. `newestArchives` lists the archives newest first,
+/// as `ArchivedWorkspace.newestFirst` orders them.
+public func sidebarEntries(
+  environments: [Workspace], unprovisioned: [UnprovisionedWorktree], project: (String) -> Project,
+  options: SidebarOptions, newestArchives: [ArchivedWorkspace]
 ) -> [SidebarEntry] {
-  let archives = ArchivedWorkspace.newestFirst(archived)
-    .filter { !options.hiddenProjects.contains($0.sidebarProject.root) }
+  let archives = newestArchives.filter { !options.hiddenProjects.contains($0.sidebarProject.root) }
   struct GroupKey: Hashable {
     var project: Project
     var worktreeRoot: String
@@ -270,18 +291,30 @@ private func visibleEntries(
   let current = (apps + unprovisioned.map(SidebarEntry.worktree)).filter {
     !options.hiddenProjects.contains(project($0.path).root)
   }
-  return (current + archiveEntries).filter { options.statuses.contains($0.status(hidden: options.hiddenWorkspaces)) }
+  return current + archiveEntries
+}
+
+/// The rows of `entries` whose status the options show.
+public func visibleSidebarEntries(_ entries: [SidebarEntry], _ options: SidebarOptions) -> [SidebarEntry] {
+  entries.filter { options.statuses.contains($0.status(hidden: options.hiddenWorkspaces)) }
 }
 
 public func sidebarStatusCounts(
   environments: [Workspace], unprovisioned: [UnprovisionedWorktree], project: (String) -> Project,
   options: SidebarOptions, archived: [ArchivedWorkspace] = []
 ) -> [StatusFilter: Int] {
-  var options = options
-  options.statuses = Set(StatusFilter.allCases)
+  sidebarStatusCounts(
+    sidebarEntries(
+      environments: environments, unprovisioned: unprovisioned, project: project, options: options,
+      newestArchives: ArchivedWorkspace.newestFirst(archived)),
+    hidden: options.hiddenWorkspaces)
+}
+
+/// How many of `entries` have each status.
+public func sidebarStatusCounts(_ entries: [SidebarEntry], hidden: HiddenWorkspaces) -> [StatusFilter: Int] {
   var counts = Dictionary(uniqueKeysWithValues: StatusFilter.allCases.map { ($0, 0) })
-  for entry in visibleEntries(environments, unprovisioned, project, options, archived) {
-    counts[entry.status(hidden: options.hiddenWorkspaces), default: 0] += 1
+  for entry in entries {
+    counts[entry.status(hidden: hidden), default: 0] += 1
   }
   return counts
 }

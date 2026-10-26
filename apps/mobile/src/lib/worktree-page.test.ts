@@ -25,6 +25,40 @@ it('keeps native build detail tabs available independently of detected support',
   expect(buildEntries([app], true).map(({ platform }) => platform)).toEqual(['ios', 'android']);
 });
 
+it('lists the iOS and Android builds of an app that also has a macOS app, then its macOS build', () => {
+  const macos: EnvironmentState['macos'] = {
+    state: 'stopped',
+    launchId: 'launch',
+    arguments: [],
+    product: 'Notes',
+    bundle: '/w/Notes.app',
+    bundleId: 'dev.notes',
+    executable: 'Notes',
+    build: { state: 'ok', startedAt: '2026-10-05T10:00:00Z' },
+  };
+  const shared: EnvironmentState = {
+    path: '/w/mobile',
+    live: false,
+    warnings: [],
+    memoryMb: 0,
+    platforms: ['ios', 'android', 'macos'],
+    macos,
+  };
+  const desktop: EnvironmentState = { ...shared, path: '/w/desktop', platforms: ['macos'] };
+  const pairs = (entries: ReturnType<typeof buildEntries>) => entries.map(({ path, platform }) => [path, platform]);
+  expect(pairs(buildEntries([shared], true))).toEqual([
+    ['/w/mobile', 'ios'],
+    ['/w/mobile', 'android'],
+    ['/w/mobile', 'macos'],
+  ]);
+  expect(pairs(buildEntries([desktop, shared], true))).toEqual([
+    ['/w/mobile', 'ios'],
+    ['/w/mobile', 'android'],
+    ['/w/desktop', 'macos'],
+    ['/w/mobile', 'macos'],
+  ]);
+});
+
 it('counts shared disk once and sums independently measured app resources', () => {
   const apps: EnvironmentState[] = [
     {
@@ -70,6 +104,7 @@ it('keeps device ownership after ordering and applies stopped filtering to each 
     live: false,
     warnings: [],
     memoryMb: 0,
+    stage: { kind: 'stopped', since: null, platform: null, closedApps: [] },
     ios: { name: 'stopped', udid: 'stopped', owned: true, state: 'Shutdown' },
   };
   const b: EnvironmentState = {
@@ -77,6 +112,7 @@ it('keeps device ownership after ordering and applies stopped filtering to each 
     live: true,
     warnings: [],
     memoryMb: 0,
+    stage: { kind: 'running', since: null, platform: null, closedApps: [] },
     ios: { name: 'phone', udid: 'phone', owned: true, state: 'Booted' },
     android: { name: 'pixel', owned: true, physical: false, state: 'detected' },
   };
@@ -85,6 +121,7 @@ it('keeps device ownership after ordering and applies stopped filtering to each 
     live: true,
     warnings: [],
     memoryMb: 0,
+    stage: { kind: 'running', since: null, platform: null, closedApps: [] },
     ios: { name: 'tablet', udid: 'tablet', owned: true, state: 'Booted' },
   };
   expect(worktreeDevices([a, b, c], Date.now()).map(({ device, env }) => [device.id ?? device.name, env.path])).toEqual(

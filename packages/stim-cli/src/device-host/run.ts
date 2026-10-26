@@ -44,7 +44,7 @@ async function main(): Promise<void> {
   if (input.mode === 'offer') {
     const request = parseHostedOfferRequest(input);
     if (!request) throw new Error('Invalid hosted offer selectors.');
-    process.stdout.write(`${JSON.stringify(inspectHostedDevice(request, exclude ? { exclude } : undefined))}\n`);
+    process.stdout.write(`${JSON.stringify(await inspectHostedDevice(request, exclude ? { exclude } : undefined))}\n`);
     return;
   }
   if (process.platform !== 'darwin') {
@@ -75,7 +75,7 @@ async function main(): Promise<void> {
       !Number.isFinite(input.since)
     )
       throw new Error('Invalid hosted native log request.');
-    const more = (input.platform === 'android' ? collectHostedAndroidLogs : collectHostedIosLogs)(
+    const more = await (input.platform === 'android' ? collectHostedAndroidLogs : collectHostedIosLogs)(
       process.env.STIM_HOME,
       input.session as string,
       input.attempt as string,

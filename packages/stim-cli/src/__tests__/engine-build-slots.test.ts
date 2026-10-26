@@ -1,4 +1,4 @@
-import type { BuildWaitingFor } from '@stim-cli/core/state';
+import { buildSlotPath, buildSlotsDir, type BuildWaitingFor } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile, type ChildProcess } from 'node:child_process';
@@ -8,11 +8,9 @@ import { claimRemoveCommand } from '../ownership-claim.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 import {
   acquireBuildSlot,
-  buildSlotPath,
-  buildSlotsDir,
+  buildSlotUsage,
   listBuildSlots,
   releaseBuildSlot,
-  readBuildSlot,
   tryAcquireBuildSlot,
 } from '../engine/build-slots.ts';
 
@@ -35,7 +33,7 @@ describe('tryAcquireBuildSlot', () => {
     expect(got.acquired).toBe(true);
     expect(got.index).toBe(0);
     expect(existsSync(buildSlotPath(0))).toBeTruthy();
-    const rec = readBuildSlot(buildSlotPath(0));
+    const rec = listBuildSlots().find((slot) => slot.index === 0);
     assert(rec);
     expect(rec.pid).toBe(process.pid);
     expect(rec.index).toBe(0);
@@ -106,6 +104,33 @@ describe('releaseBuildSlot', () => {
 });
 
 describe('acquireBuildSlot', () => {
+  test('cancelling a queued build clears its wait without acquiring or releasing another builder slot', async () => {
+    const held = tryAcquireBuildSlot({ max: 1, root: '/another/build' });
+    assert(held);
+    const controller = new AbortController();
+    const waitingFor = vi.fn<(info: BuildWaitingFor | null) => void>();
+    const pending = acquireBuildSlot({ max: 1, signal: controller.signal, waitingFor });
+    const outcome = pending.then(
+      (handle) => {
+        releaseBuildSlot(handle);
+        return 'acquired';
+      },
+      (error: { code?: string }) => error.code,
+    );
+    try {
+      await vi.waitFor(() => expect(waitingFor).toHaveBeenCalledWith(expect.objectContaining({ kind: 'build-slot' })));
+      controller.abort();
+      expect(
+        await Promise.race([outcome, new Promise((resolve) => setTimeout(() => resolve('still waiting'), 200))]),
+      ).toBe('STIM_CANCELLED');
+      expect(waitingFor).toHaveBeenLastCalledWith(null);
+      expect(listBuildSlots().map((slot) => slot.path)).toEqual([held.path]);
+    } finally {
+      releaseBuildSlot(held);
+      await outcome;
+    }
+  });
+
   test('a queued build reports its slot wait and keeps progress pointing to concurrency guidance', async () => {
     const held = tryAcquireBuildSlot({ max: 1 });
     assert(held);
@@ -189,6 +214,27 @@ describe('listBuildSlots', () => {
     expect(byIndex[1].alive).toBe(false);
     expect(byIndex[1].projectRoot).toBe('/w/dead');
   });
+});
+
+test('status slot usage counts the live and unresolved slots a build could take, with each holder', () => {
+  plantClaim(buildSlotPath(0), 'exclusive', liveClaimOwner(), { details: { index: 0, projectRoot: '/w/a' } });
+  plantClaim(buildSlotPath(1), 'exclusive', goneClaimOwner(), { details: { index: 1, projectRoot: '/w/gone' } });
+  plantClaim(buildSlotPath(2), 'exclusive', liveClaimOwner(), {
+    details: { index: 2, offloaded: true, client: 'dev-1', repo: 'r', job: 'j' },
+  });
+  plantClaim(buildSlotPath(3), 'exclusive', { pid: 4242, processToken: 'nonsense' }, { details: { index: 3 } });
+  plantClaim(buildSlotPath(4), 'exclusive', liveClaimOwner(), { details: { index: 4, projectRoot: '/w/over' } });
+  const usage = buildSlotUsage(4);
+  expect(usage).toMatchObject({
+    max: 4,
+    inUse: 3,
+    holders: [
+      { slot: 0, workspace: '/w/a', client: null },
+      { slot: 2, workspace: null, client: 'dev-1' },
+      { slot: 3, workspace: null, client: null, since: null, unresolved: true },
+    ],
+  });
+  expect(usage.holders[0]?.since).toEqual(expect.any(String));
 });
 
 describe('waitForFile', () => {

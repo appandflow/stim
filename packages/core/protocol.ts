@@ -1,5 +1,6 @@
 import type {
   BuildPlanPayload,
+  MacosBuildPlanPayload,
   BuildHistoryEntry,
   HostedDeviceRequest,
   HostedDeviceOfferRequest,
@@ -14,15 +15,27 @@ import type {
   HostedLogsPage,
   NdjsonRecord,
   StatusPayload,
+  ArchivedSummary,
+  ArchivedUsage,
+  ArchivedWorkspace,
+  EnvironmentState,
+  KeyedDelta,
+  MachineView,
+  MaintenanceStatus,
+  WorkspaceSummary,
+  WorktreeFacts,
+  WorktreeRow,
+  SettingScope,
+  SettingWriteResult,
 } from './state/index.ts';
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export const PROTOCOL_SCHEMA_FILE = 'protocol.schema.json';
 
 /**
- * `read` serves state. `control` also runs {@link ACTIONS}; only the Mac grants it. `build` lets another Mac run
- * project code here to build for it; it never comes with `read` or `control`, and only the Mac approves it.
+ * `read` serves state. `control` also runs {@link ACTIONS}; only the machine grants it. `build` lets another machine run
+ * project code here to build for it; it never comes with `read` or `control`, and only the machine approves it.
  * `device-host` permits a client's native app code in its own hosted sessions, and grants no other capability.
  */
 export const CAPABILITIES = ['read', 'control', 'build', 'device-host'] as const;
@@ -48,10 +61,41 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
  * `hosted-android-data` is Android APK build handoff and native log queries, persisted before device deletion.
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
+ * `hosted-metro-link` carries hosted Metro over `device-host.metro.link` connections the client opens, so the host never
+ * connects to the client.
+ * `hosted-metro-ports` is `device-host.metro.ports`, which names the listed ports that already accept loopback
+ * connections on the host, apart from the requesting client's own dev-client bridges.
  * `native-xcode-build` accepts native Xcode provider requests with a separate source-transfer identity.
  * `native-xcode-toolchain` accepts native Xcode discovery without unrelated platform or Ruby probes.
+ * `build-artifact-cache` offers and fetches exact completed native Xcode archives without a build job.
  * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
+ * `native-gradle-artifact-cache` applies caller cache policy to verified worker-scoped APK reuse.
+ * `react-native-peer-cache` offers development archives with build-proven fingerprints, options and toolchains.
+ * `fingerprint-sources` accepts `fingerprintSources` on `build.start`, so a fingerprint mismatch names the differing sources.
+ * `fingerprint-ignored` accepts `fingerprintIgnored` on `build.start`, the paths the caller's git ignored that the machine's git cannot.
+ * `fingerprint-tracked` accepts `fingerprintTracked` on `build.start`, the top-level entries the caller's git tracks although an ignore pattern matches them.
+ * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
+ * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
+ * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
+ * `build-compat` accepts `compat` on `build.start`, and in place of `stimBuild` in React Native and SwiftPM artifact
+ * queries.
+ * `build-jdk` accepts `jdk` on `build.start`, the JDK major an Android build runs on; the machine finds an installed JDK of that
+ * major when its default differs.
+ * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
+ * `archived.list`, `worktrees.list` and `maintenance.get`.
+ * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
+ * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
+ * `desktop-report-invalidate-target` accepts a report target in `desktop.reports.invalidate`, which then invalidates only it.
+ * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
+ * `desktop-settings-schema` supplies this server's registry-derived settings schema to local Desktop clients.
+ * `desktop-settings-write` mutates settings on the proved local Desktop connection.
+ * `desktop-stop` streams private Desktop workspace or slot stop progress and its terminal result.
+ * `desktop-start` streams dev-server startup progress and its result on the proved local Desktop connection.
+ * `desktop-run` streams platform build/install/launch progress and facts on the proved local Desktop connection.
+ * `desktop-build` streams build-only progress and artifact facts on the proved local Desktop connection.
+ * `desktop-plan` reads next-build reports for selected folders on the proved local Desktop connection.
+ * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
  */
 export const FEATURES = [
   'physical-ios',
@@ -75,18 +119,77 @@ export const FEATURES = [
   'hosted-ios-process',
   'native-xcode-build',
   'native-xcode-toolchain',
+  'build-artifact-cache',
   'native-gradle-build',
+  'native-gradle-artifact-cache',
+  'native-gradle-peer-cache',
+  'react-native-peer-cache',
+  'fingerprint-sources',
+  'fingerprint-ignored',
+  'fingerprint-tracked',
+  'swiftpm-peer-cache',
+  'build-dependency-cache',
   'hosted-android-data',
   'hosted-android-process',
+  'hosted-metro-ports',
+  'hosted-metro-link',
   'server-update',
+  'build-compat',
+  'build-jdk',
+  'status-views',
+  'desktop-reports',
+  'desktop-report-platform',
+  'desktop-report-invalidate-target',
+  'desktop-settings',
+  'desktop-settings-schema',
+  'desktop-settings-write',
+  'desktop-full-logs',
+  'desktop-doctor-run',
+  'desktop-machine-access',
+  'desktop-stop',
+  'desktop-reload',
+  'desktop-start',
+  'desktop-run',
+  'desktop-build',
+  'desktop-gc',
+  'desktop-worktree-remove',
+  'desktop-worktree-warm',
+  'desktop-plan',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
 
 export const METHODS = [
   'hello',
+  'desktop.authenticate',
+  'desktop.reports.get',
+  'desktop.reports.subscribe',
+  'desktop.reports.invalidate',
+  'desktop.settings.get',
+  'desktop.settings.schema',
+  'desktop.settings.write',
+  'desktop.logs.subscribe',
+  'desktop.doctor.run',
+  'desktop.machine-access.subscribe',
+  'desktop.stop.subscribe',
+  'desktop.reload.subscribe',
+  'desktop.start.subscribe',
+  'desktop.run.subscribe',
+  'desktop.build.subscribe',
+  'desktop.gc.subscribe',
+  'desktop.worktree.remove.subscribe',
+  'desktop.worktree.warm.subscribe',
+  'desktop.plan.get',
+  'desktop.plan.cancel',
   'route.setup',
   'status.subscribe',
+  'workspaces.subscribe',
+  'workspace.subscribe',
+  'machine.subscribe',
+  'builds.history',
+  'archived.list',
+  'worktrees.list',
+  'maintenance.get',
   'logs.query',
   'logs.subscribe',
   'stats.get',
@@ -126,6 +229,7 @@ export const METHODS = [
   'build.start',
   'build.cancel',
   'build.artifact',
+  'build.cached-artifact',
   'build.attach',
   'device-host.offer',
   'device-host.reserve',
@@ -138,7 +242,9 @@ export const METHODS = [
   'device-host.app.attach',
   'device-host.logs.query',
   'device-host.metro.open',
+  'device-host.metro.ports',
   'device-host.metro.close',
+  'device-host.metro.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
@@ -163,7 +269,7 @@ export const METHODS = [
 ] as const;
 
 /**
- * The methods that update this server's `stim-server service`. A Mac this one approved for `build` or
+ * The methods that update this server's `stim-server service`. A machine this one approved for `build` or
  * `device-host` may call them; they need neither `read` nor `control`.
  */
 export const SERVER_UPDATE_METHODS = ['server.update.status', 'server.update.start', 'server.update.chunk'] as const;
@@ -175,6 +281,7 @@ export const BUILD_METHODS = [
   'build.start',
   'build.cancel',
   'build.artifact',
+  'build.cached-artifact',
   'build.attach',
 ] as const;
 
@@ -191,7 +298,9 @@ export const DEVICE_HOST_METHODS = [
   'device-host.app.attach',
   'device-host.logs.query',
   'device-host.metro.open',
+  'device-host.metro.ports',
   'device-host.metro.close',
+  'device-host.metro.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
@@ -214,14 +323,15 @@ export const PUSH_TOKEN_PATTERN = '^(Expo|Exponent)PushToken\\[[^\\]\\s]{1,256}\
 
 /**
  * `unauthorized`, `pairing-expired` and `protocol-unsupported` refuse the client until it pairs again or
- * updates; `approval-pending` refuses a build client until the Mac approves it; clients retry the others.
+ * updates; `unknown-secret` means the server does not hold the pairing token or setup ticket (yet), so a client with a
+ * setup ticket retries until setup runs; clients retry the others. A network connection's refusals during the
+ * handshake arrive as the WebSocket close reason.
  */
 export const ERROR_CODES = [
   'unauthorized',
   'pairing-expired',
   'protocol-unsupported',
-  'approval-pending',
-  'identity-unavailable',
+  'unknown-secret',
   'bad-request',
   'unknown-method',
   'already-authenticated',
@@ -248,39 +358,20 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 
 export type RequestId = number | string;
 
-/** Spends a single-use pairing token; the result carries the new device token. */
-export interface PairingAuth {
-  pairingToken: string;
-  deviceName: string;
-}
-
-/** Presents the device token a previous pairing returned. */
-export interface DeviceAuth {
-  deviceToken: string;
-}
-
 /**
- * Asks, from another Mac on the tailnet, to build here. The result carries a device token with no
- * capabilities and `approval`; the token authenticates once the Mac approves the request.
+ * The first request on a connection, after the Noise handshake on a network connection or none on the local Unix
+ * socket. Authentication already happened; capabilities come from the server's record of the client's key.
  */
-export interface BuildRequestAuth {
-  request: 'build';
-  deviceName: string;
-  setupTicket?: string;
-}
-
-/** Requests explicit device hosting approval; grants no read, control or build access. */
-export interface DeviceHostRequestAuth {
-  request: 'device-host';
-  deviceName: string;
-  setupTicket?: string;
-}
-
 export interface HelloParams {
-  protocol: number;
   /** `runId` is the CLI invocation's id: letters, digits, `.`, `_`, `-`, at most 64. The server puts it on its log lines for the connection. */
   client: { name: string; version: string; runId?: string };
-  auth: PairingAuth | DeviceAuth | BuildRequestAuth | DeviceHostRequestAuth;
+  /**
+   * Which of the key's own records this connection acts as: its `build` or `device-host` approval. Without it, the
+   * pairing in `devices.json`. It never widens what a record allows.
+   */
+  access?: 'build' | 'device-host';
+  /** On the local Unix socket only: asks for the private Desktop bootstrap challenge. It grants nothing by itself. */
+  desktopBootstrap?: true;
 }
 
 export interface HelloResult {
@@ -288,20 +379,25 @@ export interface HelloResult {
   host?: { name: string; screenRecording: boolean; accessibility: boolean } | null;
   protocol: number;
   /**
-   * The Mac's name, this package's version, the version of the `stim` it runs, and the home directory of the
-   * user it runs as, so clients can show paths under it as `~/...`. A pending approval result has no `home`.
+   * The machine's name, this package's version, the version of the `stim` it runs, and the home directory of the
+   * user it runs as, so clients can show paths under it as `~/...`.
    */
-  server: { name: string; version: string; stim: string; home?: string };
+  /** `port`, on the local socket only, is the server's TCP port, so a client can tell which server answered. */
+  server: { name: string; version: string; stim: string; home?: string; id?: string; port?: number };
   capabilities: Capability[];
   features: Feature[];
   /** The actions this device may run: every one of {@link ACTIONS} with `control`, none without. */
   actions: ActionName[];
-  /** The paired device this connection authenticated as, as `stim-server devices` lists it. */
+  /** The record this connection authenticated as, as `stim-server devices` lists it; `local` on the Unix socket. */
   device: { id: string; name: string };
-  /** Present only when the hello spent a pairing token or requested build or device-host access. The server keeps only its hash. */
-  deviceToken?: string;
-  /** Present only on a build or device-host request, which the server then closes; the request lapses at `expiresAt`. */
-  approval?: { state: 'pending'; expiresAt: string };
+  /** Present only for a requested private bootstrap on the local Unix socket. */
+  desktopBootstrap?: DesktopBootstrapChallenge;
+}
+
+/** Per-connection nonce and HMAC-SHA256 proof under the parent's private key, with the `server:` domain. */
+export interface DesktopBootstrapChallenge {
+  nonce: string;
+  proof: string;
 }
 
 export interface SubscribeResult {
@@ -338,6 +434,15 @@ export interface LogFilter {
   tail?: number;
 }
 
+/** Complete retained output on the private local Desktop connection; slot and time bounds are applied by Desktop. */
+export interface DesktopLogFilter {
+  workspace: string;
+  sources?: LogSource[];
+  level?: LogLevel;
+  grep?: string;
+  errors?: boolean;
+}
+
 /** One record as `stim logs --json` prints it. */
 export type LogRecord = NdjsonRecord;
 
@@ -355,6 +460,37 @@ export type StatsResult = Record<string, unknown>;
 
 /** `stim settings --json`; the CLI masks sensitive values. */
 export type SettingsResult = Record<string, unknown>;
+
+/** One settings mutation from the Desktop that started this server. Values use CLI text syntax. */
+export type DesktopSettingsWriteParams = { cwd: string; key: string; scope?: SettingScope } & (
+  | { action: 'set'; value: string }
+  | { action: 'unset' }
+);
+
+/** A masked write result or the CLI's typed refusal; transport failures use the RPC error channel. */
+export type DesktopSettingsWriteResult = SettingWriteResult | { code: string; message: string; remedy: string | null };
+
+export interface DesktopPlanRefusal {
+  code: string;
+  message: string;
+  remedy: string | null;
+}
+
+export type DesktopReportTarget = { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' } | { report: 'gc' };
+
+export interface DesktopReportSnapshot {
+  pending: boolean;
+  value: Record<string, unknown> | null;
+  error?: string;
+  measuredAt?: string;
+}
+
+export interface DesktopReportEvent {
+  event: 'desktop-report';
+  subscription: string;
+  target: DesktopReportTarget;
+  snapshot: DesktopReportSnapshot;
+}
 
 /** `web` is the workspace's Stim-owned Chrome page, from `stim web`; it has only the default slot. */
 export const PLATFORMS = ['ios', 'android', 'web', 'macos'] as const;
@@ -426,7 +562,7 @@ export interface KeyframeParams {
 
 /**
  * Plays recorded footage into a video subscription instead of the live screen: the frame at `at` (epoch
- * milliseconds on the Mac's clock) arrives at once, as the access units from the keyframe before it, then playback
+ * milliseconds on the machine's clock) arrives at once, as the access units from the keyframe before it, then playback
  * goes on at `rate` times real time. A `rate` of 0 stays paused on that frame. Time where nothing was recorded is
  * skipped.
  */
@@ -456,7 +592,7 @@ export interface ReplayTarget {
   slot?: string;
 }
 
-/** A time range with recorded footage, in epoch milliseconds on the Mac's clock. */
+/** A time range with recorded footage, in epoch milliseconds on the machine's clock. */
 export interface ReplaySpan {
   start: number;
   end: number;
@@ -488,6 +624,76 @@ export interface ReplayRange {
   markers: ReplayMarker[];
 }
 
+/** A workspace path from the workspace list. */
+export interface WorkspaceRef {
+  workspace: string;
+}
+
+/** The workspace list, all at once: every workspace's summary, the unprovisioned worktrees and the archives' summary. */
+export interface WorkspacesSnapshot {
+  workspaces: WorkspaceSummary[];
+  worktrees: WorktreeRow[];
+  archived: ArchivedSummary;
+}
+
+/**
+ * The workspace list of a `workspaces.subscribe` subscription. Its first event, `seq` 0, carries `snapshot`; each
+ * later one carries what changed since the previous event, `seq` one higher: whole workspaces and worktrees to insert or
+ * replace by `path`, the paths that are gone, and the archives' summary when it changed. A client that misses a `seq`
+ * subscribes again for a new snapshot.
+ */
+export interface WorkspacesEvent {
+  event: 'workspaces';
+  subscription: string;
+  seq: number;
+  snapshot?: WorkspacesSnapshot;
+  workspaces?: KeyedDelta<WorkspaceSummary>;
+  worktrees?: KeyedDelta<WorktreeRow>;
+  archived?: ArchivedSummary;
+}
+
+/**
+ * One workspace, as `stim status --json` prints its environment, on subscribing and on every change to it. `environment`
+ * is null while no workspace has that path.
+ */
+export interface WorkspaceEvent {
+  event: 'workspace';
+  subscription: string;
+  seq: number;
+  environment: EnvironmentState | null;
+}
+
+/** The machine on subscribing and on every change, with the usage history and own leases a `status` event carries. */
+export interface MachineEvent {
+  event: 'machine';
+  subscription: string;
+  seq: number;
+  machine: MachineView;
+  usage?: UsageHistory;
+  /** `grantedAt` of the device leases this server holds for phones; absent when it holds none. */
+  ownLeases?: string[];
+}
+
+/** A workspace's full build history, newest first per platform. */
+export interface BuildsHistoryResult {
+  builds: EnvironmentState['builds'];
+}
+
+/** `before` is the `next` of the previous page; `limit` is at most {@link ARCHIVED_PAGE_LIMIT}. */
+export interface ArchivedListParams {
+  before?: string;
+  limit?: number;
+}
+
+export const ARCHIVED_PAGE_LIMIT = 50;
+
+/** A page of archives, newest removal first, the usage of all of them, and the cursor of the next page or null. */
+export interface ArchivedListResult {
+  archived: ArchivedWorkspace[];
+  usage: ArchivedUsage;
+  next: string | null;
+}
+
 /** An archived[].id from status; the original workspace is not required. */
 export interface ArchiveDetailParams {
   archive: string;
@@ -499,7 +705,7 @@ export interface ArchiveDetailResult {
   recordings: { platform: 'ios' | 'android' | 'web'; slot: string; spans: ReplaySpan[] }[];
 }
 
-/** A device slot, as {@link ReplayTarget} names it, and a time in epoch milliseconds on the Mac's clock. */
+/** A device slot, as {@link ReplayTarget} names it, and a time in epoch milliseconds on the machine's clock. */
 export interface ReplayKeyframeParams extends ReplayTarget {
   at: number;
 }
@@ -555,7 +761,7 @@ export const VIDEO_ARTWORK = 32;
 /**
  * The layout of a binary video message, big-endian: u8 version ({@link VIDEO_HEADER_VERSION}), u8 flags
  * ({@link VIDEO_KEYFRAME}, posture bits and {@link VIDEO_ARTWORK}), u16 header length, u32 sequence number of the messages sent on this subscription, f64 capture time in milliseconds since the
- * epoch on the Mac's clock, u16 width, u16 height, u8 subscription id length N, N bytes of ASCII subscription
+ * epoch on the machine's clock, u16 width, u16 height, u8 subscription id length N, N bytes of ASCII subscription
  * id. After the header comes one Annex-B H.264 access unit; a keyframe carries its SPS and PPS. The stream has
  * no B-frames, so each access unit is shown as it arrives.
  */
@@ -773,25 +979,101 @@ export interface BuildPlanParams {
 
 /** `stim ios|android --plan --json`. It builds, boots and installs nothing, and writes no Stim state. */
 export type BuildPlanResult = BuildPlanPayload;
-/** A client's repository on a remote Mac: letters, digits, `.`, `_` and `-`, at most 80. */
+/** A client's repository on a remote machine: letters, digits, `.`, `_` and `-`, at most 80. */
 export const BUILD_REPO_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$';
 
 /** A version-manager Ruby installation name, without path separators. */
 export const BUILD_RUBY_VERSION_PATTERN = '^(?!\\.{1,2}$)[^/\\\\\\u0000\\r\\n]+$';
 
-/** Asks a remote Mac what it can build, how busy it is, and how warm its copy of `repo` is. */
+/** Asks a remote machine what it can build, how busy it is, and how warm its copy of `repo` is. */
 export interface BuildOfferParams {
   repo: string;
   /** sha256 of the repository's lockfile, compared with the one the machine last installed from. */
   lockfile?: string;
+  /** The dependency installation to compare with the lockfile, supported by `build-dependency-cache`. */
+  dependencies?: { project: string; packageName: string | null };
   /** The project's normalized .ruby-version; absent uses the worker's default Ruby. */
   rubyVersion?: string;
   native?: 'xcode' | 'gradle';
+  artifact?: BuildArtifactIdentity;
+  gradleArtifact?: BuildGradleArtifactQuery;
+  reactNativeArtifact?: BuildReactNativeArtifactQuery;
+  swiftpmArtifact?: BuildSwiftpmArtifactQuery;
 }
 
-/** The toolchain a build must match exactly on both Macs. */
+/**
+ * Which Stim built an artifact: the build compatibility version from a client that saw the `build-compat` feature,
+ * else the exact Stim build digest.
+ */
+export type BuildStimIdentity = { stimBuild: string; compat?: never } | { compat: number; stimBuild?: never };
+
+/** A post-mutation React Native fingerprint and the requested development build. */
+export type BuildReactNativeArtifactQuery = {
+  project: string;
+  fingerprint: string;
+  isExpo: boolean;
+} & (
+  | {
+      platform: 'ios';
+      toolchain: BuildStimIdentity & { arch: string; xcode: string; simulatorSdk: string; cocoapods: string };
+      ios: {
+        runtime: string;
+        configuration: string;
+        scheme: string | null;
+        projectPath: string;
+        optimizations: { compilationCache: boolean; swiftCompilationCache: boolean | null; prefixMapping: boolean };
+      };
+    }
+  | { platform: 'android'; toolchain: BuildStimIdentity & { jdk: string }; android: BuildAndroidOptions }
+);
+
+/** A declared native Gradle request with a resolved variant, excluding worker-private inputs and APK identity. */
+export interface BuildGradleArtifactQuery {
+  project: string;
+  sourceDigest: string;
+  inputs: GradleOffloadInputs;
+  android: BuildAndroidOptions & { variant: string };
+}
+
+/** A complete SwiftPM source transfer and repeatable build; private input values stay on the worker. */
+export type BuildSwiftpmArtifactQuery = BuildStimIdentity & {
+  project: string;
+  sourceDigest: string;
+  inputs: {
+    complete: true;
+    ignored: string[];
+    outputs: string[];
+    localFiles: string[];
+    environment: string[];
+  };
+  build: {
+    product: string;
+    infoPlist: string;
+    resources: Record<string, string>;
+    assetCatalog: string | null;
+  };
+};
+
+/** A native artifact identity whose key includes its complete inputs, target and toolchain. */
+export interface BuildArtifactIdentity {
+  fingerprint: string;
+  cacheKey: string;
+}
+
+export interface CachedBuildArtifact extends BuildArtifactIdentity {
+  name: string;
+  size: number;
+  sha256: string;
+  androidPackage?: string;
+}
+
+/** The toolchain a build must match exactly on both machines. */
 export interface BuildToolchain {
   stimBuild: string | null;
+  /** The Stim build compatibility version, compared instead of `stimBuild`; absent from an older stim-server. */
+  compat?: number;
+  /** The OS stim-server runs on, as Node names it; absent from a stim-server older than this field. */
+  os?: string;
   arch: string;
   xcode: string | null;
   simulatorSdk: string | null;
@@ -801,12 +1083,28 @@ export interface BuildToolchain {
   runtimes: string[];
   /** The major version of the JDK Gradle runs on there. */
   jdk: string | null;
+  /** The majors of every JDK it can find, the one `jdk` names included; absent from a stim-server older than this field. */
+  jdks?: string[];
+  /** What `xcode-select -p` prints on a Mac; absent from a stim-server older than this field, and while DEVELOPER_DIR is set there. */
+  developerDir?: string | null;
+  /** The Xcode apps in `/Applications`, with the license and first-launch checks of each while `xcode` is null. */
+  xcodeApps?: {
+    path: string;
+    version: string | null;
+    build: string | null;
+    license?: boolean;
+    firstLaunch?: boolean;
+  }[];
   /** The NDK, build-tools and platform directories of its Android SDK; null without an SDK. */
   androidSdk: { ndk: string[]; buildTools: string[]; platforms: string[] } | null;
+  /** Whether that SDK has its licenses accepted, so Gradle downloads a missing package; absent from a stim-server older than this field. */
+  androidLicenses?: boolean;
+  /** The SDK directory `androidSdk` was read from; absent from a stim-server older than this field. */
+  androidHome?: string;
 }
 
 /**
- * How busy the remote Mac is. `running` counts offloaded builds and `max` is how many it runs at once.
+ * How busy the remote machine is. `running` counts offloaded builds and `max` is how many it runs at once.
  * `cpus`, `loadPerCore` (5-minute load average per CPU), `builds` (its own Stim native builds plus the offloaded
  * ones), `maxBuilds` (its `concurrency.maxBuilds`, 0 when unlimited), `maxLoadPerCore`, `memoryUsedBytes`
  * (Activity Monitor's Memory Used) and `memoryTotalBytes` are absent from a stim-server older than them. `declined` is why it would refuse a build now, null when it would take one.
@@ -830,6 +1128,7 @@ export interface BuildOfferResult {
   toolchain: BuildToolchain;
   capacity: BuildCapacity;
   warm: { checkout: boolean; dependencies: boolean; build: boolean };
+  artifact?: CachedBuildArtifact | null;
 }
 
 /** One file of the client's checkout. A `link` blob holds the symlink's target. */
@@ -866,6 +1165,11 @@ export interface BuildAndroidOptions {
   module?: string | null;
 }
 
+export interface BuildFingerprintSource {
+  id: string;
+  hash: string | null;
+}
+
 export interface GradleOffloadInputs {
   complete: true;
   ignored: string[];
@@ -886,6 +1190,12 @@ export interface BuildStartParams {
   iosProjectPath?: string | null;
   runtime?: string | null;
   fingerprint: string | null;
+  /** The id and hash of each source of `fingerprint`, so the machine can name the sources its fingerprint differs in. */
+  fingerprintSources?: BuildFingerprintSource[];
+  /** Paths relative to `project` that the client's git ignores for `fingerprint`, such as through .git/info/exclude. */
+  fingerprintIgnored?: string[];
+  /** Top-level entries of `project` that the client's git tracks although an ignore pattern matches them. */
+  fingerprintTracked?: string[];
   native?:
     | {
         provider: 'xcode';
@@ -895,7 +1205,12 @@ export interface BuildStartParams {
         /** The non-file parameters of the client's artifact identity, so the machine can name what differs. */
         parameters: Record<string, unknown>;
       }
-    | { provider: 'gradle'; sourceDigest: string; inputs: GradleOffloadInputs };
+    | {
+        provider: 'gradle';
+        sourceDigest: string;
+        inputs: GradleOffloadInputs;
+        cache?: { read: boolean; write: boolean; remote: boolean };
+      };
   packageName?: string | null;
   isExpo?: boolean;
   optimizations?: Record<string, unknown> | null;
@@ -906,8 +1221,14 @@ export interface BuildStartParams {
     bundleId: string;
     resources?: Record<string, string>;
     assetCatalog?: string | null;
+    artifactInputs?: BuildSwiftpmArtifactQuery['inputs'];
   } | null;
   stimBuild: string;
+  /** The client's Stim build compatibility version, compared instead of `stimBuild` by a machine that reports one. */
+  compat?: number;
+  /** The JDK major the client's Android build ran on; a machine with the `build-jdk` feature builds on a JDK of that major. */
+  jdk?: string;
+  cacheArtifact?: boolean;
 }
 
 export interface BuildJobParams {
@@ -925,7 +1246,7 @@ export interface BuildArtifactResult {
   size: number;
   sha256: string;
   /**
-   * For a macOS job, a single-use token for the staged bundle this Mac keeps for a while, which a hosted session of a
+   * For a macOS job, a single-use token for the staged bundle this machine keeps for a while, which a hosted session of a
    * device-host client on the same tailnet node can take with `device-host.app.handoff`.
    */
   handoff?: string;
@@ -960,14 +1281,14 @@ export interface MachineVolume {
 export interface MachineUsage {
   volumes: MachineVolume[];
   /**
-   * `usedBytes` is the Mac's memory in use, as Activity Monitor's "Memory Used" counts it: app memory, wired and
+   * `usedBytes` is the machine's memory in use, as Activity Monitor's "Memory Used" counts it: app memory, wired and
    * compressed. `pressure` is the macOS memory pressure level. Both are null on other systems or when they cannot
    * be read.
    */
   memory: { totalBytes: number; usedBytes: number | null; pressure: MemoryPressure | null };
   load: { avg1: number; avg5: number; avg15: number; cpus: number };
   /**
-   * `usage` is the Mac's overall CPU busy fraction (0..1), from the tick delta between this call and the
+   * `usage` is the machine's overall CPU busy fraction (0..1), from the tick delta between this call and the
    * previous one. Null on the first call of a server process, since there is no previous sample yet.
    */
   cpu: { usage: number | null; cores: number };
@@ -998,7 +1319,7 @@ export interface MachineHistory {
 }
 
 /**
- * The Mac's disk and build detail: the payloads of the `stim gc --json` dry run and of `stim stats --json`, both run in
+ * The machine's disk and build detail: the payloads of the `stim gc --json` dry run and of `stim stats --json`, both run in
  * the home directory. A part is null when its command failed, and its `gcError` or `statsError` says why.
  * `measuredAt` is when the commands started. The server keeps one result for 60 seconds, shared by every connection.
  */
@@ -1008,7 +1329,7 @@ export interface MachineDetails {
   stats: Record<string, unknown> | null;
   statsError?: string;
   /**
-   * `remoteMachines` from `stim doctor --json --platform ios`; empty when `remote.machines` names none. The reply
+   * `remoteMachines` from `stim doctor --json`; empty when `remote.machines` names none. The reply
    * never waits for doctor: `buildMachines` and `buildMachinesError` are the last result a background doctor run
    * settled, `buildMachinesAt` is when it settled, and `buildMachinesPending` is true while that result is stale
    * (or absent) and a refresh is running. A client that wants the refreshed result asks `machine.details` again.
@@ -1018,8 +1339,8 @@ export interface MachineDetails {
   buildMachinesAt?: string;
   buildMachinesPending?: boolean;
   /**
-   * The builds this Mac ran for other Macs, one entry per client, from the audit log. `today` is
-   * this Mac's local calendar day. Absent from a server older than this field.
+   * The builds this machine ran for other machines, one entry per client, from the audit log. `today` is
+   * this machine's local calendar day. Absent from a server older than this field.
    */
   buildClients?: BuildClientSummary[];
   measuredAt: string;
@@ -1035,11 +1356,28 @@ export interface BuildClientSummary {
   lastAt: string;
 }
 
+/**
+ * The first layer that stops this machine from using a remote machine, as `stim doctor --json` reports it under
+ * `diagnosis`. `code` is stable; `title` is a short label for a status pill; `message` says what failed and
+ * `remedy` what to do. `guide remote` lists the codes.
+ */
+export interface RemoteDiagnosis {
+  layer: 'tailscale' | 'peer' | 'route' | 'server' | 'compat';
+  code: string;
+  title: string;
+  message: string;
+  remedy: string;
+}
+
 /** One `remote.machines` entry as `stim doctor --json` reports it; `guide facts doctor` defines the fields. */
 export interface BuildMachineReport {
   machine: string;
   state: string;
+  /** Present for a state that stops at a layer below approval (`tailscale-off`, `not-on-tailnet`, `unreachable`, `outdated`). */
+  diagnosis?: RemoteDiagnosis;
   dnsName?: string;
+  /** For `key-unconfirmed`: the fingerprint of the key a `local:` machine answered with, for a person to compare. */
+  fingerprint?: string;
   deviceId?: string;
   requestedAt?: string;
   offloadable?: boolean;
@@ -1099,7 +1437,7 @@ export interface QuietHours {
 /**
  * Asks the server to push this device's notifications through the Expo push service to `token`, an Expo push
  * token, for at least one event. Registering again replaces the previous registration. `ref` is echoed as
- * `data.ref` in every push, so the phone can tell which Mac sent it. `stuckMinutes` is how long a driven workspace
+ * `data.ref` in every push, so the phone can tell which machine sent it. `stuckMinutes` is how long a driven workspace
  * must show no activity to look stuck, 15 by default. `levels` sets each event's delivery; an event it leaves out
  * is silent. An older server ignores `levels`. `agentOnly` is accepted from older phones and ignored.
  */
@@ -1193,7 +1531,7 @@ export interface ServerUpdatePackage {
 
 /**
  * What `server.update.start` installs: an exact stim-server `release` from the public npm registry, or the
- * `packages` of a client's own build, which the Mac takes only while its `server.acceptClientBuilds` is true.
+ * `packages` of a client's own build, which the machine takes only while its `server.acceptClientBuilds` is true.
  */
 export type ServerUpdateStartParams = { release: string } | { packages: ServerUpdatePackage[] };
 
@@ -1233,8 +1571,8 @@ export interface ServerUpdateStatus {
 }
 
 /**
- * Where an update this Mac asked `machine` for stands: the host's own `server.update.status`, or why it could not be
- * read (`unreachable`, also while the host restarts), and how much of this Mac's build it has sent.
+ * Where an update this machine asked `machine` for stands: the host's own `server.update.status`, or why it could not be
+ * read (`unreachable`, also while the host restarts), and how much of this machine's build it has sent.
  */
 export interface MachineUpdateStatus {
   remote: ServerUpdateStatus | null;
@@ -1288,10 +1626,12 @@ export interface Methods {
   'device-host.app.attach': { params: { session: string; attempt: string }; result: HostedAppLaunch };
   'device-host.logs.query': { params: { session: string; cursor?: HostedLogsCursor }; result: HostedLogsPage };
   'device-host.metro.open': {
-    params: { session: string; gatewayPort: number; secret: string; clientMetroPort?: number };
+    params: { session: string; clientMetroPort?: number };
     result: { port: number };
   };
+  'device-host.metro.ports': { params: { ports: number[] }; result: { busy: number[] } };
   'device-host.metro.close': { params: { session: string }; result: { port: null } };
+  'device-host.metro.link': { params: { session: string }; result: Record<string, never> };
   'device-host.frames.subscribe': {
     params: { session: string; fps?: number; maxEdge?: number; video?: string[] };
     result: FramesSubscribeResult;
@@ -1310,7 +1650,61 @@ export interface Methods {
   'device-host.input.posture': Methods['input.posture'];
   'device-host.input.window': Methods['input.window'];
   hello: { params: HelloParams; result: HelloResult };
+  'desktop.authenticate': { params: { proof: string }; result: { authorized: true } };
+  'desktop.reports.get': { params: DesktopReportTarget; result: DesktopReportSnapshot };
+  'desktop.reports.subscribe': { params: DesktopReportTarget; result: SubscribeResult };
+  'desktop.reports.invalidate': { params?: Record<string, never> | DesktopReportTarget; result: Record<string, never> };
+  'desktop.settings.get': { params: { cwd: string }; result: SettingsResult };
+  'desktop.settings.schema': { params?: Record<string, never>; result: Record<string, unknown> };
+  'desktop.settings.write': { params: DesktopSettingsWriteParams; result: DesktopSettingsWriteResult };
+  'desktop.logs.subscribe': { params: DesktopLogFilter; result: SubscribeResult };
+  'desktop.doctor.run': {
+    params: { cwd: string; platform?: 'ios' | 'android' };
+    result: Record<string, unknown>;
+  };
+  'desktop.machine-access.subscribe': { params: { cwd: string; ticket?: string }; result: SubscribeResult };
+  'desktop.stop.subscribe': { params: { cwd: string; slot?: string }; result: SubscribeResult };
+  'desktop.reload.subscribe': { params: { cwd: string; platform?: ReloadPlatform }; result: SubscribeResult };
+  'desktop.start.subscribe': {
+    params: { cwd: string; remote?: boolean; resetCache?: boolean; waitSeconds?: number };
+    result: SubscribeResult;
+  };
+  'desktop.run.subscribe': {
+    params: { cwd: string; options: PlatformRunOptions };
+    result: SubscribeResult;
+  };
+  'desktop.plan.get': {
+    params: { cwd: string; request?: string } & (
+      | { platform: 'ios' | 'android'; slot?: string }
+      | { platform: 'macos' }
+    );
+    result: BuildPlanPayload | MacosBuildPlanPayload | DesktopPlanRefusal;
+  };
+  'desktop.plan.cancel': { params: { request: string }; result: { cancelled: boolean; refusal?: DesktopPlanRefusal } };
+  'desktop.build.subscribe': {
+    params: { cwd: string; options: PlatformBuildOptions };
+    result: SubscribeResult;
+  };
+  'desktop.gc.subscribe': {
+    params: { cwd: string; cache?: string; olderThan?: number; worktrees?: boolean; delete?: boolean; idleMs?: number };
+    result: SubscribeResult;
+  };
+  'desktop.worktree.warm.subscribe': {
+    params: { cwd: string };
+    result: SubscribeResult;
+  };
+  'desktop.worktree.remove.subscribe': {
+    params: { cwd: string; target?: string; force?: boolean };
+    result: SubscribeResult;
+  };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
+  'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
+  'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };
+  'machine.subscribe': { params?: Record<string, never>; result: SubscribeResult };
+  'builds.history': { params: WorkspaceRef; result: BuildsHistoryResult };
+  'archived.list': { params?: ArchivedListParams; result: ArchivedListResult };
+  'worktrees.list': { params?: Record<string, never>; result: { worktrees: WorktreeFacts[] } };
+  'maintenance.get': { params?: Record<string, never>; result: { maintenance: MaintenanceStatus | null } };
   'logs.query': { params: LogFilter; result: LogsQueryResult };
   'logs.subscribe': { params: LogFilter; result: SubscribeResult };
   'stats.get': { params?: WorkspaceParams; result: StatsResult };
@@ -1348,6 +1742,16 @@ export interface Methods {
   'build.start': { params: BuildStartParams; result: BuildJobParams };
   'build.cancel': { params: BuildJobParams; result: Record<string, never> };
   'build.artifact': { params: BuildJobParams; result: BuildArtifactResult };
+  'build.cached-artifact': {
+    params: {
+      repo: string;
+      artifact: BuildArtifactIdentity;
+      gradleArtifact?: BuildGradleArtifactQuery;
+      reactNativeArtifact?: BuildReactNativeArtifactQuery;
+      swiftpmArtifact?: BuildSwiftpmArtifactQuery;
+    };
+    result: CachedBuildArtifact | null;
+  };
   'build.attach': { params: BuildJobParams; result: BuildAttachResult };
 }
 
@@ -1541,10 +1945,243 @@ export interface BuildProgressEvent {
   outcome?: BuildJobOutcome;
 }
 
+/** Progress chunks from a private Desktop stop, before its terminal event. */
+export interface DesktopStopProgressEvent {
+  event: 'desktop-stop-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The stop's CLI-compatible JSON, exit status and human summary or refusal. */
+export interface DesktopStopEndedEvent {
+  event: 'desktop-stop-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/** Progress chunks from a private Desktop reload, before its terminal event. */
+export interface DesktopReloadProgressEvent {
+  event: 'desktop-reload-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The reload's CLI-compatible JSON, exit status and human summary or refusal. */
+export interface DesktopReloadEndedEvent {
+  event: 'desktop-reload-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/** Progress chunks from a private Desktop start, before its terminal event. */
+export interface DesktopStartProgressEvent {
+  event: 'desktop-start-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The start's CLI-compatible JSON, exit status and human summary or refusal. */
+export interface DesktopStartEndedEvent {
+  event: 'desktop-start-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+interface NativeRunOptions {
+  slot?: string;
+  metroCheck?: boolean;
+  buildCache?: boolean;
+  remoteBuild?: string;
+  remote?: string;
+  device?: string | boolean;
+  wait?: string | boolean;
+  easProfile?: string;
+}
+
+/** Artifact-only selectors shared by the in-process API and private Desktop transport. */
+export type PlatformBuildOptions =
+  | {
+      platform: 'ios';
+      configuration?: string;
+      scheme?: string;
+      /** Defaults to the host simulator architecture for Debug, or all architectures otherwise. */
+      arch?: 'arm64' | 'x86_64' | 'all';
+      buildCache?: boolean;
+      remoteBuild?: string;
+    }
+  | {
+      platform: 'android';
+      variant?: string;
+      abi?: 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all';
+      buildCache?: boolean;
+      remoteBuild?: string;
+    }
+  | { platform: 'macos'; remoteBuild?: string };
+
+/** Build, install and launch selectors shared by the in-process API and private Desktop transport. */
+export type PlatformRunOptions =
+  | (NativeRunOptions & {
+      platform: 'ios';
+      configuration?: string;
+      scheme?: string;
+      deviceType?: string;
+      runtime?: string;
+      simulatorApp?: string;
+    })
+  | (NativeRunOptions & {
+      platform: 'android';
+      variant?: string;
+      systemImage?: string;
+      deviceProfile?: string;
+    })
+  | { platform: 'macos'; remoteBuild?: string; remote?: string }
+  | { platform: 'web'; headed?: boolean };
+
+/** Progress from a private Desktop platform run, before its terminal event. */
+export interface DesktopRunProgressEvent {
+  event: 'desktop-run-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The run's typed API result or refusal, exit status and summary. */
+export interface DesktopRunEndedEvent {
+  event: 'desktop-run-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/** Progress from a private Desktop artifact build, before its terminal event. */
+export interface DesktopBuildProgressEvent {
+  event: 'desktop-build-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The build's typed API result or refusal, exit status and summary. */
+export interface DesktopBuildEndedEvent {
+  event: 'desktop-build-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/** Progress from private Desktop garbage collection, before its terminal event. */
+export interface DesktopGcProgressEvent {
+  event: 'desktop-gc-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The GC JSON report or typed refusal, exit status and summary. */
+export interface DesktopGcEndedEvent {
+  event: 'desktop-gc-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/** Progress from private Desktop worktree removal, before its terminal event. */
+export interface DesktopWorktreeRemoveProgressEvent {
+  event: 'desktop-worktree-remove-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The removal result or typed refusal, exit status and summary. */
+export interface DesktopWorktreeRemoveEndedEvent {
+  event: 'desktop-worktree-remove-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/** Progress from private Desktop worktree warming, before its terminal event. */
+export interface DesktopWorktreeWarmProgressEvent {
+  event: 'desktop-worktree-warm-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The warming result or typed refusal, exit status and summary. */
+export interface DesktopWorktreeWarmEndedEvent {
+  event: 'desktop-worktree-warm-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/** Progress from a private Desktop machine-access request. */
+export interface DesktopMachineAccessProgressEvent {
+  event: 'desktop-machine-access-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+/** The machine-access report or typed refusal after cleanup completes. */
+export interface DesktopMachineAccessEndedEvent {
+  event: 'desktop-machine-access-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
+/**
+ * Sent on a `device-host.metro.link` connection when the host pairs it with one Metro stream; binary frames follow.
+ * Only device-host links receive it, so it is not a `ServerEvent`.
+ */
+export interface MetroLinkOpenEvent {
+  event: 'device-host.metro.link.open';
+}
+
 export type ServerEvent =
+  | DesktopMachineAccessProgressEvent
+  | DesktopMachineAccessEndedEvent
+  | DesktopWorktreeWarmProgressEvent
+  | DesktopWorktreeWarmEndedEvent
+  | DesktopWorktreeRemoveProgressEvent
+  | DesktopWorktreeRemoveEndedEvent
+  | DesktopGcProgressEvent
+  | DesktopGcEndedEvent
+  | DesktopBuildProgressEvent
+  | DesktopBuildEndedEvent
+  | DesktopRunProgressEvent
+  | DesktopRunEndedEvent
+  | DesktopStartProgressEvent
+  | DesktopStartEndedEvent
+  | DesktopReloadProgressEvent
+  | DesktopReloadEndedEvent
+  | DesktopStopProgressEvent
+  | DesktopStopEndedEvent
+  | DesktopReportEvent
   | BuildProgressEvent
   | NotificationEvent
   | StatusEvent
+  | WorkspacesEvent
+  | WorkspaceEvent
+  | MachineEvent
   | LogsEvent
   | LogsEndedEvent
   | FrameEvent

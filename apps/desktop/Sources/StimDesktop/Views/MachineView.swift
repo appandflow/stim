@@ -53,12 +53,12 @@ struct MachineView: View {
         }
         if let variant = Tips.emptyState(
           gate: tips.established, machines: buildMachines.entries, settingsError: buildMachines.settings.error,
-          selectedMachine: machine, macs: buildMachines.macs)
+          selectedMachine: machine, peers: buildMachines.peers)
         {
           BuildMachinesEmptyState(
             add: {
               OpenRequests.shared.addMachine = AddMachineRequest(
-                machineID: Tips.firstMac(buildMachines.macs)?.id, hostedSimulators: false)
+                machineID: Tips.preselected(buildMachines.peers, hostedSimulators: false)?.id, hostedSimulators: false)
             }, needsTailscale: variant == .tailscale)
         }
         if let failure = buildMachines.settingsFailure {
@@ -75,6 +75,7 @@ struct MachineView: View {
             EmptyView()
           }
           NowBand(status: status, metrics: metrics, gc: gc)
+          CapacitySection(status: status)
           if let plan = autopilot.pressure { pressureBanner(plan) }
           ThisMacPlacements(model: buildMachines)
           MachineHeading(icon: "internaldrive", title: "Disk Usage", subtitle: "Workspace, device and tool storage on this Mac.")
@@ -174,7 +175,7 @@ struct MachineView: View {
     HStack(alignment: .firstTextBaseline) {
       VStack(alignment: .leading, spacing: Space.xs) {
         Text("Machines").font(.stim(.title))
-        Text("View resource usage and disk space on this Mac, or build activity on a linked Mac.")
+        Text("View resource usage and disk space on this Mac, or build activity on a remote machine.")
           .foregroundStyle(Palette.secondary)
       }
       Spacer()
@@ -204,7 +205,7 @@ struct MachineView: View {
       }
     } trailing: {
       if !plan.isEmpty {
-        Button("Free Disk Space") { autopilot.runPressurePlan(trigger: .manual, present: true) }
+        Button("Free Disk Space") { autopilot.runPressurePlan() }
           .buttonStyle(.stim(.primary))
           .help("stim gc --delete")
       }

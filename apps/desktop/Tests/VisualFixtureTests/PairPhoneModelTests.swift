@@ -12,7 +12,6 @@ final class PairPhoneModelTests: XCTestCase {
     var starts = 0
     var stops = 0
     var refreshes = 0
-    var reloads = 0
     var tailscaleReads = 0
     var replies = 0
     var routeReply: CheckedContinuation<String?, Never>?
@@ -26,7 +25,7 @@ final class PairPhoneModelTests: XCTestCase {
             self.tailscaleReads += 1
             return .running(dnsName: "macbook.tail.test")
           }, snapshot: { self.snapshot }, refreshServer: { self.refreshes += 1 },
-          reloadDevices: { self.reloads += 1 }, devices: { self.devices }, startServing: { self.starts += 1 },
+          devices: { self.devices }, startServing: { self.starts += 1 },
           stopServing: { self.stops += 1 },
           setUpRoute: { await withCheckedContinuation { self.routeReply = $0 } },
           pair: { control in
@@ -51,7 +50,7 @@ final class PairPhoneModelTests: XCTestCase {
         PairingCode.self,
         from: Data(
           """
-          {"qr":{"v":1,"name":"MacBook","endpoint":"wss://macbook.tail.test:7443","pairingToken":"\(token)"},
+          {"qr":{"v":2,"name":"MacBook","endpoint":"wss://macbook.tail.test:7443","pairingToken":"\(token)","fingerprint":"fp"},
            "expiresAt":\(now.addingTimeInterval(300).timeIntervalSince1970)}
           """.utf8))
     }
@@ -128,7 +127,7 @@ final class PairPhoneModelTests: XCTestCase {
     await waitUntil { model.code != nil }
     await model.start()
     defer { model.stop() }
-    await waitUntil { harness.reloads == 1 }
+    await waitUntil { harness.refreshes == 1 }
     XCTAssertEqual(harness.refreshes, 1)
     XCTAssertEqual(harness.tailscaleReads, 0)
     let decoder = JSONDecoder()
@@ -138,14 +137,13 @@ final class PairPhoneModelTests: XCTestCase {
         PairedDevice.self,
         from: Data(
           """
-          {"id":"new-phone","name":"Janic's iPhone","identity":{"kind":"tailnet"},
+          {"id":"new-phone","name":"Janic's iPhone","keyFingerprint":"k1",
            "pairedAt":\(harness.now.timeIntervalSince1970),"capabilities":["read","control"]}
           """.utf8))
     ]
     harness.now = harness.now.addingTimeInterval(2)
     await waitUntil { model.wizard.step == .done }
     XCTAssertEqual(model.wizard.paired?.name, "Janic's iPhone")
-    XCTAssertEqual(harness.reloads, 2)
     XCTAssertEqual(harness.refreshes, 2)
   }
 }

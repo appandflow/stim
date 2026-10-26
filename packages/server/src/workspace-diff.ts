@@ -101,7 +101,7 @@ export async function readWorkspaceDiff(
   ) {
     const version = parseGitVersion((await git(['--version'])) ?? '');
     if (!version || version[0] < 2 || (version[0] === 2 && version[1] < 45)) {
-      throw new Error('Workspace diffs need Git 2.45 or later for partial clones. Review on the Mac.');
+      throw new Error('Workspace diffs need Git 2.45 or later for partial clones. Review on that machine.');
     }
   }
   const drivers = new Set(
@@ -135,7 +135,7 @@ export async function readWorkspaceDiff(
       for (let i = 0; i + 2 < fields.length; i += 3) {
         if (fields[i + 1] === 'filter' && drivers.has(fields[i + 2]!)) {
           throw new Error(
-            'Workspace diffs are unavailable because tracked files use a Git clean/process filter. Review on the Mac.',
+            'Workspace diffs are unavailable because tracked files use a Git clean/process filter. Review on that machine.',
           );
         }
       }
@@ -169,7 +169,9 @@ export async function readWorkspaceDiff(
   if (file.status.includes('U') || file.status === 'AA' || file.status === 'DD') {
     return {
       path,
-      patches: [{ section: 'unstaged', kind: 'unavailable', text: 'Unmerged file: resolve the conflict on the Mac.' }],
+      patches: [
+        { section: 'unstaged', kind: 'unavailable', text: 'Unmerged file: resolve the conflict on that machine.' },
+      ],
     };
   }
   if (file.untracked) {
@@ -215,7 +217,7 @@ export async function readWorkspaceDiff(
           {
             section: file.staged ? 'staged' : 'unstaged',
             kind: 'unavailable',
-            text: 'Submodule changes: review the nested repository on the Mac.',
+            text: 'Submodule changes: review the nested repository on that machine.',
           },
         ],
       };

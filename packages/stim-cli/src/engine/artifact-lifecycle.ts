@@ -13,7 +13,7 @@ export interface ArtifactLifecycle<Artifact, Preparation, Placement = never> {
   reuse(artifact: Artifact): Promise<Artifact | null>;
   build: {
     placement?: {
-      select(): Placement | null;
+      select(): Placement | null | Promise<Placement | null>;
       acquire(placement: Placement, preparation: Preparation): Promise<ReadyArtifact<Artifact> | null>;
     };
     admit(): Promise<void>;
@@ -40,7 +40,7 @@ export async function runArtifactLifecycle<Artifact, Preparation, Placement>(
     }
 
     const { build } = phases;
-    const placement = build.placement?.select() ?? null;
+    const placement = (await build.placement?.select()) ?? null;
     if (placement === null) await build.admit();
     const preparation = await build.prepare();
     const late = await build.revalidate(preparation);

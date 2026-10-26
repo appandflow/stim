@@ -16,6 +16,7 @@ interface IosDeviceRecord {
   owned?: boolean;
   serial?: string;
   simslimManaged?: boolean;
+  simslimApplied?: { profile: string; springBoardPid: number };
   schemeApprovals?: string[];
   [key: string]: unknown;
 }
@@ -79,6 +80,7 @@ export interface ConcurrencyLimits {
 
 export interface StimConfig {
   version?: number;
+  homeId?: string;
   projects: Record<string, ProjectRecord>;
   repos: Record<string, RepoRecord>;
   tempDir?: unknown;
@@ -92,15 +94,18 @@ export interface StimConfig {
   hosting?: { agentDriver?: unknown };
   debug?: { logs?: unknown };
   server?: {
+    buildsPaused?: unknown;
+    devicesPaused?: unknown;
     acceptClientBuilds?: unknown;
+    lanAddresses?: unknown;
     maxLoadPerCore?: unknown;
     workerRoot?: unknown;
     gradleDaemonIdleMinutes?: unknown;
   };
   remote?: {
     machines?: unknown;
+    easMaxDurationMinutes?: unknown;
     build?: unknown;
-    buildMode?: unknown;
     buildPoolDisabled?: unknown;
     devicePoolDisabled?: unknown;
   };

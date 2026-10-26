@@ -3,104 +3,61 @@ import Combine
 import StimKit
 import StimStores
 
-/// Runs Stim's cleanup commands on a schedule while the app runs: `stim gc --idle` for idle devices,
-/// a nightly `stim gc --delete` bounded by age, and an unbounded `stim gc --delete` when free disk falls under
-/// the Stim budget. It also removes worktrees whose pull request was merged or closed, when `stim gc` finds them safe.
-/// When the CLI's own automatic maintenance is on (`MaintenanceStatus.cleansAutomatically`), the CLI clears build
-/// outputs, trims caches and removes finished worktrees, so the disk-pressure run and the finished-pull-request
-/// removal stand down; idle shutdown and the nightly run stay, because the CLI does not do them. When the CLI's last
-/// pass was blocked and disk is still under the budget, the app asks with a notification instead of running
-/// `stim gc --delete`, which would clear what the CLI keeps. Finished worktrees are removed here again when the CLI's
-/// worktree check has not run within an hour.
-/// Every run goes through the CLI on the machine action slot, so it never overlaps a cleanup the user
-/// started, and is recorded in the activity log.
 @MainActor
 final class AutopilotRunner: ObservableObject {
   static let tick: TimeInterval = 60
-  static let idleRetry: TimeInterval = 10 * 60
-  static let pressureRetry: TimeInterval = 60 * 60
   static let budgetMaxAge: TimeInterval = 30 * 60
   static let reportMaxAge: TimeInterval = 10 * 60
 
-  @Published private(set) var log: [AutopilotLogEntry]
   /// Set while free disk is under the Stim budget.
   @Published private(set) var pressure: PressurePlan?
   /// The volume Stim writes to with the least free space, measured on every check.
   @Published private(set) var lowestVolume: DiskVolume?
-  /// Worktrees whose pull request was merged or closed that `stim gc` keeps, with the reason.
-  @Published private(set) var finishedPullRequests: [PullRequestCleanup.Flag] = []
-  /// Why the last pull request check could not ask GitHub, or nil when it could.
-  @Published private(set) var pullRequestCheck: String?
   /// The CLI's automatic maintenance as the last `stim status --json` reported it; nil from a `stim` without it.
   @Published private(set) var cliMaintenance: MaintenanceStatus?
+  @Published private(set) var statusLoaded = false
 
   private let status: StatusStore
   private let actions: ActionCenter
   private let gc: GcReportStore
   private let disks: DiskVolumeStore
   private let settings: MachineSettingsStore
-  private let cli: Task<StimCLI, Never>
   private var timer: Timer?
   private var checking = false
-  private var lastIdleRun: Date?
-  private var lastPressureRun: Date?
   private(set) var budget: (minFree: Double, hardFloor: Double)?
   private var budgetAt: Date?
   private var notifiedEpisode = false
-  private var nightlyHour: Int?
-  private var pollingPullRequests = false
-  private var lastPullRequestPoll: Date?
-  private var pullRequestVerdict: (candidates: Set<String>, at: Date, nextEligible: Date?)?
-  private var activation: NSObjectProtocol?
   private var maintenanceSubscription: AnyCancellable?
 
   init(
-    status: StatusStore, actions: ActionCenter, gc: GcReportStore, disks: DiskVolumeStore, settings: MachineSettingsStore,
-    cli: Task<StimCLI, Never>
+    status: StatusStore, actions: ActionCenter, gc: GcReportStore, disks: DiskVolumeStore, settings: MachineSettingsStore
   ) {
     self.status = status
     self.actions = actions
     self.gc = gc
     self.disks = disks
     self.settings = settings
-    self.cli = cli
-    log = AutopilotLog.decode(UserDefaults.standard.data(forKey: AppPreferences.Key.autopilotLog))
-    maintenanceSubscription = status.$payload.map { $0?.maintenance }.removeDuplicates().sink { [weak self] in
-      self?.cliMaintenance = $0
-    }
+    maintenanceSubscription = status.$payload.map { ($0 != nil, $0?.maintenance) }.removeDuplicates { $0 == $1 }
+      .sink { [weak self] loaded, maintenance in
+        self?.statusLoaded = loaded
+        self?.cliMaintenance = maintenance
+      }
   }
-
-  private var cliCleansAutomatically: Bool { cliMaintenance?.cleansAutomatically == true }
 
   private var defaults: UserDefaults { .standard }
 
   func start() {
     guard timer == nil else { return }
-    if defaults.object(forKey: AppPreferences.Key.autopilotLastNightly) == nil {
-      defaults.set(Date(), forKey: AppPreferences.Key.autopilotLastNightly)
-    }
     NotificationResponder.shared.runPlan = { [weak self] in self?.runPlanFromNotification() }
-    if defaults.bool(forKey: AppPreferences.Key.notifiesDiskPressure)
-      || defaults.bool(forKey: AppPreferences.Key.notifiesWorktreeRemoval)
-    {
+    if defaults.bool(forKey: AppPreferences.Key.notifiesDiskPressure) {
       Notifier.requestAuthorization()
     }
     timer = Timer.scheduledTimer(withTimeInterval: Self.tick, repeats: true) { [weak self] _ in
-      MainActor.assumeIsolated { self?.check() }
+      MainActor.assumeIsolated { self?.checkPressure(maxAge: Self.tick / 2) }
     }
     Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
-      MainActor.assumeIsolated { self?.check() }
+      MainActor.assumeIsolated { self?.checkPressure(maxAge: Self.tick / 2) }
     }
-    activation = NotificationCenter.default.addObserver(
-      forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
-    ) { [weak self] _ in
-      MainActor.assumeIsolated { self?.checkPullRequests(interval: PullRequestCleanup.focusInterval) }
-    }
-  }
-
-  func clearLog() {
-    log = []
-    defaults.removeObject(forKey: AppPreferences.Key.autopilotLog)
   }
 
   /// The Do it of a pressure notification, which can be clicked long after it was posted: it runs the plan
@@ -111,63 +68,11 @@ final class AutopilotRunner: ObservableObject {
       OpenRequests.shared.showsMachine = true
       return
     }
-    runPressurePlan(trigger: .manual, present: true)
+    runPressurePlan()
   }
 
-  func runPressurePlan(trigger: AutopilotLogEntry.Trigger, present: Bool) {
-    lastPressureRun = Date()
-    run(trigger, "Reclaim disk space", PressurePlan.arguments, present: present) { run, summary in
-      guard trigger == .pressure else { return }
-      let archived = run.gcOutcome.flatMap { try? $0.get().archivedWorktrees.isEmpty } == false
-      Notifier.postPressure(
-        id: "\(archived ? Notifier.archivedPressurePrefix : Notifier.ranPressurePrefix)\(run.id)",
-        title: "Free disk is under the Stim budget",
-        body: summary
-          ?? "Stim Desktop ran stim gc --delete. \(run.exitStatus == 0 ? "It finished" : "It exited with an error"); see the autopilot log.",
-        offersPlan: false)
-    }
-  }
-
-  private func check() {
-    checkPullRequests(interval: PullRequestCleanup.pollInterval)
-    let now = Date()
-    let idle = actions.active(for: ActionCenter.machineKey) == nil
-    let hour = defaults.integer(forKey: AppPreferences.Key.autopilotNightlyHour)
-    if !defaults.bool(forKey: AppPreferences.Key.autopilotNightly) || (nightlyHour != nil && nightlyHour != hour) {
-      defaults.set(now, forKey: AppPreferences.Key.autopilotLastNightly)
-    }
-    nightlyHour = hour
-    if idle, defaults.bool(forKey: AppPreferences.Key.autopilotNightly),
-      let last = defaults.object(forKey: AppPreferences.Key.autopilotLastNightly) as? Date,
-      AutopilotSchedule.nightlyDue(now: now, hour: hour, lastRun: last)
-    {
-      defaults.set(now, forKey: AppPreferences.Key.autopilotLastNightly)
-      let days = defaults.integer(forKey: AppPreferences.Key.autopilotNightlyOlderThanDays)
-      run(.nightly, "Nightly cleanup", AutopilotSchedule.nightlyArguments(olderThanDays: days), present: false)
-      return
-    }
-    let minutes = defaults.integer(forKey: AppPreferences.Key.autopilotIdleMinutes)
-    if idle, defaults.bool(forKey: AppPreferences.Key.autopilotIdleShutdown), minutes > 0,
-      lastIdleRun.map({ now.timeIntervalSince($0) >= Self.idleRetry }) ?? true,
-      AutopilotSchedule.idleShutdownDue(bootedDevices, minutes: minutes, now: now)
-    {
-      lastIdleRun = now
-      run(
-        .idle, "Shut down idle devices", ["gc", "--idle", AutopilotSchedule.idleDuration(minutes: minutes), "--json"],
-        present: false)
-      return
-    }
-    checkPressure(maxAge: Self.tick / 2)
-  }
-
-  /// Booted devices of workspaces with no build running, which `gc --idle` skips.
-  private var bootedDevices: [AutopilotSchedule.Device] {
-    (status.payload?.environments ?? []).filter { $0.build?.isRunning != true }.flatMap { env in
-      env.devices.filter { $0.isRunning && $0.platform != "macos" }
-    }
-    .map {
-      AutopilotSchedule.Device(activity: $0.activity, screenChangedAt: $0.activityKey.flatMap(ScreenActivity.shared.lastChange))
-    }
+  func runPressurePlan() {
+    run("Reclaim disk space", PressurePlan.arguments)
   }
 
   private func checkPressure(maxAge: TimeInterval) {
@@ -224,134 +129,17 @@ final class AutopilotRunner: ObservableObject {
       notifiedEpisode = false
       return
     }
-    let wants = defaults.bool(forKey: AppPreferences.Key.autopilotPressure)
-    if wants, !plan.isEmpty, status.payload == nil { return }
-    if wants, !plan.isEmpty, cliCleansAutomatically, cliMaintenance?.lastPass?.blocked.isEmpty ?? true { return }
-    let acts = wants && !cliCleansAutomatically
-    if acts, !plan.isEmpty, actions.active(for: ActionCenter.machineKey) == nil,
-      lastPressureRun.map({ Date().timeIntervalSince($0) >= Self.pressureRetry }) ?? true
-    {
-      runPressurePlan(trigger: .pressure, present: false)
-      return
-    }
-    guard !notifiedEpisode, !(acts && !plan.isEmpty) else { return }
+    guard status.payload != nil, !notifiedEpisode, MaintenanceStatus.asksAboutDiskPressure(cliMaintenance) else { return }
     notifiedEpisode = true
     Notifier.postPressure(
       id: "pressure-\(Date().timeIntervalSince1970)", title: plan.headline, body: plan.proposal, offersPlan: !plan.isEmpty)
   }
 
-  private func run(
-    _ trigger: AutopilotLogEntry.Trigger, _ title: String, _ arguments: [String], present: Bool,
-    completion: ((ActionRun, String?) -> Void)? = nil
-  ) {
-    let command = StimCommand(arguments, cwd: NSHomeDirectory())
-    let titles = Dictionary(
-      (status.payload?.environments.map { ($0.path, $0.names.title) } ?? [])
-        + (status.payload?.unprovisionedWorktrees?.map { ($0.path, $0.names.title) } ?? []),
-      uniquingKeysWith: { first, _ in first })
-    actions.run(title, steps: [command], key: ActionCenter.machineKey, present: present) { [weak self] run in
-      guard let self else { return }
-      self.checkPressure(maxAge: 0)
-      let summary = run.gcOutcome.flatMap { try? $0.get() }.map {
-        $0.summary(name: { titles[$0] ?? PathNames(path: $0).title })
-      }
-      self.record(
-        AutopilotLogEntry(
-          date: Date(), trigger: trigger, command: "stim \(arguments.joined(separator: " "))",
-          exitStatus: run.launchError == nil ? run.exitStatus : nil, note: summary ?? run.summary))
-      completion?(run, summary)
+  private func run(_ title: String, _ arguments: [String]) {
+    actions.run(
+      title, steps: [StimCommand(arguments, cwd: NSHomeDirectory())], key: ActionCenter.machineKey, present: true
+    ) { [weak self] _ in
+      self?.checkPressure(maxAge: 0)
     }
-  }
-
-  /// Lists the merged and closed pull requests of each repository with a Stim environment, one `gh` call each.
-  /// Only when a linked worktree's branch is among them does it ask `stim gc --json`, and it asks again only when
-  /// those worktrees change, one becomes eligible, or the last answer is `reportMaxAge` old.
-  private func checkPullRequests(interval: TimeInterval) {
-    guard defaults.bool(forKey: AppPreferences.Key.autopilotPullRequests), !pollingPullRequests else { return }
-    let now = Date()
-    if let last = lastPullRequestPoll, now.timeIntervalSince(last) < interval { return }
-    guard let environments = status.payload?.environments else { return }
-    lastPullRequestPoll = now
-    pollingPullRequests = true
-    let repositories = Set(environments.compactMap { $0.worktree?.repository })
-    let previous = pullRequestVerdict
-    let gc = gc
-    let cli = cli
-    Task.detached(priority: .utility) {
-      let cli = await cli.value
-      let gh = GitHubCLI(environment: cli.environment)
-      var finished: [String: Set<String>] = [:]
-      for repository in repositories {
-        if let data = gh.run(PullRequestCleanup.listArguments, cwd: repository) {
-          let ownRepos = localRemoteRepos(at: repository)
-          if let branches = PullRequestCleanup.branches(data, ownRepos: ownRepos) {
-            finished[repository] = branches
-          }
-        }
-      }
-      let problem = PullRequestCleanup.problem(
-        hasGitHubCLI: gh.executable != nil, repositories: repositories.count, answered: finished.count)
-      let candidates = PullRequestCleanup.candidates(environments, finished: finished)
-      let stale =
-        previous.map {
-          $0.candidates != candidates || now.timeIntervalSince($0.at) >= PullRequestCleanup.reportMaxAge
-            || $0.nextEligible.map { now >= $0 } == true
-        } ?? true
-      let answered = finished
-      let asked = !candidates.isEmpty && stale
-      let report = asked ? await gc.report(startedAfter: Date()) : nil
-      await MainActor.run {
-        self.pollingPullRequests = false
-        self.pullRequestCheck = problem
-        if candidates.isEmpty, problem == nil {
-          self.pullRequestVerdict = nil
-          self.finishedPullRequests = []
-          return
-        }
-        guard asked else { return }
-        self.pullRequestVerdict = (candidates, now, report.flatMap(PullRequestCleanup.nextEligible))
-        guard let report else { return }
-        self.finishedPullRequests = PullRequestCleanup.flagged(report)
-        guard self.cliMaintenance?.removesFinishedWorktrees(now: Date()) != true else { return }
-        self.removeFinished(
-          PullRequestCleanup.stillRemovable(
-            PullRequestCleanup.removable(report), environments: self.status.payload?.environments ?? [],
-            finished: answered))
-      }
-    }
-  }
-
-  /// `stim worktree remove` on each worktree, which re-checks it under its own locks before removing it.
-  private func removeFinished(_ worktrees: [GcReport.LinkedWorktree]) {
-    guard !worktrees.isEmpty else { return }
-    let steps = worktrees.map { StimCommand(["worktree", "remove", $0.path], cwd: NSHomeDirectory()) }
-    let started = actions.run(
-      "Remove worktrees of finished pull requests", steps: steps, key: ActionCenter.machineKey, present: false
-    ) { [weak self] run in
-      guard let self else { return }
-      self.pullRequestVerdict = nil
-      let removed = worktrees.filter { !FileManager.default.fileExists(atPath: $0.path) }
-      let kept = worktrees.count - removed.count
-      var note = removed.isEmpty ? nil : PullRequestCleanup.summary(removed)
-      if kept > 0 {
-        note = [note, "kept \(kept); \(run.summary ?? "see the activity log")"].compactMap { $0 }.joined(separator: "; ")
-      }
-      self.record(
-        AutopilotLogEntry(
-          date: Date(), trigger: .pullRequests,
-          command: steps.map { "stim \($0.arguments.joined(separator: " "))" }.joined(separator: "; "),
-          exitStatus: run.launchError == nil ? run.exitStatus : nil, note: note))
-      if !removed.isEmpty {
-        Notifier.postWorktreesRemoved(
-          title: PullRequestCleanup.summary(removed),
-          body: removed.map { self.status.names(ofPath: $0.path).title }.joined(separator: ", "))
-      }
-    }
-    if started == nil { pullRequestVerdict = nil }
-  }
-
-  private func record(_ entry: AutopilotLogEntry) {
-    log = AutopilotLog.appending(entry, to: log)
-    defaults.set(AutopilotLog.encode(log), forKey: AppPreferences.Key.autopilotLog)
   }
 }

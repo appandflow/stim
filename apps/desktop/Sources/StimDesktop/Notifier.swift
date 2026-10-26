@@ -28,8 +28,6 @@ final class Notifier: ObservableObject {
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
   }
 
-  nonisolated static let ranPressurePrefix = "pressure-ran-"
-  nonisolated static let archivedPressurePrefix = "pressure-ran-archived-"
   static let pressureCategory = "diskPressure"
   static let doItAction = "doIt"
 
@@ -37,9 +35,7 @@ final class Notifier: ObservableObject {
     guard isAvailable else { return }
     UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
       UNUserNotificationCenter.current().removeDeliveredNotifications(
-        withIdentifiers: delivered.map(\.request.identifier).filter {
-          $0.hasPrefix("pressure") && !$0.hasPrefix(ranPressurePrefix)
-        })
+        withIdentifiers: delivered.map(\.request.identifier).filter { $0.hasPrefix("pressure") })
     }
   }
 
@@ -51,16 +47,6 @@ final class Notifier: ObservableObject {
     content.body = body
     content.categoryIdentifier = offersPlan ? pressureCategory : ""
     UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
-  }
-
-  /// Posts that the autopilot removed worktrees whose pull request was merged or closed.
-  static func postWorktreesRemoved(title: String, body: String) {
-    guard isAvailable, UserDefaults.standard.bool(forKey: AppPreferences.Key.notifiesWorktreeRemoval) else { return }
-    let content = UNMutableNotificationContent()
-    content.title = title
-    content.body = body
-    UNUserNotificationCenter.current().add(
-      UNNotificationRequest(identifier: "worktrees-\(Date().timeIntervalSince1970)", content: content, trigger: nil))
   }
 
   nonisolated static let oversightPrefix = "oversight:"
@@ -183,9 +169,6 @@ final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @
           }
         } else if action == Notifier.doItAction {
           self.runPlan?()
-        } else if id.hasPrefix(Notifier.archivedPressurePrefix) {
-          AppPreferences.showArchived(.standard)
-          MainWindow.show()
         } else if id.hasPrefix("pressure") {
           OpenRequests.shared.showsMachine = true
         } else if id.hasPrefix(Notifier.oversightPrefix) {

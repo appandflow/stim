@@ -7,7 +7,9 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../workspace/workspace-state.ts';
-import { maintenanceKeepSetting, resolveProjectSettings } from '../workspace/settings.ts';
+import { maintenanceKeepSetting, resolveProjectSettings, resolveProjectSettingsAsync } from '../workspace/settings.ts';
+import type { StimContext } from '@stim-cli/core';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
 const BUILD_RECORDS = ['lastBuild', ...Object.values(LAST_BUILD_KEYS)];
@@ -65,9 +67,28 @@ export function maintenancePinned(root: string): boolean {
   }
 }
 
-export function recentUse(workspace: string, settings: Pick<MaintenanceSettings, 'protectRecentHours'>): string | null {
+export async function maintenancePinnedAsync(root: string, operation: StimContext): Promise<boolean> {
+  try {
+    return maintenanceKeepSetting(
+      (await resolveProjectSettingsAsync(root, { env: operation.env, signal: operation.signal, declareFor: operation }))
+        .settings,
+    );
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation.signal.throwIfAborted();
+    return true;
+  }
+}
+
+export function recentUse(
+  workspace: string,
+  settings: Pick<MaintenanceSettings, 'protectRecentHours'>,
+  windowMs: number = settings.protectRecentHours * 3_600_000,
+): string | null {
   const since = Date.now() - workspaceLastUsed(workspace);
-  return Number.isFinite(since) && since < settings.protectRecentHours * 3_600_000
-    ? `used within the last ${settings.protectRecentHours} hours`
-    : null;
+  if (!Number.isFinite(since) || since >= windowMs) return null;
+  return windowMs < 3_600_000
+    ? `used within the last ${Math.round(windowMs / 60_000)} minutes`
+    : `used within the last ${windowMs / 3_600_000} hours`;
 }

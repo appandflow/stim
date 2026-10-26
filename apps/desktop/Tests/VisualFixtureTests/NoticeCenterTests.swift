@@ -4,6 +4,49 @@ import XCTest
 @testable import StimDesktop
 
 @MainActor final class NoticeCenterTests: XCTestCase {
+  func testNewWorkspaceCardsExpireIncludingQueuedCardsWithoutDismissingOtherNotices() async throws {
+    let center = NoticeCenter(workspaceLifetime: 0.05)
+    var dismissals = 0
+    let update = Notice(icon: "bell", title: "stim available", actionTitle: "Update", perform: {})
+    center.show(update)
+    for path in ["/first", "/second"] {
+      center.show(
+        Notice(
+          icon: "folder", title: "New workspace", actionTitle: "Show", perform: {},
+          onDismiss: { dismissals += 1 }, key: WorkspaceArrivals.cardKey(path), workspacePath: path))
+    }
+    center.step(1)
+
+    let deadline = Date().addingTimeInterval(5)
+    while center.notices.count > 1 && Date() < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+
+    XCTAssertEqual(center.notices.map(\.id), [update.id])
+    XCTAssertEqual(center.current?.id, update.id)
+    XCTAssertEqual(dismissals, 0)
+  }
+
+  func testNewWorkspaceCardsFollowTheSettingAndOtherNoticesAreUnaffected() {
+    let name = "NoticeCenterTests.\(UUID())"
+    let defaults = UserDefaults(suiteName: name)!
+    addTeardownBlock { defaults.removePersistentDomain(forName: name) }
+    let center = NoticeCenter(defaults: defaults)
+    let card = Notice(
+      icon: "folder", title: "New workspace", actionTitle: "Show", perform: {},
+      key: WorkspaceArrivals.cardKey("/new"), workspacePath: "/new")
+    let update = Notice(icon: "bell", title: "stim available", actionTitle: "Update", perform: {})
+
+    XCTAssertTrue(center.show(card))
+    XCTAssertEqual(center.notices.map(\.id), [card.id])
+    center.removeAll()
+
+    defaults.set(false, forKey: AppPreferences.Key.showsWorkspaceCards)
+    XCTAssertFalse(center.show(card))
+    XCTAssertTrue(center.show(update))
+    XCTAssertEqual(center.notices.map(\.id), [update.id])
+  }
+
   func testRemovedWorkspaceNoticesLeaveWithoutRecordingAUserDismissal() throws {
     let payload = try JSONDecoder().decode(
       StatusPayload.self,

@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>com.apple.application-identifier</key>
+  <string>R7E8P23K3N.dev.stim.desktop</string>
+  <key>com.apple.developer.associated-domains</key>
+  <array>
+    <string>applinks:stim.appandflow.com</string>
+  </array>
   <key>com.apple.security.device.camera</key>
   <true/>
 </dict>

@@ -100,14 +100,14 @@ function sourceNamer(sourceRoot: string, targetRoot: string, encoding: 'utf-8' |
   return (text: string) => pattern.test(nested ? text.replace(nested, '') : text);
 }
 
-function findPath(dir: string, text: (value: string) => boolean, bytes: (value: string) => boolean): string | null {
+function findPath(dir: string, text: (value: string) => boolean, bytes: (value: Buffer) => boolean): string | null {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isSymbolicLink() && text(readlinkSync(path))) return path;
     if (entry.isDirectory()) {
       const found = findPath(path, text, bytes);
       if (found) return found;
-    } else if (entry.isFile() && bytes(readFileSync(path).toString('latin1'))) return path;
+    } else if (entry.isFile() && bytes(readFileSync(path))) return path;
   }
   return null;
 }
@@ -149,7 +149,10 @@ export function relocatePods({
   const manifest = readFileSync(manifestPath, 'utf-8');
   const pattern = pathPattern(sourceRoot);
   const textNamesSource = sourceNamer(sourceRoot, targetRoot, 'utf-8');
-  const bytesNameSource = sourceNamer(sourceRoot, targetRoot, 'latin1');
+  const latin1NamesSource = sourceNamer(sourceRoot, targetRoot, 'latin1');
+  const sourceBytes = Buffer.from(sourceRoot, 'utf-8');
+  const bytesNameSource = (buffer: Buffer) =>
+    buffer.includes(sourceBytes) && latin1NamesSource(buffer.toString('latin1'));
   let pods: string[] = [];
   if (normalize(podfileLock) === normalize(manifest)) {
     let names: string | null;
@@ -185,7 +188,7 @@ export function relocatePods({
     if (!existsSync(dir)) continue;
     walkTextFiles(dir, (file) => {
       const buffer = readFileSync(file);
-      if (buffer.includes(0)) return;
+      if (!buffer.includes(sourceBytes) || buffer.includes(0)) return;
       const text = buffer.toString('utf-8');
       if (!pattern.test(text)) return;
       writeFileSync(file, relocatePath(text, sourceRoot, targetRoot));

@@ -37,6 +37,7 @@ import {
 import { withAlpha } from '@/design/color';
 import { useArchiveDetail } from '@/hooks/archive-detail';
 import { useAppForeground } from '@/hooks/app-foreground';
+import { useHeaderInset } from '@/hooks/header-inset';
 import { useReplayRangeState } from '@/hooks/replay-range';
 import { archiveError } from '@/lib/archived';
 import { archivedPage } from '@/lib/archived-page';
@@ -623,7 +624,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
   const all = orderDevices(devicesOf(env));
   const { byDevice, general } = deviceWarnings(env.warnings, all);
   const build = runningBuild(env);
-  const stage = workspaceStage(env, all, now);
+  const stage = workspaceStage(env, now);
   const devices = stage.kind === 'stopped' ? all.filter((device) => device.platform === 'macos') : all;
   const open = (pathname: '/mac/[id]/resources' | '/mac/[id]/build' | '/mac/[id]/work', platform?: Platform) =>
     router.push({ pathname, params: { id: macId, path, ...(platform ? { platform } : {}) } });
@@ -783,7 +784,7 @@ function WorktreeContent({
   const entries = buildEntries(apps);
   const page = worktreePage({ path, environments: apps, entries, now });
   const lead = apps.find((app) => app.path === page.lead)!;
-  const stage = workspaceStage(lead, orderDevices(devicesOf(lead)), now);
+  const stage = workspaceStage(lead, now);
   const devices = worktreeDevices(apps, now);
   const captions = worktreePage({ path, environments: apps, entries: devices, now }).subtitles;
   const firstDevice = devices.findIndex((entry) => entry.path === path);
@@ -924,11 +925,12 @@ function WorktreeContent({
 }
 
 function PinnedBanner({ state, onHeight }: { state: ConnectionState; onHeight: (height: number) => void }) {
+  const top = useHeaderInset();
   return (
     <View
       pointerEvents="box-none"
       onLayout={(event) => onHeight(event.nativeEvent.layout.height)}
-      style={styles.pinned}
+      style={[styles.pinned, { top }]}
     >
       <ConnectionBanner state={state} />
     </View>
@@ -937,7 +939,7 @@ function PinnedBanner({ state, onHeight }: { state: ConnectionState; onHeight: (
 
 const styles = StyleSheet.create((theme) => ({
   loading: { marginTop: 48 },
-  pinned: { position: 'absolute', top: 0, left: 0, right: 0 },
+  pinned: { position: 'absolute', left: 0, right: 0 },
   container: { padding: theme.space.xl, gap: theme.space.lg, paddingBottom: 40 },
   deviceGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: theme.space.lg },
   device: { width: '100%', maxWidth: 640 },

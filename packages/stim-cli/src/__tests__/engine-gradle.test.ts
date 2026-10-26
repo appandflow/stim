@@ -18,7 +18,6 @@ import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import {
   apkOutputsDir,
   buildAndroid as buildAndroidImpl,
-  debugApkDir,
   discoverAndroidProject,
   gradlewPath,
   readProductFlavors,
@@ -40,7 +39,7 @@ import {
 } from '../engine/gradle.ts';
 import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
 import { readClaimSet } from '../ownership-claim.ts';
-import { makeWriter } from './_factories.ts';
+import { makeChildProcess, makeWriter } from './_factories.ts';
 import { defaultAndroidLayout } from '../workspace/settings.ts';
 
 function locateApk(root: string, transcript = '', variant: string | null = null) {
@@ -86,7 +85,7 @@ function makeAndroidProject({ gradlew = true } = {}) {
 }
 
 function writeApk(name = 'app-debug.apk', contents = 'apk') {
-  const dir = debugApkDir(defaultAndroidLayout(root));
+  const dir = join(apkOutputsDir(defaultAndroidLayout(root)), 'debug');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, name), contents);
   return join(dir, name);
@@ -250,7 +249,7 @@ describe('locateApk', () => {
     writeApk('app-debug.apk');
     const flavoured = writeApk('app-staging-debug.apk');
     writeFileSync(
-      join(debugApkDir(defaultAndroidLayout(root)), 'output-metadata.json'),
+      join(join(apkOutputsDir(defaultAndroidLayout(root)), 'debug'), 'output-metadata.json'),
       JSON.stringify({ elements: [{ outputFile: 'app-staging-debug.apk' }] }),
     );
     expect(locateApk(root, 'BUILD SUCCESSFUL in 3s').apkPath).toBe(flavoured);
@@ -370,10 +369,12 @@ function fakeChild({
     for (const line of stderrLines) child.stderr.emit('data', `${line}\n`);
     if (error) {
       child.emit('error', error);
+      child.emit('close', null, null);
       return;
     }
     if (onExit) onExit();
     child.emit('exit', code, signal);
+    child.emit('close', code, signal);
   });
   return child as unknown as ChildProcess;
 }
@@ -404,7 +405,7 @@ const nativeScript = join(import.meta.dirname, '../../shim/android-optimizations
 
 describe('buildAndroid', () => {
   test('refuses a Windows native build with an object path that cannot fit before invoking Gradle', async () => {
-    const longRoot = join(root, 'windows-object-path-limit');
+    const longRoot = join(root, 'windows-object-path-limit'.padEnd(60, '-'));
     mkdirSync(join(longRoot, 'android'), { recursive: true });
     writeFileSync(gradlewPath(defaultAndroidLayout(longRoot)), '');
     let spawned = false;
@@ -455,7 +456,7 @@ describe('buildAndroid', () => {
     expect(stdio[0]).toBe('ignore');
 
     assert(result.ok);
-    expect(result.apkPath).toBe(join(debugApkDir(defaultAndroidLayout(root)), 'app-debug.apk'));
+    expect(result.apkPath).toBe(join(join(apkOutputsDir(defaultAndroidLayout(root)), 'debug'), 'app-debug.apk'));
     expect(result.durationMs).toBe(41000);
     const [start, ...transcript] = writer.records;
     assert(start);
@@ -753,6 +754,23 @@ describe('buildAndroid', () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  test('without an SDK variable, the SDK is where Android Studio installs it on this host', () => {
+    const platform = process.platform;
+    const env = { HOME: '/home/dev', USERPROFILE: 'C:\\Users\\dev', LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local' };
+    try {
+      for (const [host, expected] of [
+        ['darwin', join('/home/dev', 'Library', 'Android', 'sdk')],
+        ['linux', join('/home/dev', 'Android', 'Sdk')],
+        ['win32', join(env.LOCALAPPDATA, 'Android', 'Sdk')],
+      ] as const) {
+        Object.defineProperty(process, 'platform', { value: host });
+        expect(androidHome(env)).toBe(expected);
+      }
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform });
+    }
+  });
+
   test('Gradle gets the SDK path Stim resolved when the caller set no SDK variable, and an explicit one untouched', async () => {
     makeAndroidProject();
     const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
@@ -836,12 +854,34 @@ describe('buildAndroid', () => {
     expect(beats[0]).toMatch(/^ {2}build {6} still compiling \(\d+s\)$/);
     writeApk();
     child.emit('exit', 0, null);
+    child.emit('close', 0, null);
     const result = await promise;
     assert(result.ok);
     const settled = beats.length;
     await new Promise((r) => setTimeout(r, 40));
     expect(beats.length).toBe(settled);
   });
+
+  test.skipIf(process.platform !== 'win32')(
+    'waits for the Java client pipes after its batch launcher exits',
+    async () => {
+      makeAndroidProject();
+      const child = makeChildProcess();
+      let finished = false;
+      const work = buildAndroid({ root, logWriter: recordingWriter() }, { spawnFn: () => child, heartbeatMs: 0 }).then(
+        (result) => {
+          finished = true;
+          return result;
+        },
+      );
+      child.emit('exit', 1, null);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(finished).toBe(false);
+      child.stdout?.emit('data', 'Java client finished\n');
+      child.emit('close', 1, null);
+      expect((await work).lastLines).toContain('Java client finished');
+    },
+  );
 
   test.each([0, 1])('keeps fresh ccache statistics on success or failure (exit: %s)', async (exitCode) => {
     makeAndroidProject();
@@ -1327,7 +1367,7 @@ test('a Gradle root outside the app runs its wrapper there with the module-quali
       },
     },
   );
-  expect(calls[0]?.cmd).toBe(join(root, 'gradlew'));
+  expect(calls[0]?.cmd).toBe(join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew'));
   expect(calls[0]?.args).toContain(':packages:rn-tester:android:app:assembleDebug');
   expect(calls[0]?.opts.cwd).toBe(root);
   assert(result.ok);

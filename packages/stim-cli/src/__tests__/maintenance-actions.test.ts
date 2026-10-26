@@ -13,16 +13,23 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { buildCacheRoot, metroCacheRoot } from '@stim-cli/core';
 import {
+  gcLogFile,
+  maintenanceDir,
   maintenanceNdjsonFile,
+  maintenanceStateFile,
+  readGcLog,
   readMaintenanceState,
   sharedCompilationCache,
   type MaintenanceAction,
   type MaintenanceRecord,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import * as gcDevices from '../commands/gc/devices.ts';
+import * as ios from '../devices/ios.ts';
+import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { register, readManifest } from '../cache/cache-manifest.ts';
 import { pruneCache } from '../cache/caches.ts';
-import * as buildLocks from '../engine/build-lock.ts';
+import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { executeAction, type ActContext } from '../maintenance/act.ts';
 import * as measurements from '../maintenance/measure.ts';
 import { cacheEntryProtection } from '../maintenance/protect.ts';
@@ -37,6 +44,7 @@ import { liveClaimOwner, plantClaim } from './_factories.ts';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MB = 1024 * 1024;
 
+const initialCwd = process.cwd();
 let home: string;
 let projects: string;
 
@@ -72,6 +80,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  process.chdir(initialCwd);
   resetExecutor();
   rmSync(home, { recursive: true, force: true });
   rmSync(projects, { recursive: true, force: true });
@@ -191,6 +200,14 @@ test('on mode trims over-cap caches oldest first and clears only idle, unpinned,
   expect(readFileSync(join(workspaceDir(spaces.old.root), 'logs', 'maintenance.ndjson'), 'utf8')).toContain(
     'Cleared build outputs',
   );
+
+  const cleared = readGcLog().filter((record) => record.status === 'done');
+  expect(cleared.map((record) => record.kind).toSorted()).toEqual(['cache', 'workspaceOutputs']);
+  expect(cleared.every((record) => record.trigger === 'maintenance' && record.via === 'test')).toBe(true);
+  expect(new Set(cleared.map((record) => record.runId))).toEqual(new Set([records()[0]?.pass]));
+  const outputs = cleared.find((record) => record.kind === 'workspaceOutputs');
+  expect(outputs).toMatchObject({ label: spaces.old.root, id: spaces.old.root, path: spaces.old.root });
+  expect(outputs?.bytes).toBeGreaterThan(0);
 });
 
 test('report mode plans the same actions and deletes nothing', async () => {
@@ -208,6 +225,7 @@ test('report mode plans the same actions and deletes nothing', async () => {
   );
   expect(actionKinds()).toEqual(expect.arrayContaining(['would-trim-cache', 'would-clear-outputs']));
   expect(records().every((record) => record.mode === 'report')).toBe(true);
+  expect(existsSync(gcLogFile())).toBe(false);
 });
 
 test('the age sweep removes only what is provably stale', async () => {
@@ -249,6 +267,30 @@ test('the age sweep removes only what is provably stale', async () => {
   expect(readManifest().caches.map((entry) => entry.dir)).toEqual([cache]);
   expect(actionKinds().toSorted()).toEqual(['clear-outputs', 'remove-orphan', 'trim-cache', 'unregister-cache']);
 });
+
+test.skipIf(process.platform === 'win32')(
+  'the age sweep keeps the outputs of a git-locked worktree unused for olderThanDays, and logs it as locked',
+  async () => {
+    process.env.STIM_MAINTENANCE_WORKTREE_CHECK_MINUTES = '1000000';
+    process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
+    const repo = join(projects, 'repo');
+    mkdirSync(repo);
+    const git = (cwd: string, args: string) => execSync(`git ${args}`, { cwd, timeout: 15_000 });
+    git(repo, 'init -q -b main');
+    git(repo, '-c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init');
+    git(repo, `worktree add -q --detach "${join(projects, 'rollback')}"`);
+    git(repo, `worktree lock --reason rollback "${join(projects, 'rollback')}"`);
+    const rollback = workspace('rollback', { usedDaysAgo: 10 });
+    const idle = workspace('idle-ten', { usedDaysAgo: 10 });
+
+    await runMaintenance('test');
+
+    expect(hasOutputs(idle.dir)).toBe(false);
+    expect(hasOutputs(rollback.dir)).toBe(true);
+    expect(JSON.stringify(records())).toContain(`Kept ${realpathSync(rollback.root)}: locked with git worktree lock`);
+  },
+  60_000,
+);
 
 test('maintenance records in a workspace log do not make the workspace look used', () => {
   const old = workspace('written-by-maintenance', { usedDaysAgo: 30 });
@@ -295,13 +337,11 @@ describe('executing single actions', () => {
 
     vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 1024 }]);
     const hardFloor = { ...context().budget, hardFloorDiskMb: 5 * 1024 };
-    vi.spyOn(buildLocks, 'listBuildLocks').mockReturnValue([
-      { alive: true } as ReturnType<typeof buildLocks.listBuildLocks>[number],
-    ]);
+    const build = plantClaim(cacheClaimRoot(dir), 'shared', liveClaimOwner());
     expect((await executeAction(empty, context({ budget: hardFloor }))).status).toBe('kept');
     expect(existsSync(join(dir, 'objects'))).toBe(true);
 
-    vi.spyOn(buildLocks, 'listBuildLocks').mockReturnValue([]);
+    rmSync(build);
     const emptied = await executeAction(empty, context({ budget: hardFloor }));
     expect(emptied.status).toBe('done');
     expect(existsSync(join(dir, 'objects'))).toBe(false);
@@ -487,4 +527,167 @@ test('finished worktrees are removed, except a pinned one and the one the pass s
   ).toEqual(
     expect.arrayContaining(['pinned by maintenance.keep', 'the command that started this pass runs inside it']),
   );
+}, 60_000);
+
+function ageWorktrees(worktrees: Record<string, string>, days: Record<string, number>) {
+  for (const [name, path] of Object.entries(worktrees)) {
+    ensureWorkspaceStorage(path);
+    recordWorkspaceUse(path, ago(days[name] ?? 0));
+  }
+}
+
+test('the age sweep keeps an idle unmerged worktree unless maintenance.removeIdleWorktrees is on', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['idle']);
+  ageWorktrees(worktrees, { idle: 30 });
+  vi.spyOn(process, 'cwd').mockReturnValue(repo);
+
+  await runMaintenance('test');
+
+  expect(existsSync(worktrees.idle ?? '')).toBe(true);
+  expect(actionKinds()).not.toContain('remove-worktree');
+}, 60_000);
+
+test('the age sweep removes a clean pushed worktree unused for olderThanDays, and keeps dirty, unpushed and recent ones', async () => {
+  process.env.STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES = 'true';
+  const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'dirty', 'unpushed', 'recent']);
+  const at = (name: string) => worktrees[name] ?? '';
+  const [idle, dirty, unpushed, recent] = [at('idle'), at('dirty'), at('unpushed'), at('recent')] as const;
+  writeFileSync(join(dirty, 'notes.txt'), 'uncommitted');
+  writeFileSync(join(unpushed, 'local.txt'), 'local');
+  execSync('git add -A && git commit -q -m local', { cwd: unpushed, timeout: 15_000 });
+  ageWorktrees(worktrees, { idle: 10, dirty: 10, unpushed: 10, recent: 2 });
+  vi.spyOn(process, 'cwd').mockReturnValue(repo);
+
+  await runMaintenance('test');
+
+  expect(existsSync(idle)).toBe(false);
+  expect(existsSync(dirty)).toBe(true);
+  expect(existsSync(unpushed)).toBe(true);
+  expect(existsSync(recent)).toBe(true);
+  expect(actionKinds()).toEqual(['remove-worktree']);
+}, 60_000);
+
+test('olderThanDays 0 keeps idle worktrees, outputs and cache entries while the sweep still removes orphans', async () => {
+  process.env.STIM_MAINTENANCE_OLDER_THAN_DAYS = '0';
+  process.env.STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES = 'true';
+  const { repo, worktrees } = gitRepoWithWorktrees(['idle']);
+  ageWorktrees(worktrees, { idle: 30 });
+  const old = workspace('old-outputs', { usedDaysAgo: 30 });
+  const orphanDir = ensureWorkspaceStorage(join(projects, 'deleted-worktree'));
+  writeFileSync(join(orphanDir, 'state.json'), '{}');
+  const cache = join(projects, 'shared-cache');
+  const oldEntry = join(cache, 'old-entry');
+  mkdirSync(oldEntry, { recursive: true });
+  utimesSync(oldEntry, new Date(), ago(30));
+  register({ dir: cache, name: 'Shared cache' });
+  vi.spyOn(process, 'cwd').mockReturnValue(repo);
+
+  await runMaintenance('test');
+
+  expect(resolveMaintenanceSettings().invalid).toBeUndefined();
+  expect(existsSync(worktrees.idle ?? '')).toBe(true);
+  expect(hasOutputs(old.dir)).toBe(true);
+  expect(existsSync(oldEntry)).toBe(true);
+  expect(existsSync(orphanDir)).toBe(false);
+  expect(actionKinds()).toEqual(['remove-orphan']);
+}, 60_000);
+
+test('the age sweep deletes a parked simulator unused for olderThanDays through teardown and keeps a recently parked one', async () => {
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  const real = getExecutor();
+  setExecutor({
+    ...getExecutor(),
+    findExecutable: (name) => (name === 'git' ? real.findExecutable(name) : null),
+    runFileAsync: async (file, args: string[], opts) =>
+      file === 'git' || file === 'du' ? real.runFileAsync(file, args, opts) : '',
+  });
+  const park = (udid: string, daysAgo: number) => {
+    const source = join(projects, `source-${udid}`);
+    mkdirSync(source, { recursive: true });
+    upsertProject(source, { platforms: { ios: { deviceUdid: udid, deviceName: `stim-${udid}`, owned: true } } });
+    parkSim({
+      platform: 'ios',
+      projectPath: source,
+      max: 3,
+      record: {
+        udid,
+        name: `stim-${udid}`,
+        runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+        deviceTypeIdentifier: 'iphone',
+        simslimManaged: false,
+        parkedAt: ago(daysAgo).toISOString(),
+      },
+    });
+  };
+  park('OLD-PARKED', 10);
+  park('NEW-PARKED', 2);
+  const listed = (udid: string): ios.IosSimRecord => ({
+    udid,
+    name: `stim-${udid}`,
+    state: 'Shutdown',
+    runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+    deviceTypeIdentifier: 'iphone',
+    available: true,
+  });
+  vi.spyOn(ios, 'listAllIosSimsAsync').mockResolvedValue([listed('OLD-PARKED'), listed('NEW-PARKED')]);
+  vi.spyOn(ios, 'listIosDeviceTypesAsync').mockResolvedValue([]);
+  const deleted: string[] = [];
+  vi.spyOn(ios, 'deleteParkedIosSim').mockImplementation(async (udid) => {
+    deleted.push(udid);
+  });
+  process.env.STIM_MAINTENANCE_DEVICE_IDLE_DAYS = '0';
+  process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
+
+  await runMaintenance('test');
+
+  expect(deleted).toEqual(['OLD-PARKED']);
+  expect(readParked('ios').map((record) => record.udid)).toEqual(['NEW-PARKED']);
+  expect(actionKinds()).toContain('delete-parked-device');
+});
+
+test('report mode lists a worktree once when the worktree check plans one the last sweep already planned', async () => {
+  process.env.STIM_MAINTENANCE = 'report';
+  const { repo, worktrees, heads } = gitRepoWithWorktrees(['shipped']);
+  const shipped = worktrees.shipped ?? '';
+  const merged = {
+    number: 1,
+    url: 'https://github.com/o/r/pull/1',
+    state: 'MERGED',
+    headRefOid: heads.shipped,
+    mergedAt: '2026-09-01T00:00:00Z',
+  };
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : real.findExecutable(name)),
+    runFileAsync: async (file, args: string[], opts) => {
+      if (file !== 'gh') return real.runFileAsync(file, args, opts);
+      const fields = args.flatMap((arg) => {
+        const variable = /^(b\d+)=(.*)$/s.exec(arg);
+        return variable ? [[variable[1], { nodes: variable[2] === 'shipped' ? [merged] : [] }]] : [];
+      });
+      return JSON.stringify({ data: { repository: Object.fromEntries(fields) } });
+    },
+  });
+  process.env.STIM_MAINTENANCE_PROTECT_RECENT_HOURS = '0';
+  const now = Date.now();
+  mkdirSync(maintenanceDir(), { recursive: true });
+  writeFileSync(
+    maintenanceStateFile(),
+    JSON.stringify({
+      version: 1,
+      lastAt: { pressure: now, size: now, sweep: now },
+      pressure: null,
+      sizes: [],
+      lastPass: null,
+      recent: [],
+      plan: [{ kind: 'would-remove-worktree', target: shipped, bytes: 0, reason: 'idle 9d', check: 'sweep' }],
+    }),
+  );
+  vi.spyOn(process, 'cwd').mockReturnValue(repo);
+
+  await runMaintenance('test');
+
+  expect(readMaintenanceState()?.plan.filter((action) => action.target === shipped)).toHaveLength(1);
+  expect(existsSync(shipped)).toBe(true);
 }, 60_000);

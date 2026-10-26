@@ -6,7 +6,12 @@ import { installHostedApp } from '../device-host/app.ts';
 import type { HostedAppFile, HostedIosDevice } from '@stim-cli/core/state';
 
 const native = vi.hoisted(() => ({ runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>() }));
-vi.mock('../exec.ts', () => ({ getExecutor: () => ({ runFile: native.runFile }) }));
+vi.mock('../exec.ts', () => ({
+  getExecutor: () => ({
+    runFile: native.runFile,
+    runFileAsync: async (file: string, args?: string[], options?: unknown) => native.runFile(file, args, options),
+  }),
+}));
 let root: string;
 let home: string;
 let area: string;

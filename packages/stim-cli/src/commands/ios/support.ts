@@ -13,6 +13,7 @@ import {
   iosProjectDirSettingError,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
+  inertSettingWarning,
   unknownSettingKeys,
   type SettingsObject,
 } from '../../workspace/settings.ts';
@@ -27,7 +28,7 @@ import {
   unknownIosRuntimeRefusal,
 } from '../../engine/device-capacity.ts';
 import { parseIosSimulatorApp, type IosSimulatorApp } from '../../devices/ios-simulator-viewer.ts';
-import { listIosRuntimes } from '../../devices/ios.ts';
+import { listIosRuntimes, type IosSimSnapshot } from '../../devices/ios.ts';
 import { IosDeviceMismatchError } from '../../engine/device-ios.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import { describeDiagnostic } from '../../engine/errors-xcode.ts';
@@ -49,6 +50,7 @@ export function resolveIosBuildSetup(
   remoteBuild: string | undefined,
   settings: SettingsObject,
   warn: (label: 'setting' | 'cache', message: string) => void,
+  env?: NodeJS.ProcessEnv,
 ): { ok: true; buildMachine: string; optimizations: Optimizations } | { ok: false; failure: FailArgs } {
   const [shapeError, ...lines] = settingShapeErrors(settings);
   if (shapeError)
@@ -57,7 +59,7 @@ export function resolveIosBuildSetup(
   if (placement.failure) return { ok: false, failure: { ...placement.failure, setup: true } };
   let optimizations: Optimizations;
   try {
-    optimizations = resolveOptimizations(settings);
+    optimizations = resolveOptimizations(settings, env);
   } catch (error) {
     return {
       ok: false,
@@ -65,7 +67,7 @@ export function resolveIosBuildSetup(
     };
   }
   for (const key of unknownSettingKeys(settings)) {
-    warn('setting', `Warning: setting "${key}" is not read by Stim and will be ignored.`);
+    warn('setting', inertSettingWarning(settings, key));
   }
   const cacheProviderError = cacheProviderSettingError(settings);
   if (cacheProviderError) warn('cache', `${cacheProviderError} Using the local cache.`);
@@ -160,7 +162,7 @@ export function resolveSimulatorAppFlag(
   return { simulatorApp };
 }
 
-export function deviceModelRefusal({
+export async function deviceModelRefusal({
   slot,
   deviceTypeFlag,
   runtimeFlag,
@@ -172,6 +174,8 @@ export function deviceModelRefusal({
   remoteBackend,
   hosted = false,
   listRuntimes,
+  signal,
+  snapshot,
 }: {
   slot?: string;
   deviceTypeFlag: string | undefined;
@@ -183,8 +187,13 @@ export function deviceModelRefusal({
   physical: boolean;
   remoteBackend: RemoteDeviceBackend | null;
   hosted?: boolean;
-  listRuntimes: typeof listIosRuntimes;
-}): { code: string; message: string; remedy: string } | null {
+  signal?: AbortSignal;
+  snapshot?: IosSimSnapshot;
+  listRuntimes: (options?: {
+    signal?: AbortSignal;
+    snapshot?: IosSimSnapshot;
+  }) => ReturnType<typeof listIosRuntimes> | Promise<ReturnType<typeof listIosRuntimes>>;
+}): Promise<{ code: string; message: string; remedy: string } | null> {
   if (slot && slot !== 'default' && remoteBackend)
     return {
       code: 'STIM_BAD_ARG',
@@ -222,7 +231,7 @@ export function deviceModelRefusal({
   if (!deviceType && !runtime) return null;
   let runtimes;
   try {
-    runtimes = listRuntimes();
+    runtimes = await listRuntimes({ signal, snapshot });
   } catch (error) {
     return {
       code: 'STIM_NO_DEVICE',
@@ -287,10 +296,14 @@ export function iosProviderRunOptions(
 export function podAction(
   podState: PodStateLike | null | undefined,
   verdict: PodVerdictLike | null | undefined,
+  { prebuildRan = false }: { prebuildRan?: boolean } = {},
 ): { install: boolean; reason?: string } {
   if (verdict?.stale) return { install: true, reason: verdict.reason };
   if (verdict?.noPods && podState?.hasPodfile) {
     return { install: true, reason: 'ios/Podfile exists but no pods are installed' };
+  }
+  if (prebuildRan && podState?.hasPodfile) {
+    return { install: true, reason: 'prebuild updated ios/ in place' };
   }
   return { install: false };
 }
@@ -386,6 +399,7 @@ export function createIosDeviceWaitRun(
         progress.waitingFor(info, 'device-slot');
       },
       onWait: stats.addDeviceSlotWaitMs,
+      onBootStart: () => progress.bootStarted(),
     },
     record(next) {
       if (waiting) outcome = next;

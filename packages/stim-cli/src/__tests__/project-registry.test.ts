@@ -1,3 +1,4 @@
+import { testContext } from './_context.ts';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -180,7 +181,7 @@ test('symlinks resolve native ownership and workspace identity by canonical path
 
 test('unreadable relevant manifests refuse instead of falling back to another integration or registered app', () => {
   packageAt(dir);
-  getExecutor().runFile('git', ['-C', dir, 'init', '-q']);
+  getExecutor().runFile('git', ['-C', dir, 'init', '-q'], { timeoutMs: 60_000 });
   upsertProject(dir, {});
   const nested = join(dir, 'nested');
   write(join(nested, 'package.json'), '{');
@@ -195,7 +196,7 @@ test('unreadable relevant manifests refuse instead of falling back to another in
 
 test('registered redirects use integration admission while a nearer independent app retains its root', () => {
   packageAt(dir, false);
-  getExecutor().runFile('git', ['-C', dir, 'init', '-q']);
+  getExecutor().runFile('git', ['-C', dir, 'init', '-q'], { timeoutMs: 60_000 });
   const app = join(dir, 'native');
   write(join(app, 'App.xcodeproj'));
   upsertProject(app, {});
@@ -225,7 +226,9 @@ test.each([JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }), JSON.
     const selected = projectRegistry.selectMacos(dir);
     if ('problem' in selected) throw new Error(selected.problem.message);
     const project = await selected.load();
-    expect(() => project.prepare({})).toThrow(expect.objectContaining({ code: 'STIM_BAD_ARG' }));
+    await expect(project.prepare(testContext({ projectRoot: dir, cwd: dir }), {})).rejects.toThrow(
+      expect.objectContaining({ code: 'STIM_BAD_ARG' }),
+    );
   },
 );
 

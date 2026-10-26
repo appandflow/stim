@@ -1,9 +1,9 @@
 import Foundation
 
 extension OversightCategory {
-  /// Whether a foreground Alert opens a card in the window: a request that lapses, or a problem on the Mac. Every
-  /// other category reaches the bell only.
-  public var raisesToast: Bool { self == .buildRequest || self == .machine }
+  /// Whether a foreground Alert opens a card in the window: a problem on the Mac. Every other category reaches the
+  /// bell only.
+  public var raisesToast: Bool { self == .machine }
 
   /// The phone's settings label for the category.
   public var label: String {
@@ -42,7 +42,7 @@ extension OversightCategory {
   }
 
   /// The categories that can fire on Stim Desktop; `control` is a stim-server push to a phone.
-  public static let desktop: [OversightCategory] = [.started, .stuck, .looping, .finished, .machine, .attention, .buildRequest]
+  public static let desktop: [OversightCategory] = [.started, .stuck, .looping, .finished, .machine, .attention]
 }
 
 extension OversightTarget {
@@ -73,12 +73,10 @@ public enum NotificationLevel: String, CaseIterable, Sendable {
 }
 
 extension OversightCategory {
-  /// Work started starts Off, because it reports what the person asked for. A build request starts at Alert: it
-  /// waits on an answer from this Mac and lapses after 15 minutes. Every other category starts Silent.
+  /// Work started starts Off, because it reports what the person asked for. Every other category starts Silent.
   public var defaultLevel: NotificationLevel {
     switch self {
     case .started: return .off
-    case .buildRequest: return .alert
     default: return .silent
     }
   }

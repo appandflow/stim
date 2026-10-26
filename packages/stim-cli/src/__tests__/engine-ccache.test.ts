@@ -202,7 +202,9 @@ describe('resolveCcache', () => {
       null,
     );
     expect(notes.length).toBe(1);
-    expect(notes[0]).toMatch(/ccache off \(android\/app\/build\.gradle sets CMAKE_CXX_COMPILER_LAUNCHER/);
+    expect(notes[0]).toContain(
+      `ccache off (${join('android', 'app', 'build.gradle')} sets CMAKE_CXX_COMPILER_LAUNCHER`,
+    );
     rmSync(root, { recursive: true, force: true });
   });
 

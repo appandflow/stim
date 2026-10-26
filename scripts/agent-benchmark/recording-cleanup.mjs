@@ -29,7 +29,6 @@ export function retireAndroidRecording({ runDir, ownerHome, ownerWorktree, seria
     const record = read(join(runDir, 'run.json'));
     const meta = read(join(runDir, 'meta.json'));
     if (
-      record.valid !== true ||
       record.recording?.valid !== true ||
       meta.platform !== 'android' ||
       meta.runId !== record.runId ||

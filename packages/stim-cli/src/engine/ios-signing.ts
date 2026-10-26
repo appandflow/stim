@@ -2,6 +2,8 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
+import { throwIfCancelled } from '../cancellation.ts';
+import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 import {
   parseProvisioningProfilePlist,
   parseSigningIdentities,
@@ -34,55 +36,91 @@ function errorText(error: unknown): string {
   return stderr || stdout || String(withOutput?.message ?? error);
 }
 
+interface SigningToolOptions {
+  exec?: Executor | null;
+  env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+}
+
+async function signingCommand(
+  file: string,
+  args: string[],
+  { exec, env, signal }: SigningToolOptions,
+): Promise<string> {
+  throwIfCancelled(signal, 'iOS signing');
+  try {
+    const output = await (exec || getExecutor()).runFileAsync(file, args, {
+      timeoutMs: SIGNING_TIMEOUT_MS,
+      ...(env ? childEnvironment(env) : {}),
+      onSpawn: killOnAbort(signal),
+    });
+    throwIfCancelled(signal, 'iOS signing');
+    return output;
+  } catch (error) {
+    throwIfCancelled(signal, 'iOS signing');
+    throw error;
+  }
+}
+
 export interface EmbeddedProfileRead {
   present: boolean;
   profile: ProvisioningProfile | null;
 }
 
-export function readEmbeddedProfile(
+export async function readEmbeddedProfile(
   appPath: string,
-  { exec = null }: { exec?: Executor | null } = {},
-): EmbeddedProfileRead {
-  const executor = exec || getExecutor();
+  options: SigningToolOptions = {},
+): Promise<EmbeddedProfileRead> {
+  throwIfCancelled(options.signal, 'iOS signing');
   const path = join(appPath, EMBEDDED_PROFILE);
   if (!existsSync(path)) return { present: false, profile: null };
+  const plist = await decodeProvisioningProfile(path, options);
+  return { present: true, profile: plist === null ? null : parseProvisioningProfilePlist(plist) };
+}
+
+export async function decodeProvisioningProfile(
+  path: string,
+  options: SigningToolOptions = {},
+): Promise<string | null> {
   try {
-    const plist = executor.runFile(
+    return await signingCommand(
       '/usr/bin/openssl',
       ['smime', '-verify', '-noverify', '-inform', 'DER', '-in', path],
-      {
-        timeoutMs: SIGNING_TIMEOUT_MS,
-      },
+      options,
     );
-    return { present: true, profile: parseProvisioningProfilePlist(plist) };
   } catch {
-    return { present: true, profile: null };
+    throwIfCancelled(options.signal, 'iOS signing');
+    return null;
   }
 }
 
-export function findSigningIdentities({ exec = null }: { exec?: Executor | null } = {}): SigningIdentity[] {
-  const executor = exec || getExecutor();
+export async function findSigningIdentities(options: SigningToolOptions = {}): Promise<SigningIdentity[]> {
+  return (await probeSigningIdentities(options)) ?? [];
+}
+
+/** The keychain's code signing identities, or null when `security find-identity` itself failed. */
+export async function probeSigningIdentities(options: SigningToolOptions = {}): Promise<SigningIdentity[] | null> {
   try {
     return parseSigningIdentities(
-      executor.runFile('security', ['find-identity', '-v', '-p', 'codesigning'], { timeoutMs: SIGNING_TIMEOUT_MS }),
+      await signingCommand('security', ['find-identity', '-v', '-p', 'codesigning'], options),
     );
   } catch {
-    return [];
+    throwIfCancelled(options.signal, 'iOS signing');
+    return null;
   }
 }
 
-export interface SigningGateOptions {
+export interface SigningGateOptions extends SigningToolOptions {
   appPath: string;
   udid: string | null;
   configuration?: string | null;
   pinnedName?: string | null;
   pinnedSha1?: string | null;
   now?: number;
-  exec?: Executor | null;
 }
 
-export function gateProfileForDevice(options: SigningGateOptions): ProfileGateResult {
-  const read = readEmbeddedProfile(options.appPath, { exec: options.exec ?? null });
+export async function gateProfileForDevice(options: SigningGateOptions): Promise<ProfileGateResult> {
+  const read = await readEmbeddedProfile(options.appPath, options);
   return profileGate({
     profilePresent: read.present,
     profile: read.profile,
@@ -93,12 +131,12 @@ export function gateProfileForDevice(options: SigningGateOptions): ProfileGateRe
   });
 }
 
-export function gateAppForDevice(options: SigningGateOptions): SigningGateResult {
-  const read = readEmbeddedProfile(options.appPath, { exec: options.exec ?? null });
+export async function gateAppForDevice(options: SigningGateOptions): Promise<SigningGateResult> {
+  const read = await readEmbeddedProfile(options.appPath, options);
   return signingGate({
     profilePresent: read.present,
     profile: read.profile,
-    identities: read.present ? findSigningIdentities({ exec: options.exec ?? null }) : [],
+    identities: read.present ? await findSigningIdentities(options) : [],
     udid: options.udid,
     configuration: options.configuration ?? null,
     pinnedName: options.pinnedName ?? null,
@@ -121,42 +159,40 @@ export interface ResealFailure extends SigningRefusal {
 
 export type ResealResult = ResealSuccess | ResealFailure;
 
-function extractEntitlements(appPath: string, executor: Executor): string {
+async function extractEntitlements(appPath: string, options: SigningToolOptions): Promise<string> {
   try {
-    return String(
-      executor.runFile('codesign', ['-d', '--entitlements', '-', '--xml', appPath], { timeoutMs: SIGNING_TIMEOUT_MS }),
-    ).trim();
+    return String(await signingCommand('codesign', ['-d', '--entitlements', '-', '--xml', appPath], options)).trim();
   } catch {
+    throwIfCancelled(options.signal, 'iOS signing');
     return '';
   }
 }
 
-export function resealBundle({
+export async function resealBundle({
   appPath,
   identity,
-  exec = null,
-}: {
+  ...options
+}: SigningToolOptions & {
   appPath: string;
   identity: SigningIdentity;
-  exec?: Executor | null;
-}): ResealResult {
-  const executor = exec || getExecutor();
+}): Promise<ResealResult> {
   const signAs = identity.sha1 || identity.name;
   let mode: ResealMode = 'preserve-metadata';
   let preserveError: unknown = null;
   try {
-    executor.runFile(
+    await signingCommand(
       'codesign',
       ['--force', '--sign', signAs, '--preserve-metadata=identifier,entitlements,flags,runtime', appPath],
-      { timeoutMs: SIGNING_TIMEOUT_MS },
+      options,
     );
   } catch (error) {
+    throwIfCancelled(options.signal, 'iOS signing');
     preserveError = error;
   }
 
   let tempDir: string | null = null;
   if (preserveError) {
-    const entitlements = extractEntitlements(appPath, executor);
+    const entitlements = await extractEntitlements(appPath, options);
     const args = ['--force', '--sign', signAs];
     if (entitlements !== '') {
       tempDir = mkdtempSync(join(tmpdir(), 'stim-entitlements-'));
@@ -169,8 +205,9 @@ export function resealBundle({
     }
     args.push(appPath);
     try {
-      executor.runFile('codesign', args, { timeoutMs: SIGNING_TIMEOUT_MS });
+      await signingCommand('codesign', args, options);
     } catch (error) {
+      throwIfCancelled(options.signal, 'iOS signing');
       return {
         ok: false,
         code: SIGNING_CODES.codesignFailed,
@@ -184,8 +221,9 @@ export function resealBundle({
   }
 
   try {
-    executor.runFile('codesign', ['--verify', '--strict', appPath], { timeoutMs: SIGNING_TIMEOUT_MS });
+    await signingCommand('codesign', ['--verify', '--strict', appPath], options);
   } catch (error) {
+    throwIfCancelled(options.signal, 'iOS signing');
     return {
       ok: false,
       code: SIGNING_CODES.codesignFailed,
@@ -199,8 +237,8 @@ export function resealBundle({
   return { ok: true, identity, mode };
 }
 
-export function sealAppForDevice(options: SigningGateOptions): ResealResult {
-  const gate = gateAppForDevice(options);
+export async function sealAppForDevice(options: SigningGateOptions): Promise<ResealResult> {
+  const gate = await gateAppForDevice(options);
   if (!gate.ok) return { ...gate, lastLines: [] };
-  return resealBundle({ appPath: options.appPath, identity: gate.identity, exec: options.exec ?? null });
+  return resealBundle({ ...options, identity: gate.identity });
 }

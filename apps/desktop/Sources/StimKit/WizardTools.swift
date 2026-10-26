@@ -1,7 +1,7 @@
 import Foundation
 
-/// One row of the wizard's Tools step. A row blocks Next only when the chosen capability cannot work at all;
-/// every other problem is a warning that names its consequence.
+/// One row of the wizard's Tools step. A blocking row is shown in red when the chosen capability cannot work at all;
+/// every other problem is a warning that names its consequence. Neither disables Next.
 public struct WizardTool: Equatable, Identifiable, Sendable {
   public enum State: Equatable, Sendable {
     case checking, ok
@@ -22,23 +22,32 @@ public struct WizardTool: Equatable, Identifiable, Sendable {
   public var onThisMac = false
   public var blocks = false
   public var consequence: String?
+  /// An `ok` row that still says something the person should know, shown in amber.
+  public var warns = false
 }
 
 private let androidCodes: Set<String> = ["jdk", "android-sdk", "ndk", "build-tools", "compile-sdk"]
 
+/// The Tools step's rows. A Linux or Windows machine (`androidOnly`) builds Android only, so it gets no Xcode, iOS runtime or
+/// CocoaPods rows, and a missing Android SDK or any JDK problem doctor reports is red there, since no build could
+/// offload. Setup's own tool check, used until doctor compares, is never red.
 public func toolsReport(
   journal: SetupJournal?, status: BuildMachineStatus?, capabilities: Set<SetupCapability>, android: Bool = false,
-  findings: [DoctorReport.Finding] = []
+  findings: [DoctorReport.Finding] = [], androidOnly: Bool = false
 ) -> [WizardTool] {
   let builds = capabilities.contains(.build)
   let hosts = capabilities.contains(.deviceHost)
-  let machine = status?.machine ?? "the build Mac"
+  let machine = status?.machine ?? "the remote machine"
   func fix(code: String, reason: String, step: SetupJournal.Step? = nil) -> String {
     let finding = status.flatMap { status in
-      findings.first { $0.code == "build-machine-\(code)" && $0.title.hasPrefix("Remote Mac \(status.machine) ") }
+      findings.first { finding in
+        finding.code == "build-machine-\(code)"
+          && ["Remote machine", "Remote Mac"].contains { finding.title.hasPrefix("\($0) \(status.machine) ") }
+      }
     }
+    if let commands = finding?.fix, commands.contains("\n") { return commands }
     return step?.fix ?? finding?.fix
-      ?? (isLocal(code, reason) ? "Check this problem on this Mac." : "Check this problem on the build Mac.")
+      ?? (isLocal(code, reason) ? "Check this problem on this Mac." : "Check this problem on the remote machine.")
   }
   func isLocal(_ code: String, _ reason: String) -> Bool {
     code == "checkout" || (code == "jdk" && reason.contains("none here"))
@@ -46,11 +55,15 @@ public func toolsReport(
   func isMissing(_ reason: String) -> Bool {
     reason.hasPrefix("no ") || reason.contains("none") || reason.contains("null") || reason.contains("undefined")
   }
+  let apple: [(String, String, String)] = [
+    ("xcode", "Xcode", "Xcode"), ("runtime", "iOS simulator runtime", "iOS runtime"),
+    ("cocoapods", "CocoaPods / Bundler", "CocoaPods"),
+  ]
   let definitions: [(String, String, String)] =
-    [
-      ("xcode", "Xcode", "Xcode"), ("runtime", "iOS simulator runtime", "iOS runtime"),
-      ("cocoapods", "CocoaPods / Bundler", "CocoaPods"), ("stim-build", "Stim build (matches this Mac)", "Stim build"),
-      ("jdk", "Java (JDK)", "JDK"), ("android-sdk", "Android SDK", "Android SDK"),
+    (androidOnly ? [] : apple)
+    + [
+      ("stim-build", "Stim build (matches this Mac)", "Stim build"), ("jdk", "Java (JDK)", "JDK"),
+      ("android-sdk", "Android SDK", "Android SDK"),
     ]
     + (android && builds
       ? [("ndk", "NDK", "NDK"), ("build-tools", "Build-tools", "Build-tools"), ("compile-sdk", "Compile SDK", "Compile SDK")]
@@ -79,15 +92,25 @@ public func toolsReport(
       let fix = fixes.enumerated().filter { fixes.firstIndex(of: $0.element) == $0.offset }.map(\.element)
         .joined(separator: "\n")
       row.state = missing ? .missing(fix) : .mismatch(fix)
-      (row.blocks, row.consequence) = policy(code: code, missing: missing, builds: builds, hosts: hosts)
+      (row.blocks, row.consequence) = policy(code: code, missing: missing, builds: builds, hosts: hosts, androidOnly: androidOnly)
       return row
     }
-    if isAndroid, let step {
+    let notes = status?.notes?.filter { codes.contains($0.code) } ?? []
+    if !notes.isEmpty {
+      var row = WizardTool(id: code, title: title, detail: notes.map(\.reason).joined(separator: "\n"), state: .ok)
+      row.warns = true
+      return row
+    }
+    if isAndroid, let step, !(androidOnly && status?.state == .approved && status?.offloadable != nil) {
       var row = WizardTool(id: code, title: title, detail: nil, state: .ok)
       if step.state != .ok {
         row.state = .missing(step.fix ?? "Install it on \(machine).")
-        row.detail = "Needed only for Android builds"
-        row.consequence = "Android builds stay on this Mac."
+        if androidOnly {
+          row.consequence = "Stim checks it again once it can compare an Android project."
+        } else {
+          row.detail = "Needed only for Android builds"
+          row.consequence = "Android builds stay on this Mac."
+        }
       }
       return row
     }
@@ -103,14 +126,14 @@ public func toolsReport(
     }
     if step.state == .ok { return WizardTool(id: code, title: title, detail: nil, state: .ok) }
     var row = WizardTool(id: code, title: title, detail: nil, state: .missing(step.fix!))
-    (row.blocks, row.consequence) = policy(code: code, missing: true, builds: builds, hosts: hosts)
-    if isAndroid { row.detail = "Needed only for Android builds" }
+    (row.blocks, row.consequence) = policy(code: code, missing: true, builds: builds, hosts: hosts, androidOnly: androidOnly)
+    if isAndroid, !androidOnly { row.detail = "Needed only for Android builds" }
     return row
   }
   for problem in status?.problems ?? []
   where builds && ["arch", "checkout", "busy", "disk", "unreachable"].contains(problem.code) {
     var row = WizardTool(
-      id: problem.code, title: problem.code == "busy" ? "Build Mac is busy" : "Build readiness", detail: problem.reason,
+      id: problem.code, title: problem.code == "busy" ? "Remote machine is busy" : "Build readiness", detail: problem.reason,
       state: problem.code == "busy" ? .busy : .missing(fix(code: problem.code, reason: problem.reason)),
       onThisMac: isLocal(problem.code, problem.reason))
     if problem.code == "arch" || problem.code == "unreachable" {
@@ -123,8 +146,8 @@ public func toolsReport(
   if let status, builds, status.state != .approved {
     rows.append(
       WizardTool(
-        id: "access", title: "Build Mac access", detail: status.detail,
-        state: .missing("Check approval and stim-server on the build Mac"), blocks: true))
+        id: "access", title: "Remote machine access", detail: status.detail,
+        state: .missing("Check approval and stim-server on the remote machine"), blocks: true))
   }
   if builds, status?.offloadable == false, (status?.problems ?? []).isEmpty {
     rows.append(
@@ -135,17 +158,21 @@ public func toolsReport(
 }
 
 /// Whether a tool problem stops the chosen capability from working at all, and otherwise what it costs.
-private func policy(code: String, missing: Bool, builds: Bool, hosts: Bool) -> (blocks: Bool, consequence: String?) {
+private func policy(code: String, missing: Bool, builds: Bool, hosts: Bool, androidOnly: Bool) -> (
+  blocks: Bool, consequence: String?
+) {
   switch code {
   case "stim-build":
-    return builds ? (true, "The build Mac refuses builds until it runs this Mac's Stim build.") : (false, nil)
+    return builds ? (true, "The remote machine refuses builds until it runs this Mac's Stim build.") : (false, nil)
   case "xcode":
     return missing ? (true, nil) : (false, "Builds may differ, and the build cache is not shared between the two Macs.")
   case "runtime":
     if missing, hosts { return (true, nil) }
     return (false, missing ? "iOS builds stay on this Mac." : "Builds may differ from this Mac's.")
+  case "jdk" where androidOnly, "android-sdk" where androidOnly && missing:
+    return (true, nil)
   case _ where androidCodes.contains(code):
-    return (false, "Android builds stay on this Mac.")
+    return (false, androidOnly ? "Builds that need it stay on this Mac." : "Android builds stay on this Mac.")
   default:
     return (false, "Builds fall back to this Mac until this is fixed.")
   }
@@ -182,7 +209,16 @@ private func cocoapodsAdvice(problems: [BuildMachineStatus.Problem], machine: St
 public func wizardFixIsCommand(_ fix: String) -> Bool {
   let commands = [
     "sudo", "brew", "gem", "bundle", "xcodebuild", "xcode-select", "sdkmanager", "stim", "stim-server", "npx", "npm",
+    "winget", "xcodes",
   ]
-  return !fix.contains("\n") && !fix.contains("`") && !fix.contains("<")
-    && commands.contains(String(fix.split(separator: " ").first ?? ""))
+  let program: Substring
+  if let quote = fix.first, quote == "\"" || quote == "'" {
+    let rest = fix.dropFirst()
+    program = rest.range(of: "\(quote) ").map { rest[..<$0.lowerBound] } ?? rest
+  } else {
+    program = fix.prefix { $0 != " " }
+  }
+  var name = String(program.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last ?? "")
+  if name.hasSuffix(".bat") { name.removeLast(4) }
+  return !fix.contains("\n") && !fix.contains("`") && !fix.contains("<") && commands.contains(name)
 }

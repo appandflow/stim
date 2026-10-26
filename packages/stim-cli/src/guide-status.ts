@@ -1,10 +1,10 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { getConfigDir, getProject, upsertProject } from './workspace/config.ts';
+import { getConfigDir, getProject, upsertProject, withConfigLockAsync } from './workspace/config.ts';
 import { projectRegistry } from './integrations/projects.ts';
 import type { DoctorPlatform } from './diagnostics/doctor.ts';
 import { compareStimVersions } from './diagnostics/stim-installations.ts';
-import type { DoctorRunRecord, ProjectRecord } from '@stim-cli/core/state';
+import { isJsonObject, type DoctorRunRecord, type ProjectRecord } from '@stim-cli/core/state';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DOCTOR_STALE_MS = 7 * DAY_MS;
@@ -12,6 +12,7 @@ const UPDATE_CHECK_INTERVAL_MS = DAY_MS;
 const UPDATE_CHECK_TIMEOUT_MS = 2000;
 const LATEST_URL = 'https://registry.npmjs.org/stim/latest';
 
+/** Records CLI history best-effort; storage failures do not fail the CLI report. */
 export function recordDoctorRun(
   projectRoot: string,
   platform: DoctorPlatform | undefined,
@@ -23,14 +24,31 @@ export function recordDoctorRun(
   try {
     const targets = platforms ?? projectRegistry.selectDoctor(projectRoot, platform).platforms;
     if (targets.length === 0) return;
-    upsertProject(projectRoot, (existing) => {
-      const doctorRuns = { ...existing.doctorRuns };
-      for (const target of targets) doctorRuns[target] = run;
-      return { doctorRuns };
-    });
-  } catch {
-    // The record only feeds the guide nudge; doctor's report must not depend on it.
-  }
+    writeDoctorRun(projectRoot, targets, run);
+  } catch {}
+}
+
+/** Records a completed check, rejecting unavailable state and honoring cancellation while waiting for its lock. */
+export async function recordDoctorCheck(
+  projectRoot: string,
+  platform: DoctorPlatform | undefined,
+  version: string,
+  signal: AbortSignal,
+): Promise<void> {
+  signal.throwIfAborted();
+  const targets = projectRegistry.selectDoctor(projectRoot, platform).platforms;
+  if (targets.length === 0) return;
+  await withConfigLockAsync(() => {
+    writeDoctorRun(projectRoot, targets, { at: new Date().toISOString(), version });
+  }, signal);
+}
+
+function writeDoctorRun(projectRoot: string, targets: readonly DoctorPlatform[], run: DoctorRunRecord): void {
+  upsertProject(projectRoot, (existing) => {
+    const doctorRuns = { ...existing.doctorRuns };
+    for (const target of targets) doctorRuns[target] = run;
+    return { doctorRuns };
+  });
 }
 
 export function doctorDueReason(record: DoctorRunRecord | undefined, running: string, now: Date): string | null {
@@ -78,8 +96,8 @@ function writeUpdateCache(cache: UpdateCache): void {
 async function fetchLatest(fetchImpl: typeof fetch): Promise<string | null> {
   const res = await fetchImpl(LATEST_URL, { signal: AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS) });
   if (!res.ok) return null;
-  const body = (await res.json()) as { version?: unknown };
-  return typeof body.version === 'string' ? body.version : null;
+  const body: unknown = await res.json();
+  return isJsonObject(body) && typeof body.version === 'string' ? body.version : null;
 }
 
 export async function checkForUpdate(

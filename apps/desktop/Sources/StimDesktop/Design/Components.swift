@@ -207,6 +207,7 @@ struct CommandText: View {
 
 struct CopyableCommand: View {
   var command: String
+  var runsOn: String?
 
   var body: some View {
     HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
@@ -216,7 +217,8 @@ struct CopyableCommand: View {
         .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
       CopyButton(
-        command, variant: .plain, showsTitle: false, help: "Copy the command", accessibilityLabel: "Copy \(command)")
+        command, variant: .plain, showsTitle: false,
+        help: runsOn.map { "Copy the command to run on \($0)" } ?? "Copy the command", accessibilityLabel: "Copy \(command)")
     }
     .padding(.leading, Space.md)
     .padding(.trailing, Space.xxs)

@@ -20,6 +20,35 @@ import Testing
   }
 }
 
+@Suite struct SimulatorTouchSequenceTests {
+  @Test func retainsTheOriginEdgeUntilTheContactLifts() {
+    var gesture = SimulatorTouchSequence()
+    #expect(gesture.edge(for: .down, at: CGPoint(x: 0.5, y: 0.98)) == 3)
+    #expect(gesture.edge(for: .move, at: CGPoint(x: 0.5, y: 0.5)) == 3)
+    #expect(gesture.edge(for: .up, at: CGPoint(x: 0.5, y: 0.5)) == 3)
+    #expect(gesture.edge(for: .down, at: CGPoint(x: 0.5, y: 0.5)) == 0)
+    #expect(gesture.edge(for: .move, at: CGPoint(x: 0.5, y: 0.99)) == 0)
+    #expect(gesture.edge(for: .up, at: CGPoint(x: 0.5, y: 0.99)) == 0)
+  }
+
+  @Test func bottomSwipesUseTheNativeEdgeInEveryOrientation() {
+    for (orientation, expected) in [(UInt32(1), UInt32(3)), (2, 1), (3, 4), (4, 2)] {
+      var gesture = SimulatorTouchSequence()
+      let start = nativeScreenPoint(CGPoint(x: 0.5, y: 0.99), orientation: orientation)
+      let end = nativeScreenPoint(CGPoint(x: 0.5, y: 0.5), orientation: orientation)
+      #expect(gesture.edge(for: .down, at: start) == expected)
+      #expect(gesture.edge(for: .up, at: end) == expected)
+    }
+  }
+
+  @Test func twoFingerContactsNearAnEdgeRemainOrdinaryTouches() {
+    var gesture = SimulatorTouchSequence()
+    #expect(gesture.edge(for: .down, at: CGPoint(x: 0.5, y: 0.99), isMultiTouch: true) == 0)
+    #expect(gesture.edge(for: .move, at: CGPoint(x: 0.5, y: 0.5), isMultiTouch: true) == 0)
+    #expect(gesture.edge(for: .up, at: CGPoint(x: 0.5, y: 0.5), isMultiTouch: true) == 0)
+  }
+}
+
 @Suite struct QuarterTurnTests {
   @Test func rotatesPortraitToTheLandscapeOnTheTurnsSide() {
     #expect(quarterTurn(from: 1, clockwise: false) == 3)

@@ -58,16 +58,18 @@ assert(
 );
 assert(typeof logsDir === 'string' && metroPort, 'the launch has no Metro evidence location');
 const executor = getExecutor();
-const probe = () => {
-  if (platform !== 'ios') return androidAppProcess(deviceId, appId);
+const knownPid = (observed) =>
+  observed.state === 'running' ? observed.pid : observed.state === 'stopped' ? null : undefined;
+const probe = async () => {
+  if (platform !== 'ios') return knownPid(await androidAppProcess(deviceId, appId));
   const started = performance.now();
   let failure;
-  const observedPid = iosAppProcess(deviceId, appId, {
+  const observed = await iosAppProcess(deviceId, appId, {
     exec: {
       ...executor,
-      runFile(...args) {
+      async runFileAsync(...args) {
         try {
-          return executor.runFile(...args);
+          return await executor.runFileAsync(...args);
         } catch (error) {
           failure = {
             code: error.code,
@@ -82,13 +84,13 @@ const probe = () => {
     },
   });
   process.stderr.write(
-    `${JSON.stringify({ event: 'qa_ios_process_probe', appId, deviceId, slot, since, outcome: observedPid === undefined ? 'inspection-error' : observedPid === null ? 'not-running' : 'running', pid: observedPid ?? null, elapsedMs: Math.round(performance.now() - started), error: failure })}\n`,
+    `${JSON.stringify({ event: 'qa_ios_process_probe', appId, deviceId, slot, since, outcome: observed.state === 'unknown' ? 'inspection-error' : observed.state === 'stopped' ? 'not-running' : 'running', pid: knownPid(observed) ?? null, elapsedMs: Math.round(performance.now() - started), error: failure })}\n`,
   );
-  return observedPid;
+  return knownPid(observed);
 };
 const pid = await waitForKnownObservation(probe, { deadline: bundleDeadline });
 assert(Number.isInteger(pid) && pid > 0, 'the launch has no positively identified live app process');
-const platformShared = siblingPlatformSlots(root, platform, slot).length > 0;
+const platformShared = (await siblingPlatformSlots(root, platform, slot)).length > 0;
 if (expectUnattributed) {
   assert(
     platform === 'android' && slot !== 'default' && platformShared,
@@ -110,8 +112,8 @@ const result = await waitForKnownObservation(
       metroPort,
       platform,
       timeoutMs: Math.max(0, bundleDeadline - Date.now()),
-      processAlive: () => {
-        const observedPid = probe();
+      processAlive: async () => {
+        const observedPid = await probe();
         return observedPid === undefined ? null : observedPid === pid;
       },
       readNativeCrashes: readCrashes,
@@ -172,7 +174,7 @@ if (expectUnattributed) {
     assert(Date.now() < deadline, 'named-slot app readiness timed out');
     await sleep(500);
   }
-  assert.equal(readCrashes().length, 0, 'named-slot app reported a native crash');
+  assert.equal((await readCrashes()).length, 0, 'named-slot app reported a native crash');
 } else {
   assert(
     result.verified && result.processAlive === true && !result.fatal,

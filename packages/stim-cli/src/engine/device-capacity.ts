@@ -5,17 +5,19 @@ import {
   getConcurrencyLimits,
   getConfigDir,
   loadConfig,
+  withConfigLockAsync,
   type Config,
   type ProjectRecord,
 } from '../workspace/config.ts';
 import {
   iosRuntimeMatches,
   listAllIosSims,
+  listAllIosSimsAsync,
   listIosDeviceTypes,
   parseRuntimeVersion,
   type IosRuntime,
 } from '../devices/ios.ts';
-import { listAdbDevices, type SystemImage } from '../devices/android.ts';
+import { listAdbDevices, listAdbDevicesAsync, type SystemImage } from '../devices/android.ts';
 import { workspaceId } from '@stim-cli/core';
 import { automaticMachineEnabled } from '@stim-cli/core/state';
 import { formatElapsed, phaseLine } from '../command-output.ts';
@@ -32,8 +34,10 @@ import {
 } from '../ownership-claim.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from './workspace-process-lock.ts';
 import { deviceReclaimIdleMinutesSetting } from '../workspace/settings.ts';
+import { workspaceDisplayLabel, workspaceLabels } from '../workspace/display-label.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
-import type { BuildWaitingFor, SettingScope } from '@stim-cli/core/state';
+import type { StimContext } from '@stim-cli/core';
+import type { BuildWaitingFor, SettingScope, StatusDeviceSlotHolder, StatusDeviceSlots } from '@stim-cli/core/state';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
 type DeviceTypeInfo = ReturnType<typeof listIosDeviceTypes>[number];
@@ -226,6 +230,53 @@ function listed<T>(source: Listing<T>, empty: T, absent: (error: unknown) => boo
   }
 }
 
+async function listedAwait<T>(
+  read: () => T | Promise<T>,
+  empty: T,
+  absent: (error: unknown) => boolean = () => false,
+): Promise<T> {
+  try {
+    return (await read()) ?? empty;
+  } catch (error) {
+    if (absent(error)) return empty;
+    throw new DeviceCountUnavailable('', { cause: error });
+  }
+}
+
+type AsyncListing<T> = T | (() => T | Promise<T>);
+
+interface AsyncInventorySources {
+  sims?: AsyncListing<SimRecord[]>;
+  adb?: AsyncListing<AdbDevices>;
+  config?: AsyncListing<Config | null>;
+  booting?: AsyncListing<BootingDevice[]>;
+}
+
+async function readInventoryAsync({
+  sims = () => (process.platform === 'darwin' ? listAllIosSimsAsync({ timeoutMs: LISTING_TIMEOUT_MS }) : []),
+  adb = () => listAdbDevicesAsync({ timeoutMs: LISTING_TIMEOUT_MS }),
+  config = loadConfig,
+  booting = readBootingDevices,
+}: AsyncInventorySources): Promise<DeviceInventory | CapacityRefusal> {
+  try {
+    const recorded = await listedAwait(() => (typeof config === 'function' ? config() : config), null);
+    return {
+      booting: await listedAwait(() => (typeof booting === 'function' ? booting() : booting), []),
+      sims: await listedAwait(() => (typeof sims === 'function' ? sims() : sims), [], toolAbsent),
+      adb: recordsOwnedEmulator(recorded)
+        ? await listedAwait(() => (typeof adb === 'function' ? adb() : adb), NO_ADB, toolAbsent)
+        : NO_ADB,
+      config: recorded,
+    };
+  } catch (error) {
+    if (error instanceof DeviceCountUnavailable) {
+      if (isClaimRefusal(error.cause)) throw error.cause;
+      return uncountedRefusal(error.cause);
+    }
+    throw error;
+  }
+}
+
 function readInventory({
   sims = listSimsForCount,
   adb = listAdbForCount,
@@ -262,6 +313,51 @@ export function countLiveOwnedDevices(
     return 'code' in inventory ? { unknown: inventory.message } : inventoryKeys(inventory, exclude).size;
   } catch (error) {
     if (isClaimRefusal(error)) return { unknown: error.message };
+    throw error;
+  }
+}
+
+async function listedAsync<T>(source: () => Promise<T>, empty: T): Promise<T> {
+  try {
+    return await source();
+  } catch (error) {
+    if (toolAbsent(error)) return empty;
+    throw new DeviceCountUnavailable('', { cause: error });
+  }
+}
+
+export async function countLiveOwnedDevicesFrom(
+  sources: AsyncInventorySources,
+  { exclude = [] }: { exclude?: DeviceCountExclusion[] } = {},
+): Promise<number | { unknown: string }> {
+  try {
+    const inventory = await readInventoryAsync(sources);
+    return 'code' in inventory ? { unknown: inventory.message } : inventoryKeys(inventory, exclude).size;
+  } catch (error) {
+    if (isClaimRefusal(error)) return { unknown: error.message };
+    throw error;
+  }
+}
+
+export async function countLiveOwnedDevicesAsync(operation: StimContext): Promise<number | { unknown: string }> {
+  try {
+    operation.signal.throwIfAborted();
+    const config = loadConfig();
+    const booting = readBootingDevices();
+    const [sims, adb] = await Promise.all([
+      process.platform === 'darwin'
+        ? listedAsync(() => listAllIosSimsAsync({ timeoutMs: LISTING_TIMEOUT_MS }), [])
+        : [],
+      recordsOwnedEmulator(config)
+        ? listedAsync(() => listAdbDevicesAsync({ timeoutMs: LISTING_TIMEOUT_MS }), NO_ADB)
+        : NO_ADB,
+    ]);
+    operation.signal.throwIfAborted();
+    return countLiveOwnedDevices({ config, booting, sims, adb });
+  } catch (error) {
+    operation.signal.throwIfAborted();
+    if (isClaimRefusal(error)) return { unknown: error.message };
+    if (error instanceof DeviceCountUnavailable) return { unknown: uncountedRefusal(error.cause).message };
     throw error;
   }
 }
@@ -389,6 +485,8 @@ export interface DeviceSlotWaitPolicy {
   reclaimIdleMinutes?: number;
   waitingFor?: (info: BuildWaitingFor | null) => void;
   onWait?: (ms: number) => void;
+  /** Called once admission lets the boot start, just before it runs. */
+  onBootStart?: () => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -411,25 +509,62 @@ export function deviceSlotWaitingLine({
   return `${'device'.padEnd(11)} waiting for a device slot (${count}/${max} in use${holders.length ? `: ${holders.join(', ')}` : ''}), ${formatElapsed(elapsedMs)} elapsed -- stim guide lifecycle concurrency${queue ? `; ${queue}` : ''}`;
 }
 
-function deviceHolders(inventory: DeviceInventory, keys: Set<string>): string[] {
-  const names = new Map<string, string>();
-  for (const [root, project] of Object.entries(inventory.config?.projects ?? {})) {
-    for (const { platforms } of projectDeviceSlots(project)) {
+function unrecordedHolder(label: string): { label: string; workspace: null; slot: null } {
+  return { label, workspace: null, slot: null };
+}
+
+function slotHolders(inventory: DeviceInventory, keys: Set<string>): StatusDeviceSlotHolder[] {
+  const owners = new Map<string, { label: string; workspace: string | null; slot: string | null }>();
+  const projects = Object.entries(inventory.config?.projects ?? {});
+  const labels = workspaceLabels(projects.map(([root, project]) => ({ root, label: project.label })));
+  for (const [root, project] of projects) {
+    const label = labels.get(root) ?? basename(root);
+    for (const { slot, platforms } of projectDeviceSlots(project)) {
       if (platforms.ios?.deviceUdid)
-        names.set(deviceKey('ios', platforms.ios.deviceUdid), project.label || basename(root));
+        owners.set(deviceKey('ios', platforms.ios.deviceUdid), { label, workspace: root, slot });
       if (platforms.android?.avdName)
-        names.set(deviceKey('android', platforms.android.avdName), project.label || basename(root));
+        owners.set(deviceKey('android', platforms.android.avdName), { label, workspace: root, slot });
     }
   }
   for (const sim of inventory.sims) {
     const key = deviceKey('ios', sim.udid);
-    if (!names.has(key)) names.set(key, sim.name);
+    if (!owners.has(key)) owners.set(key, unrecordedHolder(sim.name));
   }
+  const booting = new Set<string>();
   for (const device of inventory.booting) {
     const key = deviceKey(device.platform, device.key);
-    if (!names.has(key)) names.set(key, device.displayName ?? device.key);
+    booting.add(key);
+    if (!owners.has(key)) owners.set(key, unrecordedHolder(device.displayName ?? device.key));
   }
-  return [...new Set([...keys].map((key) => names.get(key) ?? key.slice(key.indexOf(':') + 1)))].toSorted();
+  return [...keys]
+    .map((key): StatusDeviceSlotHolder => {
+      const { label, workspace, slot } = owners.get(key) ?? unrecordedHolder(key.slice(key.indexOf(':') + 1));
+      const platform = key.startsWith('android:') ? 'android' : 'ios';
+      return booting.has(key)
+        ? { platform, label, workspace, slot, booting: true }
+        : { platform, label, workspace, slot };
+    })
+    .toSorted((a, b) => a.label.localeCompare(b.label) || a.platform.localeCompare(b.platform));
+}
+
+function deviceHolders(inventory: DeviceInventory, keys: Set<string>): string[] {
+  return [...new Set(slotHolders(inventory, keys).map((holder) => holder.label))].toSorted();
+}
+
+/**
+ * `concurrency.maxDevices` usage for status: the owned devices the cap counts and who holds each. `sims` is the
+ * listing status already read; an unknown count reports why instead of failing.
+ */
+export async function deviceSlotUsage(max: number, sources: AsyncInventorySources = {}): Promise<StatusDeviceSlots> {
+  try {
+    const inventory = await readInventoryAsync(sources);
+    if ('code' in inventory) return { max, inUse: null, unknown: inventory.message, holders: [] };
+    const keys = inventoryKeys(inventory);
+    return { max, inUse: keys.size, holders: slotHolders(inventory, keys) };
+  } catch (error) {
+    if (isClaimRefusal(error)) return { max, inUse: null, unknown: error.message, holders: [] };
+    throw error;
+  }
 }
 
 function liveWaiters(): ClaimHolder[] {
@@ -527,13 +662,14 @@ export async function withDeviceBootAdmission<T>(
     waitMs = DEFAULT_DEVICE_SLOT_WAIT_MS,
     noWait = false,
     automatic = false,
-    displayName = basename(root),
+    displayName = workspaceDisplayLabel(root, loadConfig()),
     reclaimIdleMinutes = deviceReclaimIdleMinutesSetting({}),
     now = Date.now,
     signal,
     sleep = (ms) => delay(ms, undefined, { signal }),
     waitingFor = () => {},
     onWait = () => {},
+    onBootStart = () => {},
   }: DeviceSlotWaitPolicy & {
     root: string;
     max?: number;
@@ -552,7 +688,10 @@ export async function withDeviceBootAdmission<T>(
   };
   signal?.throwIfAborted();
   requireMembership();
-  if (!max || max <= 0) return boot();
+  if (!max || max <= 0) {
+    onBootStart();
+    return boot();
+  }
   const workspace = workspaceId(root);
   device = { ...device, workspace, displayName };
   let ticket: ClaimHandle | undefined;
@@ -609,7 +748,7 @@ export async function withDeviceBootAdmission<T>(
               if (claims.some((entry) => deviceKey(entry.platform, entry.key) === own)) return admit();
               return wait(lastInventory);
             }
-            const inventory = readInventory(sources);
+            const inventory = await readInventoryAsync(sources);
             if ('code' in inventory) throw new DeviceAdmissionRefusal(inventory);
             const keys = inventoryKeys(inventory);
             const own = deviceKey(device.platform, device.key);
@@ -660,7 +799,10 @@ export async function withDeviceBootAdmission<T>(
       }
     } catch (error) {
       if (error instanceof DeviceAdmissionRefusal && error.code === 'STIM_AT_CAPACITY') {
-        recordCapacityRefusal({ platform: device.platform as 'ios' | 'android', max, workspace }, now());
+        const at = now();
+        await withConfigLockAsync(() =>
+          recordCapacityRefusal({ platform: device.platform as 'ios' | 'android', max, workspace }, at),
+        ).catch(() => {});
       }
       throw error;
     } finally {
@@ -668,14 +810,18 @@ export async function withDeviceBootAdmission<T>(
       if (visibleWait) waitingFor(null);
       if (started !== undefined) {
         const ms = Math.max(0, Math.round(now() - started));
-        recordCapacityWait(
-          { platform: device.platform as 'ios' | 'android', ms, max, workspace, ...(reclaimed ? { reclaimed } : {}) },
-          now(),
-        );
+        const at = now();
+        await withConfigLockAsync(() =>
+          recordCapacityWait(
+            { platform: device.platform as 'ios' | 'android', ms, max, workspace, ...(reclaimed ? { reclaimed } : {}) },
+            at,
+          ),
+        ).catch(() => {});
         onWait(ms);
       }
     }
     requireMembership();
+    onBootStart();
     return await boot();
   } finally {
     releaseClaim(marker);

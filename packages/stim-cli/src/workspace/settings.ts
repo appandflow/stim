@@ -1,8 +1,16 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { isAbsolute, join, normalize, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
+import type { StimContext } from '@stim-cli/core';
+import { throwIfCancelled } from '../cancellation.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
-import { gitCommonDir as projectGitCommonDir, repoRoot as projectRepoRoot } from './worktree.ts';
+import {
+  gitCommonDir as projectGitCommonDir,
+  repoRoot as projectRepoRoot,
+  gitCommonDirAsync,
+  repoRootAsync,
+} from './worktree.ts';
 import { TUNNEL_MODES, type TunnelMode } from '../engine/metro-reach.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import {
@@ -10,12 +18,16 @@ import {
   expectedShape,
   isLayeredSetting,
   coerceSettingText,
+  placementWord,
+  replacementAdvice,
   settingDefinition,
   settingValueError,
   REMOTE_DEVICE_BACKENDS,
+  REPLACED_SETTINGS,
   SETTING_GROUPS,
   SETTINGS,
   WEB_VIEWPORTS,
+  type AutomaticPlacement,
   type SettingScope,
   type SettingsObject,
   type WebViewport,
@@ -79,6 +91,8 @@ export function settingShapeErrors(settings: unknown): string[] {
     const expected =
       setting.key === 'ios.remote' ||
       setting.key === 'android.remote' ||
+      setting.key === 'macos.remote' ||
+      setting.key === 'android.deviceProfile' ||
       (setting.type.kind === 'number' && !BOUNDS_CHECKED_WHEN_USED.has(setting.key))
         ? settingValueError(setting, value)
         : acceptsShape(setting, value)
@@ -537,13 +551,8 @@ export function iosSimSlimProfileSetting(settings: unknown, settingsRoot: string
   }
 }
 
-export function iosSimSlimProfileSettingError(settings: unknown, settingsRoot: string): string | null {
-  try {
-    iosSimSlimProfileSetting(settings, settingsRoot);
-    return null;
-  } catch (error) {
-    return String((error as Error)?.message || error);
-  }
+export function iosSimSlimDefaultSetting(settings: unknown): boolean {
+  return isPlainObject(settings) && isPlainObject(settings.ios) && settings.ios.simslim === 'on';
 }
 
 function iosString(settings: unknown, key: string): unknown {
@@ -620,6 +629,16 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   return unknown;
 }
 
+export function inertSettingWarning(settings: unknown, key: string): string {
+  const advice = replacementAdvice(key, settingValueAt(settings, key));
+  const instead = advice
+    ? advice.command
+      ? ` Run \`${advice.command}\` instead.`
+      : ` Use ${advice.key} instead.`
+    : '';
+  return `Warning: setting "${key}" is not read by Stim and will be ignored.${instead}`;
+}
+
 export function readCommittedSettings(directory?: string | null): SettingsObject {
   if (!directory) return {};
   const p = join(directory, '.stim.json');
@@ -648,8 +667,17 @@ const MACHINE_READABLE_SETTINGS = SETTINGS.filter(
     isLayeredSetting(setting) && setting.scopes.includes('machine') && !setting.key.startsWith('optimizations.'),
 );
 
-function machineLayerSettings(machine: unknown): SettingsObject | null {
+export function removedMachineSettings(machine: unknown): SettingsObject {
   const settings: SettingsObject = {};
+  for (const key of Object.keys(REPLACED_SETTINGS)) {
+    const value = settingValueAt(machine, key);
+    if (value !== undefined) setSettingValueAt(settings, key, value);
+  }
+  return settings;
+}
+
+function machineLayerSettings(machine: unknown): SettingsObject | null {
+  const settings: SettingsObject = removedMachineSettings(machine);
   // Copied whole, not key by key, so an unknown or malformed key under machine
   // optimizations still reaches settingShapeErrors and doctor's inert-key check
   // instead of silently disappearing.
@@ -764,6 +792,45 @@ export function resolveProjectSettings(root: string): ResolvedProjectSettings {
   return { context, settings: resolveSettings(context) };
 }
 
+type ProjectSettingsReadOptions = { env?: NodeJS.ProcessEnv; signal?: AbortSignal; declareFor?: StimContext };
+
+export interface ProjectSettingsReaders {
+  gitCommonDir: (cwd: string, options?: ProjectSettingsReadOptions) => string | null | Promise<string | null>;
+  repoRoot: (cwd: string, options?: ProjectSettingsReadOptions) => string | null | Promise<string | null>;
+}
+
+/** Resolves repository paths asynchronously; declared probes run sequentially and cancellation rejects. */
+export async function projectSettingsContextAsync(
+  root: string,
+  git: ProjectSettingsReaders = { gitCommonDir: gitCommonDirAsync, repoRoot: repoRootAsync },
+  { env = process.env, signal, declareFor }: ProjectSettingsReadOptions = {},
+): Promise<ProjectSettingsContext> {
+  throwIfCancelled(signal, 'settings resolution');
+  const options = { env, signal, declareFor };
+  const common = Promise.resolve(git.gitCommonDir(root, options));
+  const repo = declareFor ? common.then(() => git.repoRoot(root, options)) : git.repoRoot(root, options);
+  const [commonResult, repoResult] = await Promise.allSettled([common, repo]);
+  for (const result of [commonResult, repoResult])
+    if (
+      result.status === 'rejected' &&
+      (result.reason instanceof WorkspaceProcessCleanupError ||
+        (result.reason instanceof Error && 'reportCleanup' in result.reason))
+    )
+      throw result.reason;
+  throwIfCancelled(signal, 'settings resolution');
+  if (commonResult.status === 'rejected') throw commonResult.reason;
+  if (repoResult.status === 'rejected') throw repoResult.reason;
+  return { projectPath: root, gitCommonDir: commonResult.value, repoRoot: repoResult.value };
+}
+
+export async function resolveProjectSettingsAsync(
+  root: string,
+  options?: ProjectSettingsReadOptions,
+): Promise<ResolvedProjectSettings> {
+  const context = await projectSettingsContextAsync(root, undefined, options);
+  return { context, settings: resolveSettings(context) };
+}
+
 export const METRO_COMMAND_PORT = '{port}';
 
 export function metroCommandSetting(settings: SettingsObject): string[] | null {
@@ -848,16 +915,20 @@ export function cacheProviderSettingError(settings: SettingsObject): string | nu
   return null;
 }
 
-export type IosRemoteTarget = { kind: 'backend'; backend: RemoteDeviceBackend } | { kind: 'machine'; machine: string };
+export type IosRemoteTarget =
+  | { kind: 'backend'; backend: RemoteDeviceBackend }
+  | { kind: 'machine'; machine: string; placement?: AutomaticPlacement };
 
-/** The remote target `remote` names, or null for `local`, which runs on this Mac whatever a lower layer sets. */
+/** The remote target `remote` names, or null for `local`, which runs on this machine whatever a lower layer sets. */
 export function parseIosRemote(remote: string): IosRemoteTarget | null {
   const selected = remote.trim();
   const reserved = selected.toLowerCase();
-  if (reserved === 'local') return null;
+  const word = placementWord(selected);
+  if (word === 'local') return null;
+  if (word) return { kind: 'machine', machine: 'auto', placement: word };
   return (REMOTE_DEVICE_BACKENDS as readonly string[]).includes(reserved)
     ? { kind: 'backend', backend: reserved as RemoteDeviceBackend }
-    : { kind: 'machine', machine: reserved === 'auto' ? 'auto' : selected };
+    : { kind: 'machine', machine: selected };
 }
 
 export function remoteIosSetting(settings: SettingsObject): IosRemoteTarget | null {
@@ -900,6 +971,10 @@ export function deviceReclaimIdleMinutesSetting(settings: SettingsObject): numbe
 export function maintenanceKeepSetting(settings: SettingsObject): boolean {
   const value = settingValueAt(settings, 'maintenance.keep');
   return value !== undefined && value !== false;
+}
+
+export function workspaceHiddenSetting(settings: SettingsObject | undefined): boolean {
+  return settingValueAt(settings, 'workspace.hidden') === true;
 }
 
 export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {

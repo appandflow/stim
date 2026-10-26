@@ -201,3 +201,99 @@ test.each([
     platform === 'ios' ? ['-nP', '-iTCP:N', '-Fpn'] : [],
   );
 });
+
+describe('the Expo dev client manifest request', () => {
+  async function fetchPath(url: string, path: string, headers: Record<string, string> = {}) {
+    const [incoming] = await once(get(`${url}${path}`, { headers }), 'response');
+    incoming.resume();
+    await once(incoming, 'end');
+  }
+  const arm = (url: string) => fetchPath(url, '/_stim/metro-warmup');
+
+  test.each(['ios', 'android'] as const)(
+    'a %s manifest request is recorded from its start to the end of its response, in the form the supervisor accepts',
+    async (platform) => {
+      const { records, url } = await listen((res) => res.end('{}'), { manifests: true });
+      await arm(url);
+      await fetchPath(url, '/', { 'expo-platform': platform });
+      await vi.waitFor(() => expect(records).toHaveLength(2));
+      expect(records.map((r) => r.event)).toEqual(['manifest_request_started', 'manifest_request_finished']);
+      expect(records[1]).toMatchObject({ platform, statusCode: 200, requestId: records[0]?.requestId, level: 'debug' });
+      for (const record of records) {
+        const line = `stim-bundle-response: ${JSON.stringify(record)}`;
+        expect(recordFromLine(line, { stream: 'stderr' })).toEqual(record);
+      }
+    },
+  );
+
+  test('a manifest the server refuses is recorded as failed', async () => {
+    const { records, url } = await listen(
+      (res) => {
+        res.statusCode = 500;
+        res.end();
+      },
+      { manifests: true },
+    );
+    await arm(url);
+    await fetchPath(url, '/manifest', { 'expo-platform': 'android' });
+    await vi.waitFor(() => expect(records).toHaveLength(2));
+    expect(records[1]).toMatchObject({ event: 'manifest_request_failed', statusCode: 500 });
+  });
+
+  test.each([
+    ['a request without a platform', '/', {}],
+    ['another path', '/index.html', { 'expo-platform': 'ios' }],
+    ['a platform Metro does not serve natively', '/', { 'expo-platform': 'web' }],
+    ['Stim warmup fetch', '/', { 'expo-platform': 'android', 'x-stim-metro-warmup': '1' }],
+  ])('%s is not recorded', async (_name, path, headers) => {
+    const { records, url } = await listen((res) => res.end(), { manifests: true });
+    await arm(url);
+    await fetchPath(url, path, headers);
+    expect(records).toEqual([]);
+  });
+
+  test('a server that never saw the warmup probe, or a bare React Native one, records no manifest requests', async () => {
+    const unarmed = await listen((res) => res.end(), { manifests: true });
+    await fetchPath(unarmed.url, '/', { 'expo-platform': 'android' });
+    expect(unarmed.records).toEqual([]);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+
+    const bare = await listen((res) => res.end());
+    await arm(bare.url);
+    await fetchPath(bare.url, '/', { 'expo-platform': 'android' });
+    expect(bare.records).toEqual([]);
+  });
+});
+
+test('an HMR update Metro pushes over /hot after a file change is recorded, at most once a minute, in the form the supervisor accepts', async () => {
+  const { records, url } = await listen((res) => res.end());
+  const hmrMessages: string[] = [];
+  server.on('upgrade', (_req, socket) => {
+    socket.on('error', () => {});
+    socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n');
+    for (const message of hmrMessages) socket.write(Buffer.from(message));
+    socket.end();
+  });
+  const upgrade = async (path: string) => {
+    const request = get(`${url}${path}`, { headers: { Connection: 'Upgrade', Upgrade: 'websocket' } });
+    const [, socket] = await once(request, 'upgrade');
+    socket.on('error', () => {});
+    socket.destroy();
+  };
+  const [incoming] = await once(get(`${url}/status`), 'response');
+  incoming.resume();
+  await once(incoming, 'end');
+
+  hmrMessages.push(JSON.stringify({ type: 'update-start', body: { isInitialUpdate: true } }));
+  await upgrade('/hot');
+  expect(records).toEqual([]);
+
+  hmrMessages.push(JSON.stringify({ type: 'update-start', body: { isInitialUpdate: false } }));
+  await upgrade('/message');
+  expect(records).toEqual([]);
+  await upgrade('/hot');
+  await upgrade('/hot');
+  expect(records.map((record) => record.event)).toEqual(['hmr_update']);
+  const line = `stim-bundle-response: ${JSON.stringify(records[0])}`;
+  expect(recordFromLine(line, { stream: 'stderr' })).toEqual(records[0]);
+});

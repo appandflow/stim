@@ -54,6 +54,7 @@ jest.mock('@/hooks/archive-detail', () => ({
   useArchiveDetail: () => mockDetail,
 }));
 jest.mock('@/hooks/app-foreground', () => ({ useAppForeground: () => true }));
+jest.mock('@/hooks/header-inset', () => ({ useHeaderInset: () => 0 }));
 jest.mock('@/hooks/build-plans', () => ({ useWorkspaceBuildPlans: () => () => undefined }));
 jest.mock('@/hooks/workspace-actions', () => ({ useAction: () => ({ available: null, pending: null }) }));
 jest.mock('@/hooks/recents', () => ({ useRecents: () => ({ touch: () => {} }) }));

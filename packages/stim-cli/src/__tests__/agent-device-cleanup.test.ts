@@ -128,10 +128,10 @@ function executor(lists: string[], close?: (args: string[]) => string) {
 test.each([
   [{ platform: 'ios' as const, id: 'U1' }, ios, '--udid'],
   [{ platform: 'android' as const, id: 'emulator-5554', avdName: 'stim-app_fold' }, android, '--serial'],
-])('closes only exact matching sessions with a rejecting target guard: %j', (device, session, selector) => {
+])('closes only exact matching sessions with a rejecting target guard: %j', async (device, session, selector) => {
   const calls = executor([payload([ios, android, { ...ios, name: 'unrelated', device_udid: 'U10', id: 'U10' }])]);
   const owned = vi.fn<() => boolean>(() => true);
-  closeOwnedDeviceSessions(device, owned);
+  await closeOwnedDeviceSessions(device, owned);
   expect(calls.filter((args) => args[0] === 'close')).toEqual([
     [
       'close',
@@ -156,44 +156,44 @@ test.each([
   { current: [] },
   { current: [{ ...ios, id: 'U2', device_udid: 'U2' }] },
   { current: [{ ...ios, createdAt: ios.createdAt + 1 }] },
-])('does not close a disappeared, rebound or recreated session: %j', ({ current }) => {
+])('does not close a disappeared, rebound or recreated session: %j', async ({ current }) => {
   const calls = executor([payload([ios]), payload(current)]);
-  closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
+  await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
   expect(calls.some((args) => args[0] === 'close')).toBe(false);
 });
 
-test('does not close after device ownership changes', () => {
+test('does not close after device ownership changes', async () => {
   const calls = executor([payload([ios])]);
-  closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => false);
+  await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => false);
   expect(calls.some((args) => args[0] === 'close')).toBe(false);
 });
 
-test('contains a failed close and still closes the next matching session', () => {
+test('contains a failed close and still closes the next matching session', async () => {
   const calls = executor([payload([ios, { ...ios, name: 'second' }])], (args) => {
     if (args.includes(ios.name)) throw new Error('timed out');
     return '{"success":true}';
   });
-  closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
+  await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
   expect(calls.filter((args) => args[0] === 'close')).toHaveLength(2);
   expect(stderr).toHaveBeenCalledWith(expect.stringContaining('could not close agent-device session ios-task'));
   expect(stderr).toHaveBeenCalledWith(expect.stringContaining('closed agent-device session second'));
 });
 
-test('skips absent CLI and contains invalid inventory and unsuccessful close responses', () => {
+test('skips absent CLI and contains invalid inventory and unsuccessful close responses', async () => {
   const runFile = vi.fn<() => string>();
   setExecutor({ runQuiet: () => null, findExecutable: () => null, runFile });
-  closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
+  await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
   expect(runFile).not.toHaveBeenCalled();
   expect(stderr).not.toHaveBeenCalled();
   executor(['garbage']);
-  closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
+  await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
   expect(stderr).toHaveBeenCalledWith(expect.stringContaining('could not list agent-device sessions'));
   executor([payload([ios])], () => '{"success":false}');
-  closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
+  await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
   expect(stderr).toHaveBeenCalledWith(expect.stringContaining('could not close agent-device session'));
 });
 
-test("reports agent-device's own refusal instead of the bare command line", () => {
+test("reports agent-device's own refusal instead of the bare command line", async () => {
   const refusal = {
     success: false,
     error: {
@@ -212,7 +212,7 @@ test("reports agent-device's own refusal instead of the bare command line", () =
       });
     },
   });
-  closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
+  await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
   expect(stderr).toHaveBeenCalledWith(
     expect.stringContaining(
       'could not list agent-device sessions for U1: agent-device refused: Daemon registration ownership could not be verified. (daemon_registration_unproven)',
@@ -220,19 +220,19 @@ test("reports agent-device's own refusal instead of the bare command line", () =
   );
 });
 
-test('stops invoking agent-device once the per-device budget is exhausted', () => {
+test('stops invoking agent-device once the per-device budget is exhausted', async () => {
   let now = 1000;
   vi.spyOn(Date, 'now').mockImplementation(() => now);
   const calls = executor([payload([ios, { ...ios, name: 'second' }])], () => {
     now += 15000;
     return '{"success":true}';
   });
-  closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
+  await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
   expect(calls).toHaveLength(3);
   expect(stderr).toHaveBeenCalledWith(expect.stringContaining('agent-device cleanup timed out'));
 });
 
-test('closes claimed workspace sessions with --state-dir even when the default inventory fails', () => {
+test('closes claimed workspace sessions with --state-dir even when the default inventory fails', async () => {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-agent-cleanup-')));
   vi.stubEnv('STIM_HOME', join(home, 'stim'));
   vi.stubEnv('AGENT_DEVICE_CLAIMS_DIR', join(home, 'claims'));
@@ -260,7 +260,7 @@ test('closes claimed workspace sessions with --state-dir even when the default i
     },
   });
   try {
-    closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true, workspace);
+    await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true, workspace);
     expect(calls.filter((args) => args[0] === 'close')).toEqual([
       [
         'close',
@@ -284,4 +284,86 @@ test('closes claimed workspace sessions with --state-dir even when the default i
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+describe('a busy agent-device daemon', () => {
+  const busy = (stateDir: string) =>
+    Object.assign(new Error('Command failed: agent-device session list'), {
+      status: 1,
+      stdout: JSON.stringify({
+        success: false,
+        error: {
+          code: 'COMMAND_FAILED',
+          message: 'The running daemon is busy and was not replaced.',
+          details: { reason: 'daemon-busy', stateDir },
+        },
+      }),
+      stderr: '',
+    });
+
+  function withWorkspaceDaemon(run: (workspace: string, stateDir: string, defaultDir: string) => Promise<void>) {
+    return async () => {
+      const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-agent-cleanup-')));
+      vi.stubEnv('STIM_HOME', join(home, 'stim'));
+      vi.stubEnv('AGENT_DEVICE_CLAIMS_DIR', join(home, 'claims'));
+      const workspace = join(home, 'app');
+      mkdirSync(workspace);
+      const stateDir = workspaceAgentDeviceDir(workspace);
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(join(stateDir, 'daemon.json'), '{}');
+      mkdirSync(join(home, 'claims'));
+      writeFileSync(
+        join(home, 'claims', 'claim.json'),
+        JSON.stringify({ session: ios.name, workspace, device: { id: 'U1' } }),
+      );
+      try {
+        await run(workspace, stateDir, join(home, '.agent-device'));
+      } finally {
+        vi.unstubAllEnvs();
+        rmSync(home, { recursive: true, force: true });
+      }
+    };
+  }
+
+  const lines = () =>
+    stderr.mock.calls.map((call: unknown[]) => String(call[0])).filter((line: string) => line.includes('agent-device'));
+
+  test(
+    'is reported once per device, naming each daemon, the consequence and the remedy',
+    withWorkspaceDaemon(async (workspace, stateDir, defaultDir) => {
+      setExecutor({
+        findExecutable: () => '/bin/agent-device',
+        runFile: (_file, args) => {
+          throw busy(args.includes('--state-dir') ? stateDir : defaultDir);
+        },
+      });
+      await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true, workspace);
+      expect(lines()).toHaveLength(1);
+      expect(lines()[0]).toContain('stay open');
+      expect(lines()[0]).not.toContain('closed agent-device session');
+      expect(lines()[0]).toContain(`agent-device daemon stop --state-dir '${defaultDir}'`);
+      expect(lines()[0]).toContain(`agent-device daemon stop --state-dir '${stateDir}'`);
+    }),
+  );
+
+  test(
+    'still closes sessions on the daemon that answers and reports only the busy one',
+    withWorkspaceDaemon(async (workspace, stateDir, defaultDir) => {
+      const calls: string[][] = [];
+      setExecutor({
+        findExecutable: () => '/bin/agent-device',
+        runFile: (_file, args) => {
+          calls.push(args);
+          if (!args.includes('--state-dir')) throw busy(defaultDir);
+          return args[0] === 'session' ? payload([ios]) : '{"success":true}';
+        },
+      });
+      await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true, workspace);
+      expect(calls.some((args) => args[0] === 'close' && args.includes(stateDir))).toBe(true);
+      const busyLines = lines().filter((line: string) => line.includes('is busy'));
+      expect(busyLines).toHaveLength(1);
+      expect(busyLines[0]).toContain(`agent-device daemon stop --state-dir '${defaultDir}'`);
+      expect(busyLines[0]).not.toContain(stateDir);
+    }),
+  );
 });

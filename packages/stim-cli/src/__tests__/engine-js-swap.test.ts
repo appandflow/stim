@@ -1,5 +1,15 @@
 import type { ChildProcess } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -14,7 +24,7 @@ import {
   readHermesEnabled,
   swapJsBundle,
 } from '../engine/js-swap.ts';
-import { getExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor } from '../exec.ts';
 import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
 
 describe('hermescPath', () => {
@@ -145,8 +155,16 @@ let tmp: string;
 const cachedApp = '/cache/ios/k-release-sim/Fixture.app';
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'stim-swap-root-'));
+  root = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-swap-root-')));
   tmp = mkdtempSync(join(tmpdir(), 'stim-swap-tmp-'));
+  for (const name of ['expo', 'react-native']) {
+    const dir = join(root, 'node_modules', name);
+    mkdirSync(dir, { recursive: true });
+    const bin = join(dir, 'cli.js');
+    writeFileSync(bin, '#!/usr/bin/env node\n');
+    chmodSync(bin, 0o755);
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, bin: { [name]: 'cli.js' } }));
+  }
 });
 
 afterEach(() => {
@@ -233,12 +251,23 @@ describe('swapJsBundle', () => {
     expect(result.hermes).toBe(true);
 
     const shape = calls.map((c) => c.file);
-    expect(shape).toEqual(['cp', 'plutil', 'npx', hermescPath(root, join(root, 'ios')), 'mv', 'cp', 'cp', 'codesign']);
+    expect(shape).toEqual([
+      'cp',
+      'plutil',
+      process.platform === 'win32' ? process.execPath : join(root, 'node_modules', 'expo', 'cli.js'),
+      hermescPath(root, join(root, 'ios')),
+      'mv',
+      'cp',
+      'cp',
+      'codesign',
+    ]);
 
     const copyAside = calls[0];
     expect(copyAside?.args).toEqual(['-c', '-R', cachedApp, appCopy]);
     const bundle = calls[2];
-    expect(bundle?.args?.slice(0, 2)).toEqual(['expo', 'export:embed']);
+    expect(bundle?.args?.slice(process.platform === 'win32' ? 1 : 0, process.platform === 'win32' ? 2 : 1)).toEqual([
+      'export:embed',
+    ]);
     expect(bundle?.args).toContain(bundleOutput);
     const codesign = calls.at(-1);
     expect(codesign?.args).toEqual(['--force', '--sign', '-', appCopy]);
@@ -252,7 +281,9 @@ describe('swapJsBundle', () => {
     const result = await run({ isExpo: false });
     expect(result.ok).toBe(true);
     const bundle = calls.find((c) => c.op === 'spawn');
-    expect(bundle?.args?.slice(0, 2)).toEqual(['react-native', 'bundle']);
+    expect(bundle?.args?.slice(process.platform === 'win32' ? 1 : 0, process.platform === 'win32' ? 2 : 1)).toEqual([
+      'bundle',
+    ]);
     expect(bundle?.args).toContain('--entry-file');
   });
 
@@ -296,9 +327,9 @@ describe('swapJsBundle', () => {
       const real = getExecutor();
       const exec = {
         ...real,
-        runFile: (file: string, args: string[] = []) => {
+        runFileAsync: async (file: string, args: string[], opts: ExecOptions) => {
           if (file === 'plutil') throw new Error('Command failed: plutil\nNo value at that key path');
-          return real.runFile(file, args);
+          return real.runFileAsync(file, args, opts);
         },
       };
       try {

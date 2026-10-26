@@ -23,17 +23,7 @@ import type {
   RunSample,
   RunHistory,
 } from '@stim-cli/core/state';
-export {
-  CAPACITY_REFUSAL_LIMIT,
-  CAPACITY_REFUSAL_MAX_AGE_MS,
-  statsFile,
-  statsProjectKey,
-  HISTORY_LIMIT,
-  PLACEMENT_DECISIONS,
-  readStats,
-  readRunEstimates,
-  offloadSummary,
-} from '@stim-cli/core/state';
+export { statsProjectKey, readStats, readRunEstimates } from '@stim-cli/core/state';
 export type {
   RunOutcomeKind,
   StatsPlatform,

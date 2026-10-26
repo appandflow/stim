@@ -1,3 +1,19 @@
+import { createHash } from 'node:crypto';
+import { x25519 } from '@noble/curves/ed25519.js';
+import type { NoiseDh, NoiseKeyPair } from '@stim-cli/core/noise';
+import {
+  acceptNoise,
+  CLOSE_REFUSED,
+  decodeSecret,
+  HandshakeRefusal,
+  keyFingerprint,
+  MODE_FIRST_CONTACT,
+  secretValues,
+  type RawSocket,
+  type SecretValues,
+} from '@stim-cli/core/noise-session';
+import { statusViews, withDerivedFacts } from '@stim-cli/core/phone-protocol';
+
 import { filterRecords, shiftTimestamps, usageHistory } from '../../mobile/mock-server/payloads.mjs';
 
 export interface Frame {
@@ -7,19 +23,8 @@ export interface Frame {
   data: string;
 }
 
-interface Environment {
-  path: string;
-  recording?: { enabled: boolean };
-  ios?: { state?: string };
-  android?: { state?: string };
-  slots?: Environment[];
-}
-
-interface StatusPayload {
-  environments: Environment[];
-  capacity: { totalMemoryMb: number };
-  machine?: { owners?: unknown[] };
-}
+type Environment = Parameters<typeof withDerivedFacts>[0];
+type StatusPayload = Parameters<typeof statusViews>[0];
 
 interface LogRecord {
   ts: number;
@@ -86,14 +91,27 @@ export interface Device {
 export interface Peer {
   send(text: string): void;
   close(): void;
-  remember(device: Device): void;
+}
+
+/** A paired phone, by the hex of its static key. */
+export interface DeviceRecord {
+  name: string;
+  /** The `lookup` of the `DEMO_TOKEN` it paired with, so a new token unpairs it. */
+  lookup: string;
+}
+
+export interface DemoAuth {
+  /** The pairing token: it never expires and pairs any number of phones. Without a valid one, every phone is refused. */
+  token: string | undefined;
+  keyPair: NoiseKeyPair;
+  devices: { get(key: string): DeviceRecord | undefined; set(key: string, record: DeviceRecord): void };
 }
 
 type Params = Record<string, unknown>;
 type Outcome = { result: unknown } | { error: [string, string] } | { deferred: true };
 type Timer = ReturnType<typeof setInterval>;
 
-const PROTOCOL = 1;
+const PROTOCOL = 2;
 const ACTIONS = ['reload', 'stop'];
 const ACTION_MS = 800;
 const STATUS_MS = 5000;
@@ -109,8 +127,21 @@ const TOUCH_PHASES = ['down', 'move', 'up'];
 const TAP_SLOP = 0.03;
 const MAX_DEVICE_NAME = 64;
 const SIMULATOR = { canShake: false, slowAnimations: null };
-const DEVICE_TOKEN_CONTEXT = 'stim-demo-device:';
 const ROOT = '/Users/demo/Developer';
+const SUBSCRIPTION_LIMITS = new Map([
+  ['status.subscribe', 2],
+  ['workspaces.subscribe', 2],
+  ['machine.subscribe', 2],
+  ['workspace.subscribe', 8],
+  ['logs.subscribe', 8],
+  ['frames.subscribe', 16],
+]);
+export const HANDSHAKE_MS = 10_000;
+const HELLO_MS = 10_000;
+const utf8 = new TextDecoder();
+
+// workerd's node:crypto diffieHellman fails for every X25519 public key it imports, as DER or JWK.
+export const workerDh: NoiseDh = (privateKey, publicKey) => x25519.getSharedSecret(privateKey, publicKey);
 
 interface FrameFeed {
   connection: DemoConnection;
@@ -119,6 +150,17 @@ interface FrameFeed {
   key: string;
   platform: string;
   slot: string;
+}
+
+export function upgradeFromWebPage(headers: Pick<Headers, 'get'>, url: string): boolean {
+  if (headers.get('sec-fetch-site') !== null) return true;
+  const origin = headers.get('origin');
+  if (origin === null) return false;
+  try {
+    return new URL(origin).host !== new URL(url).host;
+  } catch {
+    return true;
+  }
 }
 
 export class DemoMachine {
@@ -132,12 +174,15 @@ export class DemoMachine {
   readonly feeds: Set<FrameFeed> = new Set();
   readonly fixtures: Fixtures;
   readonly name: string;
-  private readonly token: string | undefined;
+  private readonly auth: DemoAuth;
+  private readonly secret: SecretValues | null;
 
-  constructor(fixtures: Fixtures, name: string, token: string | undefined) {
+  constructor(fixtures: Fixtures, name: string, auth: DemoAuth) {
     this.fixtures = fixtures;
     this.name = name;
-    this.token = token || undefined;
+    this.auth = auth;
+    const token = auth.token === undefined ? null : decodeSecret(auth.token);
+    this.secret = token && secretValues(token);
     this.shiftMs = this.startedAt - Date.parse(fixtures.capturedAt);
     this.logs = fixtures.logs.map((record) => Object.assign({}, record, { ts: record.ts + this.shiftMs }));
     this.notifications = notificationSamples(name)
@@ -148,13 +193,60 @@ export class DemoMachine {
       .toReversed();
   }
 
-  connect(peer: Peer, device: Device | null): DemoConnection {
+  connect(peer: Peer, device: Device): DemoConnection {
     return new DemoConnection(this, peer, device);
+  }
+
+  /** The pairing code for the review notes, without its `pairingToken`. */
+  pairingCode(endpoint: string): { v: number; name: string; endpoint: string; fingerprint: string } {
+    return { v: PROTOCOL, name: this.name, endpoint, fingerprint: keyFingerprint(this.auth.keyPair.publicKey) };
+  }
+
+  /**
+   * Runs the protocol 2 handshake on a socket's first message, as stim-server does, except that the pairing token is
+   * never spent. It resolves with the phone's connection, or null after closing a refused socket.
+   */
+  async accept(raw: RawSocket, first: unknown, isBinary: boolean): Promise<DemoConnection | null> {
+    const lookup = this.secret && hex(this.secret.lookup);
+    let accepted;
+    try {
+      accepted = await acceptNoise(raw, first, isBinary, {
+        keyPair: this.auth.keyPair,
+        psk: (candidate) => (this.secret && candidate === lookup ? this.secret.psk : null),
+        timeoutMs: HANDSHAKE_MS,
+        dh: workerDh,
+      });
+    } catch (error) {
+      if (error instanceof HandshakeRefusal) return null;
+      throw error;
+    }
+    const key = hex(accepted.clientKey);
+    let record = this.auth.devices.get(key);
+    if (accepted.mode === MODE_FIRST_CONTACT && lookup !== null) {
+      record = { name: deviceName(accepted.payload), lookup };
+      this.auth.devices.set(key, record);
+    } else if (!record || record.lookup !== lookup) {
+      raw.close(CLOSE_REFUSED, 'unauthorized');
+      return null;
+    }
+    const device = { id: createHash('sha256').update(accepted.clientKey).digest('hex').slice(0, 8), name: record.name };
+    const { socket } = accepted;
+    const connection = this.connect(
+      { send: (text) => socket.send(text), close: () => socket.close(1008, 'no hello') },
+      device,
+    );
+    socket.on('message', (data: Uint8Array, binary: boolean) => {
+      if (!binary) void connection.receive(utf8.decode(data));
+    });
+    socket.on('close', () => connection.close());
+    return connection;
   }
 
   status(): StatusPayload {
     const payload = shiftTimestamps(this.fixtures.status, this.shiftMs) as StatusPayload;
-    for (const env of payload.environments) env.recording = { enabled: this.recordingEnabled };
+    payload.environments = payload.environments.map((env) =>
+      withDerivedFacts({ ...env, recording: { enabled: this.recordingEnabled } }),
+    );
     return payload;
   }
 
@@ -169,39 +261,15 @@ export class DemoMachine {
     this.screens.set(target, ((this.screens.get(target) ?? 0) + 1) % count);
     for (const feed of this.feeds) if (feed.target === target) feed.connection.sendFrame(feed);
   }
-
-  async issueDeviceToken(): Promise<string> {
-    const id = base64url(crypto.getRandomValues(new Uint8Array(18)));
-    return `${id}.${await this.sign(id)}`;
-  }
-
-  async verifyDeviceToken(deviceToken: string): Promise<boolean> {
-    const [id, mac, ...rest] = deviceToken.split('.');
-    if (!id || !mac || rest.length > 0 || this.token === undefined) return false;
-    return constantTimeEqual(mac, await this.sign(id));
-  }
-
-  pairingTokenMatches(value: unknown): boolean {
-    return typeof value === 'string' && this.token !== undefined && constantTimeEqual(value, this.token);
-  }
-
-  private async sign(id: string): Promise<string> {
-    const key = await crypto.subtle.importKey(
-      'raw',
-      new TextEncoder().encode(this.token),
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign'],
-    );
-    const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(DEVICE_TOKEN_CONTEXT + id));
-    return base64url(new Uint8Array(mac));
-  }
 }
 
 export class DemoConnection {
   private nextSubscription = 1;
   private nextSession = 1;
   private readonly timers = new Map<string, Timer>();
+  private readonly kinds = new Map<string, string>();
+  private greeted = false;
+  private readonly helloTimer: Timer;
   private readonly sessions = new Map<
     string,
     { target: string; key: string; platform: string; down?: { x: number; y: number } }
@@ -210,12 +278,17 @@ export class DemoConnection {
   private closed = false;
   private readonly machine: DemoMachine;
   private readonly peer: Peer;
-  private device: Device | null;
+  private readonly device: Device;
 
-  constructor(machine: DemoMachine, peer: Peer, device: Device | null) {
+  constructor(machine: DemoMachine, peer: Peer, device: Device) {
     this.machine = machine;
     this.peer = peer;
     this.device = device;
+    this.helloTimer = setTimeout(() => {
+      if (this.closed) return;
+      this.close();
+      this.peer.close();
+    }, HELLO_MS);
   }
 
   receive(text: string): Promise<void> {
@@ -225,6 +298,7 @@ export class DemoConnection {
 
   close(): void {
     this.closed = true;
+    clearTimeout(this.helloTimer);
     for (const subscription of this.timers.keys()) this.stop(subscription);
     for (const feed of this.machine.feeds) if (feed.connection === this) this.machine.feeds.delete(feed);
     this.sessions.clear();
@@ -247,7 +321,8 @@ export class DemoConnection {
     if (!this.closed) this.peer.send(JSON.stringify(message));
   }
 
-  private async handle(text: string): Promise<void> {
+  private handle(text: string): void {
+    if (this.closed) return;
     let message: { id?: unknown; method?: unknown; params?: Params };
     try {
       message = JSON.parse(text) as typeof message;
@@ -258,60 +333,62 @@ export class DemoConnection {
     const params = message.params ?? {};
     const fail = (code: string, description: string): void => this.send({ id, error: { code, message: description } });
     if (typeof method !== 'string') return fail('unknown-method', `Unknown method ${String(method)}.`);
-    if (method !== 'hello' && !this.device) return fail('unauthorized', 'Send hello first.');
+    if (method !== 'hello' && !this.greeted) return fail('unauthorized', 'Send hello first.');
     let outcome: Outcome;
     try {
-      outcome = method === 'hello' ? await this.hello(params) : this.call(method, params, id);
+      outcome = method === 'hello' ? this.hello() : this.call(method, params, id);
     } catch (error) {
       return fail('bad-request', (error as Error).message);
     }
-    if ('error' in outcome) {
-      fail(...outcome.error);
-      if (method === 'hello') this.peer.close();
-      return;
-    }
+    if ('error' in outcome) return fail(...outcome.error);
     if ('result' in outcome) this.send({ id, result: outcome.result });
   }
 
-  private async hello(params: Params): Promise<Outcome> {
-    if (params.protocol !== PROTOCOL) return { error: ['protocol-unsupported', 'This server speaks protocol 1.'] };
-    const auth = (params.auth ?? {}) as Params;
-    if (typeof auth.deviceToken === 'string') {
-      if (!(await this.machine.verifyDeviceToken(auth.deviceToken))) {
-        return { error: ['unauthorized', 'This Mac does not recognize this phone.'] };
-      }
-      return { result: await this.welcome(auth.deviceToken, 'Phone') };
-    }
-    if (!this.machine.pairingTokenMatches(auth.pairingToken)) {
-      return { error: ['pairing-expired', 'This pairing code was used or expired. Show a new one in Stim Desktop.'] };
-    }
-    const deviceToken = await this.machine.issueDeviceToken();
-    const name = typeof auth.deviceName === 'string' ? auth.deviceName.slice(0, MAX_DEVICE_NAME) : 'Phone';
-    return { result: { ...(await this.welcome(deviceToken, name)), deviceToken } };
-  }
-
-  private async welcome(deviceToken: string, name: string): Promise<Record<string, unknown>> {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(deviceToken));
-    this.device = { id: hex(new Uint8Array(digest)).slice(0, 8), name };
-    this.peer.remember(this.device);
+  private hello(): Outcome {
+    this.greeted = true;
+    clearTimeout(this.helloTimer);
     const { fixtures } = this.machine;
     return {
-      protocol: PROTOCOL,
-      server: {
-        name: this.machine.name,
-        version: fixtures.stimVersion,
-        stim: fixtures.stimVersion,
-        home: fixtures.home,
+      result: {
+        protocol: PROTOCOL,
+        server: {
+          name: this.machine.name,
+          version: fixtures.stimVersion,
+          stim: fixtures.stimVersion,
+          home: fixtures.home,
+        },
+        capabilities: ['read', 'control'],
+        features: [
+          'physical-ios',
+          'physical-android',
+          'notifications',
+          'workspace-diff',
+          'macos-window',
+          'status-views',
+        ],
+        actions: ACTIONS,
+        device: this.device,
       },
-      capabilities: ['read', 'control'],
-      features: ['physical-ios', 'physical-android', 'notifications', 'workspace-diff', 'macos-window'],
-      actions: ACTIONS,
-      device: this.device,
     };
   }
 
-  private every(ms: number, tick: (subscription: string) => void): string {
+  private stream(
+    method: string,
+    event: (views: ReturnType<typeof statusViews>, seq: number, payload: StatusPayload) => Record<string, unknown>,
+  ): Outcome {
+    let seq = 0;
+    const send = (subscription: string) => {
+      const payload = this.machine.status();
+      this.send({ subscription, ...event(statusViews(payload), seq++, payload) });
+    };
+    const subscription = this.every(method, STATUS_MS, send);
+    setTimeout(() => this.timers.has(subscription) && send(subscription), 0);
+    return { result: { subscription } };
+  }
+
+  private every(method: string, ms: number, tick: (subscription: string) => void): string {
     const subscription = `s${this.nextSubscription++}`;
+    this.kinds.set(subscription, method);
     this.timers.set(
       subscription,
       setInterval(() => tick(subscription), ms),
@@ -323,6 +400,7 @@ export class DemoConnection {
     const timer = this.timers.get(subscription);
     if (timer !== undefined) clearInterval(timer);
     this.timers.delete(subscription);
+    this.kinds.delete(subscription);
     for (const feed of this.machine.feeds) {
       if (feed.connection === this && feed.subscription === subscription) this.machine.feeds.delete(feed);
     }
@@ -330,6 +408,10 @@ export class DemoConnection {
 
   private call(method: string, params: Params, id: unknown): Outcome {
     const machine = this.machine;
+    const limit = SUBSCRIPTION_LIMITS.get(method);
+    if (limit !== undefined && [...this.kinds.values()].filter((kind) => kind === method).length >= limit) {
+      return { error: ['limit-exceeded', `A connection can hold ${limit} ${method} subscriptions.`] };
+    }
     switch (method) {
       case 'status.subscribe': {
         const event = (subscription: string): unknown => {
@@ -341,9 +423,46 @@ export class DemoConnection {
             usage: usageHistory(payload.machine?.owners ?? [], Date.now()),
           };
         };
-        const subscription = this.every(STATUS_MS, (sub) => this.send(event(sub)));
+        const subscription = this.every(method, STATUS_MS, (sub) => this.send(event(sub)));
         setTimeout(() => this.timers.has(subscription) && this.send(event(subscription)), 0);
         return { result: { subscription } };
+      }
+      case 'workspaces.subscribe':
+        return this.stream(method, (views, seq) => ({
+          event: 'workspaces',
+          seq,
+          snapshot: { workspaces: views.workspaces, worktrees: views.worktrees, archived: views.archived },
+        }));
+      case 'workspace.subscribe': {
+        const workspace = params.workspace;
+        if (!machine.fixtures.status.environments.some((env) => env.path === workspace)) {
+          return { error: ['unknown-workspace', `${String(workspace)} is not a Stim workspace on this Mac.`] };
+        }
+        return this.stream(method, (views, seq) => ({
+          event: 'workspace',
+          seq,
+          environment: views.details.get(String(workspace)) ?? null,
+        }));
+      }
+      case 'machine.subscribe':
+        return this.stream(method, (views, seq, payload) => ({
+          event: 'machine',
+          seq,
+          machine: views.machine,
+          usage: usageHistory(payload.machine?.owners ?? [], Date.now()),
+        }));
+      case 'archived.list': {
+        const archived = machine.status().archived ?? [];
+        const total = (kind: 'logs' | 'recordings' | 'agentActions' | 'record') =>
+          archived.reduce((sum, archive) => sum + archive.bytes[kind], 0);
+        const byKind = {
+          logs: total('logs'),
+          recordings: total('recordings'),
+          agentActions: total('agentActions'),
+          record: total('record'),
+        };
+        const bytes = archived.reduce((sum, archive) => sum + archive.bytes.total, 0);
+        return { result: { archived, usage: { count: archived.length, bytes, byKind }, next: null } };
       }
       case 'logs.query':
         return {
@@ -357,7 +476,7 @@ export class DemoConnection {
       case 'logs.subscribe': {
         const logs = machine.logs.filter((record) => record.workspace === params.workspace);
         let cursor = 0;
-        const subscription = this.every(LOGS_MS, (sub) => {
+        const subscription = this.every(method, LOGS_MS, (sub) => {
           if (!logs.length) return;
           const record = { ...logs[cursor++ % logs.length], ts: Date.now() };
           const records = filterRecords([record], { ...params, tail: undefined });
@@ -376,7 +495,7 @@ export class DemoConnection {
         if (!machine.fixtures.frames[target.key]) {
           return { error: ['no-frames', `The demo server has no ${String(params.platform)} screen.`] };
         }
-        const subscription = this.every(FRAME_MS, () => this.sendFrame(feed));
+        const subscription = this.every(method, FRAME_MS, () => this.sendFrame(feed));
         const feed: FrameFeed = { connection: this, subscription, ...target };
         machine.feeds.add(feed);
         setTimeout(() => this.timers.has(subscription) && this.sendFrame(feed), 0);
@@ -782,16 +901,14 @@ function diffPatches(path: unknown): unknown[] {
   ];
 }
 
-function base64url(bytes: Uint8Array): string {
-  return base64(bytes).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+function deviceName(payload: Uint8Array): string {
+  try {
+    const { name } = JSON.parse(utf8.decode(payload)) as { name?: unknown };
+    if (typeof name === 'string' && name !== '') return name.slice(0, MAX_DEVICE_NAME);
+  } catch {}
+  return 'Phone';
 }
 
 function hex(bytes: Uint8Array): string {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function constantTimeEqual(a: string, b: string): boolean {
-  let diff = a.length ^ b.length;
-  for (let i = 0; i < Math.max(a.length, b.length); i++) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
-  return diff === 0;
 }

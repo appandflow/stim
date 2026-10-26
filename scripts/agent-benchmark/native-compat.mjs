@@ -181,6 +181,16 @@ export function verifyNativeCompatibilityTools(path, expectedSha256, agentDevice
     !(wrapperMode & 0o100)
   )
     throw new Error('Xcode compatibility wrapper changed');
+  if (manifest.emulatorProcess) {
+    const files = manifest.emulatorProcess.files;
+    if (JSON.stringify(Object.keys(files).toSorted()) !== JSON.stringify(['native-process', 'native-process.c', 'ps']))
+      throw new Error('Incomplete emulator process compatibility bridge');
+    for (const [name, expected] of Object.entries(files)) {
+      const file = join(directory, 'emulator-process', name);
+      if (fileHash(file) !== expected.sha256 || (lstatSync(file).mode & 0o777) !== expected.mode)
+        throw new Error('Emulator process compatibility bridge changed');
+    }
+  }
   if (realpathSync(agentDeviceBin) !== realpathSync(join(packagePath, 'bin/agent-device.mjs')))
     throw new Error('agent-device is not the compatibility package');
   return { ...manifest, manifestSha256: expectedSha256, directory };
@@ -195,11 +205,17 @@ export function verifyNativeCompatibility(path, expectedSha256, fixture, agentDe
 
 export function probeNativeCompatibility(compatibility, execute) {
   if (!compatibility) return null;
-  const host = pathToFileURL(join(compatibility.directory, 'agent-device/dist/src/host-process.js')).href;
+  const current = compatibility.agentDeviceVersion === '0.21.23';
+  const host = pathToFileURL(
+    join(compatibility.directory, 'agent-device/dist/src', current ? 'owner-identity.js' : 'host-process.js'),
+  ).href;
+  const exports = current
+    ? 'w as start,S as command,g as zombie,_ as list'
+    : 'c as start,s as command,i as zombie,a as list';
   const script = `import assert from 'node:assert/strict';
     import {execFileSync} from 'node:child_process';
     import {realpathSync} from 'node:fs';
-    import {c as start,s as command,i as zombie,a as list} from ${JSON.stringify(host)};
+    import {${exports}} from ${JSON.stringify(host)};
     assert.throws(() => execFileSync('/bin/ps',['-p',String(process.pid),'-o','command=']));
     assert(start(process.pid)); assert(command(process.pid)); assert.equal(zombie(process.pid),false);
     assert((await list({timeoutMs:5000})).some(x => x.pid === process.pid));

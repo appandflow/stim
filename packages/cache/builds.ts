@@ -42,6 +42,7 @@ export interface ResolveTieredBuildOptions {
   skipRead?: boolean;
   warn?: WarnOnce;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface StoreTieredBuildOptions {
@@ -52,6 +53,7 @@ export interface StoreTieredBuildOptions {
   overwrite: boolean;
   warn?: WarnOnce;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 interface BuildProviderTier {
@@ -62,9 +64,11 @@ interface BuildProviderTier {
 async function providerTier(
   loadProvider: LoadBuildProvider | null | undefined,
   warn: WarnOnce,
+  signal?: AbortSignal,
 ): Promise<BuildProviderTier | null> {
   if (!loadProvider) return null;
   const loaded = await loadProvider();
+  signal?.throwIfAborted();
   if (loaded?.unavailable) {
     warn(
       'provider-load',
@@ -98,18 +102,26 @@ export async function resolveTieredBuild({
   skipRead = false,
   warn = ignore,
   timeoutMs = buildResolveTimeoutMs(),
+  signal = neverAborted(),
 }: ResolveTieredBuildOptions): Promise<TieredBuildResolution | null> {
+  signal.throwIfAborted();
   if (skipRead) return null;
 
-  const hit = await local.resolve({ ...target, destinationDir, signal: neverAborted() });
+  const hit = await local.resolve({ ...target, destinationDir, signal });
+  signal.throwIfAborted();
   if (hit) return { path: hit, tier: 'local' };
 
-  const tier = await providerTier(loadProvider, warn);
+  const tier = await providerTier(loadProvider, warn, signal);
+  signal.throwIfAborted();
   if (!tier) return null;
 
   const { capability: provider, name: label } = tier;
   ensureDestination?.(destinationDir);
-  const outcome = await callWithTimeout((signal) => provider.resolve({ ...target, destinationDir, signal }), timeoutMs);
+  const outcome = await callWithTimeout(
+    (childSignal) => provider.resolve({ ...target, destinationDir, signal: childSignal }),
+    timeoutMs,
+    signal,
+  );
   if (outcome.timedOut) {
     warn('provider-resolve', `${label} did not answer within ${timeoutMs}ms; building instead`);
     return null;
@@ -127,13 +139,15 @@ export async function resolveTieredBuild({
 
   let stored: string | null = null;
   try {
-    stored = (await local.store({ ...target, sourcePath: path, overwrite: false, signal: neverAborted() })) || null;
+    stored = (await local.store({ ...target, sourcePath: path, overwrite: false, signal })) || null;
   } catch (error) {
+    signal.throwIfAborted();
     warn(
       'provider-backfill',
       `a ${label} hit could not be stored locally: ${String((error as Error)?.message || error)}`,
     );
   }
+  signal.throwIfAborted();
   return { path: stored || path, tier: 'provider', providerName: label, storedLocally: Boolean(stored) };
 }
 
@@ -145,14 +159,23 @@ export async function storeTieredBuild({
   overwrite,
   warn = ignore,
   timeoutMs = buildUploadTimeoutMs(),
+  signal = neverAborted(),
 }: StoreTieredBuildOptions): Promise<TieredBuildStoreResult> {
-  const localPath = (await local.store({ ...target, sourcePath, overwrite, signal: neverAborted() })) || null;
+  signal.throwIfAborted();
+  const localPath = (await local.store({ ...target, sourcePath, overwrite, signal })) || null;
 
-  const tier = await providerTier(loadProvider, warn);
+  signal.throwIfAborted();
+  const tier = await providerTier(loadProvider, warn, signal);
+  signal.throwIfAborted();
   if (!tier) return { localPath, providerUpload: null, providerName: null };
 
-  const providerUpload = callWithTimeout<void>(async (signal) => {
-    await tier.capability.store({ ...target, sourcePath, overwrite, signal });
-  }, timeoutMs);
+  const providerUpload = callWithTimeout<void>(
+    async (childSignal) => {
+      await tier.capability.store({ ...target, sourcePath, overwrite, signal: childSignal });
+    },
+    timeoutMs,
+    signal,
+  );
+  void providerUpload.catch(() => {});
   return { localPath, providerUpload, providerName: tier.name };
 }

@@ -1,3 +1,4 @@
+import type { DeviceAppProcess } from '@stim-cli/core/state';
 import { getExecutor, type Executor } from '../exec.ts';
 import { debugLog } from '../debug-log.ts';
 import { approvableSchemes, readBundleSchemes } from './app-schemes.ts';
@@ -30,18 +31,18 @@ export const IOS_DEV_MENU_OFF_DEFAULTS_PLIST: string = [
   '',
 ].join('\n');
 
-function writeIosDevMenuOffDefaults(udid: string, bundleId: string, exec: Executor): void {
+async function writeIosDevMenuOffDefaults(udid: string, bundleId: string, exec: Executor): Promise<void> {
   for (const key of IOS_DEV_MENU_OFF_KEYS) {
-    exec.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, key, '-bool', 'false'], {
+    await exec.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, key, '-bool', 'false'], {
       timeoutMs: 60000,
     });
   }
 }
 
-function describeIosSimulatorFailure(error: unknown, exec: Executor): string {
+async function describeIosSimulatorFailure(error: unknown, exec: Executor): Promise<string> {
   const detail = describe(error);
   return (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT'
-    ? `${detail}. ${iosSimulatorFailureAdvice(exec)}`
+    ? `${detail}. ${await iosSimulatorFailureAdvice(exec)}`
     : detail;
 }
 
@@ -100,7 +101,7 @@ export type AndroidLaunchResult = {
   reason?: string;
 };
 
-export function installIosApp(
+export async function installIosApp(
   {
     udid,
     appPath,
@@ -117,18 +118,19 @@ export function installIosApp(
     proveInstalled?: boolean;
   },
   { exec = null, now = null }: ExecOpt = {},
-): IosInstallResult {
+): Promise<IosInstallResult> {
   const e = exec || getExecutor();
   const artifactStartedAt = now?.();
-  const skipped = bundleId && proveInstalled ? deviceHoldsBundle({ udid, bundleId, appPath }, { exec: e }) : false;
+  const skipped =
+    bundleId && proveInstalled ? await deviceHoldsBundle({ udid, bundleId, appPath }, { exec: e }) : false;
   if (!skipped) {
     try {
-      e.runFile('xcrun', ['simctl', 'install', udid, appPath], { timeoutMs: 300000, killSignal: 'SIGKILL' });
+      await e.runFileAsync('xcrun', ['simctl', 'install', udid, appPath], { timeoutMs: 300000, killSignal: 'SIGKILL' });
     } catch (err) {
       return {
         failed: true,
         code: INSTALL_ERROR,
-        reason: `simctl install failed for ${appPath}: ${describeIosSimulatorFailure(err, e)}`,
+        reason: `simctl install failed for ${appPath}: ${await describeIosSimulatorFailure(err, e)}`,
       };
     }
   }
@@ -153,9 +155,9 @@ export function installIosApp(
   const preparationStartedAt = preparing ? artifactFinishedAt : undefined;
   if (bundleId && preparing) {
     try {
-      if (devMenuKeys.length > 0) writeIosDevMenuOffDefaults(udid, bundleId, e);
+      if (devMenuKeys.length > 0) await writeIosDevMenuOffDefaults(udid, bundleId, e);
       for (const key of missingApprovals) {
-        e.runFile(
+        await e.runFileAsync(
           'xcrun',
           ['simctl', 'spawn', udid, 'defaults', 'write', IOS_SCHEME_APPROVAL_DOMAIN, key, '-string', bundleId],
           { timeoutMs: 60000 },
@@ -165,7 +167,7 @@ export function installIosApp(
       return {
         failed: true,
         code: INSTALL_ERROR,
-        reason: `Installed ${bundleId}, but could not prepare the dev client: ${describeIosSimulatorFailure(err, e)}`,
+        reason: `Installed ${bundleId}, but could not prepare the dev client: ${await describeIosSimulatorFailure(err, e)}`,
       };
     }
   }
@@ -181,25 +183,25 @@ export function installIosApp(
   return skipped ? { ok: true, appPath, skipped: true, ...timing } : { ok: true, appPath, ...timing };
 }
 
-export function clearOtherUserApps(
+export async function clearOtherUserApps(
   { udid, keep }: { udid: string; keep?: string | null },
   {
     list = listUserApps,
     uninstall = uninstallIosApp,
   }: { list?: typeof listUserApps; uninstall?: typeof uninstallIosApp } = {},
-): { listed: boolean; kept: boolean; removed: string[]; failed: string[] } {
+): Promise<{ listed: boolean; kept: boolean; removed: string[]; failed: string[] }> {
   const removed: string[] = [];
   const failed: string[] = [];
   let installed: string[];
   try {
-    installed = list(udid);
+    installed = await list(udid);
   } catch {
     return { listed: false, kept: false, removed, failed };
   }
   for (const bundleId of installed) {
     if (bundleId === keep) continue;
     try {
-      uninstall(udid, bundleId);
+      await uninstall(udid, bundleId);
       removed.push(bundleId);
     } catch {
       failed.push(bundleId);
@@ -258,58 +260,72 @@ export function parseLaunchedPid(text: unknown): number | null {
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-export function iosAppProcess(
+export type AppProcessProbe =
+  | { state: Extract<DeviceAppProcess['state'], 'running'>; pid: number }
+  | { state: Exclude<DeviceAppProcess['state'], 'running'> };
+
+export function appProcessFromPid(pid: number | null): AppProcessProbe {
+  return pid === null ? { state: 'stopped' } : { state: 'running', pid };
+}
+
+export async function iosAppProcess(
   udid: string,
   bundleId: string,
-  { exec = null }: ExecOpt = {},
-): number | null | undefined {
+  { exec = null, timeoutMs = 2000 }: ExecOpt & { timeoutMs?: number } = {},
+): Promise<AppProcessProbe> {
   const e = exec || getExecutor();
   const started = performance.now();
-  let pid: number | null | undefined;
+  let probe: AppProcessProbe = { state: 'unknown' };
   let failure: { code?: string; exit?: number } = {};
   try {
-    const out = e.runFile('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 2000 });
+    const out = await e.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs });
     const label = `UIKitApplication:${bundleId}[`;
-    pid = null;
+    probe = { state: 'stopped' };
     for (const line of out.split('\n')) {
       if (!line.includes(label)) continue;
       const candidate = Number(line.trim().split(/\s+/)[0]);
       if (Number.isInteger(candidate) && candidate > 0) {
-        pid = candidate;
+        probe = { state: 'running', pid: candidate };
         break;
       }
     }
-    return pid;
+    return probe;
   } catch (error) {
     const { code, status } = (error ?? {}) as { code?: unknown; status?: unknown };
     failure = {
       ...(typeof code === 'string' ? { code } : {}),
       ...(typeof status === 'number' ? { exit: status } : {}),
     };
-    return undefined;
+    return probe;
   } finally {
     debugLog.log('ios.app-process', {
       deviceId: udid,
       bundleId,
-      state: pid === undefined ? 'unknown' : pid === null ? 'absent' : 'running',
-      ...(typeof pid === 'number' ? { appPid: pid } : {}),
+      state: probe.state === 'stopped' ? 'absent' : probe.state,
+      ...(probe.state === 'running' ? { appPid: probe.pid } : {}),
       ms: Math.round(performance.now() - started),
       ...failure,
     });
   }
 }
 
-function launchedIosAppAfterNoHandle(error: unknown, udid: string, bundleId: string, exec: Executor): number | null {
+async function launchedIosAppAfterNoHandle(
+  error: unknown,
+  udid: string,
+  bundleId: string,
+  exec: Executor,
+): Promise<number | null> {
   const stderr = String((error as { stderr?: unknown })?.stderr ?? '');
   if (
     !stderr.includes('domain=NSPOSIXErrorDomain, code=3') ||
     !stderr.includes(`Application launch for '${bundleId}' did not return a process handle nor launch error.`)
   )
     return null;
-  return iosAppProcess(udid, bundleId, { exec }) ?? null;
+  const probe = await iosAppProcess(udid, bundleId, { exec });
+  return probe.state === 'running' ? probe.pid : null;
 }
 
-export function launchIosApp(
+export async function launchIosApp(
   {
     udid,
     bundleId,
@@ -326,45 +342,55 @@ export function launchIosApp(
     consolePaths?: { stdout: string; stderr: string };
   },
   { exec = null }: ExecOpt = {},
-): IosLaunchResult {
+): Promise<IosLaunchResult> {
   const e = exec || getExecutor();
-  const runningPid = iosAppProcess(udid, bundleId, { exec: e });
-  const stateUnknown = runningPid === undefined;
+  const launchRestarts = metroPort === null || !devClientScheme || Boolean(consolePaths);
+  const writeJsLocation = async (port: number | string): Promise<IosLaunchResult | null> => {
+    try {
+      await e.runFileAsync(
+        'xcrun',
+        ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, 'RCT_jsLocation', jsLocationValue(port)],
+        { timeoutMs: 60000 },
+      );
+      return null;
+    } catch (err) {
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `Could not point ${bundleId} at Metro port ${port} (defaults write RCT_jsLocation): ${await describeIosSimulatorFailure(err, e)}`,
+      };
+    }
+  };
+  const runningProbe = iosAppProcess(udid, bundleId, { exec: e });
+  const earlyWrite = metroPort !== null && launchRestarts ? writeJsLocation(metroPort) : null;
+  const running = await runningProbe;
+  const stateUnknown = running.state === 'unknown';
   const launchArgs = [
     'simctl',
     'launch',
     ...(consolePaths ? [`--stdout=${consolePaths.stdout}`, `--stderr=${consolePaths.stderr}`] : []),
-    ...(stateUnknown ? ['--terminate-running-process'] : []),
+    ...(stateUnknown || (running.state === 'running' && launchRestarts) ? ['--terminate-running-process'] : []),
     udid,
     bundleId,
   ];
   const restart: { restartedPid?: number } = {};
-  if (runningPid) {
+  if (running.state === 'running' && launchRestarts) {
+    restart.restartedPid = running.pid;
+  } else if (running.state === 'running') {
     try {
-      e.runFile('xcrun', ['simctl', 'terminate', udid, bundleId], { timeoutMs: 30000 });
+      await e.runFileAsync('xcrun', ['simctl', 'terminate', udid, bundleId], { timeoutMs: 30000 });
     } catch (err) {
       return {
         failed: true,
         code: LAUNCH_ERROR,
-        reason: `simctl terminate ${bundleId} failed, so the running app (pid ${runningPid}) was not restarted: ${describeIosSimulatorFailure(err, e)}`,
+        reason: `simctl terminate ${bundleId} failed, so the running app (pid ${running.pid}) was not restarted: ${await describeIosSimulatorFailure(err, e)}`,
       };
     }
-    restart.restartedPid = runningPid;
+    restart.restartedPid = running.pid;
   }
   if (metroPort !== null) {
-    try {
-      e.runFile(
-        'xcrun',
-        ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, 'RCT_jsLocation', jsLocationValue(metroPort)],
-        { timeoutMs: 60000 },
-      );
-    } catch (err) {
-      return {
-        failed: true,
-        code: LAUNCH_ERROR,
-        reason: `Could not point ${bundleId} at Metro port ${metroPort} (defaults write RCT_jsLocation): ${describeIosSimulatorFailure(err, e)}`,
-      };
-    }
+    const writeFailure = await (earlyWrite ?? writeJsLocation(metroPort));
+    if (writeFailure) return writeFailure;
 
     if (devClientScheme) {
       const url = devClientUrl(devClientScheme, metroPort, 'localhost', { devMenuParams });
@@ -373,12 +399,12 @@ export function launchIosApp(
         // simctl openurl carries no launch arguments, so it needs the
         // dev-menu keys in the persisted defaults instead of DEV_MENU_LAUNCH_ARGS.
         try {
-          writeIosDevMenuOffDefaults(udid, bundleId, e);
+          await writeIosDevMenuOffDefaults(udid, bundleId, e);
         } catch (err) {
           return {
             failed: true,
             code: LAUNCH_ERROR,
-            reason: `Could not turn off ${bundleId}'s dev menu before opening it (defaults write): ${describeIosSimulatorFailure(err, e)}`,
+            reason: `Could not turn off ${bundleId}'s dev menu before opening it (defaults write): ${await describeIosSimulatorFailure(err, e)}`,
           };
         }
       }
@@ -390,35 +416,35 @@ export function launchIosApp(
           const initialUrl = new URL(url).searchParams.get('url')!;
           launchedWithInitialUrl = true;
           const pid = parseLaunchedPid(
-            e.runFile('xcrun', [...launchArgs, '--initialUrl', initialUrl, ...DEV_MENU_LAUNCH_ARGS], {
+            await e.runFileAsync('xcrun', [...launchArgs, '--initialUrl', initialUrl, ...DEV_MENU_LAUNCH_ARGS], {
               timeoutMs: 60000,
             }),
           );
           return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid, ...restart };
         }
-        e.runFile('xcrun', ['simctl', 'openurl', udid, url], { timeoutMs: 60000 });
+        await e.runFileAsync('xcrun', ['simctl', 'openurl', udid, url], { timeoutMs: 60000 });
         return { ok: true, mode: 'openurl', url, jsLocation: jsLocationValue(metroPort), ...restart };
       } catch (err) {
         const pid =
-          launchedWithInitialUrl && !stateUnknown ? launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
+          launchedWithInitialUrl && !stateUnknown ? await launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
         if (pid && pid !== restart.restartedPid)
           return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid, ...restart };
         return {
           failed: true,
           code: LAUNCH_ERROR,
-          reason: `simctl ${launchedWithInitialUrl ? `launch ${bundleId}` : `openurl ${url}`} failed: ${describeIosSimulatorFailure(err, e)}`,
+          reason: `simctl ${launchedWithInitialUrl ? `launch ${bundleId}` : `openurl ${url}`} failed: ${await describeIosSimulatorFailure(err, e)}`,
         };
       }
     }
   }
 
   try {
-    const out = e.runFile('xcrun', launchArgs, { timeoutMs: 60000 });
+    const out = await e.runFileAsync('xcrun', launchArgs, { timeoutMs: 60000 });
     const result: IosLaunchResult = { ok: true, mode: 'launch', pid: parseLaunchedPid(out), ...restart };
     if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
     return result;
   } catch (err) {
-    const pid = stateUnknown ? null : launchedIosAppAfterNoHandle(err, udid, bundleId, e);
+    const pid = stateUnknown ? null : await launchedIosAppAfterNoHandle(err, udid, bundleId, e);
     if (pid && pid !== restart.restartedPid) {
       const result: IosLaunchResult = { ok: true, mode: 'launch', pid, ...restart };
       if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
@@ -427,7 +453,7 @@ export function launchIosApp(
     return {
       failed: true,
       code: LAUNCH_ERROR,
-      reason: `simctl launch ${bundleId} failed: ${describeIosSimulatorFailure(err, e)}`,
+      reason: `simctl launch ${bundleId} failed: ${await describeIosSimulatorFailure(err, e)}`,
     };
   }
 }
@@ -450,7 +476,7 @@ const ADB_UNINSTALL_TIMEOUT_MS = 120_000;
 const ADB_SHELL_TIMEOUT_MS = 30_000;
 const ADB_SHELL_OPTIONS = { timeoutMs: ADB_SHELL_TIMEOUT_MS, killSignal: 'SIGKILL' } as const;
 
-export function installAndroidApp(
+export async function installAndroidApp(
   {
     serial,
     apkPath,
@@ -458,16 +484,16 @@ export function installAndroidApp(
     allowUninstall = false,
   }: { serial: string; apkPath: string; packageName?: string | null; allowUninstall?: boolean },
   { exec = null }: ExecOpt = {},
-): AndroidInstallResult {
+): Promise<AndroidInstallResult> {
   const e = exec || getExecutor();
-  if (packageName && deviceHoldsApk({ serial, packageName, apkPath }, { exec: e })) {
+  if (packageName && (await deviceHoldsApk({ serial, packageName, apkPath }, { exec: e }))) {
     return { ok: true, apkPath, skipped: true };
   }
-  const install = () => {
-    e.runFile('adb', ['-s', serial, 'install', '-r', apkPath], { timeoutMs: ADB_INSTALL_TIMEOUT_MS });
+  const install = async () => {
+    await e.runFileAsync('adb', ['-s', serial, 'install', '-r', apkPath], { timeoutMs: ADB_INSTALL_TIMEOUT_MS });
   };
   try {
-    install();
+    await install();
     return { ok: true, apkPath };
   } catch (err) {
     const conflict = installConflictKind(describe(err));
@@ -475,7 +501,7 @@ export function installAndroidApp(
       return { failed: true, code: INSTALL_ERROR, reason: `adb install failed for ${apkPath}: ${describe(err)}` };
     }
     try {
-      e.runFile('adb', ['-s', serial, 'uninstall', packageName], {
+      await e.runFileAsync('adb', ['-s', serial, 'uninstall', packageName], {
         timeoutMs: ADB_UNINSTALL_TIMEOUT_MS,
         killSignal: 'SIGKILL',
       });
@@ -489,7 +515,7 @@ export function installAndroidApp(
       };
     }
     try {
-      install();
+      await install();
     } catch (retryErr) {
       return {
         failed: true,
@@ -522,10 +548,10 @@ export function parseResolvedActivity(text: unknown): string | null {
   return null;
 }
 
-function resolveLaunchActivity(serial: string, packageName: string, { exec = null }: ExecOpt = {}) {
+async function resolveLaunchActivity(serial: string, packageName: string, { exec = null }: ExecOpt = {}) {
   const e = exec || getExecutor();
   try {
-    const out = e.runFile(
+    const out = await e.runFileAsync(
       'adb',
       [
         '-s',
@@ -547,19 +573,19 @@ function resolveLaunchActivity(serial: string, packageName: string, { exec = nul
   }
 }
 
-export function reverseMetroPorts(
+export async function reverseMetroPorts(
   {
     serial,
     metroPort,
     devicePorts = null,
   }: { serial: string; metroPort: number | string; devicePorts?: (number | string)[] | null },
   { exec = null }: ExecOpt = {},
-): { ok?: boolean; reversed?: string[]; failed?: boolean; code?: string; reason?: string } {
+): Promise<{ ok?: boolean; reversed?: string[]; failed?: boolean; code?: string; reason?: string }> {
   const e = exec || getExecutor();
   const pairs = (devicePorts ?? [metroPort]).map((device) => [device, metroPort]);
   for (const [device, host] of pairs) {
     try {
-      e.runFile('adb', ['-s', serial, 'reverse', `tcp:${device}`, `tcp:${host}`], ADB_SHELL_OPTIONS);
+      await e.runFileAsync('adb', ['-s', serial, 'reverse', `tcp:${device}`, `tcp:${host}`], ADB_SHELL_OPTIONS);
     } catch (err) {
       return {
         failed: true,
@@ -581,19 +607,19 @@ export function hasMetroReverse(listing: unknown, metroPort: number): boolean {
 }
 
 /** Re-applies the launch's `metroPort` reverse when the device no longer has it. */
-export function ensureMetroReverse(
+export async function ensureMetroReverse(
   { serial, metroPort }: { serial: string; metroPort: number },
   { exec = null }: ExecOpt = {},
-): { restored: boolean; failed?: undefined; reason?: undefined } | { failed: true; reason: string } {
+): Promise<{ restored: boolean; failed?: undefined; reason?: undefined } | { failed: true; reason: string }> {
   const e = exec || getExecutor();
   let listing: string;
   try {
-    listing = e.runFile('adb', ['-s', serial, 'reverse', '--list'], ADB_SHELL_OPTIONS);
+    listing = await e.runFileAsync('adb', ['-s', serial, 'reverse', '--list'], ADB_SHELL_OPTIONS);
   } catch {
     return { failed: true, reason: `adb reverse --list failed on ${serial}` };
   }
   if (hasMetroReverse(listing, metroPort)) return { restored: false };
-  const reversed = reverseMetroPorts({ serial, metroPort }, { exec: e });
+  const reversed = await reverseMetroPorts({ serial, metroPort }, { exec: e });
   return reversed.failed ? { failed: true, reason: reversed.reason ?? 'adb reverse failed' } : { restored: true };
 }
 
@@ -631,7 +657,7 @@ export function debugHttpHostScript({
   ].join('\n');
 }
 
-export function writeDebugHttpHost(
+export async function writeDebugHttpHost(
   {
     serial,
     packageName,
@@ -639,12 +665,12 @@ export function writeDebugHttpHost(
     physical = false,
   }: { serial: string; packageName: string; metroPort: number | string; physical?: boolean },
   { exec = null }: ExecOpt = {},
-): { ok: boolean; host?: string; reason?: string } {
+): Promise<{ ok: boolean; host?: string; reason?: string }> {
   const e = exec || getExecutor();
   const host = `${androidMetroHost(physical)}:${metroPort}`;
   const script = debugHttpHostScript({ packageName, host });
   try {
-    e.runFile(
+    await e.runFileAsync(
       'adb',
       ['-s', serial, 'shell', 'run-as', packageName, 'sh', '-c', deviceShellArg(script)],
       ADB_SHELL_OPTIONS,
@@ -668,10 +694,15 @@ export function amStartError(text: unknown): string | null {
   return null;
 }
 
-export function openAndroidDevClientUrl(
-  { serial, url, packageName }: { serial: string; url: string; packageName?: string },
+export async function openAndroidDevClientUrl(
+  {
+    serial,
+    url,
+    packageName,
+    stopOnStart = false,
+  }: { serial: string; url: string; packageName?: string; stopOnStart?: boolean },
   { exec = null }: ExecOpt = {},
-): { ok?: boolean; url?: string; failed?: boolean; reason?: string } {
+): Promise<{ ok?: boolean; url?: string; failed?: boolean; reason?: string }> {
   const e = exec || getExecutor();
   let out;
   try {
@@ -681,6 +712,7 @@ export function openAndroidDevClientUrl(
       'shell',
       'am',
       'start',
+      ...(stopOnStart ? ['-S'] : []),
       '-a',
       'android.intent.action.VIEW',
       '-d',
@@ -690,7 +722,7 @@ export function openAndroidDevClientUrl(
       ANDROID_DISABLE_AUTO_LAUNCH_EXTRA,
       'true',
     ];
-    out = e.runFile('adb', args, ADB_SHELL_OPTIONS);
+    out = await e.runFileAsync('adb', args, ADB_SHELL_OPTIONS);
   } catch (err) {
     return { failed: true, reason: `am start -d ${url} failed on ${serial}: ${describe(err)}` };
   }
@@ -699,26 +731,41 @@ export function openAndroidDevClientUrl(
   return { ok: true, url };
 }
 
-function stopRunningAndroidApp(
+async function stopRunningAndroidApp(
   serial: string,
   packageName: string,
   exec: Executor,
-): { restartedPid?: number; failed?: true; code?: string; reason?: string } {
-  const pid = androidAppProcess(serial, packageName, { exec });
-  if (!pid) return {};
+): Promise<{ restartedPid?: number; stopOnStart?: true; failed?: true; code?: string; reason?: string }> {
+  const running = await androidAppProcess(serial, packageName, { exec });
+  if (running.state === 'stopped') return {};
+  if (running.state !== 'running') return { stopOnStart: true };
   try {
-    exec.runFile('adb', ['-s', serial, 'shell', 'am', 'force-stop', packageName], ADB_SHELL_OPTIONS);
+    await exec.runFileAsync('adb', ['-s', serial, 'shell', 'am', 'force-stop', packageName], ADB_SHELL_OPTIONS);
   } catch (err) {
     return {
       failed: true,
       code: LAUNCH_ERROR,
-      reason: `am force-stop ${packageName} failed on ${serial}, so the running app (pid ${pid}) was not restarted: ${describe(err)}`,
+      reason: `am force-stop ${packageName} failed on ${serial}, so the running app (pid ${running.pid}) was not restarted: ${describe(err)}`,
     };
   }
-  return { restartedPid: pid };
+  return { restartedPid: running.pid };
 }
 
-export function launchAndroidApp(
+async function launchAndroidWithMonkey(
+  serial: string,
+  packageName: string,
+  stopOnStart: boolean,
+  exec: Executor,
+): Promise<void> {
+  if (stopOnStart) {
+    try {
+      await exec.runFileAsync('adb', ['-s', serial, 'shell', 'am', 'force-stop', packageName], ADB_SHELL_OPTIONS);
+    } catch {}
+  }
+  await exec.runFileAsync('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1'], ADB_SHELL_OPTIONS);
+}
+
+export async function launchAndroidApp(
   {
     serial,
     packageName,
@@ -735,19 +782,19 @@ export function launchAndroidApp(
     bridgePort?: number;
   },
   { exec = null }: ExecOpt = {},
-): AndroidLaunchResult {
+): Promise<AndroidLaunchResult> {
   const e = exec || getExecutor();
-  const restart = stopRunningAndroidApp(serial, packageName, e);
+  const { stopOnStart = false, ...restart } = await stopRunningAndroidApp(serial, packageName, e);
   if (restart.failed) return restart;
-  const reversed = reverseMetroPorts(
+  const reversed = await reverseMetroPorts(
     { serial, metroPort: bridgePort ?? metroPort, devicePorts: [metroPort] },
     { exec: e },
   );
   if (reversed.failed) return reversed;
-  const prefs = writeDebugHttpHost({ serial, packageName, metroPort, physical }, { exec: e });
+  const prefs = await writeDebugHttpHost({ serial, packageName, metroPort, physical }, { exec: e });
   let reversedPairs = reversed.reversed ?? [];
   if (!prefs.ok && Number(metroPort) !== DEFAULT_METRO_PORT) {
-    const fallback = reverseMetroPorts(
+    const fallback = await reverseMetroPorts(
       { serial, metroPort: bridgePort ?? metroPort, devicePorts: [DEFAULT_METRO_PORT] },
       { exec: e },
     );
@@ -764,15 +811,19 @@ export function launchAndroidApp(
   let devClientNote = null;
   if (devClientScheme) {
     const url = androidDevClientUrl(devClientScheme, metroPort, physical);
-    const opened = openAndroidDevClientUrl({ serial, url }, { exec: e });
+    const opened = await openAndroidDevClientUrl({ serial, url, stopOnStart }, { exec: e });
     if (opened.ok) return { ok: true, mode: 'deep-link', devClientUrl: url, ...wiring };
     devClientNote = `${opened.reason}; fell back to the launcher activity`;
   }
 
-  const component = resolveLaunchActivity(serial, packageName, { exec: e });
+  const component = await resolveLaunchActivity(serial, packageName, { exec: e });
   if (component) {
     try {
-      e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-n', component], ADB_SHELL_OPTIONS);
+      await e.runFileAsync(
+        'adb',
+        ['-s', serial, 'shell', 'am', 'start', ...(stopOnStart ? ['-S'] : []), '-n', component],
+        ADB_SHELL_OPTIONS,
+      );
       return { ok: true, mode: 'am-start', component, devClientNote, ...wiring };
     } catch (err) {
       return {
@@ -784,7 +835,7 @@ export function launchAndroidApp(
   }
 
   try {
-    e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1'], ADB_SHELL_OPTIONS);
+    await launchAndroidWithMonkey(serial, packageName, stopOnStart, e);
     return { ok: true, mode: 'monkey', devClientNote, ...wiring };
   } catch (err) {
     return {
@@ -795,17 +846,21 @@ export function launchAndroidApp(
   }
 }
 
-export function launchAndroidReleaseApp(
+export async function launchAndroidReleaseApp(
   { serial, packageName }: { serial: string; packageName: string },
   { exec = null }: ExecOpt = {},
-): AndroidLaunchResult {
+): Promise<AndroidLaunchResult> {
   const e = exec || getExecutor();
-  const restart = stopRunningAndroidApp(serial, packageName, e);
+  const { stopOnStart = false, ...restart } = await stopRunningAndroidApp(serial, packageName, e);
   if (restart.failed) return restart;
-  const component = resolveLaunchActivity(serial, packageName, { exec: e });
+  const component = await resolveLaunchActivity(serial, packageName, { exec: e });
   if (component) {
     try {
-      e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-n', component], ADB_SHELL_OPTIONS);
+      await e.runFileAsync(
+        'adb',
+        ['-s', serial, 'shell', 'am', 'start', ...(stopOnStart ? ['-S'] : []), '-n', component],
+        ADB_SHELL_OPTIONS,
+      );
       return { ok: true, mode: 'am-start', component, ...restart };
     } catch (err) {
       return {
@@ -816,7 +871,7 @@ export function launchAndroidReleaseApp(
     }
   }
   try {
-    e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1'], ADB_SHELL_OPTIONS);
+    await launchAndroidWithMonkey(serial, packageName, stopOnStart, e);
     return { ok: true, mode: 'monkey', ...restart };
   } catch (err) {
     return {
@@ -853,19 +908,23 @@ export function parsePsPid(text: unknown, packageName: string): number | null {
   return null;
 }
 
-export function androidAppProcess(
+export async function androidAppProcess(
   serial: string,
   packageName: string,
   { exec = null }: ExecOpt = {},
-): number | null | undefined {
+): Promise<AppProcessProbe> {
   const e = exec || getExecutor();
   try {
-    const pid = parsePidof(e.runFile('adb', ['-s', serial, 'shell', 'pidof', packageName], ADB_SHELL_OPTIONS));
-    if (pid !== null) return pid;
+    const pid = parsePidof(
+      await e.runFileAsync('adb', ['-s', serial, 'shell', 'pidof', packageName], ADB_SHELL_OPTIONS),
+    );
+    if (pid !== null) return { state: 'running', pid };
   } catch {}
   try {
-    return parsePsPid(e.runFile('adb', ['-s', serial, 'shell', 'ps', '-A'], ADB_SHELL_OPTIONS), packageName);
+    return appProcessFromPid(
+      parsePsPid(await e.runFileAsync('adb', ['-s', serial, 'shell', 'ps', '-A'], ADB_SHELL_OPTIONS), packageName),
+    );
   } catch {
-    return undefined;
+    return { state: 'unknown' };
   }
 }

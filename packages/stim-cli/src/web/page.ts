@@ -1,6 +1,7 @@
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { connectOwnedBrowser } from './cdp.ts';
 import type { WebRecord } from './state.ts';
+import { throwIfCancelled } from '../cancellation.ts';
 
 /** The record of a verified live browser: its supervisor and Chrome are the processes the record names. */
 export function liveWebRecord(record: WebRecord | null): (WebRecord & { targetId: string }) | null {
@@ -21,24 +22,34 @@ export async function sendToOwnedPage(
   record: WebRecord & { targetId: string },
   method: string,
   params: Record<string, unknown> = {},
+  signal?: AbortSignal,
 ): Promise<string> {
-  const cdp = await connectOwnedBrowser(record.cdpPort, record.chromeProcess!.pid);
+  const cdp = await connectOwnedBrowser(record.cdpPort, record.chromeProcess!.pid, signal);
+  let navigateTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     const { targetInfo } = (await cdp.send('Target.getTargetInfo', { targetId: record.targetId })) as {
       targetInfo: { url: string };
     };
+    throwIfCancelled(signal, 'browser operation');
     const { sessionId } = (await cdp.send('Target.attachToTarget', { targetId: record.targetId, flatten: true })) as {
       sessionId: string;
     };
+    throwIfCancelled(signal, 'browser operation');
     const reply = cdp.send(method, params, sessionId);
     if (method === 'Page.navigate') {
       reply.catch(() => {});
-      await Promise.race([reply, new Promise((resolve) => setTimeout(resolve, NAVIGATE_ACK_MS))]);
+      await Promise.race([
+        reply,
+        new Promise<void>((resolve) => {
+          navigateTimer = setTimeout(resolve, NAVIGATE_ACK_MS);
+        }),
+      ]);
     } else {
       await reply;
     }
     return targetInfo.url;
   } finally {
+    clearTimeout(navigateTimer);
     cdp.close();
   }
 }

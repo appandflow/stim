@@ -5,7 +5,8 @@ import type { FingerprintSource } from '@expo/fingerprint';
 import { fingerprintNativeInputs, NativeInputError, type NativeInputSnapshot } from './native-inputs.ts';
 import { pbxReferences, pbxString, type NativeXcodeModel, type NativeXcodeSelection } from './native-xcode-project.ts';
 import { workspaceDir, workspaceDerivedData } from '../workspace/paths.ts';
-import { getExecutor } from '../exec.ts';
+import { gitQuietAsync } from '../workspace/git.ts';
+import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 
 export function nativeXcodePackages(root: string): string {
   return join(workspaceDir(root), 'xcode-packages');
@@ -79,13 +80,18 @@ function fold(path: string): string {
   return path.normalize('NFC').toLowerCase();
 }
 
-function gitVisibility(sourceRoot: string) {
+async function gitVisibility(sourceRoot: string, env: NodeJS.ProcessEnv, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   if (!existsSync(join(sourceRoot, '.git'))) return null;
-  const listing = getExecutor().runFileQuiet(
-    'git',
-    ['-C', sourceRoot, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-    { untrimmed: true, omitEnv: ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'] },
-  );
+  const childEnv = childEnvironment(env);
+  const listing = await gitQuietAsync(sourceRoot, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+    env: childEnv.env,
+    untrimmed: true,
+    omitEnv: [...childEnv.omitEnv, 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'],
+    timeoutMs: 120_000,
+    onSpawn: killOnAbort(signal),
+  });
+  signal?.throwIfAborted();
   if (listing === null) return null;
   const listed = new Set<string>();
   const whole = new Set<string>();
@@ -108,22 +114,24 @@ function gitVisibility(sourceRoot: string) {
   return { admit, include };
 }
 
-export function nativeXcodeInputSnapshot(
+export async function nativeXcodeInputSnapshot(
   root: string,
   selection: NativeXcodeSelection,
   parameters: { sdk: string; architecture: string | null; toolchain: Record<string, string>; optimizations: unknown },
+  env: NodeJS.ProcessEnv,
   sourceRoot: string = root,
-): NativeInputSnapshot | { cacheIneligible: string } {
+  signal?: AbortSignal,
+): Promise<NativeInputSnapshot | { cacheIneligible: string }> {
   if (selection.platform === 'unknown')
     return { cacheIneligible: 'The selected application platform cannot be resolved from its project configuration' };
-  const visibility = gitVisibility(sourceRoot);
+  const visibility = await gitVisibility(sourceRoot, env, signal);
   const inputs: { name: string; path: string; optional?: boolean; admit?: (path: string) => boolean }[] = [
     { name: 'repository', path: sourceRoot, ...(visibility ? { admit: visibility.admit } : {}) },
   ];
   const excluded = [join(sourceRoot, '.git'), join(root, '.git'), workspaceDerivedData(root)];
   const reasons = new Set<string>();
   const environment: Record<string, string> = {};
-  for (const [name, value] of Object.entries(process.env).toSorted(([a], [b]) => a.localeCompare(b))) {
+  for (const [name, value] of Object.entries(env).toSorted(([a], [b]) => a.localeCompare(b))) {
     if (
       value !== undefined &&
       /^(?:DEVELOPER_DIR|TOOLCHAINS|SDKROOT|CFLAGS|CPPFLAGS|CXXFLAGS|OBJCFLAGS|LDFLAGS|ARCHS|ONLY_ACTIVE_ARCH|SOURCE_DATE_EPOCH|ZERO_AR_DATE|IPHONEOS_DEPLOYMENT_TARGET|MACOSX_DEPLOYMENT_TARGET|DEVELOPMENT_TEAM|XCODE_.*|SWIFT_.*|CLANG_.*|GCC_.*|OTHER_.*FLAGS|CODE_SIGN.*|PROVISIONING_.*)$/.test(
@@ -155,10 +163,10 @@ export function nativeXcodeInputSnapshot(
     const result = value.replace(/\$\(([^)]+)\)|\$\{([^}]+)\}/g, (_match, parenthesized: string, braced: string) => {
       const name = parenthesized ?? braced;
       if (known[name] !== undefined) return known[name];
-      const env = process.env[name];
-      if (env !== undefined) {
-        environment[name] = env;
-        return env;
+      const supplied = env[name];
+      if (supplied !== undefined) {
+        environment[name] = supplied;
+        return supplied;
       }
       missing = true;
       return '';
@@ -271,7 +279,6 @@ export function nativeXcodeInputSnapshot(
           if (base) visit(base, project.directory);
           const settings = entry.buildSettings;
           for (const [rawKey, setting] of Object.entries(settings && typeof settings === 'object' ? settings : {})) {
-            if (rawKey.endsWith('_comment')) continue;
             const key = pbxString(rawKey)!;
             const values = Array.isArray(setting) ? pbxReferences(setting) : [setting];
             for (const [valueIndex, value] of values.entries()) {
@@ -311,9 +318,10 @@ export function nativeXcodeInputSnapshot(
       'CLANG_CONFIG_FILE_USER_DIR',
       'CLANG_CONFIG_FILE_SYSTEM_DIR',
     ]) {
-      if (process.env[name]) reasons.add(`Environment ${name} supplies native inputs outside the resolved project`);
+      if (env[name]) reasons.add(`Environment ${name} supplies native inputs outside the resolved project`);
     }
-    if (process.env.XCODE_XCCONFIG_FILE) xcconfig(resolve(process.env.XCODE_XCCONFIG_FILE), selection.targetProject);
+    if (env.XCODE_XCCONFIG_FILE)
+      xcconfig(resolve(selection.container.dir, env.XCODE_XCCONFIG_FILE), selection.targetProject);
     for (const [name, value] of Object.entries(environment)) {
       if (
         /(?:FLAGS|OTHER_.*FLAGS)$/.test(name) &&
@@ -328,8 +336,9 @@ export function nativeXcodeInputSnapshot(
     }
     if (reasons.size) return { cacheIneligible: [...reasons].join('; ') };
     for (const [name, path] of dependencyRoots) inputs.push({ name, path: realpathSync(path) });
-    const snapshot = fingerprintNativeInputs(inputs, {
+    const snapshot = await fingerprintNativeInputs(inputs, {
       excluded,
+      signal,
       ignoredDirectoryMarkers: nativeXcodeMetadataDirectories(selection),
       parameters: {
         recipe: 'native-xcode-v1',
@@ -352,6 +361,7 @@ export function nativeXcodeInputSnapshot(
       return { cacheIneligible: 'C-family or Metal sources need a verified compiler include dependency graph' };
     return snapshot;
   } catch (error) {
+    signal?.throwIfAborted();
     return {
       cacheIneligible:
         error instanceof NativeInputError

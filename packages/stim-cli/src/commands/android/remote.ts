@@ -7,7 +7,7 @@ import type { EasFallbackCheck } from '../../device-host/placement.ts';
 import { prepareHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { readHostedAndroid } from '../../device-host/ios-state.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
-import { resolveOwnedAvdSerial } from '../../devices/android.ts';
+import { resolveOwnedAvdSerialAsync } from '../../devices/android.ts';
 import { getProject } from '../../workspace/config.ts';
 
 export async function connectAndroidHosting({
@@ -19,7 +19,7 @@ export async function connectAndroidHosting({
   metroCheck,
   selectors,
   read = readHostedAndroid,
-  resolveSerial = resolveOwnedAvdSerial,
+  resolveSerial = resolveOwnedAvdSerialAsync,
   prepare = prepareHostedAndroid,
 }: {
   root: string;
@@ -30,7 +30,7 @@ export async function connectAndroidHosting({
   metroCheck: boolean;
   selectors: HostedDeviceSelectors;
   read?: typeof readHostedAndroid;
-  resolveSerial?: typeof resolveOwnedAvdSerial;
+  resolveSerial?: typeof resolveOwnedAvdSerialAsync;
   prepare?: typeof prepareHostedAndroid;
 }): Promise<{ target: HostedAndroidTarget | null } | { failure: { code: string; message: string; remedy?: string } }> {
   let recorded;
@@ -65,14 +65,14 @@ export async function connectAndroidHosting({
   if (local?.owned && local.avdName) {
     let running = true;
     try {
-      const resolved = resolveSerial(local.avdName, { timeoutMs: 5000 });
+      const resolved = await resolveSerial(local.avdName, { timeoutMs: 5000 });
       running = Boolean(resolved.serial) || (!resolved.notRunning && !resolved.missing);
     } catch {}
     if (running)
       return {
         failure: {
           code: 'STIM_BAD_ARG',
-          message: `This workspace's Android emulator for slot ${slot} runs on this Mac; run stim stop first.`,
+          message: `This workspace's Android emulator for slot ${slot} runs on this machine; run stim stop first.`,
         },
       };
   }
@@ -100,6 +100,8 @@ export async function selectAndroidPlacement({
   log,
   fromFlag,
   noWait,
+  waitMs,
+  signal,
   buildMachine,
   localSelectors,
   eas,
@@ -113,12 +115,17 @@ export async function selectAndroidPlacement({
   log?: (record: PlacementRecord) => void;
   fromFlag: boolean;
   noWait: boolean;
+  waitMs?: number;
+  signal?: AbortSignal;
   buildMachine?: string;
   eas?: () => Promise<EasFallbackCheck>;
   localSelectors: (target: {
     systemImage: string | null;
     deviceProfile: string | null;
-  }) => { code: string; message: string; remedy: string } | null;
+  }) =>
+    | { code: string; message: string; remedy: string }
+    | null
+    | Promise<{ code: string; message: string; remedy: string } | null>;
 }): Promise<
   | {
       target: AndroidRunPlan['target'];
@@ -151,21 +158,33 @@ export async function selectAndroidPlacement({
       budget: connected.target ? { reclaimed: [], refusal: null } : await checkBudget({ root: args.root, note }),
     };
   }
-  const refusal = localSelectors(selected);
+  const refusal = await localSelectors(selected);
   if (refusal) return { failure: refusal };
   try {
     const placed = await automatic({
       root: args.root,
       slot: args.slot,
       platform: 'android',
+      ...(selected.placement ? { placement: selected.placement } : {}),
       ...(appMode === 'process' ? { appMode } : {}),
       selectors,
       buildMachine,
       noWait,
+      ...(waitMs === undefined ? {} : { waitMs }),
+      onWait: (line) => phase('placement:', line),
+      signal,
       ...(eas ? { eas } : {}),
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
-    log?.(devicePlacementRecord({ platform: 'android', fromFlag: fromFlag, easFallback: Boolean(eas), placed }));
+    log?.(
+      devicePlacementRecord({
+        platform: 'android',
+        selected: selected.placement,
+        fromFlag: fromFlag,
+        easFallback: Boolean(eas),
+        placed,
+      }),
+    );
     if (placed.placement.decision === 'eas')
       return {
         target: {
@@ -197,6 +216,14 @@ export async function selectAndroidPlacement({
       devicePlacement: placed.placement,
     };
   } catch (error) {
+    if (signal?.aborted)
+      return {
+        failure: {
+          code: 'STIM_CANCELLED',
+          message: 'The run was cancelled while it waited for a remote machine.',
+          remedy: 'Run the command again when you want the app on a device.',
+        },
+      };
     return {
       failure: {
         code: (error as Error & { code?: string }).code ?? 'STIM_HOSTING_REFUSED',

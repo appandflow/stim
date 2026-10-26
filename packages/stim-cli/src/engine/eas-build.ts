@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { getExecutor } from '../exec.ts';
+import type { StimContext } from '@stim-cli/core';
+import { remoteCliInvocation } from './node-cli.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildLock, releaseBuildLock } from './build-lock.ts';
 import { resolveEasCliBin } from './remote-cache.ts';
-import { readInstalledEasCliVersion } from './device-remote.ts';
+import { throwIfCancelled } from '../cancellation.ts';
+import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 import { easCliSupport, easCliUpgradeRemedy } from './eas-simulator.ts';
 
 type Platform = 'ios' | 'android';
@@ -100,6 +103,7 @@ export function selectEasBuild(
 }
 
 interface EasLookupArgs {
+  context?: StimContext;
   root: string;
   platform: Platform;
   profile?: string;
@@ -108,7 +112,9 @@ interface EasLookupArgs {
   selectors?: (string | null | undefined)[];
   buildCache?: boolean;
   note: (line: string) => void;
-  readEasCliVersion?: (easBin: string, root: string) => string | null;
+  env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+  readEasCliVersion?: (easBin: string, root: string) => string | null | Promise<string | null>;
 }
 
 interface EasLookup {
@@ -116,17 +122,21 @@ interface EasLookup {
   buildId: string | null;
   cacheKey: string | null;
   missing: Refusal;
-  run: (args: string[], timeoutMs?: number) => unknown;
+  run: (args: string[], timeoutMs?: number) => Promise<unknown>;
 }
 
 async function lookUpEasBuild({
+  context,
   root,
   platform,
   profile,
   note,
   physical = false,
-  readEasCliVersion = readInstalledEasCliVersion,
+  env,
+  signal,
+  readEasCliVersion,
 }: EasLookupArgs & { profile: string }): Promise<EasLookup> {
+  throwIfCancelled(signal, 'EAS development build');
   const retry = 'the same Stim command';
   const buildCommand = `npx eas-cli build --platform ${platform} --profile ${shellArg(profile)}`;
   const cli = resolveEasCliBin(root);
@@ -136,7 +146,39 @@ async function lookUpEasBuild({
       'EAS CLI is not installed.',
       'Install eas-cli, run eas login, then retry.',
     );
-  const easCli = easCliSupport(readEasCliVersion(cli.file, root), MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION);
+  let profileEnv: Record<string, string> = {};
+  const command = async (args: string[], timeoutMs = 120_000): Promise<string> => {
+    throwIfCancelled(signal, 'EAS development build');
+    try {
+      const environment = env ? childEnvironment({ ...env, ...profileEnv }) : { env: profileEnv, omitEnv: [] };
+      const invocation = remoteCliInvocation(cli.file, args, 'eas-cli');
+      const output = await getExecutor().runFileAsync(invocation.file, invocation.args, {
+        cwd: root,
+        timeoutMs,
+        ...environment,
+        omitEnv: [
+          ...environment.omitEnv,
+          ...(args[0] === '--version' ? ['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN'] : []),
+        ],
+        onSpawn: killOnAbort(signal),
+        declareFor: context,
+      });
+      throwIfCancelled(signal, 'EAS development build');
+      return output;
+    } catch (error) {
+      throwIfCancelled(signal, 'EAS development build');
+      throw error;
+    }
+  };
+  let version: string | null;
+  try {
+    version = readEasCliVersion ? await readEasCliVersion(cli.file, root) : await command(['--version'], 30_000);
+  } catch {
+    throwIfCancelled(signal, 'EAS development build');
+    version = null;
+  }
+  throwIfCancelled(signal, 'EAS development build');
+  const easCli = easCliSupport(version, MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION);
   if (!easCli.supported)
     throw new EasFailure(
       'STIM_EAS_UNAVAILABLE',
@@ -145,17 +187,11 @@ async function lookUpEasBuild({
         : `Could not read an eas-cli version from \`${cli.file} --version\`; --eas-profile needs eas-cli ${MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION} or later.`,
       `${easCliUpgradeRemedy(MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION)}, then retry ${retry}.`,
     );
-  let profileEnv: Record<string, string> = {};
-  const run = (args: string[], timeoutMs = 120_000): unknown => {
+  const run = async (args: string[], timeoutMs = 120_000): Promise<unknown> => {
     try {
-      return JSON.parse(
-        getExecutor().runFile(cli.file, [...args, '--json', '--non-interactive'], {
-          cwd: root,
-          timeoutMs,
-          env: profileEnv,
-        }),
-      );
+      return JSON.parse(await command([...args, '--json', '--non-interactive'], timeoutMs));
     } catch {
+      throwIfCancelled(signal, 'EAS development build');
       throw new EasFailure(
         'STIM_EAS_UNAVAILABLE',
         `EAS ${args[0]} failed or returned invalid JSON.`,
@@ -164,7 +200,7 @@ async function lookUpEasBuild({
     }
   };
   note(`eas   resolving profile ${profile}`);
-  const config = object(run(['config', '--platform', platform, '--profile', profile]));
+  const config = object(await run(['config', '--platform', platform, '--profile', profile]));
   const buildProfile = object(config.buildProfile);
   // EAS build:list treats --build-profile only as a filter; project context uses the process environment.
   profileEnv = object(buildProfile.env) as Record<string, string>;
@@ -201,7 +237,9 @@ async function lookUpEasBuild({
     );
   }
   note(`eas   fingerprinting ${platform} with profile ${profile}`);
-  const fingerprint = object(run(['fingerprint:generate', '--platform', platform, '--build-profile', profile])).hash;
+  const fingerprint = object(
+    await run(['fingerprint:generate', '--platform', platform, '--build-profile', profile]),
+  ).hash;
   if (typeof fingerprint !== 'string' || !/^[a-f0-9]{40,64}$/.test(fingerprint)) {
     throw new EasFailure(
       'STIM_EAS_UNAVAILABLE',
@@ -210,7 +248,7 @@ async function lookUpEasBuild({
     );
   }
   note(`eas   looking for ${fingerprint.slice(0, 8)}`);
-  const builds = run([
+  const builds = await run([
     'build:list',
     '--platform',
     platform,
@@ -295,6 +333,7 @@ export async function planEasDevelopmentBuild(args: EasLookupArgs & { profile: s
       missing: found.buildId ? null : found.missing,
     };
   } catch (error) {
+    throwIfCancelled(args.signal, 'EAS development build');
     return easFailure(error, 'the same Stim command');
   }
 }
@@ -323,7 +362,7 @@ export async function resolveEasDevelopmentBuild(args: EasLookupArgs): Promise<E
       );
     }
     args.note(`eas   resolving artifact for build ${buildId}`);
-    const result = object(run(['build:download', '--build-id', buildId], 10 * 60_000));
+    const result = object(await run(['build:download', '--build-id', buildId], 10 * 60_000));
     if (typeof result.path !== 'string' || !existsSync(result.path))
       throw new Error('EAS returned no downloaded artifact.');
     const path = realpathSync(result.path);
@@ -337,6 +376,7 @@ export async function resolveEasDevelopmentBuild(args: EasLookupArgs): Promise<E
     args.note(`eas   artifact ready ${fingerprint.slice(0, 8)}`);
     return { ok: true, path, fingerprint, cacheKey, cacheHit: 'remote' };
   } catch (error) {
+    throwIfCancelled(args.signal, 'EAS development build');
     return easFailure(error, retry);
   } finally {
     releaseBuildLock(lock);

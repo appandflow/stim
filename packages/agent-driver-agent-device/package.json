@@ -1,0 +1,36 @@
+{
+  "name": "@stim-cli/agent-driver-agent-device",
+  "version": "1.28.0",
+  "description": "agent-device driver for stim-server hosted apps.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/appandflow/stim.git",
+    "directory": "packages/agent-driver-agent-device"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "module-sync": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@stim-cli/agent-driver": "workspace:*",
+    "@stim-cli/core": "workspace:*"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

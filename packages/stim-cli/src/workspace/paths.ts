@@ -2,9 +2,9 @@ import { existsSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'path';
 import { ensurePrivateDir, workspaceName, workspaceStateDir as workspaceDir } from '@stim-cli/core';
 import { readJsonObject, workspaceMetadataFile } from '@stim-cli/core/state';
-import { withDirLock } from '../dir-lock.ts';
+import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
 
-export { buildCacheRoot as sharedBuildCache, metroCacheRoot as sharedMetroCache, workspaceId } from '@stim-cli/core';
+export { buildCacheRoot as sharedBuildCache, workspaceId } from '@stim-cli/core';
 export { workspaceName, workspaceDir };
 export {
   emulatorLogFile,
@@ -16,7 +16,6 @@ export {
   workspaceLogErrorIndex,
   workspaceLogsDir,
   workspaceAgentDeviceDir,
-  workspaceMetadataFile,
   workspaceStateFile,
   workspaceStateLock,
 } from '@stim-cli/core/state';
@@ -56,4 +55,12 @@ export function ensureWorkspaceStorage(projectRoot: string): string {
     error.code = 'STIM_WORKSPACE_COLLISION';
     throw error;
   });
+}
+
+/** Initializes or validates workspace storage after asynchronously acquiring its metadata lock. */
+export function ensureWorkspaceStorageAsync(projectRoot: string, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
+  const dir = workspaceDir(resolve(projectRoot));
+  ensurePrivateDir(dir);
+  return withDirLockAsync(join(dir, 'metadata.lock'), () => ensureWorkspaceStorage(projectRoot), { signal });
 }

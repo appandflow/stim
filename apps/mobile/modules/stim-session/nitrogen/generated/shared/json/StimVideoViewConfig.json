@@ -1,0 +1,12 @@
+{
+  "uiViewClassName": "StimVideoView",
+  "supportsRawText": false,
+  "bubblingEventTypes": {},
+  "directEventTypes": {},
+  "validAttributes": {
+    "stream": true,
+    "onKeyframeNeeded": true,
+    "onOrientationCleared": true,
+    "hybridRef": true
+  }
+}

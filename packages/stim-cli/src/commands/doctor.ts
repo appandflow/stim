@@ -1,16 +1,29 @@
 import { maintenanceNdjsonFile } from '@stim-cli/core/state';
+import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
 import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { recordDoctorRun } from '../guide-status.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
+import type { ProjectDoctor } from '../integrations/project-doctor.ts';
 import { repoRoot } from '../workspace/worktree.ts';
 import { getProject } from '../workspace/config.ts';
-import { projectSettingsContext, type SettingsObject } from '../workspace/settings.ts';
-import { readMachineSettings } from '../diagnostics/doctor-config.ts';
-import { iosRuntimeMatches, listIosRuntimesAsync, pickDefaultIosCreation } from '../devices/ios.ts';
-import { offloadCheck, simulatorRuntime } from '../offload/client.ts';
+import {
+  projectSettingsContextAsync,
+  type ProjectSettingsContext,
+  type SettingsObject,
+} from '../workspace/settings.ts';
+import type { StimContext } from '@stim-cli/core';
+import { readMachineSettings, type MachineSettings } from '../diagnostics/doctor-config.ts';
+import { checkWorktreeStorageLayout } from '../diagnostics/doctor-storage.ts';
+import {
+  iosRuntimeMatches,
+  listAllIosSimsAsync,
+  listIosRuntimesAsync,
+  pickDefaultIosCreation,
+} from '../devices/ios.ts';
+import { offloadCheck } from '../offload/client.ts';
 import { resolveDeviceType, resolveRuntime } from './ios/support.ts';
 import {
   allowanceSearchPaths,
@@ -21,16 +34,20 @@ import {
   sandboxAllowance,
   sandboxFinding,
 } from '../diagnostics/sandbox.ts';
-import { detectXcodeMajor, runDoctor } from '../diagnostics/doctor.ts';
+import { runDoctor } from '../diagnostics/doctor.ts';
+import { detectXcodeMajorAsync } from '../engine/xcode.ts';
 import type { DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
+import { NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
 import { budgetLine, inspectBudget, type BudgetReport } from '../budget.ts';
-import { inspectBuildMachines } from '../offload/build-machines.ts';
+import { inspectBuildMachines, type BuildMachinesInspection } from '../offload/build-machines.ts';
+import { doctorIo, keyConfirmer, type GeneratedTickets } from '../offload/tailnet.ts';
+import { confirmInTerminal } from './device-provision.ts';
 import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
-import { inspectDeviceHostMachines } from '../device-host/machines.ts';
+import { configuredMachines, inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
-import { memoryCulpritFindings, readMemoryCulprits } from '../memory-culprits.ts';
+import { memoryCulpritFindings, readMemoryCulpritsAsync } from '../memory-culprits.ts';
 import {
   inspectNestedWorktrees,
   nestedWorktreeFinding,
@@ -60,7 +77,8 @@ async function iosTargetRuntime(root: string, settings: SettingsObject | null): 
     const runtime = resolveRuntime(null, settings);
     if (runtime) return runtimes.find((each) => iosRuntimeMatches(each, runtime))?.identifier ?? null;
     const udid = getProject(root)?.platforms?.ios?.deviceUdid;
-    const own = typeof udid === 'string' ? simulatorRuntime(udid) : null;
+    const own =
+      typeof udid === 'string' ? (await listAllIosSimsAsync()).find((device) => device.udid === udid)?.runtime : null;
     if (own) return own;
     const deviceType = resolveDeviceType(null, settings) ?? undefined;
     return pickDefaultIosCreation([], runtimes, { deviceType })?.runtimeId ?? null;
@@ -94,6 +112,75 @@ function stimVersionLines(report: StimVersionReport): string[] {
   ];
 }
 
+const OVERRIDES: Record<string, string> = {
+  node: 'put another node first on PATH',
+  JAVA_HOME: 'set JAVA_HOME',
+  ANDROID_HOME: 'set ANDROID_HOME',
+};
+
+/**
+ * Where the toolchain a process without a login shell, such as stim-server under Stim Desktop, finds each tool,
+ * and the Node the project's dev server runs on.
+ */
+export interface ToolchainReport {
+  entries: ToolchainEntry[];
+  projectNode: {
+    pin: string;
+    spec: string;
+    bin: string | null;
+    version: string | null;
+    match: 'exact' | 'major' | null;
+  } | null;
+}
+
+export function toolchainReport(root: string, env: NodeJS.ProcessEnv = process.env): ToolchainReport {
+  const { entries } = discoverToolchain(env);
+  const pin = projectNodePin(root);
+  const pinned = pin ? projectNodeBin(root, env) : null;
+  return {
+    entries,
+    projectNode: pin
+      ? {
+          pin: pin.file,
+          spec: pin.spec,
+          bin: pinned?.bin ?? null,
+          version: pinned?.version ?? null,
+          match: pinned?.match ?? null,
+        }
+      : null,
+  };
+}
+
+function toolchainLine(entry: ToolchainEntry): string {
+  const where =
+    entry.source === 'environment'
+      ? 'from the environment'
+      : entry.source === 'discovered'
+        ? `found from ${entry.from ?? 'a standard location'}`
+        : 'not found';
+  const override = OVERRIDES[entry.name] ? `; ${OVERRIDES[entry.name]} to override` : '';
+  return phaseLine(entry.name, `${entry.value ?? 'unset'} (${where}${override})`);
+}
+
+function toolchainLines(report: ToolchainReport): string[] {
+  const project = report.projectNode;
+  return [
+    ...report.entries.map(toolchainLine),
+    ...(project
+      ? [
+          phaseLine(
+            'project node',
+            !project.bin
+              ? `${project.pin} pins ${project.spec}, which no nvm, fnm, Volta, asdf, mise or Homebrew install provides; Metro runs on the node on PATH`
+              : project.match === 'major'
+                ? `${project.version} at ${project.bin}, the newest installed Node of the major ${project.pin} pins and not older than ${project.spec}, since no install has ${project.spec}; Metro runs on it when the node on PATH does not fit the pin`
+                : `${project.version} at ${project.bin}, which ${project.pin} pins (${project.spec}); Metro runs on it when the node on PATH does not satisfy the pin`,
+          ),
+        ]
+      : []),
+  ];
+}
+
 function budgetLines(budget: BudgetReport | null): string[] {
   return budget ? [phaseLine('budget', budgetLine(budget))] : [];
 }
@@ -103,6 +190,7 @@ export function doctorSuccessLines(
   stim: StimVersionReport,
   budget: BudgetReport | null = null,
   projectLines: string[] = [],
+  toolchain: string[] = [],
 ): string[] {
   return [
     `Doctor (${doctorTarget(platform)})`,
@@ -110,6 +198,7 @@ export function doctorSuccessLines(
     phaseLine('findings', '0'),
     ...stimVersionLines(stim),
     ...budgetLines(budget),
+    ...(toolchain.length ? ['', 'Toolchain', ...toolchain] : []),
     '',
     'Shared',
     phaseLine('settings', 'every Stim setting type, machine config paths, companions and inert keys'),
@@ -182,6 +271,195 @@ export function applySandboxFix(root: string, env: NodeJS.ProcessEnv = process.e
   );
 }
 
+interface PreparedDoctor {
+  settingsContext: ProjectSettingsContext;
+  machineSettings: MachineSettings;
+  settings: SettingsObject | null;
+  selected: ReturnType<ProjectRegistry['selectDoctor']>;
+  doctors: ProjectDoctor[];
+}
+
+async function prepareDoctor(
+  root: string,
+  platform: DoctorPlatform | undefined,
+  registry: Pick<ProjectRegistry, 'selectDoctor'>,
+  operation?: StimContext,
+): Promise<PreparedDoctor> {
+  const settingsContext = await projectSettingsContextAsync(root, undefined, {
+    env: operation?.env ?? process.env,
+    signal: operation?.signal,
+  });
+  const machineSettings = readMachineSettings(settingsContext);
+  const settings = machineSettings.corrupt ? null : machineSettings.settings;
+  const selected = registry.selectDoctor(root, platform);
+  const doctors = await selected.load();
+  return { settingsContext, machineSettings, settings, selected, doctors };
+}
+
+export interface DoctorReport {
+  project: string;
+  platform: DoctorPlatform | null;
+  stim: StimVersionReport;
+  budget: BudgetReport | null;
+  maintenance: ReturnType<typeof maintenanceStatus> & { logPath: string };
+  remoteMachines: Array<BuildMachinesInspection['machines'][number] & { priority?: number }>;
+  deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>['machines'][number] & { priority?: number }>;
+  toolchain: ToolchainReport | null;
+  findings: Finding[];
+}
+
+function withPriority<T extends { machine: string }>(machines: T[]): Array<T & { priority?: number }> {
+  const order = configuredMachines() ?? [];
+  return machines.map((each) => {
+    const at = order.indexOf(each.machine);
+    return at < 0 ? each : { ...each, priority: at + 1 };
+  });
+}
+
+export async function readDoctorReport(
+  operation: StimContext,
+  platform: DoctorPlatform | undefined,
+  version: string,
+  requestAccess = false,
+): Promise<DoctorReport> {
+  const found = projectRegistry.findProjectRoot(operation.projectRoot);
+  if (!found) throw Object.assign(new Error(NO_PROJECT_REFUSAL.message), NO_PROJECT_REFUSAL);
+  const root = found;
+  const prepared = await prepareDoctor(root, platform, projectRegistry, operation);
+  return assembleDoctorReport(
+    root,
+    { platform, fix: requestAccess },
+    version,
+    prepared,
+    (runningVersion) =>
+      inspectStimVersions(runningVersion, {
+        operation,
+        cwd: root,
+        env: operation.env,
+        runningPath: '',
+      }),
+    process.platform,
+    operation,
+  );
+}
+
+async function assembleDoctorReport(
+  root: string,
+  opts: DoctorOptions,
+  version: string,
+  prepared: PreparedDoctor,
+  inspectVersions: (version: string) => StimVersionReport | Promise<StimVersionReport>,
+  host: NodeJS.Platform,
+  operation?: StimContext,
+): Promise<DoctorReport> {
+  const { settingsContext, machineSettings, settings, selected, doctors } = prepared;
+  const env = operation?.env ?? process.env;
+  const io = doctorIo(operation);
+  const stim = await inspectVersions(version);
+
+  const { findings, context } = await runDoctor(
+    root,
+    {
+      xcodeMajor: selected.platforms.includes('ios') && host === 'darwin' ? await detectXcodeMajorAsync() : null,
+      platform: opts.platform,
+      platforms: selected.platforms,
+      host,
+      machineSettings,
+      repoRoot: settingsContext.repoRoot,
+      remoteEnv: env,
+      operation,
+      tailnetStatus: io.status,
+    },
+    doctors.map((doctor) => doctor.inspect),
+  );
+  findings.unshift(...(await checkWorktreeStorageLayout(context)));
+  if (selected.problem)
+    findings.unshift({
+      level: 'cost',
+      ...(selected.problem.kind === 'not-an-app' ? { code: 'not-an-app' } : {}),
+      title:
+        selected.problem.kind === 'unreadable'
+          ? 'The project could not be read'
+          : 'This directory has no supported app for this operation',
+      detail: selected.problem.message,
+      fix: selected.problem.remedy,
+    });
+  for (const doctor of doctors) {
+    if (doctor.inspectAsync) findings.push(...(await doctor.inspectAsync(context)));
+  }
+
+  if (detectHarness(env)) {
+    const sandbox = sandboxFinding(settingsContext.repoRoot ?? root, {
+      env,
+      home: env.HOME ?? env.USERPROFILE,
+      stimHome: operation?.home ?? env.STIM_HOME,
+    });
+    if (sandbox) findings.push(sandbox);
+  }
+
+  const shadowed = shadowedStimFinding(stim);
+  if (shadowed) findings.push(shadowed);
+
+  const budget = await inspectBudget(root, undefined, env, operation);
+  findings.push(...budget.findings);
+  const watchmanMemory = withoutUnhandledRejection(inspectWatchmanMemory(env, operation));
+  const tickets: GeneratedTickets = new Map();
+  const interactive =
+    !operation && opts.fix === true && !opts.json && process.stdin.isTTY === true && process.stderr.isTTY === true;
+  const confirmKey = keyConfirmer(interactive ? confirmInTerminal : null);
+  const deviceHosts = withoutUnhandledRejection(
+    inspectDeviceHostMachines({ fix: opts.fix === true, version, tickets, operation, confirmKey }, io),
+  );
+  const nestedWorktrees = await inspectNestedWorktrees(root);
+  const watched = withoutUnhandledRejection(watchedCheckouts(nestedWorktrees.map((entry) => entry.checkout)));
+  const targetInspectors = doctors.flatMap((doctor) => {
+    const inspect = doctor.offloadTargets?.(context, () => iosTargetRuntime(root, settings));
+    return inspect ? [inspect] : [];
+  });
+  const remoteMachinesInspection = withoutUnhandledRejection(
+    inspectBuildMachines(
+      {
+        fix: opts.fix === true,
+        version,
+        tickets,
+        operation,
+        confirmKey,
+        check: targetInspectors.length
+          ? offloadCheck(root, async () => (await Promise.all(targetInspectors.map((inspect) => inspect()))).flat())
+          : null,
+      },
+      io,
+    ),
+  );
+
+  const watchman = await watchmanMemory;
+  if (watchman) findings.push(watchman);
+  if (!memorySweepIsScoped(env)) findings.push(...memoryCulpritFindings(await readMemoryCulpritsAsync()));
+  const watchedRoots = await watched;
+  for (const entry of nestedWorktrees) findings.push(nestedWorktreeFinding(entry, watchedRoots.has(entry.checkout)));
+  const remoteMachines = await remoteMachinesInspection;
+  findings.push(...remoteMachines.findings);
+  const deviceHostMachines = await deviceHosts;
+  const reported = new Set(remoteMachines.findings.map((each) => each.title));
+  findings.push(...deviceHostMachines.findings.filter((each) => !reported.has(each.title)));
+  const agentDriver = inspectHostedAgentDriver();
+  if (agentDriver) findings.push(agentDriver);
+
+  const toolchain = host === 'darwin' ? toolchainReport(root, env) : null;
+  const maintenance = maintenanceStatus(env);
+  return {
+    project: root,
+    platform: opts.platform ?? null,
+    stim,
+    budget: budget.report,
+    maintenance: { ...maintenance, logPath: maintenanceNdjsonFile() },
+    remoteMachines: withPriority(remoteMachines.machines),
+    deviceHosts: withPriority(deviceHostMachines.machines),
+    toolchain,
+    findings,
+  };
+}
+
 export default function doctorCommand(
   program: Command,
   version: string,
@@ -202,7 +480,7 @@ export default function doctorCommand(
     )
     .option(
       '--fix',
-      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; ask each remote Mac in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
+      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; ask each remote machine in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
     )
     .action(async (opts: DoctorOptions) => {
       const root = registry.findProjectRoot(process.cwd());
@@ -210,12 +488,8 @@ export default function doctorCommand(
         refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
-      const settingsContext = projectSettingsContext(root);
-      const machineSettings = readMachineSettings(settingsContext);
-      const settings = machineSettings.corrupt ? null : machineSettings.settings;
-
-      const selected = registry.selectDoctor(root, opts.platform);
-      const doctors = await selected.load();
+      const prepared = await prepareDoctor(root, opts.platform, registry);
+      const { settingsContext, settings, selected, doctors } = prepared;
 
       if (opts.fix) {
         if (sandboxFinding(repoRoot(root) ?? root)) applySandboxFix(root);
@@ -232,7 +506,7 @@ export default function doctorCommand(
             process.exitCode = 1;
           }
         }
-        const nestedToFix = inspectNestedWorktrees(root);
+        const nestedToFix = await inspectNestedWorktrees(root);
         const watchedToFix = await watchedCheckouts(nestedToFix.map((entry) => entry.checkout));
         for (const entry of nestedToFix) {
           let result: ReturnType<typeof writeIgnoreDirs>;
@@ -264,95 +538,20 @@ export default function doctorCommand(
         }
       }
 
-      const stim = await inspectVersions(version);
-
-      const { findings, context } = runDoctor(
-        root,
-        {
-          xcodeMajor: selected.platforms.includes('ios') && host === 'darwin' ? detectXcodeMajor() : null,
-          platform: opts.platform,
-          platforms: selected.platforms,
-          host,
-          machineSettings,
-          repoRoot: settingsContext.repoRoot,
-        },
-        doctors.map((doctor) => doctor.inspect),
-      );
-      if (selected.problem)
-        findings.unshift({
-          level: 'cost',
-          ...(selected.problem.kind === 'not-an-app' ? { code: 'not-an-app' } : {}),
-          title:
-            selected.problem.kind === 'unreadable'
-              ? 'The project could not be read'
-              : 'This directory has no supported app for this operation',
-          detail: selected.problem.message,
-          fix: selected.problem.remedy,
-        });
-      for (const doctor of doctors) {
-        if (doctor.inspectAsync) findings.push(...(await doctor.inspectAsync(context)));
-      }
-
-      if (detectHarness()) {
-        const sandbox = sandboxFinding(repoRoot(root) ?? root);
-        if (sandbox) findings.push(sandbox);
-      }
-
-      const shadowed = shadowedStimFinding(stim);
-      if (shadowed) findings.push(shadowed);
-
-      const budget = await inspectBudget(root);
-      findings.push(...budget.findings);
-      const watchmanMemory = withoutUnhandledRejection(inspectWatchmanMemory());
-      const deviceHosts = withoutUnhandledRejection(inspectDeviceHostMachines({ fix: opts.fix === true }));
-      const nestedWorktrees = inspectNestedWorktrees(root);
-      const watched = withoutUnhandledRejection(watchedCheckouts(nestedWorktrees.map((entry) => entry.checkout)));
-      const targetInspectors = doctors.flatMap((doctor) => {
-        const inspect = doctor.offloadTargets?.(context, () => iosTargetRuntime(root, settings));
-        return inspect ? [inspect] : [];
-      });
-      const remoteMachinesInspection = withoutUnhandledRejection(
-        inspectBuildMachines({
-          fix: opts.fix === true,
-          check: targetInspectors.length
-            ? offloadCheck(root, async () => (await Promise.all(targetInspectors.map((inspect) => inspect()))).flat())
-            : null,
-        }),
-      );
-
-      const watchman = await watchmanMemory;
-      if (watchman) findings.push(watchman);
-      if (!memorySweepIsScoped()) findings.push(...memoryCulpritFindings(readMemoryCulprits()));
-      const watchedRoots = await watched;
-      for (const entry of nestedWorktrees)
-        findings.push(nestedWorktreeFinding(entry, watchedRoots.has(entry.checkout)));
-      const remoteMachines = await remoteMachinesInspection;
-      findings.push(...remoteMachines.findings);
-      const deviceHostMachines = await deviceHosts;
-      const reported = new Set(remoteMachines.findings.map((each) => each.title));
-      findings.push(...deviceHostMachines.findings.filter((each) => !reported.has(each.title)));
-      const agentDriver = inspectHostedAgentDriver();
-      if (agentDriver) findings.push(agentDriver);
-
-      const maintenance = maintenanceStatus();
+      const report = await assembleDoctorReport(root, opts, version, prepared, inspectVersions, host);
+      const { findings, stim, toolchain, maintenance } = report;
+      const budget = { report: report.budget };
+      const order = (configuredMachines() ?? []).map((machine, at) => `${at + 1} ${machine}`);
       const maintenanceLines = [
+        ...(order.length
+          ? [phaseLine('placement order', `${order.join(', ')} (first with room and load under its limit)`)]
+          : []),
         phaseLine('maintenance.mode', maintenance.mode),
         phaseLine('maintenance log', maintenanceNdjsonFile()),
         phaseLine('last pass', maintenanceLine(maintenance, false) ?? 'no pass has run yet'),
       ];
       if (opts.json) {
-        console.log(
-          JSON.stringify({
-            project: root,
-            platform: opts.platform ?? null,
-            stim,
-            budget: budget.report,
-            maintenance: { ...maintenance, logPath: maintenanceNdjsonFile() },
-            remoteMachines: remoteMachines.machines,
-            deviceHosts: deviceHostMachines.machines,
-            findings,
-          }),
-        );
+        console.log(JSON.stringify(report));
         recordDoctorRun(root, opts.platform, version, undefined, selected.platforms);
         return;
       }
@@ -364,6 +563,7 @@ export default function doctorCommand(
             stim,
             budget.report,
             doctors.flatMap((doctor) => doctor.successLines?.(opts.platform) ?? []),
+            toolchain ? toolchainLines(toolchain) : [],
           ),
           ...maintenanceLines,
         ];
@@ -380,6 +580,10 @@ export default function doctorCommand(
       console.log(chalk.bold(`Doctor (${doctorTarget(opts.platform)})`));
       for (const line of [...stimVersionLines(stim), ...budgetLines(budget.report), ...maintenanceLines])
         console.log(chalk.dim(line));
+      if (toolchain) {
+        console.log(chalk.bold('\nToolchain'));
+        for (const line of toolchainLines(toolchain)) console.log(chalk.dim(line));
+      }
       for (const f of ordered) {
         const tag = f.level === 'cost' ? chalk.yellow('costs time') : chalk.dim('note');
         console.log(`\n${tag}  ${chalk.bold(f.title)}`);

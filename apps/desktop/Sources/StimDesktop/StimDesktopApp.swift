@@ -16,7 +16,7 @@ enum TutorialEntry { case resume, begin }
 @MainActor
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
-  @Published var device: DeviceOpenRequest?
+  @Published var viewer: ViewedDevice?
   @Published var workspaceLink: WorkspaceLink?
   @Published var workspacePath: String?
   /// The workspace selected in the main window, which the Settings window edits.
@@ -25,6 +25,8 @@ final class OpenRequests: ObservableObject {
   @Published var pairsPhone = false
   @Published var addMachine: AddMachineRequest?
   @Published var tutorialRequest: TutorialEntry?
+  @Published var showsDiscover = false
+  @Published var showsViewOptions = false
   @Published var showsSetupGuide = false
   @Published var target: OversightTarget?
   var openMainWindow: (() -> Void)?
@@ -32,6 +34,11 @@ final class OpenRequests: ObservableObject {
   func showTutorial(_ entry: TutorialEntry = .resume) {
     MainWindow.show()
     tutorialRequest = entry
+  }
+
+  func showDiscover() {
+    MainWindow.show()
+    showsDiscover = true
   }
 
   /// Brings the main window forward, opening one when none is left, and shows the setup guide over it.
@@ -73,6 +80,20 @@ final class StimApplication: NSApplication {
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private var terminationSource: DispatchSourceSignal?
 
+  func application(
+    _ application: NSApplication, continue userActivity: NSUserActivity,
+    restorationHandler: @escaping ([NSUserActivityRestoring]) -> Void
+  ) -> Bool {
+    guard userActivity.activityType == NSUserActivityTypeBrowsingWeb, let url = userActivity.webpageURL,
+      let link = workspaceLink(fromOpenURL: url)
+    else { return false }
+    MainActor.assumeIsolated {
+      OpenRequests.shared.workspaceLink = link
+      MainWindow.show()
+    }
+    return true
+  }
+
   func application(_ application: NSApplication, open urls: [URL]) {
     if let link = urls.lazy.compactMap(workspaceLink(fromOpenURL:)).last {
       MainActor.assumeIsolated {
@@ -80,9 +101,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainWindow.show()
       }
     }
-    guard let request = urls.lazy.compactMap(deviceOpenRequest(fromOpenURL:)).last else { return }
+    guard urls.contains(where: { deviceOpenRequest(fromOpenURL: $0) != nil }) else { return }
     MainActor.assumeIsolated {
-      OpenRequests.shared.device = request
       if !MainWindow.isOpen { MainWindow.show() }
     }
   }
@@ -179,31 +199,33 @@ struct StimDesktopApp: App {
       servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones), pairedPhones: nil)
     CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
     let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimExecutable)
+    let stimHome = UserDefaults.standard.string(forKey: AppPreferences.Key.stimHome)
+    let overrides = UserDefaults.standard.string(forKey: AppPreferences.Key.environmentOverrides)
     let environment = Task.detached {
-      var environment = StimHome.environment(
-        await LoginShell.environment() ?? LoginShell.fallback(ProcessInfo.processInfo.environment),
-        launch: ProcessInfo.processInfo.environment)
+      var environment = await Toolchain.environment(
+        launch: ProcessInfo.processInfo.environment, stimHome: stimHome, overrides: overrides)
       if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
       return environment
     }
     let cli = Task.detached { await StimCLI.resolve(environment: await environment.value, override: override) }
     self.cli = cli
-    ServerController.shared.configure(environment: environment)
-    BuildRequestNotifier.shared.start()
+    let settingsEnvironment = Toolchain.settingsEnvironment(
+      launch: ProcessInfo.processInfo.environment, stimHome: stimHome, overrides: overrides)
+    ServerController.shared.configure(environment: environment, settingsEnvironment: settingsEnvironment)
     let statsReader = StatsReader(cli: cli) { ServerSession.shared.statsConnection }
     self.statsReader = statsReader
     _ = ServerSession.shared
-    let store = StatusStore(cli: cli)
+    let store = StatusStore(cli: cli, stimHome: StimHome.path(environment: settingsEnvironment))
     self.store = store
     serverStatus = ServerSession.shared.objectWillChange.sink { [weak store] _ in
       DispatchQueue.main.async {
-        MainActor.assumeIsolated { store?.useServer(ServerSession.shared.statsConnection) }
+        MainActor.assumeIsolated { store?.useServer(ServerSession.shared.feedConnection) }
       }
     }
     notifier = Notifier(store: store)
-    let actions = ActionCenter(cli: cli)
+    let actions = ActionCenter(cli: cli) { ServerSession.shared.statsConnection }
     self.actions = actions
-    let gc = GcReportStore(cli: cli)
+    let gc = GcReportStore(reader: GcReportReader(cli: cli) { ServerSession.shared.statsConnection })
     self.gc = gc
     let disks = DiskVolumeStore(status: store)
     let oversight = OversightNotifier(store: store, disks: disks)
@@ -212,7 +234,18 @@ struct StimDesktopApp: App {
     self.metrics = metrics
     storage = StorageStore(status: store, cli: cli)
     planChecks = BuildPlanChecks { platform, workspace in
-      try await cli.value.plan(platform: platform, workspace: workspace)
+      let connection = await ServerSession.shared.localActionConnection
+      return try await readServerBuildPlan(
+        platform: platform, workspace: workspace, cli: await cli.value, connection: connection)
+    }
+    planChecks.onCancelledRefusal = { workspace, platform, refusal in
+      guard refusal.code == "STIM_CLAIM_UNAVAILABLE" else { return }
+      let notification = OversightNotification(
+        id: "plan-cleanup:\(workspace):\(platform)", category: .attention,
+        title: "Build preview cleanup needs attention",
+        body: ["[\(refusal.code)] \(refusal.message)", refusal.remedy].compactMap { $0 }.joined(separator: " "),
+        quiet: true, thread: workspace, target: .build(path: workspace, platform: platform), remedy: refusal.remedy)
+      NotificationInbox.shared.add(InboxEntry(notification: notification, date: Date()))
     }
     actions.onFinish = { [store, gc] run in
       let worktree = run.steps.contains { $0.program == "stim" && $0.arguments.first == "worktree" }
@@ -222,19 +255,18 @@ struct StimDesktopApp: App {
         store.doctorChanged(in: step.cwd)
       }
     }
-    let machineSettings = MachineSettingsStore(cli: cli)
+    let machineSettings = MachineSettingsStore(
+      cli: cli, server: { ServerSession.shared.statsConnection }, actions: { ServerSession.shared.localActionConnection })
     self.machineSettings = machineSettings
     let buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings, statsReader: statsReader)
     self.buildMachines = buildMachines
-    let autopilot = AutopilotRunner(
-      status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings, cli: cli)
+    let autopilot = AutopilotRunner(status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings)
     self.autopilot = autopilot
     let discovery = DiscoveryCoordinator(
       status: store, machines: buildMachines, stats: statsReader, autopilot: autopilot, gc: gc, environment: environment)
     self.discovery = discovery
     let tips = TipCoordinator(status: store, machines: buildMachines)
     self.tips = tips
-    oversight.keptWorktrees = { [autopilot] in autopilot.finishedPullRequests }
     let onboarding = Onboarding(environment: environment, cli: cli, actions: actions)
     self.onboarding = onboarding
     DispatchQueue.main.async {
@@ -274,6 +306,7 @@ struct StimDesktopApp: App {
         .keyboardShortcut("b", modifiers: [.command, .shift])
       }
       CommandGroup(replacing: .help) {
+        Button("Discover Stim") { OpenRequests.shared.showDiscover() }
         Button("Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }
         Button("Stim Tutorial\u{2026}") { OpenRequests.shared.showTutorial() }
         Divider()
@@ -367,6 +400,9 @@ struct NavigationCommands: Commands {
         .disabled(navigation == nil)
       Button("Machines") { navigation?.go(.machine) }
         .keyboardShortcut("4", modifiers: .command)
+        .disabled(navigation == nil)
+      Button("Builds") { navigation?.go(.builds) }
+        .keyboardShortcut("5", modifiers: .command)
         .disabled(navigation == nil)
     }
   }

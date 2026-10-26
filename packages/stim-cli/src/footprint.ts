@@ -1,7 +1,9 @@
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compiledHelper, configDir } from '@stim-cli/core';
+import { compiledHelper, configDir, type StimContext } from '@stim-cli/core';
 import { getExecutor } from './exec.ts';
+import { runOperationFile, runOperationFileQuiet } from './engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 
 const SOURCE = 'stim-footprint.swift';
 const COMPILE_TIMEOUT_MS = 120_000;
@@ -13,9 +15,15 @@ function helperSource(): string {
   return join(dirname(here), SOURCE);
 }
 
-async function buildHelper(): Promise<string | null> {
+async function buildHelper(operation?: StimContext): Promise<string | null> {
   const exec = getExecutor();
-  if (!exec.runFileQuiet('xcode-select', ['-p'], { timeoutMs: READ_TIMEOUT_MS })) return null;
+  const developer = operation
+    ? await runOperationFileQuiet(operation, exec, 'xcode-select', ['-p'], {
+        timeoutMs: READ_TIMEOUT_MS,
+        cwd: operation.cwd,
+      })
+    : exec.runFileQuiet('xcode-select', ['-p'], { timeoutMs: READ_TIMEOUT_MS });
+  if (!developer) return null;
   const source = helperSource();
   try {
     return await compiledHelper({
@@ -23,13 +31,24 @@ async function buildHelper(): Promise<string | null> {
       name: 'stim-footprint',
       inputs: [source],
       version: '',
+      prune: !operation,
       compile: async (output) => {
-        await exec.runFileAsync('xcrun', ['swiftc', '-O', '-swift-version', '5', '-o', output, source], {
-          timeoutMs: COMPILE_TIMEOUT_MS,
-        });
+        await runOperationFile(
+          operation,
+          exec,
+          'xcrun',
+          ['swiftc', '-O', '-swift-version', '5', '-o', output, source],
+          {
+            timeoutMs: COMPILE_TIMEOUT_MS,
+            cwd: operation?.cwd,
+          },
+        );
       },
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    operation?.signal.throwIfAborted();
     return null;
   }
 }
@@ -41,11 +60,12 @@ let built: { home: string; promise: Promise<string | null> } | null = null;
 let failure: { home: string; nextRetryAt: number; backoffMs: number } | null = null;
 
 /** The `stim-footprint` helper, compiled on first use. A success is kept for the process's life; a failure retries after a doubling backoff instead of being pinned forever. */
-function footprintHelper(): Promise<string | null> {
+function footprintHelper(operation?: StimContext): Promise<string | null> {
+  if (operation) return buildHelper(operation);
   const home = configDir();
   if (built?.home === home) return built.promise;
   if (failure?.home === home && Date.now() < failure.nextRetryAt) return Promise.resolve(null);
-  const promise = buildHelper().then((helper) => {
+  const promise = buildHelper(operation).then((helper) => {
     if (helper === null) {
       const backoffMs =
         failure?.home === home ? Math.min(failure.backoffMs * 2, RETRY_BACKOFF_MAX_MS) : RETRY_BACKOFF_INITIAL_MS;
@@ -70,8 +90,15 @@ function parseFootprints(output: string): Map<number, number> {
 }
 
 /** Every readable process's physical footprint in bytes, or null when the helper is unavailable or fails. */
-export async function readFootprints(): Promise<Map<number, number> | null> {
-  const helper = await footprintHelper();
-  const output = helper ? getExecutor().runFileQuiet(helper, [], { timeoutMs: READ_TIMEOUT_MS }) : null;
+export async function readFootprints(operation?: StimContext): Promise<Map<number, number> | null> {
+  const helper = await footprintHelper(operation);
+  const output = helper
+    ? operation
+      ? await runOperationFileQuiet(operation, getExecutor(), helper, [], {
+          timeoutMs: READ_TIMEOUT_MS,
+          cwd: operation.cwd,
+        })
+      : getExecutor().runFileQuiet(helper, [], { timeoutMs: READ_TIMEOUT_MS })
+    : null;
   return output === null ? null : parseFootprints(output);
 }

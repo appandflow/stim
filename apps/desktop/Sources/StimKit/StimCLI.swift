@@ -18,7 +18,7 @@ public struct StimCLI: Sendable {
       case .notFound:
         return "Could not find the stim executable. Install it globally, set STIM_BIN, or choose it in Settings."
       case .toolNotFound(let name):
-        return "Could not find \(name) on the login shell's PATH. Install Node.js 22.12 or later from nodejs.org, then try again."
+        return "Could not find \(name) on Stim Desktop's PATH. Install Node.js 22.12 or later from nodejs.org, then try again."
       case .exited(let code, let stderr):
         return stderr.isEmpty ? "stim exited with status \(code)." : "stim exited with status \(code): \(stderr)"
       case .timedOut(let seconds):
@@ -70,7 +70,7 @@ public struct StimCLI: Sendable {
     StimHome.path(environment: environment)
   }
 
-  public static let minimumVersion = SemanticVersion("1.11.0")!
+  public static let minimumVersion = SemanticVersion("1.21.0")!
 
   /// What `stim --version` printed, or nil when stim is missing, fails to start, or exits non-zero.
   public func versionOutput() async -> String? {
@@ -81,101 +81,17 @@ public struct StimCLI: Sendable {
     _ = try await run(["guide", "tutorial"])
   }
 
-  /// The raw `stim doctor --json` output for a diagnostics report, or why it could not run.
-  public func doctorJSONText(cwd: String) async -> String {
-    do {
-      return String(decoding: try await run(["doctor", "--json"], cwd: cwd), as: UTF8.self)
-    } catch {
-      return "stim doctor failed: \(error.localizedDescription)"
-    }
-  }
-
-  public func status() async throws -> StatusPayload {
-    try decodeReporting(StatusPayload.self, from: await run(["status", "--json"]), source: .cli, diagnostics: diagnostics)
-  }
-
-  public func stats(workspace: String) async throws -> ProjectStats {
-    try decodeReporting(
-      ProjectStats.self, from: await run(["stats", "--json"], cwd: workspace), source: .cli, diagnostics: diagnostics)
-  }
-
-  /// `stim stats --json` in the home directory, where it reports this Mac's machine-wide part only.
-  public func machineStats() async throws -> MachineStats {
-    try decodeReporting(
-      MachineStats.self, from: await run(["stats", "--json"], cwd: NSHomeDirectory()), source: .cli, diagnostics: diagnostics)
-  }
-
-  /// `stim <platform> --plan --json` in `workspace`: what the next build would find. It builds nothing.
-  public func plan(platform: String, workspace: String) async throws -> BuildPlanOutcome {
-    let args = [platform, "--plan", "--json"]
-    let (status, data, stderr) = try await execute(args, cwd: workspace)
-    if status == 0 { return .plan(try decodeReporting(BuildPlan.self, from: data, source: .cli, diagnostics: diagnostics)) }
-    guard let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: data) else {
-      throw exitFailure(args, status: status, stdout: data, stderr: stderr)
-    }
-    return .refused(refusal)
-  }
-
-  /// `stim gc --json` without `--delete` only reports.
-  public func gcReport() async throws -> GcReport {
-    try decodeReporting(GcReport.self, from: await run(["gc", "--json"]), source: .cli, diagnostics: diagnostics)
-  }
-
   /// `stim doctor --json` in `cwd`, which reports and never repairs without `--fix`.
   public func doctor(cwd: String) async throws -> DoctorReport {
     try decodeReporting(
       DoctorReport.self, from: await run(["doctor", "--json"], cwd: cwd), source: .cli, diagnostics: diagnostics)
   }
 
-  /// The `remote.machines` states from `stim doctor --json --platform ios` in `cwd`. With `ask`, `--fix` also asks
-  /// each named machine this Mac has no pairing with for build access, and again one that revoked it; the iOS
-  /// platform keeps `--fix` from cleaning Android build state in that checkout.
-  public func buildMachines(cwd: String, ask: Bool) async throws -> [BuildMachineStatus]? {
-    try await machineAccess(cwd: cwd, ask: ask).remoteMachines
-  }
-
-  /// Both build and device-host access states. Extra environment applies only to this doctor process.
-  public func machineAccess(
-    cwd: String, ask: Bool, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
-  ) async throws -> DoctorReport {
-    let args = ["doctor", "--json", "--platform", "ios"] + (ask ? ["--fix"] : [])
-    return try decodeReporting(
-      DoctorReport.self,
-      from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout ?? (ask ? 120 : 30)),
-      source: .cli, diagnostics: diagnostics
-    )
-  }
-
-  /// `stim settings --json` in `cwd`: every setting with its origin and layers.
-  public func settings(cwd: String) async throws -> SettingsPayload {
-    try decodeReporting(
-      SettingsPayload.self, from: await run(["settings", "--json"], cwd: cwd), source: .cli, diagnostics: diagnostics)
-  }
-
-  /// `stim settings set` or, with a nil value, `stim settings unset`, in `cwd`.
-  /// A refusal is returned rather than thrown, with the CLI's code and message.
-  public func writeSetting(_ key: String, value: String?, scope: SettingScope, cwd: String) async throws
-    -> SettingsWriteResult
-  {
-    let args =
-      value.map { ["settings", "set", key, $0] } ?? ["settings", "unset", key]
-    let fullArgs = args + ["--scope", scope.rawValue, "--json"]
-    let (status, data, stderr) = try await execute(fullArgs, cwd: cwd)
-    if status == 0 {
-      return .written(
-        try decodeReporting(SettingsWritePayload.self, from: data, source: .cli, diagnostics: diagnostics).setting)
-    }
-    guard let refusal = try? JSONDecoder().decode(SettingsRefusal.self, from: data) else {
-      throw exitFailure(fullArgs, status: status, stdout: data, stderr: stderr)
-    }
-    return .refused(refusal)
-  }
-
   func run(
-    _ args: [String], cwd: String? = nil, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
+    _ args: [String], cwd: String? = nil, timeout: TimeInterval? = nil
   ) async throws -> Data {
     let (status, data, stderr) = try await execute(
-      args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout)
+      args, cwd: cwd, timeout: timeout)
     guard status == 0 else { throw exitFailure(args, status: status, stdout: data, stderr: stderr) }
     return data
   }
@@ -187,7 +103,7 @@ public struct StimCLI: Sendable {
   }
 
   private func execute(
-    _ args: [String], cwd: String?, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
+    _ args: [String], cwd: String?, timeout: TimeInterval? = nil
   ) async throws -> (
     Int32, Data, String
   ) {
@@ -203,7 +119,7 @@ public struct StimCLI: Sendable {
     diagnostics.breadcrumb("cli", "start \(name)")
     let startedAt = Date()
     let log = DebugLog.CLIRun(tool: "stim", arguments: args, cwd: cwd)
-    var environment = environment.merging(extraEnvironment) { _, extra in extra }
+    var environment = environment
     environment["STIM_RUN_ID"] = log.runID
     var request = ProcessRequest(
       command.program, command.arguments, cwd: cwd, environment: environment, timeout: timeout)

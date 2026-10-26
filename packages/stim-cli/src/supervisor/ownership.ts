@@ -38,6 +38,8 @@ export function resolveSupervisorTarget({
   if (!pid) return { status: 'none' };
 
   if (statePid && recordPid && statePid !== recordPid) {
+    const gone = (entry?: SupervisorStateRecord | null) => ['gone', 'different'].includes(inspectIdentity(entry));
+    if (gone(state) && gone(record)) return { status: 'stale', pid };
     return {
       status: 'unverified',
       pid,

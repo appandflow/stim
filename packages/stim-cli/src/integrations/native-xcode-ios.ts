@@ -1,6 +1,9 @@
+import type { StimContext } from '@stim-cli/core';
+import { processContext } from '../cli-operation.ts';
 import { existsSync } from 'node:fs';
-import { iosToolchain } from '../offload/toolchain.ts';
+import { iosToolchainAsync } from '../offload/toolchain.ts';
 import { nativeTransferRefusal } from '../offload/client.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
 import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.ts';
@@ -23,16 +26,17 @@ import {
   HEARTBEAT_INTERVAL_MS,
   parseSwiftVersion,
   parseXcodeMajor,
+  readBundleId,
 } from '../engine/xcode.ts';
 import { readPodState, podsAreStale, runPodInstall, runCaptured } from '../engine/deps.ts';
 import { gateProfileForDevice } from '../engine/ios-signing.ts';
 import { statsProjectKey } from '../engine/stats.ts';
 import { sharedCompilationCache } from '../workspace/paths.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { repoRootAsync } from '../workspace/worktree.ts';
 import {
   remoteIosSetting,
   resolveCacheProviderConfig,
-  resolveSettings,
+  type ResolvedProjectSettings,
   settingShapeErrors,
 } from '../workspace/settings.ts';
 import { artifactCachePolicy, resolveOptimizations } from '../optimizations.ts';
@@ -48,16 +52,45 @@ import type { ProjectDoctor } from './project-doctor.ts';
 import type { NativeInputSnapshot } from './native-inputs.ts';
 import type { IosCommandOptions } from '../commands/ios/types.ts';
 
-function toolchain(sdk: string): Record<string, string> {
+async function toolchain(sdk: string, context?: StimContext): Promise<Record<string, string>> {
   const executor = getExecutor();
+  const env = context?.env ?? process.env;
+  const signal = context?.signal;
+  const childEnv = Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+  const omitEnv = Object.keys(process.env).filter((name) => env[name] === undefined);
+  const probe = async (file: string, args: string[]) => {
+    signal?.throwIfAborted();
+    let cancel: (() => void) | undefined;
+    try {
+      return await executor.runFileAsync(file, args, {
+        timeoutMs: 10_000,
+        env: childEnv,
+        omitEnv,
+        cwd: context?.cwd,
+        onSpawn(child) {
+          if (!signal) return;
+          cancel = () => {
+            child.kill('SIGKILL');
+          };
+          signal.addEventListener('abort', cancel, { once: true });
+          if (signal.aborted) cancel();
+        },
+      });
+    } finally {
+      if (cancel) signal?.removeEventListener('abort', cancel);
+      signal?.throwIfAborted();
+    }
+  };
   const identity = {
-    xcode: executor.runFile('xcodebuild', ['-version'], { timeoutMs: 10_000 }),
-    sdk: executor.runFile('xcodebuild', ['-version', '-sdk', sdk], { timeoutMs: 10_000 }),
-    swift: executor.runFile('xcrun', ['swift', '--version'], { timeoutMs: 10_000 }),
-    clang: executor.runFile('xcrun', ['clang', '--version'], { timeoutMs: 10_000 }),
-    developer: executor.runFile('xcode-select', ['-p'], { timeoutMs: 10_000 }),
-    developerOverride: process.env.DEVELOPER_DIR ?? '',
-    toolchains: process.env.TOOLCHAINS ?? '',
+    xcode: await probe('xcodebuild', ['-version']),
+    sdk: await probe('xcodebuild', ['-version', '-sdk', sdk]),
+    swift: await probe('xcrun', ['swift', '--version']),
+    clang: await probe('xcrun', ['clang', '--version']),
+    developer: await probe('xcode-select', ['-p']),
+    developerOverride: env.DEVELOPER_DIR ?? '',
+    toolchains: env.TOOLCHAINS ?? '',
   };
   if (
     !identity.xcode.trim() ||
@@ -80,11 +113,8 @@ function refusal(error: unknown) {
       };
 }
 
-function settingsContext(root: string) {
-  return { projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) };
-}
-
 function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRecipe {
+  const env = context.operation?.env ?? process.env;
   const configuration = context.configuration ?? 'Debug';
   let selected = selectNativeXcodeProject(root, context.buildScheme, configuration);
   let tools: Record<string, string> | null = null;
@@ -107,7 +137,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       throw new IosRecipeRefusal(refusal(error));
     }
   };
-  const read = () => {
+  const read = async () => {
     if (!tools) return { cacheIneligible: ineligible ?? 'Xcode toolchain identity is unavailable' };
     reselect();
     return nativeXcodeInputSnapshot(
@@ -119,18 +149,21 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
         toolchain: tools,
         optimizations: context.optimizations,
       },
-      repoRoot(root) ?? root,
+      env,
+      (await repoRootAsync(root, { env, signal: context.operation?.signal })) ?? root,
+      context.operation?.signal,
     );
   };
   return {
     async identity() {
       try {
-        tools = toolchain(context.target.sdk);
+        tools = await toolchain(context.target.sdk, context.operation);
       } catch (error) {
+        context.operation?.signal.throwIfAborted();
         ineligible = `Xcode toolchain identity is unavailable: ${(error as Error).message}`;
         return { cacheIneligible: ineligible };
       }
-      const value = read();
+      const value = await read();
       if ('cacheIneligible' in value) {
         ineligible = value.cacheIneligible;
         return value;
@@ -138,7 +171,12 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       snapshot = value;
       return identity(value);
     },
-    cache: () => filesystemBuildCapability({ sources: snapshot ? nativeXcodeSources(snapshot) : null }),
+    cache: () =>
+      filesystemBuildCapability({
+        context: context.operation,
+        sources: snapshot ? nativeXcodeSources(snapshot) : null,
+        readAppId: (path) => readBundleId(path),
+      }),
     async prepare(beforePrepare) {
       const pods = readPodState(root, root);
       const state = podsAreStale(pods.lockText, pods.manifestText);
@@ -146,6 +184,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
         beforePrepare();
         context.step('pods');
         const result = await runPodInstall(root, context.logWriter(), {
+          onHeartbeat: context.note,
           directory: root,
           estimateMs: context.estimates().podsMs,
         });
@@ -175,7 +214,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
             nativeXcodePackages(root),
           ],
           cwd: root,
-          env: { ...process.env, NSUnbufferedIO: 'YES', FORCE_COLOR: '0' },
+          env: { ...env, NSUnbufferedIO: 'YES', FORCE_COLOR: '0' },
           spawn: (file, args, opts) => getExecutor().spawn(file, args, opts),
           now: Date.now,
           heartbeatMs: HEARTBEAT_INTERVAL_MS,
@@ -195,7 +234,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       }
     },
     async reconcile() {
-      const current = snapshot && !mutations.length ? snapshot : read();
+      const current = snapshot && !mutations.length ? snapshot : await read();
       if ('cacheIneligible' in current) {
         ineligible = current.cacheIneligible;
         snapshot = null;
@@ -209,10 +248,11 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
     async validate() {
       if (!snapshot) return null;
       try {
-        tools = toolchain(context.target.sdk);
-        const after = read();
+        tools = await toolchain(context.target.sdk, context.operation);
+        const after = await read();
         return !('cacheIneligible' in after) && after.hash === snapshot.hash ? identity(snapshot) : null;
       } catch {
+        context.operation?.signal.throwIfAborted();
         return null;
       }
     },
@@ -225,13 +265,20 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
     },
     async materialize(path) {
       if (context.device) {
-        const gate = gateProfileForDevice({ appPath: path, udid: context.device.udid, configuration });
+        const gate = await gateProfileForDevice({
+          appPath: path,
+          udid: context.device.udid,
+          configuration,
+          env: context.operation?.env,
+          signal: runCancellationSignal(context.operation) ?? context.operation?.signal,
+        });
         if (!gate.ok) throw new IosRecipeRefusal({ code: gate.code, message: gate.reason, remedy: gate.remedy });
       }
       return path;
     },
     compile: () =>
       buildXcode({
+        context: context.operation,
         root,
         project: selected.container,
         scheme: selected.scheme,
@@ -243,6 +290,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
         arch: context.target.arch,
         logWriter: context.logWriter(),
         estimateMs: context.estimates().coldBuildMs,
+        onHeartbeat: context.note,
         extraArgs: nativeXcodeHasPackages(selected)
           ? ['-clonedSourcePackagesDirPath', nativeXcodePackages(root), '-disableAutomaticPackageResolution']
           : [],
@@ -255,7 +303,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
             xcodeMajor: parseXcodeMajor(tools?.xcode),
             swiftVersion: parseSwiftVersion(tools?.swift),
             swiftCacheCompatible:
-              (!process.env.SWIFT_ENABLE_EXPLICIT_MODULES || process.env.SWIFT_ENABLE_EXPLICIT_MODULES === 'YES') &&
+              (!env.SWIFT_ENABLE_EXPLICIT_MODULES || env.SWIFT_ENABLE_EXPLICIT_MODULES === 'YES') &&
               !selected.projects.some((project) =>
                 [...project.objects.values()].some((entry) => {
                   if (entry.isa !== 'XCBuildConfiguration' || pbxString(entry.name) !== configuration) return false;
@@ -269,6 +317,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
           if (settings.length && context.optimizations.compilationCache)
             register({
               dir: casPath,
+              registeredBy: context.operation?.cwd ?? root,
               name: 'Xcode compilation cache',
               prune: 'atomic',
               note: 'shared Xcode compilation cache',
@@ -288,9 +337,9 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       return { reason: result.reason, diff: null };
     },
     untrackedLine: () => null,
-    legacyCache: null,
+    expoCache: null,
     offload: {
-      context: () => {
+      context: async () => {
         const runtime = context.target.sdk === 'iphonesimulator' ? context.target.offloadRuntime() : null;
         return {
           runtime,
@@ -304,14 +353,18 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
                   ? 'no simulator runtime is available for worker selection'
                   : !snapshot
                     ? 'the native inputs have no verified identity'
-                    : nativeTransferRefusal(repoRoot(root) ?? root, snapshot)),
+                    : await nativeTransferRefusal(
+                        (await repoRootAsync(root, { env, signal: context.operation?.signal })) ?? root,
+                        snapshot,
+                        runCancellationSignal(context.operation) ?? context.operation?.signal,
+                      )),
         };
       },
-      target: (runtime) => ({
+      target: async (runtime) => ({
         platform: 'ios',
         native: 'xcode',
         local: {
-          ...iosToolchain(root, 'xcode'),
+          ...(await iosToolchainAsync(root, null)),
           ...(context.target.hostedArchitecture
             ? {
                 arch: context.target.hostedArchitecture === 'x86_64' ? 'x64' : 'arm64',
@@ -334,18 +387,22 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
         };
       },
       unchanged: async () => {
-        const current = read();
+        const current = await read();
         return snapshot !== null && !('cacheIneligible' in current) && current.hash === snapshot.hash;
       },
     },
   };
 }
 
-async function planNativeXcode(root: string, options: IosCommandOptions) {
+async function planNativeXcode(
+  root: string,
+  options: IosCommandOptions,
+  resolved: ResolvedProjectSettings,
+  operation: StimContext = processContext(root),
+) {
   if (options.easProfile !== undefined) return { refusal: planFlagRefusal('--eas-profile') };
   try {
-    const context = settingsContext(root);
-    const settings = resolveSettings(context);
+    const { context, settings } = resolved;
     const errors = settingShapeErrors(settings);
     if (errors.length) throw new NativeXcodeError(errors.join('; '), 'Correct the project settings and retry.');
     if (remoteIosSetting(settings))
@@ -354,7 +411,7 @@ async function planNativeXcode(root: string, options: IosCommandOptions) {
         'Unset ios.remote to plan a local build, or run stim ios without --plan.',
       );
     const layers = DEFAULT_DEPS.settingsLayers(context);
-    const modelRefusal = deviceModelRefusal({
+    const modelRefusal = await deviceModelRefusal({
       slot: options.slot ?? 'default',
       deviceTypeFlag: options.deviceType,
       runtimeFlag: options.runtime,
@@ -365,6 +422,7 @@ async function planNativeXcode(root: string, options: IosCommandOptions) {
       physical: false,
       remoteBackend: null,
       listRuntimes: DEFAULT_DEPS.listIosRuntimes,
+      signal: operation?.signal,
     });
     if (modelRefusal) return { refusal: modelRefusal };
     const configuration = resolveConfiguration(options.configuration, settings) ?? 'Debug';
@@ -376,16 +434,18 @@ async function planNativeXcode(root: string, options: IosCommandOptions) {
       hostArch: process.arch === 'arm64' ? 'arm64' : 'x86_64',
       configuration,
     });
-    const snapshot = nativeXcodeInputSnapshot(
+    const snapshot = await nativeXcodeInputSnapshot(
       root,
       selection,
       {
         sdk: 'iphonesimulator',
         architecture,
-        toolchain: toolchain('iphonesimulator'),
+        toolchain: await toolchain('iphonesimulator', operation),
         optimizations: optimizations.ios,
       },
+      operation?.env ?? process.env,
       context.repoRoot ?? root,
+      operation?.signal,
     );
     if ('cacheIneligible' in snapshot)
       throw new NativeXcodeError(
@@ -412,9 +472,16 @@ async function planNativeXcode(root: string, options: IosCommandOptions) {
         providerConfig: resolveCacheProviderConfig(context),
         expoRemote: null,
       },
-      { ...DEFAULT_DEPS, planPrebuild: () => 'none', note: (line) => console.error(line) },
+      {
+        ...DEFAULT_DEPS,
+        operation,
+        planPrebuild: () => 'none',
+        note: (line) => operation.output('stderr', `${line}\n`),
+      },
     );
   } catch (error) {
+    if (error instanceof Error && 'reportCleanup' in error) throw error;
+    operation?.signal.throwIfAborted();
     return { refusal: refusal(error) };
   }
 }
@@ -425,7 +492,7 @@ export function nativeXcodeIosProject(root: string): IosProject {
     targets: ['simulator', 'physical', 'hosted'],
     eas: false,
     runtimeKind: () => 'process',
-    plan: (options) => planNativeXcode(root, options),
+    plan: (options, resolved, operation) => planNativeXcode(root, options, resolved, operation),
     bundleId: () => null,
     schemeProblem(scheme, configuration) {
       try {
