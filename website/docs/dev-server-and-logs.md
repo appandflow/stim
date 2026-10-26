@@ -159,8 +159,10 @@ Chrome, a device driver other than agent-device, a live agent-device claim whose
 session activity Stim cannot find, or device activity, an emulator list or an
 emulator's AVD name that Stim cannot read keeps the workspace. A stale offline
 emulator in `adb devices` has no readable AVD name; `adb kill-server` clears it. Maintenance logs each stop with the idle time and
-each workspace kept past the window with its reason (`stim logs --source maintenance`), and
-`stim status` shows the dev server stopped by automatic maintenance. The next
+each workspace kept past the window with its reason (`stim logs --source maintenance`).
+The port is released, so `stim status` shows the workspace idle as after
+`stim stop`, and the timeline's `supervisor_stopped` line names automatic
+maintenance and the idle time as the requester. The next
 `stim start`, `stim ios` or `stim android` starts it again. A stop never
 targets the workspace of the command that started the pass, `stim gc --delete`
 included; a pass that a dev server supervisor or `stim status --watch` starts on

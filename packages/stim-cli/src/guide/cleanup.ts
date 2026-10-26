@@ -73,8 +73,9 @@ the workspace;
 the check decides again under the native-run and metro-start locks. Each stop
 is a maintenance_action line naming the idle time (gc --delete records itself
 as the requester), each workspace kept past the window a maintenance_skip line
-with the reason, and status shows the dev server as stopped by automatic
-maintenance. The next start, ios or android starts it
+with the reason. The port is released, so status shows the workspace idle as
+after stim stop, and the supervisor_stopped line in metro.ndjson names
+automatic maintenance and the idle time as the requester. The next start, ios or android starts it
 again. An owned emulator the activity check missed keeps the workspace while
 adb lists it, and so does any emulator adb lists without an AVD name, such as
 a stale offline entry that adb kill-server clears. A dev server that may still run after its supervisor
