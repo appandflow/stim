@@ -22,8 +22,8 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createHttpServer, get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
 import { createHash, createHmac } from 'node:crypto';
-import { createServer as createNetServer } from 'node:net';
-import { homedir, tmpdir, totalmem } from 'node:os';
+import { connect as connectNet, createServer as createNetServer, type Socket } from 'node:net';
+import { homedir, networkInterfaces, tmpdir, totalmem } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -94,6 +94,7 @@ import {
   type ConnectOptions,
 } from './noise-client.ts';
 import { watchTailscale, type TailscaleState } from '@stim-cli/transport-tailscale';
+import { localTransport } from '@stim-cli/transport-local';
 import { createRequestLog } from '../src/request-log.ts';
 import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceName, workspaceStateDir } from '@stim-cli/core';
@@ -436,6 +437,8 @@ async function start(
     whoisDelayMs?: number;
     authTimeoutMs?: number;
     maxAuthFailures?: number;
+    pendingConnections?: ServerOptions['pendingConnections'];
+    headersTimeoutMs?: number;
     env?: Record<string, string>;
     logLimits?: ServerOptions['logLimits'];
     commandLimits?: ServerOptions['commandLimits'];
@@ -501,6 +504,8 @@ async function start(
     listenRetryMs: overrides.listenRetryMs,
     authTimeoutMs: overrides.authTimeoutMs,
     maxAuthFailures: overrides.maxAuthFailures,
+    pendingConnections: overrides.pendingConnections,
+    headersTimeoutMs: overrides.headersTimeoutMs,
     logLimits: overrides.logLimits,
     commandLimits: overrides.commandLimits,
     actionLimits: overrides.actionLimits,
@@ -3460,41 +3465,140 @@ describe('unauthenticated connections', () => {
   });
 });
 
+const lanIp = Object.values(networkInterfaces())
+  .flat()
+  .find(
+    (info) =>
+      info?.family === 'IPv4' && !info.internal && /^(10|192\.168|172\.(1[6-9]|2\d|3[01]))\./.test(info.address),
+  )?.address;
+
+describe.skipIf(!lanIp)('the local network listener', () => {
+  const host = lanIp ?? '';
+  const lan = () => [localTransport({ entries: () => [host] })];
+  const sockets: Socket[] = [];
+  afterEach(() => {
+    for (const socket of sockets.splice(0)) socket.destroy();
+  });
+  const raw = (port: number) =>
+    new Promise<{ socket: Socket; closed: Promise<void> }>((resolve, reject) => {
+      const socket = connectNet(port, host);
+      sockets.push(socket);
+      const closed = once(socket, 'close').then(() => undefined);
+      socket.once('connect', () => resolve({ socket, closed }));
+      socket.once('error', reject);
+    });
+  const stillOpen = (closed: Promise<void>) =>
+    Promise.race([closed.then(() => false), new Promise((resolve) => setTimeout(() => resolve(true), 300))]);
+
+  it('holds a bounded number of unauthenticated connections per address, and an authenticated one stops counting', async () => {
+    const port = await start({ transports: lan(), pendingConnections: { max: 8, perPeer: 2 } });
+    expect(server?.addresses.map((address) => address.host)).toContain(host);
+    const first = await raw(port);
+    const second = await raw(port);
+    const refused = await raw(port);
+    await refused.closed;
+    expect(await stillOpen(second.closed)).toBe(true);
+
+    first.socket.destroy();
+    await first.closed;
+    const { token } = createPairingToken(Date.now(), capabilitiesFor(false));
+    const phone = await noiseConnect(`ws://${host}:${port}`, { secret: token });
+    expect(await phone.request('hello', { client: CLIENT })).toHaveProperty('result.device');
+    const third = await raw(port);
+    expect(await stillOpen(third.closed)).toBe(true);
+    const over = await raw(port);
+    await over.closed;
+    phone.socket.close();
+  });
+
+  it('closes a connection that sends no request in time', async () => {
+    const port = await start({ transports: lan(), headersTimeoutMs: 200 });
+    const silent = await raw(port);
+    await expect(silent.closed).resolves.toBeUndefined();
+  });
+
+  it('refuses a key it has no record for, and tells a peer only its version', async () => {
+    const port = await start({ transports: lan() });
+    const stranger = await noiseConnect(`ws://${host}:${port}`);
+    expect(await stranger.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
+    const peer = await fetch(`http://${host}:${port}/health`);
+    expect(await peer.json()).toEqual({ version: '1.2.3' });
+    expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toMatchObject({
+      lan: { addresses: [host], port },
+    });
+  });
+});
+
 describe('upgradeFromWebPage', () => {
-  it.each([
-    ['Desktop or the CLI on loopback', true, { host: '127.0.0.1:7787' }, false],
-    ['a simulator app on loopback', true, { host: '127.0.0.1:7787', origin: 'http://127.0.0.1:7787' }, false],
-    ['an app on localhost', true, { host: 'localhost:7787', origin: 'http://localhost:7787' }, false],
-    ['an app on IPv6 loopback', true, { host: '[::1]:7787', origin: 'http://[::1]:7787' }, false],
-    ['a cross-site page on loopback', true, { host: '127.0.0.1:7787', origin: 'https://attacker.example' }, true],
-    ['a page on another local port', true, { host: '127.0.0.1:7787', origin: 'http://127.0.0.1:8081' }, true],
-    ['a DNS-rebound page', true, { host: 'attacker.example:7787', origin: 'http://attacker.example:7787' }, true],
-    ['an https origin on loopback', true, { host: '127.0.0.1:7787', origin: 'https://127.0.0.1:7787' }, true],
-    ['an opaque origin', true, { host: '127.0.0.1:7787', origin: 'null' }, true],
-    ['an origin without a host', true, { origin: 'http://127.0.0.1:7787' }, true],
-    ['a loopback browser fetch', true, { host: '127.0.0.1:7787', 'sec-fetch-site': 'same-origin' }, true],
-    ['the CLI over the tailnet', false, { host: 'mac.tail.ts.net:7443' }, false],
+  it.each<[string, 'local' | 'proxied' | 'direct', Record<string, string>, boolean]>([
+    ['Desktop or the CLI on loopback', 'local', { host: '127.0.0.1:7787' }, false],
+    ['a simulator app on loopback', 'local', { host: '127.0.0.1:7787', origin: 'http://127.0.0.1:7787' }, false],
+    ['an app on localhost', 'local', { host: 'localhost:7787', origin: 'http://localhost:7787' }, false],
+    ['an app on IPv6 loopback', 'local', { host: '[::1]:7787', origin: 'http://[::1]:7787' }, false],
+    ['a cross-site page on loopback', 'local', { host: '127.0.0.1:7787', origin: 'https://attacker.example' }, true],
+    ['a page on another local port', 'local', { host: '127.0.0.1:7787', origin: 'http://127.0.0.1:8081' }, true],
+    ['a DNS-rebound page', 'local', { host: 'attacker.example:7787', origin: 'http://attacker.example:7787' }, true],
+    ['an https origin on loopback', 'local', { host: '127.0.0.1:7787', origin: 'https://127.0.0.1:7787' }, true],
+    ['an opaque origin', 'local', { host: '127.0.0.1:7787', origin: 'null' }, true],
+    ['an origin without a host', 'local', { origin: 'http://127.0.0.1:7787' }, true],
+    ['a loopback browser fetch', 'local', { host: '127.0.0.1:7787', 'sec-fetch-site': 'same-origin' }, true],
+    ['the CLI over the tailnet', 'proxied', { host: 'mac.tail.ts.net:7443' }, false],
     [
       'a phone over the tailnet',
-      false,
+      'proxied',
       { host: 'mac.tail.ts.net:7443', origin: 'https://mac.tail.ts.net:7443' },
       false,
     ],
-    ['an iOS phone on port 443', false, { host: 'mac.tail.ts.net:443', origin: 'https://mac.tail.ts.net' }, false],
-    ['an Android phone on port 443', false, { host: 'mac.tail.ts.net', origin: 'https://mac.tail.ts.net:443' }, false],
-    ['a phone on an IPv6 address', false, { host: '[fd7a::1]:7443', origin: 'https://[fd7a::1]:7443' }, false],
-    ['a page on another tailnet host', false, { host: 'mac.tail.ts.net:7443', origin: 'https://evil.example' }, true],
-    ['a page on another IPv6 host', false, { host: '[fd7a::1]:7443', origin: 'https://[fd7a::2]:7443' }, true],
-    ['a page on another port', false, { host: 'mac.tail.ts.net:7443', origin: 'https://mac.tail.ts.net' }, true],
-    ['an http origin over the tailnet', false, { host: '100.64.0.1:7787', origin: 'http://100.64.0.1:7787' }, true],
+    ['an iOS phone on port 443', 'proxied', { host: 'mac.tail.ts.net:443', origin: 'https://mac.tail.ts.net' }, false],
+    [
+      'an Android phone on port 443',
+      'proxied',
+      { host: 'mac.tail.ts.net', origin: 'https://mac.tail.ts.net:443' },
+      false,
+    ],
+    ['a phone on an IPv6 address', 'proxied', { host: '[fd7a::1]:7443', origin: 'https://[fd7a::1]:7443' }, false],
+    [
+      'a page on another tailnet host',
+      'proxied',
+      { host: 'mac.tail.ts.net:7443', origin: 'https://evil.example' },
+      true,
+    ],
+    ['a page on another IPv6 host', 'proxied', { host: '[fd7a::1]:7443', origin: 'https://[fd7a::2]:7443' }, true],
+    ['a page on another port', 'proxied', { host: 'mac.tail.ts.net:7443', origin: 'https://mac.tail.ts.net' }, true],
+    ['an http origin over the tailnet', 'proxied', { host: '100.64.0.1:7787', origin: 'http://100.64.0.1:7787' }, true],
     [
       'a same-origin browser fetch over the tailnet',
-      false,
+      'proxied',
       { host: 'mac.tail.ts.net:7443', origin: 'https://mac.tail.ts.net:7443', 'sec-fetch-site': 'same-origin' },
       true,
     ],
-  ])('%s', (_name, local, headers, refused) => {
-    expect(upgradeFromWebPage(headers, local)).toBe(refused);
+    ['the CLI on a local network address', 'direct', { host: '10.0.0.92:7787' }, false],
+    [
+      'a phone on a local network address',
+      'direct',
+      { host: '10.0.0.92:7787', origin: 'http://10.0.0.92:7787' },
+      false,
+    ],
+    [
+      'a DNS-rebound page on a local network address',
+      'direct',
+      { host: 'attacker.example:7787', origin: 'http://attacker.example:7787' },
+      true,
+    ],
+    [
+      'a page on another local network host',
+      'direct',
+      { host: '10.0.0.92:7787', origin: 'http://10.0.0.5:7787' },
+      true,
+    ],
+    [
+      'an https origin on a local network address',
+      'direct',
+      { host: '10.0.0.92:7787', origin: 'https://10.0.0.92:7787' },
+      true,
+    ],
+  ])('%s', (_name, via, headers, refused) => {
+    expect(upgradeFromWebPage(headers, via)).toBe(refused);
   });
 });
 

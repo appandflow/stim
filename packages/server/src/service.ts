@@ -184,6 +184,7 @@ interface Health {
   stimHome: string;
   tailscale?: { state: string; dnsName?: string | null; backendState?: string; reason?: string };
   route?: { state: string; port?: number; ports?: number[]; reason?: string };
+  lan?: { addresses: string[]; port: number };
 }
 
 export async function fetchHealth(port: number): Promise<Health | null> {

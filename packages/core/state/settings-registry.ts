@@ -951,6 +951,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       "Whether a machine approved for builds or device hosting here may update this machine's stim-server service to that machine's own stim-server build; releases from npm need no setting",
   },
   {
+    key: 'server.lanAddresses',
+    type: { kind: 'strings' },
+    scopes: MACHINE,
+    default: [],
+    description:
+      "IPv4 addresses or network interface names (such as en0) on which stim-server also accepts machines and phones on the local network, without Tailscale, on its own port. Empty listens on no local network address. Wildcard addresses are refused. Connections there run protocol 2's Noise authentication and encryption, without TLS",
+  },
+  {
     key: 'remote.machines',
     type: { kind: 'strings' },
     scopes: MACHINE,

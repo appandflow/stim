@@ -805,6 +805,32 @@ machine a \`priority\` in its JSON:
 A host reports its own load limit in its device offer; a stim-server older than
 that does not, and this machine's \`server.maxLoadPerCore\` stands in for it.
 
+REMOTE MACHINES ON THE LOCAL NETWORK
+A machine on the same local network, without Tailscale, is named
+\`local:<host>\`: its private IPv4 address or host name, with an optional
+stim-server port (default 7787). On the worker, a person first chooses where
+stim-server listens with the machine setting \`server.lanAddresses\`, a list of
+network interface names or private IPv4 addresses. It defaults to [], which
+listens on no local network address; wildcard, loopback, public and IPv6
+addresses are refused, and the running server applies a change within seconds.
+Then the person runs the setup command \`stim doctor --fix\` prints here:
+
+  stim settings set server.lanAddresses '["en0"]'           # on the worker
+  stim settings set remote.machines '["local:10.0.0.92"]'   # on this machine
+  stim doctor --fix
+
+Every connection runs Stim's Noise handshake, so plain WebSocket carries it
+without TLS, and the address never identifies anyone. Nothing on a local network
+vouches for the worker's key, so \`stim-server setup\` prints the worker's server
+key fingerprint and \`stim doctor --fix\`, run by a person in a terminal, shows
+the fingerprint the worker answered with and pins the key only after they
+confirm it matches. Until then the entry reports key-unconfirmed and is not
+used. Agents never answer that question. Offloaded builds and Release runs on
+hosted devices work there; hosted Debug runs and agent control of hosted apps
+need a tailnet machine, so automatic placement skips a local: machine for them.
+\`stim-server pair\` puts \`ws://<address>:<port>\` in the phone pairing code
+when Tailscale is not running and \`server.lanAddresses\` is set.
+
 Automatic membership is separate from approval. In Desktop Settings > Remote
 Machines, use Builds enabled and Simulators enabled for this machine or a
 configured remote. The equivalent machine settings list the excluded members;

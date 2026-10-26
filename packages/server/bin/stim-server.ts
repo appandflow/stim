@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { hostname } from 'node:os';
+import { hostname, networkInterfaces } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { readHostedSessions } from '@stim-cli/core/state';
@@ -46,6 +46,8 @@ import { startServer } from '../src/server.ts';
 import { readDesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { loadTransport } from '@stim-cli/transport';
+import { localTransport, resolveLanAddresses } from '@stim-cli/transport-local';
+import { readLanAddresses, watchLanAddresses } from '../src/lan.ts';
 import {
   findTailscale,
   serveCommand,
@@ -157,6 +159,9 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
     fail('@stim-cli/transport-tailscale did not create a Tailscale transport');
   const transport = loaded.transport;
   const { state: tailscale } = transport.snapshot();
+  const lanSetting = watchLanAddresses();
+  await Promise.race([lanSetting.ready, new Promise((done) => setTimeout(done, 1000).unref())]);
+  const lan = localTransport({ entries: lanSetting.current });
   const stim = bundledStim();
   let server;
   try {
@@ -172,7 +177,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
       serverVersion: pkg.version,
       env,
       currentEnv,
-      transports: [transport],
+      transports: [transport, lan],
       service: {
         label: serviceManagerOrNull()?.runningLabel(process.env) ?? null,
         node: process.execPath,
@@ -206,10 +211,25 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
       else if (previous.state.state === 'running') console.error('Tailscale stopped.');
       if (state.state === 'running' || previous.state.state === 'running') void announce(state);
     });
+  let lanProblems = '';
+  const announceLan = () => {
+    const { addresses, problems } = lan.lan();
+    const next = problems.join('\n');
+    if (next !== lanProblems && problems.length)
+      for (const problem of problems) console.error(`stim-server: server.lanAddresses: ${problem}.`);
+    lanProblems = next;
+    if (addresses.length)
+      console.log(`local network endpoints: ${addresses.map((host) => `ws://${host}:${port}`).join(', ')}`);
+  };
+  const stopLan = loopbackOnly ? () => {} : lan.watch(announceLan);
+  if (!loopbackOnly) announceLan();
   let shuttingDown = false;
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stopLan();
+    lanSetting.stop();
+    lan.close?.();
     transport.close?.();
     void server
       .close()
@@ -246,9 +266,11 @@ const SCOPE_TEXT: Record<Scope, string> = {
 async function pair(port: number, json: boolean, control: boolean): Promise<void> {
   const binary = findTailscale(process.env);
   const tailscale = await readTailscaleStatus(binary, process.env);
-  let endpoint = `ws://127.0.0.1:${port}`;
+  const [lan] = resolveLanAddresses(await readLanAddresses(), networkInterfaces()).addresses;
+  let endpoint = `ws://${lan ?? '127.0.0.1'}:${port}`;
   let note = tailscaleNote(tailscale);
-  if (note) note = `${note} The endpoint above only works on this machine.`;
+  if (note)
+    note = `${note} The endpoint above only works ${lan ? 'on this local network, while stim-server listens there (server.lanAddresses)' : 'on this machine'}.`;
   if (tailscale.state === 'running' && tailscale.dnsName) {
     const route = await serveRoute(binary, process.env, port, tailscale.ips);
     if (route.state === 'funneled') fail(`refusing to pair. ${routeNote(route, port)}`);

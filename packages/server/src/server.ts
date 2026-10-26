@@ -6,7 +6,7 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http';
-import { connect as connectSocket, type AddressInfo, type Socket } from 'node:net';
+import { connect as connectSocket, isIP, type AddressInfo, type Socket } from 'node:net';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -275,6 +275,10 @@ export interface ServerOptions {
   authTimeoutMs?: number;
   maxAuthFailures?: number;
   failureWindowMs?: number;
+  /** Unauthenticated connections to a network address the server holds at once, overall and per source address. */
+  pendingConnections?: { max: number; perPeer: number };
+  /** How long a connection to a network address has to send its request headers. */
+  headersTimeoutMs?: number;
   requestLog?: RequestLog;
   logLimits?: Partial<LogLimits>;
   commandLimits?: Partial<CommandLimits>;
@@ -346,6 +350,8 @@ interface ServerHealth {
   nativeViewerOpened: boolean;
   /** Present and true when the server serves this machine only, so a paired phone or another machine cannot connect. */
   loopbackOnly?: true;
+  /** The local network addresses the server listens on now, from `server.lanAddresses`; absent when there are none. */
+  lan?: { addresses: string[]; port: number };
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -900,22 +906,43 @@ function serverTransports(options: ServerOptions): { transports: Transport[]; ta
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 /**
- * Whether a WebSocket upgrade comes from a web page. Browsers send `Sec-Fetch-Site` and the page's own `Origin`.
- * React Native derives `Origin` from the ws URL, so an app's `Origin` names the requested host: over `http:` on loopback,
- * and `https:` through `tailscale serve`. SocketRocket omits the brackets of an IPv6 origin, so an iOS app on
- * `ws://[::1]` is refused.
+ * How a connection reached the server: from this machine on loopback, from a tailnet peer through `tailscale serve`
+ * (loopback with `X-Forwarded-For`), or straight to one of the server's own network addresses.
  */
-export function upgradeFromWebPage(headers: IncomingHttpHeaders, local: boolean): boolean {
+type Arrival = 'local' | 'proxied' | 'direct';
+
+function arrival(request: IncomingMessage): Arrival {
+  if (!isLoopback(request.socket.remoteAddress)) return 'direct';
+  return peerAddress(request) === null ? 'local' : 'proxied';
+}
+
+/**
+ * Whether a WebSocket upgrade comes from a web page. Browsers send `Sec-Fetch-Site` and the page's own `Origin`.
+ * React Native derives `Origin` from the ws URL, so an app's `Origin` names the requested host: over `http:` on loopback
+ * and on a local network address, and `https:` through `tailscale serve`. A DNS-rebound page names a host name, so on
+ * loopback the host must be a loopback name and on a network address an IP literal. SocketRocket omits the brackets of
+ * an IPv6 origin, so an iOS app on `ws://[::1]` is refused.
+ */
+export function upgradeFromWebPage(headers: IncomingHttpHeaders, via: Arrival): boolean {
   if (headers['sec-fetch-site'] !== undefined) return true;
   if (headers.origin === undefined) return false;
-  const scheme = local ? 'http:' : 'https:';
+  const scheme = via === 'proxied' ? 'https:' : 'http:';
   try {
     const own = new URL(`${scheme}//${headers.host ?? ''}`);
-    return new URL(headers.origin).origin !== own.origin || (local && !LOOPBACK_HOSTS.has(own.hostname));
+    if (new URL(headers.origin).origin !== own.origin) return true;
+    if (via === 'local') return !LOOPBACK_HOSTS.has(own.hostname);
+    return via === 'direct' && isIP(own.hostname.replace(/^\[|\]$/g, '')) === 0;
   } catch {
     return true;
   }
 }
+
+const MAX_PENDING_CONNECTIONS = 64;
+const MAX_PENDING_PER_PEER = 16;
+const HEADERS_TIMEOUT_MS = 10_000;
+
+/** How many peers a failure limiter remembers; past it, the peer seen longest ago is forgotten first. */
+const MAX_LIMITED_PEERS = 4096;
 
 class FailureLimiter {
   private readonly failures = new Map<string, number[]>();
@@ -939,7 +966,48 @@ class FailureLimiter {
   }
 
   record(key: string, now: number = Date.now()): void {
-    this.failures.set(key, [...this.recent(key, now), now]);
+    const kept = this.recent(key, now);
+    this.failures.delete(key);
+    const oldest = this.failures.keys().next();
+    if (this.failures.size >= MAX_LIMITED_PEERS && !oldest.done) this.failures.delete(oldest.value);
+    this.failures.set(key, [...kept, now]);
+  }
+}
+
+/**
+ * Connections to a network address that have not authenticated yet, bounded overall and per source address, so a peer
+ * on the local network cannot hold the server's sockets open without a key. Loopback connections, which include every
+ * `tailscale serve` peer, are not counted.
+ */
+class PendingConnections {
+  private readonly peers = new Map<Socket, string>();
+  private readonly counts = new Map<string, number>();
+  private readonly max: number;
+  private readonly perPeer: number;
+
+  constructor(max: number, perPeer: number) {
+    this.max = max;
+    this.perPeer = perPeer;
+  }
+
+  admit(socket: Socket): boolean {
+    const peer = socket.remoteAddress ?? '';
+    const count = this.counts.get(peer) ?? 0;
+    if (this.peers.size >= this.max || count >= this.perPeer) return false;
+    this.peers.set(socket, peer);
+    this.counts.set(peer, count + 1);
+    socket.once('close', () => this.settle(socket));
+    return true;
+  }
+
+  /** The socket authenticated, or closed: it no longer counts. */
+  settle(socket: Socket): void {
+    const peer = this.peers.get(socket);
+    if (peer === undefined) return;
+    this.peers.delete(socket);
+    const left = (this.counts.get(peer) ?? 1) - 1;
+    if (left > 0) this.counts.set(peer, left);
+    else this.counts.delete(peer);
   }
 }
 
@@ -1120,6 +1188,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const requestLog = options.requestLog ?? createRequestLog();
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
+  const unauthenticated = new PendingConnections(
+    options.pendingConnections?.max ?? MAX_PENDING_CONNECTIONS,
+    options.pendingConnections?.perPeer ?? MAX_PENDING_PER_PEER,
+  );
   const feeds = new FeedPool(options.stimCli, options.env);
   const statusFeed = new StatusFeed({
     worker: join(dirname(options.stimCli), 'status-worker.mjs'),
@@ -4409,7 +4481,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
-    if (upgradeFromWebPage(request.headers, peer === null)) {
+    if (upgradeFromWebPage(request.headers, arrival(request))) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
@@ -4488,6 +4560,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
     }
     if (ws.readyState !== ws.OPEN) return;
+    unauthenticated.settle(request.socket);
     const host = records['device-host'];
     if (host) {
       const node = peer ? await peerNode(request, peer) : null;
@@ -4519,6 +4592,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     protocol: PROTOCOL_VERSION,
     stimHome: configDir(),
   } as const;
+  const lanHealth = (): Pick<ServerHealth, 'lan'> => {
+    const wanted = new Set(
+      transports
+        .filter((transport) => transport.id === 'local')
+        .flatMap((transport) => transport.bindAddresses?.() ?? []),
+    );
+    const bound = addresses.filter(({ host }) => wanted.has(host));
+    const [first] = bound;
+    return first ? { lan: { addresses: bound.map(({ host }) => host), port: first.port } } : {};
+  };
   const answerHealth = async (response: ServerResponse) => {
     const { state } = tailscale.snapshot();
     const route =
@@ -4534,6 +4617,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       route,
       nativeViewerOpened,
       ...(options.loopbackOnly ? { loopbackOnly: true as const } : {}),
+      ...lanHealth(),
     };
     response
       .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
@@ -4590,7 +4674,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (failures.length) throw new AggregateError(failures, 'Server resources did not close cleanly.');
   };
   async function listenOn(host: string): Promise<void> {
-    const server = createServer((request, response) => {
+    const network = !isLoopback(host);
+    const headersTimeout = options.headersTimeoutMs ?? HEADERS_TIMEOUT_MS;
+    const limits = network
+      ? {
+          headersTimeout,
+          requestTimeout: headersTimeout * 3,
+          connectionsCheckingInterval: Math.min(1000, headersTimeout),
+        }
+      : {};
+    const server = createServer(limits, (request, response) => {
       if (options.loopbackOnly && peerAddress(request) !== null) {
         response.writeHead(403, { 'content-type': 'text/plain' }).end('This stim-server serves this machine only.\n');
         return;
@@ -4641,6 +4734,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     server.on('upgrade', upgrade);
     const sockets = new Set<Socket>();
     server.on('connection', (socket) => {
+      if (network) {
+        if (!unauthenticated.admit(socket)) return void socket.destroy();
+        socket.setTimeout(headersTimeout, () => socket.destroy());
+      }
       sockets.add(socket);
       socket.once('close', () => sockets.delete(socket));
     });

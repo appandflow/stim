@@ -1,0 +1,35 @@
+{
+  "name": "@stim-cli/transport-local",
+  "version": "1.27.0",
+  "description": "Local network transport for stim-server: plain WebSocket on chosen private addresses, protected by Stim's Noise session.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/appandflow/stim.git",
+    "directory": "packages/transport-local"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "module-sync": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@stim-cli/transport": "workspace:*"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
