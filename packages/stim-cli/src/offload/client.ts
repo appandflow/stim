@@ -1403,7 +1403,7 @@ async function fetchArtifact({
   }
   if (cacheHit) {
     const members = (await getExecutor().runFileAsync('tar', ['-tf', archive], { timeoutMs: 600_000 }))
-      .split('\n')
+      .split(/\r?\n/)
       .filter(Boolean);
     if (
       members.some((member) => {
