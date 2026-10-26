@@ -449,7 +449,7 @@ test('a worker without Tailscale sets up on the local network, prints its key fi
   };
   const reused = fixture().deps.health;
   const f = fixture({
-    preflight: async () => ({ dnsName: null }),
+    preflight: async () => ({ dnsName: null, lan: true }),
     health: async (port) => {
       const found = await reused(port);
       return found && { ...found, lan: { addresses: ['10.0.0.92'], port: 7787 } };
@@ -477,7 +477,7 @@ test('a worker without Tailscale sets up on the local network, prints its key fi
 });
 
 test('a local network setup whose server listens on no local address refuses before storing the ticket', async () => {
-  const f = fixture({ preflight: async () => ({ dnsName: null }) });
+  const f = fixture({ preflight: async () => ({ dnsName: null, lan: true }) });
   expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(1);
   expect(f.stored).toEqual([]);
   expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'route')).toMatchObject({

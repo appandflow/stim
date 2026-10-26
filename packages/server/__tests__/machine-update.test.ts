@@ -27,6 +27,7 @@ describe('client build packing', () => {
       '@stim-cli/metro',
       '@stim-cli/server',
       '@stim-cli/transport',
+      '@stim-cli/transport-local',
       '@stim-cli/transport-tailscale',
       'stim',
     ]);
@@ -158,6 +159,7 @@ describe('asking a remote machine to update', () => {
         'stim-cli-metro',
         'stim-cli-server',
         'stim-cli-transport',
+        'stim-cli-transport-local',
         'stim-cli-transport-tailscale',
       ]);
       for (const { name, size } of offered) {

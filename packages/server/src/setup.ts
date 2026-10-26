@@ -238,8 +238,11 @@ export interface SetupDeps {
   stderr(line: string): void;
   confirm(question: string, timeoutMs: number): Promise<boolean>;
   permissionWait(ms: number): Promise<boolean>;
-  /** The tailnet name, or null when Tailscale is not set up and `server.lanAddresses` is, for a local network worker. */
-  preflight(options: SetupOptions): Promise<{ dnsName: string | null }>;
+  /**
+   * The tailnet name, null without Tailscale, and whether `server.lanAddresses` is set: a local network worker, whose
+   * setup checks that listener instead of a tailnet route.
+   */
+  preflight(options: SetupOptions): Promise<{ dnsName: string | null; lan?: boolean }>;
   /** This server's key fingerprint. */
   fingerprint(): string;
   /** Whether the macOS application firewall is on, or null when it cannot be read or the platform has none. */
@@ -392,21 +395,22 @@ export function defaultSetupDeps(): SetupDeps {
         isJsonObject(status) && isJsonObject(status.Self) && typeof status.Self.DNSName === 'string'
           ? status.Self.DNSName.replace(/\.$/, '')
           : '';
-      if (!dnsName && !(await readLanAddresses()).length) {
+      const lan = (await readLanAddresses()).length > 0;
+      if (!dnsName && !lan) {
         throw new SetupRefusal(
           `${tailscaleRefusal(tailscaleInstall(process.env), platform)} To set this ${platform === 'darwin' ? 'Mac' : 'machine'} up on the local network without Tailscale, set server.lanAddresses first: npx --yes stim settings set server.lanAddresses '["en0"]', with this machine's network interface or private IPv4 address.`,
         );
       }
       const problem = await manager.sessionProblem();
       if (problem) throw new SetupRefusal(problem);
-      return { dnsName: dnsName || null };
+      return { dnsName: dnsName || null, lan };
     },
     fingerprint: () => keyFingerprint(serverIdentity().publicKey),
     async firewall() {
       if (platform !== 'darwin') return null;
       const result = await run('/usr/libexec/ApplicationFirewall/socketfilterfw', ['--getglobalstate']);
-      if (!result.ok) return null;
-      return /enabled/i.test(result.stdout) ? true : /disabled/i.test(result.stdout) ? false : null;
+      const state = result.ok ? /State = (\d)/.exec(result.stdout)?.[1] : undefined;
+      return state === undefined ? null : state !== '0';
     },
     claim: setupClaim,
     write: writeSetupJournal,
@@ -965,7 +969,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         { text: desktop ? `reusing the app server (no ${serviceNoun})` : `${serviceNoun} ${opts.label} running` },
       );
     });
-    if (preflight.dnsName === null) {
+    if (preflight.lan) {
       step('route', 'running', 'Local network', undefined, undefined, {
         running: 'Checking the local network listener',
       });
@@ -1094,12 +1098,11 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       try {
         deps.storeSecret(opts.ticket, approved, opts.expiresAt, deps.now());
         secretStored = true;
-        const waiting =
-          preflight.dnsName === null
-            ? `Waiting for the requesting machine to reconnect. Run \`stim doctor --fix\` in a terminal on that machine: it shows this machine's server key fingerprint, ${output.fingerprint}, and pins the key only after you confirm it matches.`
-            : deps.fromDoctor
-              ? 'Waiting for the requesting machine to reconnect. Run `stim doctor` on that machine to finish.'
-              : 'Waiting for the requesting machine to connect. Stim Desktop sends this automatically.';
+        const waiting = preflight.lan
+          ? `Waiting for the requesting machine to reconnect. Run \`stim doctor --fix\` in a terminal on that machine: it shows this machine's server key fingerprint, ${output.fingerprint}, and pins the key only after you confirm it matches.`
+          : deps.fromDoctor
+            ? 'Waiting for the requesting machine to reconnect. Run `stim doctor` on that machine to finish.'
+            : 'Waiting for the requesting machine to connect. Stim Desktop sends this automatically.';
         step('approve', 'running', 'Access approval', waiting, undefined, { running: waiting });
         while (deps.now() < Date.parse(opts.expiresAt)) {
           changed = false;
