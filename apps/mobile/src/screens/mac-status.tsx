@@ -739,9 +739,9 @@ function CapacityCard({
           }
         />
       ) : null}
-      {meters.map((meter) => (
+      {meters.map((meter, index) => (
         <View key={meter.kind}>
-          <View style={[styles.separated]}>
+          <View style={load || index > 0 ? styles.separated : undefined}>
             <RowLayout
               title={meter.label}
               subtitle={meter.reason}

@@ -15,7 +15,7 @@ const devices = capacity.devices ?? { max: 0, inUse: 0, holders: [] };
 const now = Date.parse(fixture.capturedAt);
 
 describe('loadView', () => {
-  it('tones the load by the state Stim reports, and shows an unknown state as the number alone', () => {
+  it('tones the load by the state Stim reports', () => {
     const load = { cpus: 12, loadPerCore: 2.4, busyAt: 2, limit: null };
     expect(loadView({ ...load, state: 'free' })).toMatchObject({
       value: '2.4 per core',
@@ -24,11 +24,6 @@ describe('loadView', () => {
     });
     expect(loadView({ ...load, state: 'busy' })).toMatchObject({ state: 'Busy', tone: 'warning' });
     expect(loadView({ ...load, state: 'holding' })).toMatchObject({ tone: 'error' });
-    expect(loadView(JSON.parse('{"cpus":12,"loadPerCore":2.4,"busyAt":2,"limit":null,"state":"drained"}'))).toEqual({
-      value: '2.4 per core',
-      state: null,
-      tone: 'default',
-    });
   });
 
   it('reads a whole-number load per core', () => {

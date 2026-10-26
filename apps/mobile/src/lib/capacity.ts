@@ -9,11 +9,11 @@ type Capacity = NonNullable<StatusPayload['capacity']>;
 
 export interface LoadView {
   value: string;
-  state: string | null;
+  state: string;
   tone: Tone;
 }
 
-/** The 5-minute load per core, with the state Stim placed it in. An unknown state shows the number alone. */
+/** The 5-minute load per core, with the state Stim placed it in. */
 export function loadView(load: NonNullable<Capacity['load']>): LoadView {
   const { loadPerCore } = load;
   const value = t`${loadPerCore} per core`;
@@ -24,8 +24,6 @@ export function loadView(load: NonNullable<Capacity['load']>): LoadView {
       return { value, state: t`Busy`, tone: 'warning' };
     case 'holding':
       return { value, state: t`Holding new builds`, tone: 'error' };
-    default:
-      return { value, state: null, tone: 'default' };
   }
 }
 

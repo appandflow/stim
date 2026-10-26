@@ -160,7 +160,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
 - **Machine Status**: tapping a chip shows that machine's page, laid out like
   Stim Desktop's Machine page, read-only. **Now** has the CPU, memory used and
   startup-volume free space charts over the last hour, the active workspaces and
-  Stim's share of memory, then **CPU and Memory**, the status `machine` owners
+  Stim's share of memory, the Mac's load per core, and the **Devices** and **Builds** slot meters while their caps are set (a full device meter lists the devices holding the slots), then **CPU and Memory**, the status `machine` owners
   by memory. **Disk** shows the lowest free space against Stim's disk budget
   and a bar of what uses it: Stim devices, Stim caches and outputs,
   `node_modules`, other simulators and AVDs, and runtimes and system images. A
