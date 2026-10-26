@@ -313,6 +313,7 @@ describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned b
     const attempts = join(dir, 'session', 'apps');
     const earlier = await started(bundleCopy("process.on('SIGTERM', () => {})", join(attempts, 'earlier')));
     const current = await started(bundleCopy('', join(attempts, 'current')));
+    mkdirSync(join(attempts, 'earlier.lock'));
     const bystander = await ownedProcess();
     await stopping.stopHostedBundleInstances(realpathSync(join(dir, 'session')));
     expect(inspectProcessIdentity(earlier)).toBe('gone');

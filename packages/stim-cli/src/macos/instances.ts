@@ -1,6 +1,6 @@
-import { existsSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import type { MacosProcess } from '@stim-cli/core/state';
+import { hostedAppAttempt, type MacosProcess } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { inspectProcessIdentity, processStartMicros, captureProcessToken } from '../process-identity.ts';
 import { macosDir } from './state.ts';
@@ -90,14 +90,11 @@ function failedBundleListing(record: MacosProcess, error: unknown): string | nul
 export function hostedBundleDirs(area: string): string[] {
   const apps = join(area, 'apps');
   if (process.platform !== 'darwin' || !existsSync(apps)) return [];
-  return [
-    ...new Set(
-      readdirSync(apps).flatMap((attempt) => {
-        const dir = join(apps, attempt);
-        return [dir, realpathSync(dir)];
-      }),
-    ),
-  ];
+  if (realpathSync(apps) !== apps) throw new Error('Hosted app data resolves outside its private area.');
+  return readdirSync(apps)
+    .filter((attempt) => hostedAppAttempt(attempt))
+    .map((attempt) => join(apps, attempt))
+    .filter((dir) => lstatSync(dir, { throwIfNoEntry: false })?.isDirectory());
 }
 
 /** Verifies owned bundle instances without blocking on process and executable probes. */
