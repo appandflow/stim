@@ -78,7 +78,8 @@ maintenance. The next start, ios or android starts it
 again. An owned emulator the activity check missed keeps the workspace while
 adb lists it, and so does any emulator adb lists without an AVD name, such as
 a stale offline entry that adb kill-server clears. A dev server that may still run after its supervisor
-exited is kept, and so is a dev server whose requests Stim does not record: an Expo project before SDK 54, which cannot load Stim's Metro config
+exited is kept until stim stop ends it. So is a dev server whose requests Stim
+does not record: an Expo project before SDK 54, which cannot load Stim's Metro config
 adapter, or a dev server an older Stim started, until stim stop and stim start
 restart it. Unlike the other actions, it can stop the workspace whose dev server
 supervisor or status --watch timer started the pass; a pass a command starts,

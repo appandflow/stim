@@ -29,7 +29,7 @@ import { loadConfig, saveConfig, upsertProject, writeConfigSetting } from '../wo
 import { ensureWorkspaceStorage, workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
-import { liveClaimOwner, plantClaim } from './_factories.ts';
+import { liveClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
 
 const HOUR_MS = 3_600_000;
 const MINUTE_MS = 60_000;
@@ -608,19 +608,21 @@ test.each([
   );
 });
 
-test.each([
-  ['still runs', () => liveClaimOwner().processToken, true],
-  ['is gone', () => undefined, false],
-])('a dev server that %s after its supervisor exited keeps the workspace: %s', async (_, token, kept) => {
+test.each<[string, number, () => string | undefined, boolean]>([
+  ['still runs', process.pid, () => liveClaimOwner().processToken, true],
+  ['still runs with no recorded token', process.pid, () => undefined, true],
+  ['is gone', 2 ** 22 + 7, () => undefined, false],
+  ['is gone while another process reuses its pid', process.pid, () => recycledClaimOwner().processToken, false],
+])('a dev server that %s after its supervisor exited keeps the workspace: %s', async (_, serverPid, token, kept) => {
   const { root } = bootedWorkspace('orphan', 7 * HOUR_MS);
-  const serverPid = token() ? process.pid : 2 ** 22 + 7;
+  const serverProcessToken = token();
   writeWorkspaceState(root, {
     supervisor: {
       pid: 2 ** 22 + 5,
       processToken: 'upid1.gone',
       mode: 'command-child',
       serverPid,
-      ...(token() ? { serverProcessToken: token() } : {}),
+      ...(serverProcessToken ? { serverProcessToken } : {}),
     },
   });
 
@@ -628,6 +630,6 @@ test.each([
 
   expect(actions.map((action) => action.target)).toEqual(kept ? [] : [root]);
   expect(skips.map((skip) => skip.reason)).toEqual(
-    kept ? [`its dev server (pid ${serverPid}) may still run after its supervisor exited`] : [],
+    kept ? [`its dev server (pid ${serverPid}) may still run after its supervisor exited; stim stop ends it`] : [],
   );
 });

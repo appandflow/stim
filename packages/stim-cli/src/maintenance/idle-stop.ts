@@ -321,7 +321,7 @@ function survivingServer(recorded: Record<string, unknown> | undefined): string 
     typeof token === 'string'
       ? ['same', 'unknown'].includes(inspectProcessIdentity({ pid, processToken: token }))
       : pidExists(pid);
-  return alive ? `its dev server (pid ${pid}) may still run after its supervisor exited` : null;
+  return alive ? `its dev server (pid ${pid}) may still run after its supervisor exited; stim stop ends it` : null;
 }
 
 async function candidate(
