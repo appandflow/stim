@@ -77,7 +77,7 @@ function fakeLink(): FakeLink {
             openOnRequest--;
             link.open();
           }
-          return refusal ? { error: { code: 'forbidden', message: refusal } } : { result: {} };
+          return refusal ? { error: { code: 'action-failed', message: refusal } } : { result: {} };
         },
         onEvent: (listener: typeof event) => (event = listener),
         onBinary: (listener: typeof binary) => (binary = listener),
@@ -276,6 +276,22 @@ test('after the host held links, a refusal while its session is not attached aga
   expect(errors).toEqual([]);
 });
 
+test('a host that turns this machine away after it held links stops the pool instead of retrying', async () => {
+  start();
+  await vi.waitFor(() => expect(ready).toBe(1));
+  connectOutcomes = Array.from({ length: 8 }, () => ({
+    failure: 'This machine has not approved this client for device-host.',
+    refused: true,
+    code: 'forbidden',
+  }));
+  for (const link of links.slice(0, 4)) link.drop(4401);
+  await vi.waitFor(() => expect(errors).toHaveLength(1));
+  expect(errors[0]).toContain('mini refused this machine');
+  const opened = vi.mocked(BuildConnection.open).mock.calls.length;
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  expect(vi.mocked(BuildConnection.open).mock.calls.length).toBe(opened);
+});
+
 test('retries while Tailscale cannot name the host and links once it can', async () => {
   let statusReads = 0;
   setExecutor({
@@ -325,7 +341,7 @@ test('stops reading the link while loopback Metro is not reading, and resumes wh
   }
 });
 
-test('a Metro connection that fails resets the link, and a link the host resets resets Metro', async () => {
+test('a link the host ends cleanly ends Metro, and one the host resets resets Metro', async () => {
   const ends: string[] = [];
   const recorder = createNetServer((socket) => {
     socket.once('end', () => ends.push('end'));
