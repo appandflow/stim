@@ -71,7 +71,16 @@ export interface BuildLedgerRecord extends NdjsonRecord {
   outcome: BuildLedgerOutcome;
   failure?: BuildLedgerFailure;
   device?: BuildLedgerDevice;
+  /** This machine's 5-minute load per core when the run started. Absent in older records. */
+  loadPerCore?: number;
+  /** The run's first owned simulator or emulator boot: when it started, in epoch milliseconds, and the load per core then. */
+  boot?: BuildLedgerBoot;
   stimVersion: string;
+}
+
+export interface BuildLedgerBoot {
+  startedAt: number;
+  loadPerCore: number;
 }
 
 const PLATFORMS: readonly string[] = ['ios', 'android', 'macos'];

@@ -1045,7 +1045,8 @@ the ones it offloaded.
 \`server.maxLoadPerCore\` (default 2) is also the busy threshold for
 automatic iOS, Android and macOS placement. It is the load per core at which a
 machine counts as saturated: each machine applies its own value, and a remote
-machine past it is skipped like a full one.
+machine past it is skipped like a full one. \`stim status\` shows this machine's
+load per core against it, as \`capacity.load\` in JSON.
 
 Device, Release and
 \`--remote eas|proxy\` builds, Android builds with the Apple Clang CAS compiler cache,

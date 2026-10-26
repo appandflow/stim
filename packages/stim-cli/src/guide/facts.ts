@@ -1788,7 +1788,35 @@ RULES
 
   capacity.committedMb sums memoryMb; in a \`status --watch --json\` line each
   figure, including an environment's memoryMb, is held on its own (see
-  \`guide lifecycle\`), so the sums can differ from what they sum. The memory budget plans before a boot
+  \`guide lifecycle\`), so the sums can differ from what they sum.
+
+  capacity.load is always present. capacity.builds is present only while
+  concurrency.maxBuilds is set, and capacity.devices only while
+  concurrency.maxDevices is set (see \`guide lifecycle concurrency\`):
+
+  load     { cpus, loadPerCore, busyAt, limit, state }. loadPerCore is the
+           5-minute load average divided by cpus, to one decimal. busyAt is
+           server.maxLoadPerCore (\`guide settings\`). state is free under
+           busyAt, busy at or over it, where automatic placement prefers
+           another machine, or holding at or over limit. limit is null
+           because no setting sets it yet, so state is never holding.
+
+  builds   { max, inUse, holders: [{ slot, workspace, client, since,
+           unresolved? }] }. inUse counts the slots below max that a new
+           build cannot take. workspace is the root of the local build in
+           the slot; client is the device id of the client whose offloaded
+           build this machine runs in it. An unresolved slot has a claim
+           whose holder Stim cannot identify; both are null, and the slot
+           stays in use until that claim is removed.
+  devices  { max, inUse, unknown?, holders: [{ platform, label, workspace,
+           slot, booting? }] }, the owned devices the cap counts: booted or
+           booting stim simulators, owned emulators adb lists, and boots in
+           progress. label is the label of the workspace that records the
+           device, with its device slot; for a device no workspace records,
+           label is its name and workspace and slot are null. inUse is null
+           and unknown says why when the devices could not be listed.
+
+  The memory budget plans before a boot
   and always uses the estimate. What is using CPU and memory now is the
   top-level machine section:
 

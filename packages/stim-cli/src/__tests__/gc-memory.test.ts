@@ -304,6 +304,7 @@ test('an iOS build slot does not hold the daemons, an Android lock or an unattri
     projectRoot: '/w',
     startedAt: null,
     logFile: null,
+    client: null,
     alive: true,
     unresolved: false,
   };

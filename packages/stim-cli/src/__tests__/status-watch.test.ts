@@ -285,6 +285,28 @@ describe('watchPayload', () => {
     expect(capacity(301, true)).toMatchObject({ committedMb: 301, overCapacity: true });
   });
 
+  test('a slot usage change prints while the memory sum is held', () => {
+    const devices = (inUse: number) => ({ max: 2, inUse, holders: [] });
+    const previous = watchPayload(null, payload({ capacity: { ...payload().capacity, devices: devices(1) } }));
+    const next = watchPayload(
+      previous,
+      payload({ capacity: { ...payload().capacity, committedMb: 310, devices: devices(2) } }),
+    );
+    expect(next.capacity).toMatchObject({ committedMb: 300, devices: { inUse: 2 } });
+  });
+
+  test('load is held until it moves a whole step from the last printed value or its state changes', () => {
+    const at = (loadPerCore: number, state: 'free' | 'busy' = 'busy') =>
+      payload({ capacity: { ...payload().capacity, load: { cpus: 14, loadPerCore, busyAt: 2, limit: null, state } } });
+    const first = watchPayload(null, at(17.6));
+    const held = watchPayload(first, at(18.5));
+    const moved = watchPayload(held, at(18.6));
+    expect([first, held, moved].map((p) => p.capacity.load?.loadPerCore)).toEqual([17.6, 17.6, 18.6]);
+    expect(JSON.stringify(held)).toBe(JSON.stringify(first));
+    expect(watchPayload(watchPayload(null, at(2.3)), at(3.3)).capacity.load?.loadPerCore).toBe(3.3);
+    expect(watchPayload(watchPayload(null, at(2.1)), at(1.9, 'free')).capacity.load?.state).toBe('free');
+  });
+
   test('a new, gone or changed-ownership owner prints the current rows', () => {
     const previous = watchPayload(null, payload());
     const rows = (owners: MachineOwner[]) =>

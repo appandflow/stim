@@ -414,6 +414,8 @@ approval, a free slot and a 5-minute load per core under that machine's own
 `server.maxLoadPerCore`; a machine at its caps, over that limit, unreachable or
 without approval is skipped and the next one in order is tried. Load does not
 rank the machines that qualify, so the first one fills before the next is used.
+`stim status` shows this Mac's load per core against its own
+`server.maxLoadPerCore`, as `capacity.load` in `--json`.
 Put the fastest machine first and set the order with
 `stim settings set remote.machines '["fast-mini","slow-mini"]'`;
 `stim doctor` prints it as `placement order`, and its JSON gives each machine a

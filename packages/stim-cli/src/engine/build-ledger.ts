@@ -40,6 +40,8 @@ export interface BuildLedgerRun {
   /** The phase the run was in when it finished. */
   phase: string | null;
   offload?: { host: string; phaseMs: Record<string, number> };
+  loadPerCore?: number;
+  boot?: { startedAt: string; loadPerCore: number };
 }
 
 function text(value: unknown): string | null {
@@ -103,6 +105,8 @@ export function buildLedgerRecord(run: BuildLedgerRun): BuildLedgerRecord {
           phase: run.phase,
         };
 
+  const bootStartedAt = run.boot ? Date.parse(run.boot.startedAt) : Number.NaN;
+
   const where = placement.machine ? `on ${placement.machine}` : 'here';
   const cacheText = cache.result === 'hit' ? `cache hit${cache.source === 'remote' ? ' (remote)' : ''}` : cache.result;
   const summary = `${platform} build ${outcome} ${where} in ${formatElapsed(durationMs)} (${cacheText})`;
@@ -131,6 +135,10 @@ export function buildLedgerRecord(run: BuildLedgerRun): BuildLedgerRecord {
     outcome,
     ...(failure ? { failure } : {}),
     ...(device ? { device: { name: device, ...(runtime ? { runtime } : {}) } } : {}),
+    ...(run.loadPerCore === undefined ? {} : { loadPerCore: run.loadPerCore }),
+    ...(run.boot && Number.isFinite(bootStartedAt)
+      ? { boot: { startedAt: bootStartedAt, loadPerCore: run.boot.loadPerCore } }
+      : {}),
     stimVersion: run.version,
   };
 }

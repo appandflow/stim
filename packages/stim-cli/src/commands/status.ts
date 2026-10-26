@@ -38,17 +38,22 @@ import {
   readArchives,
   type ArchivedWorkspace,
   DEVICE_RECLAIM_REASON,
+  loadPerCore,
+  maxLoadPerCore,
 } from '@stim-cli/core/state';
 import { type DeviceActivity } from '../devices/activity.ts';
 import {
   activityLabel,
   capacity,
+  capacityLoad,
+  loadLine,
   deviceLeaseLines,
   diskLine,
   gitSummaryText,
   parseDfFree,
   poolLine,
   remoteDeviceLine,
+  slotUsageLines,
   tightVolumes,
 } from '../status.ts';
 import { createStatusMeasurer, type StatusMeasurer } from '../status-measures.ts';
@@ -156,6 +161,7 @@ function renderStatus(
     simctlError,
     cwdRoot,
     machine,
+    slotUsage,
   }: StatusSnapshot,
   json: boolean,
   settle: (payload: StatusPayload) => StatusPayload = (payload) => payload,
@@ -163,7 +169,11 @@ function renderStatus(
 ): string[] {
   const out: string[] = [];
   const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
-  const cap = capacity(states, totalMemoryMb);
+  const cap = {
+    ...capacity(states, totalMemoryMb),
+    ...slotUsage,
+    load: capacityLoad(loadPerCore(), maxLoadPerCore(), null),
+  };
   const pools = (['ios', 'android'] as const).map((platform) => {
     const { max, error } = parkedMaxSetting(platform);
     return { error, line: poolLine({ platform, parked: readParked(platform).length, max }) };
@@ -198,6 +208,8 @@ function renderStatus(
       if (pool.line) out.push(chalk.dim(pool.line));
     }
     for (const line of deviceLeaseLines(leases, leaseNow)) out.push(line);
+    out.push(chalk.dim(loadLine(cap.load)));
+    for (const line of slotUsageLines(cap)) out.push(chalk.dim(line));
     return out;
   }
 
@@ -310,6 +322,8 @@ function renderStatus(
         : `\n${cap.liveCount} active environment(s), roughly ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)} committed.`,
     ),
   );
+  out.push(chalk.dim(loadLine(cap.load)));
+  for (const line of slotUsageLines(cap)) out.push(chalk.dim(line));
   const volumes = readVolumes(cwdRoot || cwd);
   const line = diskLine(volumes);
   if (line) {

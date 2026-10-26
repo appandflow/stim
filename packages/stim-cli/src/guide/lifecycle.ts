@@ -1,4 +1,4 @@
-import { WATCH_CPU_STEP_PERCENT, WATCH_MEMORY_STEP_MB } from '../status-watch.ts';
+import { WATCH_CPU_STEP_PERCENT, WATCH_LOAD_STEP_PER_CORE, WATCH_MEMORY_STEP_MB } from '../status-watch.ts';
 import type { GuideTopic } from './types.ts';
 
 const lifecycle: GuideTopic = {
@@ -276,7 +276,8 @@ WAITING FOR A CHANGE
   status payload per line: one at once, then one each time the payload
   changes, never two identical ones in a row. In a watch line, a usage
   figure repeats its value in the previous line until it moves by a step: an owner's cpuPercent ${WATCH_CPU_STEP_PERCENT} points, an
-  owner's or environment's memoryMb and capacity.committedMb ${WATCH_MEMORY_STEP_MB} MB. An owner's row
+  owner's or environment's memoryMb and capacity.committedMb ${WATCH_MEMORY_STEP_MB} MB, and
+  capacity.load as a whole until its loadPerCore moves ${WATCH_LOAD_STEP_PER_CORE} per core or its state changes. An owner's row
   changes as a whole, so its residentMb and processes update with it. A change
   in only a bookkeeping timestamp prints no line: each pullRequest.checkedAt,
   maintenance.lastChecks, maintenance.lastPass.startedAt and durationMs, and
