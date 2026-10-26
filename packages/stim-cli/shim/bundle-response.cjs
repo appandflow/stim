@@ -9,6 +9,12 @@ const PROGRESS_PART = /^\{"done":(\d+),"total":(\d+),"percent":(\d+)\}$/;
 const PROGRESS_INTERVAL_MS = 1000;
 const MANIFEST_PATHS = new Set(['/', '/manifest', '/index.exp']);
 const observedServers = new WeakSet();
+// Metro's HmrServer reports no reporter event when it pushes a change: it sends `update-start` with
+// `isInitialUpdate: false` over the `/hot` websocket, and `isInitialUpdate: true` when a client registers.
+// https://github.com/facebook/metro/blob/main/packages/metro/src/HmrServer.js (`_handleFileChange`)
+const HMR_UPDATE = '"type":"update-start","body":{"isInitialUpdate":false}';
+const HMR_UPDATE_INTERVAL_MS = 60_000;
+const hmrServers = new WeakSet();
 
 function clientPidFromLsof(output, clientPort, serverPort) {
   const connection = new RegExp(`:${clientPort}->\\S*:${serverPort}$`);
@@ -78,8 +84,39 @@ function observeManifestRequests(server, write) {
   });
 }
 
+function observeHmrUpdates(server, write) {
+  if (!server || hmrServers.has(server)) return;
+  hmrServers.add(server);
+  let recordedAt = 0;
+  server.prependListener('upgrade', (req, socket) => {
+    let pathname;
+    try {
+      pathname = new URL(req.url, 'http://localhost').pathname;
+    } catch {
+      return;
+    }
+    if (pathname !== '/hot') return;
+    const send = socket.write;
+    socket.write = function (chunk, ...rest) {
+      const now = Date.now();
+      if (
+        now - recordedAt >= HMR_UPDATE_INTERVAL_MS &&
+        (typeof chunk === 'string' || Buffer.isBuffer(chunk)) &&
+        chunk.includes(HMR_UPDATE)
+      ) {
+        recordedAt = now;
+        try {
+          write({ ts: now, src: 'metro', level: 'debug', event: 'hmr_update', msg: 'HMR update sent to the app' });
+        } catch {}
+      }
+      return send.call(this, chunk, ...rest);
+    };
+  });
+}
+
 function bundleResponseMiddleware(write, { runLsof, manifests = false } = {}) {
   return (req, res, next) => {
+    observeHmrUpdates(req.socket.server, write);
     if (req.method === 'GET' && req.url === '/_stim/metro-warmup') {
       if (manifests) observeManifestRequests(req.socket.server, write);
       res.end('ready');
