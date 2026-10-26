@@ -190,8 +190,9 @@ free issues, and treat an unlabeled issue as `priority: P2`. To claim, comment
 `Claimed: <branch>`, then push the branch to `origin` before implementing
 anything. The open pull request replaces the claim. If you stop without one,
 comment `Released:` and delete the branch. The `stale-claims` workflow posts
-`Released:` on a claim older than two days with no open pull request; it never
-deletes a branch, so release your own claim when you stop.
+`Released:` on a claim older than two days with no open pull request or recent
+commit on its branch; it never deletes a branch, so release your own claim when
+you stop.
 
 Implement each valid issue in its own git worktree and branch created from the
 refreshed `origin/main`. Independent issues may run in parallel worktrees. Keep

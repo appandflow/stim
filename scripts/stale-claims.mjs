@@ -14,10 +14,15 @@ export function parseClaimBranches(body) {
   const line = body.replace(/^\s*Claimed:\s*/i, '').split('\n')[0];
   const names = line
     .replace(/\([^)]*\)/g, ' ')
-    .split(/\s[—–-]\s|[.;](?:\s|$)/)[0]
-    .split(/[\s,]+/)
-    .map((token) => token.replace(/[.,;:]+$/, ''))
-    .filter((token) => token.includes('/'));
+    .split(/\s[\u2014\u2013-]\s|[.;](?:\s|$)/)[0]
+    .split(',')
+    .map((piece) =>
+      piece
+        .trim()
+        .split(/\s+/)[0]
+        .replace(/^[`*_]+|[`*_.,;:]+$/g, ''),
+    )
+    .filter((name, index) => name && (index === 0 || name.includes('/')));
   return [...new Set(names)];
 }
 
@@ -239,6 +244,22 @@ function aheadBy(branch) {
   return Number(gh(['api', path, '--jq', '.ahead_by']));
 }
 
+function claimUnchanged(record) {
+  const out = gh([
+    'api',
+    '--paginate',
+    `repos/${REPO}/issues/${record.issue}/comments`,
+    '--jq',
+    '.[] | {createdAt: .created_at, body: .body}',
+  ]);
+  const comments = out
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  const found = latestClaim(comments);
+  return Boolean(found) && !found.released && found.claim.createdAt === record.claimedAt;
+}
+
 function postRelease(record) {
   gh(['api', `repos/${REPO}/issues/${record.issue}/comments`, '-f', `body=${releaseComment(record)}`]);
 }
@@ -262,6 +283,10 @@ function main() {
   if (values.release) {
     for (const record of records.filter((r) => r.status === 'stale')) {
       try {
+        if (!claimUnchanged(record)) {
+          console.error(`skipped #${record.issue}: its claim changed since the scan`);
+          continue;
+        }
         postRelease(record);
         released.push(record.issue);
         console.error(`released #${record.issue}`);
@@ -272,9 +297,15 @@ function main() {
     }
   }
 
-  const review = reviewBranchNames({ records, openPrs: state.openPrs, now })
-    .map((c) => Object.assign(c, { aheadBy: aheadBy(c.branch) }))
-    .filter((c) => c.aheadBy > 0);
+  let review = [];
+  try {
+    review = reviewBranchNames({ records, openPrs: state.openPrs, now })
+      .map((c) => Object.assign(c, { aheadBy: aheadBy(c.branch) }))
+      .filter((c) => c.aheadBy > 0);
+  } catch (error) {
+    failed += 1;
+    console.error(`could not list branches to review: ${error.message}`);
+  }
 
   const report = { days, claims: records, branchesToReview: review, released };
   console.log(values.json ? JSON.stringify(report, null, 2) : formatReport({ records, review, days }));

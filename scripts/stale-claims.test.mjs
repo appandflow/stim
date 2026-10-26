@@ -18,6 +18,8 @@ describe('claim branch parsing', () => {
     ['Claimed: fix/3951-evidence — resuming the existing worktree, prior probes', ['fix/3951-evidence']],
     ['Claimed: feat/2451-signing. The maintainer approved the patch, continuing', ['feat/2451-signing']],
     ['Claimed: release/1.26.0\nmore detail, with commas', ['release/1.26.0']],
+    ['Claimed: 4405-offload-xcode-posix-path', ['4405-offload-xcode-posix-path']],
+    ['Claimed: `fix/1-a`, **fix/1-b**', ['fix/1-a', 'fix/1-b']],
   ])('%j', (body, expected) => {
     expect(parseClaimBranches(body)).toEqual(expected);
   });
