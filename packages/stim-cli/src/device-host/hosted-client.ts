@@ -157,30 +157,19 @@ export function requireHostedAppMode(
     );
 }
 
-const gatewaySecrets = new WeakMap<HostConnection, string>();
-
-function redactHostText(host: HostConnection, message: string): string {
-  const secret = gatewaySecrets.get(host);
-  return secret ? message.replaceAll(secret, '[redacted]') : message;
-}
-
 export async function call(
   host: HostConnection,
   method: string,
   params: unknown,
   timeoutMs?: number,
 ): Promise<Record<string, unknown>> {
-  if (method === 'device-host.metro.open' && isJsonObject(params) && typeof params.secret === 'string')
-    gatewaySecrets.set(host, params.secret);
   const reply = await host.connection.request(method, params, timeoutMs);
   if ('error' in reply)
-    throw Object.assign(new Error(`${host.machine} refused ${method}: ${redactHostText(host, reply.error.message)}`), {
+    throw Object.assign(new Error(`${host.machine} refused ${method}: ${reply.error.message}`), {
       code: reply.error.code,
     });
   if (!isJsonObject(reply.result)) throw new Error(`${host.machine} answered ${method} without a result.`);
-  return typeof reply.result.notice === 'string'
-    ? { ...reply.result, notice: redactHostText(host, reply.result.notice) }
-    : reply.result;
+  return reply.result;
 }
 
 export function hostedSession(

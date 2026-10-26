@@ -11,7 +11,7 @@ import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { configDir } from '@stim-cli/core';
+import { configDir, type MetroLink } from '@stim-cli/core';
 import {
   archiveDir,
   serverLocalSocket,
@@ -391,6 +391,7 @@ type ServerSocket = WebSocket | NoiseSocket;
 const CLOSE_AUTH_TIMEOUT = 4408;
 const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
+const METRO_LINK_BUFFERED_BYTES = 1024 * 1024;
 const MAX_SUBSCRIPTIONS = 32;
 
 const archiveCursor = (archive: ArchivedWorkspace) => `${archive.removedAt}|${archive.id}`;
@@ -1577,6 +1578,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     trackers.set(socket, tracker);
     let runId: string | null = null;
     let buildSession: BuildSession | null = null;
+    let metroLink: MetroLink | null = null;
+    let metroStream: Socket | null = null;
     let queue = Promise.resolve();
     let archiveReads = Promise.resolve();
     const relay = new HostedRelay(
@@ -4088,8 +4091,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
-    function handleBinary(frame: Buffer): void {
+    function handleBinary(frame: Buffer): Promise<void> | void {
       if (socket.readyState !== socket.OPEN) return;
+      if (metroStream) {
+        const stream = metroStream;
+        if (stream.write(frame)) return;
+        return new Promise<void>((resolve) => {
+          const resume = () => {
+            stream.off('drain', resume);
+            stream.off('close', resume);
+            resolve();
+          };
+          stream.on('drain', resume);
+          stream.on('close', resume);
+        });
+      }
       if (!device || !buildSession) {
         return void socket.close(CLOSE_BAD_REQUEST, 'unexpected binary frame');
       }
@@ -4097,7 +4113,33 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (refused) socket.close(CLOSE_BAD_REQUEST, refused.slice(0, 120));
     }
 
+    function linkMetro(id: RequestId, raw: unknown, session: PairedDevice): void {
+      if (metroLink) return error(id, 'bad-request', 'This connection already links Metro.');
+      const link: MetroLink = {
+        open: (stream) => {
+          if (socket.readyState !== socket.OPEN) return void stream.destroy();
+          metroLink = null;
+          metroStream = stream;
+          stream.once('close', () => socket.close(1000));
+          stream.on('data', (chunk: Buffer) => {
+            socket.send(chunk, { binary: true }, () => {
+              if (stream.isPaused() && socket.bufferedAmount < METRO_LINK_BUFFERED_BYTES) stream.resume();
+            });
+            if (socket.bufferedAmount >= METRO_LINK_BUFFERED_BYTES) stream.pause();
+          });
+          send(socket, { event: 'device-host.metro.link.open' });
+          stream.resume();
+        },
+        close: () => socket.close(1000),
+      };
+      const answer = hostedDevices.metroLink(session.id, raw, link);
+      if ('error' in answer) return send(socket, { id, error: answer.error });
+      metroLink = link;
+      send(socket, { id, result: answer.result });
+    }
+
     async function hostedMethod(id: RequestId, method: string, raw: unknown, session: PairedDevice): Promise<void> {
+      if (method === 'device-host.metro.link') return linkMetro(id, raw, session);
       const params = isJsonObject(raw) ? raw : {};
       if (method === 'device-host.frames.subscribe' || method === 'device-host.control.begin') {
         if (typeof params.session !== 'string') return error(id, 'bad-request', 'A hosted session is required.');
@@ -4179,7 +4221,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                           : method === 'device-host.logs.query'
                             ? await hostedDevices.logsQuery(session.id, raw)
                             : method === 'device-host.metro.open'
-                              ? await hostedDevices.metroOpen(session.id, raw, peer)
+                              ? await hostedDevices.metroOpen(session.id, raw)
                               : method === 'device-host.metro.ports'
                                 ? await hostedDevices.metroPorts(session.id, raw)
                                 : await hostedDevices.metroClose(session.id, raw);
@@ -4375,6 +4417,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       queue = queue.then(() => handle(raw)).catch(() => socket.close(1011, 'internal error'));
     });
     socket.on('close', (code) => {
+      if (metroLink) hostedDevices.metroUnlink(metroLink);
+      metroStream?.destroy();
       relay.close();
       relays.delete(socket);
       clearTimeout(timer);

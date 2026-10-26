@@ -434,11 +434,12 @@ outside it moves to its own issue and pull request.
   The host's person lists and stops sessions through
   `device-host.sessions` and `device-host.sessions.stop` on Desktop's Unix
   socket connection; person-side stop uses the existing stop path.
-  A session's Metro endpoint listens only on worker loopback and reaches only the
-  authenticated client's peer address. The client gateway listens only on its own
-  tailnet address, pins the worker peer, requires a fresh secret and forwards only
-  to its verified loopback Metro. Stop and revocation close the bridge and active
-  streams. Keep the recorded worker port on reconnect; refuse an occupied port.
+  A session's Metro endpoint listens only on worker loopback. The worker never
+  connects to the client: each accepted connection rides one idle
+  `device-host.metro.link` connection the session's own client opened and
+  authenticated, and the client forwards it only to its verified loopback Metro.
+  Stop and revocation close the bridge, idle links and active streams. Keep the
+  recorded worker port on reconnect; refuse an occupied port.
   App transfer uses bounded digest chunks, including the manifest itself. The
   worker validates content, contained links, simulator platform, architecture
   and minimum OS before installing on the exact ledger-owned device. Hold the

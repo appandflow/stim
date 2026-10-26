@@ -22,7 +22,7 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createHttpServer, get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
 import { createHash, createHmac } from 'node:crypto';
-import { createServer as createNetServer } from 'node:net';
+import { connect as connectNet, createServer as createNetServer } from 'node:net';
 import { homedir, tmpdir, totalmem } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1237,6 +1237,7 @@ describe('pairing', () => {
           'hosted-android-data',
           'hosted-android-process',
           'hosted-metro-ports',
+          'hosted-metro-link',
           'server-update',
           'build-compat',
           'build-jdk',
@@ -1832,14 +1833,37 @@ describe('hosted device sessions', () => {
         'ready',
       );
       expect(await next.request('stats.get')).toHaveProperty('error.code', 'forbidden');
-      expect(
-        await next.request('device-host.metro.open', { session: id, gatewayPort: 0, secret: 'bad' }),
-      ).toHaveProperty('error.code', 'bad-request');
-      const metro = { session: id, gatewayPort: 65530, secret: 'a'.repeat(64) };
+      expect(await next.request('device-host.metro.open', { session: id, clientMetroPort: 0 })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      const metro = { session: id };
       const opened = await next.request('device-host.metro.open', metro);
       const metroPort = (opened as { result: { port: number } }).result.port;
       expect(metroPort).toBeGreaterThan(0);
       expect(readHostedSessions()[0]?.metroPort).toBe(metroPort);
+
+      const carrier = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
+      expect(await carrier.request('device-host.metro.link', { session: 'other' })).toHaveProperty(
+        'error.code',
+        'unknown-session',
+      );
+      expect(await carrier.request('device-host.metro.link', { session: id })).toHaveProperty('result', {});
+      expect(await carrier.request('device-host.metro.link', { session: id })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      const device = connectNet(metroPort, '127.0.0.1');
+      const answered = new Promise<string>((resolve) => device.once('data', (data) => resolve(data.toString())));
+      device.write('GET /index.bundle HTTP/1.1\r\n\r\n');
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
+      expect(((await carrier.next()) as unknown as { binary: Buffer }).binary.toString()).toBe(
+        'GET /index.bundle HTTP/1.1\r\n\r\n',
+      );
+      carrier.socket.send(Buffer.from('HTTP/1.1 200 OK\r\n\r\nbundle'));
+      expect(await answered).toBe('HTTP/1.1 200 OK\r\n\r\nbundle');
+      device.destroy();
+      expect(await carrier.closed).toBe(1000);
 
       const content = Buffer.alloc(40000, 65);
       const digest = createHash('sha256').update(content).digest('hex');

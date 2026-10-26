@@ -386,6 +386,8 @@ export class BuildConnection {
   private readonly writeWaiters = new Set<() => void>();
   private progress: ((event: ProgressEvent) => void) | null = null;
   private binary: ((frame: Buffer) => void) | null = null;
+  private event: ((event: Record<string, unknown>) => void) | null = null;
+  private dropped: (() => void) | null = null;
   private closed: string | null = null;
   private heard = Date.now();
   private watched = false;
@@ -419,6 +421,7 @@ export class BuildConnection {
       }
       if (!isJsonObject(message)) return;
       if (message.event === 'build.progress') return this.progress?.(message as unknown as ProgressEvent);
+      if (typeof message.event === 'string') return this.event?.(message);
       const resolve = typeof message.id === 'number' ? this.pending.get(message.id) : undefined;
       if (resolve) {
         this.pending.delete(message.id as number);
@@ -433,6 +436,7 @@ export class BuildConnection {
       this.pending.clear();
       const dropped = code === CLOSE_ABNORMAL;
       this.progress?.({ job: '', outcome: { ok: false, code: dropped ? 'dropped' : 'closed', message: this.closed } });
+      this.dropped?.();
     });
     socket.on('error', () => {});
   }
@@ -569,6 +573,16 @@ export class BuildConnection {
     this.binary = listener;
   }
 
+  /** Server events other than `build.progress`, such as `device-host.metro.link.open`. */
+  onEvent(listener: ((event: Record<string, unknown>) => void) | null): void {
+    this.event = listener;
+  }
+
+  /** Called once when the machine or the network ends the connection; never after `close()` or `drop()`. */
+  onDropped(listener: (() => void) | null): void {
+    this.dropped = listener;
+  }
+
   get failure(): string | null {
     return this.closed;
   }
@@ -607,6 +621,8 @@ export class BuildConnection {
     this.pending.clear();
     this.progress = null;
     this.binary = null;
+    this.event = null;
+    this.dropped = null;
     clearInterval(this.keepalive);
     this.socket.removeAllListeners('close');
     this.unregisterExitCleanup?.();
