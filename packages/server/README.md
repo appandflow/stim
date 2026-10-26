@@ -1144,7 +1144,9 @@ that is not this client's ready iOS or Android session and a second link on the
 same connection. A session holds at most 16 idle links: a new one closes the
 oldest, so links whose client vanished without closing them cannot crowd out
 live ones. The server pings each idle link every 15 seconds and ends one that
-missed the previous pong. The feature `hosted-metro-link` advertises it.
+missed the previous pong. A link carrying a stream is not checked this way,
+since backpressure can hold its pongs; it ends when either side closes it or
+its TCP connection fails. The feature `hosted-metro-link` advertises it.
 
 Call `device-host.metro.open` with `{session, clientMetroPort?}` on the approved
 hosted connection; it returns `{port}` for the worker's loopback endpoint. A

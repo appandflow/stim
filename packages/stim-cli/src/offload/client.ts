@@ -614,7 +614,7 @@ export class BuildConnection {
     this.watched = true;
   }
 
-  /** Stops treating silence as a dropped connection, such as while this side's own sends delay the pongs. */
+  /** Stops treating silence as a dropped connection, as before `watch()`. */
   unwatch(): void {
     this.watched = false;
   }

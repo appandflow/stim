@@ -17,7 +17,26 @@ const links = vi.hoisted(() => ({
   close: vi.fn<() => void>(),
   probe: vi.fn<() => Promise<{ state: 'ready' | 'stopped' }>>(),
   dropWatchEvents: false,
+  failLinkWrites: 0,
 }));
+vi.mock('../workspace/workspace-state.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../workspace/workspace-state.ts')>();
+  return {
+    ...actual,
+    updateWorkspaceState: (root: string, update: Parameters<typeof actual.updateWorkspaceState>[1]) =>
+      actual.updateWorkspaceState(root, (state) => {
+        const next = update(state);
+        if (
+          links.failLinkWrites > 0 &&
+          JSON.stringify(next.hostedMetroLinks) !== JSON.stringify(state.hostedMetroLinks)
+        ) {
+          links.failLinkWrites--;
+          throw new Error('ENOSPC: no space left on device');
+        }
+        return next;
+      }),
+  };
+});
 vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
   return {
@@ -53,6 +72,7 @@ beforeEach(() => {
   links.close.mockReset();
   links.probe.mockReset();
   links.dropWatchEvents = false;
+  links.failLinkWrites = 0;
   writeWorkspaceState(root, {
     supervisor: { processToken: 'watcher' },
     hostedMetroRequests: {
@@ -95,6 +115,25 @@ test('closing links completes while host evidence is pending, and orphan request
   } finally {
     await close();
     release?.({ state: 'ready' });
+  }
+});
+
+test('a link state write that fails once is written again, for readiness and for closing', async () => {
+  links.probe.mockResolvedValue({ state: 'ready' });
+  links.failLinkWrites = 1;
+  const close = watchHostedMetro(root, 8082, 'watcher');
+  try {
+    await vi.waitFor(
+      () => expect(readWorkspaceState(root)?.hostedMetroLinks).toMatchObject({ [session]: { ready: true } }),
+      { timeout: 3000 },
+    );
+    expect(links.failLinkWrites).toBe(0);
+    links.failLinkWrites = 1;
+    await closeHostedMetro(root, session);
+    expect(readWorkspaceState(root)?.hostedMetroLinks).toEqual({});
+    expect(links.failLinkWrites).toBe(0);
+  } finally {
+    await close();
   }
 });
 

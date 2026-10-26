@@ -52,16 +52,32 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
     }
     return cached;
   };
+  const unpublished = new Map<string, HostedMetroLinks | null>();
+  let republish: ReturnType<typeof setTimeout> | undefined;
+  const flush = () => {
+    clearTimeout(republish);
+    for (const [session, links] of unpublished) {
+      try {
+        updateWorkspaceState(root, (state) => {
+          const published = { ...hostedMetroLinks(state) };
+          if (state.supervisor?.processToken !== processToken) return state;
+          if (links) published[session] = links;
+          else delete published[session];
+          return { ...state, [HOSTED_METRO_LINKS_KEY]: published };
+        });
+      } catch {
+        if (closed) return;
+        republish = setTimeout(flush, 1000);
+        republish.unref();
+        return;
+      }
+      unpublished.delete(session);
+    }
+  };
   const publish = (session: string, links: HostedMetroLinks | null) => {
-    try {
-      updateWorkspaceState(root, (state) => {
-        const published = { ...hostedMetroLinks(state) };
-        if (state.supervisor?.processToken !== processToken) return state;
-        if (links) published[session] = links;
-        else delete published[session];
-        return { ...state, [HOSTED_METRO_LINKS_KEY]: published };
-      });
-    } catch {}
+    unpublished.delete(session);
+    unpublished.set(session, links);
+    flush();
   };
   const reconcile = async () => {
     if (closed) return;
@@ -160,6 +176,7 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
     closed = true;
     observer.close();
     clearTimeout(probeTimer);
+    clearTimeout(republish);
     clearInterval(timer);
     await running;
     for (const pool of pools.values()) pool.close();
