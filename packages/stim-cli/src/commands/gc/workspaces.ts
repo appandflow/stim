@@ -381,6 +381,7 @@ interface WorkspaceOutputsOptions {
   olderThan: number | null;
   now: number;
   exclude?: readonly string[];
+  only?: string;
   measure?: boolean;
   sizeTimeoutMs?: number;
   signal?: AbortSignal;
@@ -400,6 +401,7 @@ export function collectWorkspaceOutputs({
   olderThan,
   now,
   exclude = [],
+  only,
   measure = true,
   sizeTimeoutMs = SIZE_TIMEOUT_MS,
   signal,
@@ -410,6 +412,9 @@ export function collectWorkspaceOutputs({
   const outputEntries = (entries: WorkspaceDirEntry[], inTree: ReadonlyMap<string, string[]> = new Map()) =>
     entries
       .filter((entry) => !exclude.includes(entry.dir))
+      .filter(
+        (entry) => only === undefined || (entry.projectRoot !== null && canonicalPath(entry.projectRoot) === only),
+      )
       .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
       .map((entry) => {
         const inTreeDirs = inTree.get(entry.dir) ?? [];
