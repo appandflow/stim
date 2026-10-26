@@ -13,9 +13,11 @@ import { persistLastBuild, reportAndroidResult, finishAndroidUpload, type Report
 import { androidDevClientScheme } from './support.ts';
 import type { RunAndroidResult, FailExtra } from './types.ts';
 import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
+import type { StimContext } from '@stim-cli/core';
 
 export async function finishHostedAndroidRun({
   target,
+  operation,
   artifact,
   root,
   slot = 'default',
@@ -57,6 +59,7 @@ export async function finishHostedAndroidRun({
   | 'durationMs'
 > & {
   target: HostedAndroidTarget;
+  operation?: StimContext;
   artifact: PreparedAndroidArtifact;
   isExpo: boolean;
   appMode?: HostedAppOffer['mode'];
@@ -147,6 +150,7 @@ export async function finishHostedAndroidRun({
       let verification;
       try {
         verification = await verifyAndroidMetroRun({
+          operation,
           root,
           slot,
           remoteDevice: false,
