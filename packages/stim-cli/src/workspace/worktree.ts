@@ -1,4 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
+import { isPathPrefix } from '@stim-cli/core/state';
 import { chmod, lstat, mkdir, readdir, realpath, utimes } from 'node:fs/promises';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
@@ -802,6 +803,40 @@ export interface WorktreeEntry {
   bare?: boolean;
 }
 
+interface MatchedWorktreeEntry extends WorktreeEntry {
+  index: number;
+}
+
+// On Windows, Node's JS realpath keeps 8.3 short names (C:\Users\RUNNER~1) and
+// the caller's letter case, while git reports long names; the native realpath
+// resolves both.
+export function nativeCanonicalPath(path: string): string {
+  const missing: string[] = [];
+  for (let existing = resolve(path); ; existing = dirname(existing)) {
+    try {
+      return resolve(realpathSync.native(existing), ...missing);
+    } catch {
+      if (dirname(existing) === existing) return resolve(path);
+      missing.unshift(basename(existing));
+    }
+  }
+}
+
+export function matchWorktreeEntry(
+  entries: WorktreeEntry[] | null | undefined,
+  path: string,
+): MatchedWorktreeEntry | null {
+  let best: MatchedWorktreeEntry | null = null;
+  const target = nativeCanonicalPath(path);
+  (entries || []).forEach((entry, index) => {
+    if (!entry?.path || !isPathPrefix(nativeCanonicalPath(entry.path), target)) return;
+    if (!best || entry.path.length > best.path.length) best = { ...entry, index };
+  });
+  return best;
+}
+
+export const LOCKED_REASON = 'locked with git worktree lock';
+
 function parseWorktrees(out: string): WorktreeEntry[] {
   const entries: WorktreeEntry[] = [];
   let current: Partial<WorktreeEntry> = {};
@@ -848,6 +883,15 @@ export function listWorktrees(cwd: string, opts: ReadOptions = {}): WorktreeEntr
 export async function listWorktreesAsync(cwd: string, options: AsyncReadOptions = {}): Promise<WorktreeEntry[]> {
   const out = await gitReadAsync(cwd, ['worktree', 'list', '--porcelain'], options);
   return out ? parseWorktrees(out) : [];
+}
+
+/** Whether git lists the worktree holding `root` as locked; a path git does not list as a worktree is not locked. */
+export function worktreeLocked(root: string): boolean {
+  return Boolean(matchWorktreeEntry(listWorktrees(root), root)?.locked);
+}
+
+export async function worktreeLockedAsync(root: string, options: AsyncReadOptions = {}): Promise<boolean> {
+  return Boolean(matchWorktreeEntry(await listWorktreesAsync(root, options), root)?.locked);
 }
 
 function branchOf(head: string): string | undefined {

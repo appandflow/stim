@@ -65,6 +65,8 @@ import {
   hasUncommittedWorkAsync,
   isPodInstallChurn,
   listWorktreesAsync,
+  matchWorktreeEntry,
+  nativeCanonicalPath,
   sourceCheckoutOf,
   podsOutOfSync,
   readWorktreeExclude,
@@ -541,25 +543,6 @@ export function excludePodChurn(
   return { lines: kept, restore };
 }
 
-interface MatchedWorktreeEntry extends WorktreeEntry {
-  index: number;
-}
-
-// On Windows, Node's JS realpath keeps 8.3 short names (C:\Users\RUNNER~1) and
-// the caller's letter case, while git reports long names; the native realpath
-// resolves both.
-function nativeCanonicalPath(path: string): string {
-  const missing: string[] = [];
-  for (let existing = resolve(path); ; existing = dirname(existing)) {
-    try {
-      return resolve(realpathSync.native(existing), ...missing);
-    } catch {
-      if (dirname(existing) === existing) return resolve(path);
-      missing.unshift(basename(existing));
-    }
-  }
-}
-
 /** Other worktrees git lists inside `path`, which removing `path` would delete with it. */
 export function nestedWorktrees(entries: readonly WorktreeEntry[], path: string): string[] {
   const root = nativeCanonicalPath(path);
@@ -567,19 +550,6 @@ export function nestedWorktrees(entries: readonly WorktreeEntry[], path: string)
     .filter((candidate) => !candidate.bare && nativeCanonicalPath(candidate.path) !== root)
     .filter((candidate) => isPathPrefix(root, nativeCanonicalPath(candidate.path)))
     .map((candidate) => candidate.path);
-}
-
-export function matchWorktreeEntry(
-  entries: WorktreeEntry[] | null | undefined,
-  path: string,
-): MatchedWorktreeEntry | null {
-  let best: MatchedWorktreeEntry | null = null;
-  const target = nativeCanonicalPath(path);
-  (entries || []).forEach((entry, index) => {
-    if (!entry?.path || !isPathPrefix(nativeCanonicalPath(entry.path), target)) return;
-    if (!best || entry.path.length > best.path.length) best = { ...entry, index };
-  });
-  return best;
 }
 
 export function removalRemedy(

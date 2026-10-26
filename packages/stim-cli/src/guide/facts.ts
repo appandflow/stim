@@ -1141,8 +1141,8 @@ RULES
   reason is null for an entry --delete acts on, and otherwise a stable code
   to branch on; detail is the text line, for the user. Never parse detail.
   A linked worktree's detail is never null.
-    workspaceBuildOutputs   unresolved | in-use | last-use-unknown |
-                            recently-used
+    workspaceBuildOutputs   unresolved | locked | in-use |
+                            last-use-unknown | recently-used
     workspaceLogs           unresolved | in-use | collector
     recordings              unresolved | retained | recently-recorded
     memory                  in-use | busy | unknown | build-running |

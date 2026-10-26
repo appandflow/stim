@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
-import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { recordLightened, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { testContext } from './_context.ts';
@@ -151,6 +151,47 @@ async function quietly(fn: () => Promise<unknown>): Promise<string> {
   }
   return lines.join('\n');
 }
+
+test.skipIf(process.platform === 'win32')(
+  'gc --delete never lightens a git-locked worktree, and says it is locked',
+  async () => {
+    const roots = idleRepo([
+      { name: 'feature', workspace: true },
+      { name: 'rollback', workspace: true },
+    ]);
+    execSync(`git worktree lock --reason rollback "${roots.rollback}"`, { cwd: roots.repo, timeout: 15_000 });
+    const outputs = (name: string) => join(workspaceDir(roots[name]!), 'derived-data', 'blob');
+    for (const name of ['feature', 'rollback']) write(outputs(name));
+
+    const { payload } = await gcJson();
+    const report = await quietly(() => runGc({ delete: true }));
+
+    expect(existsSync(join(roots.feature!, 'node_modules'))).toBe(false);
+    expect(existsSync(outputs('feature'))).toBe(false);
+    expect(existsSync(join(roots.rollback!, 'node_modules', 'pkg', 'index.js'))).toBe(true);
+    expect(existsSync(join(roots.rollback!, 'ios', 'Pods', 'Manifest.lock'))).toBe(true);
+    expect(existsSync(outputs('rollback'))).toBe(true);
+    expect(
+      payload.sections.worktreeDependencies.filter((entry: { path: string }) =>
+        entry.path.startsWith(`${roots.rollback}/`),
+      ),
+    ).toEqual([
+      expect.objectContaining({ willDelete: false, detail: 'locked with git worktree lock' }),
+      expect.objectContaining({ willDelete: false, detail: 'locked with git worktree lock' }),
+    ]);
+    expect(
+      payload.sections.workspaceBuildOutputs.find(
+        (entry: { projectRoot: string }) => entry.projectRoot === roots.rollback,
+      ),
+    ).toMatchObject({
+      willClear: false,
+      reason: 'locked',
+      detail: 'locked with git worktree lock',
+    });
+    expect(report).toContain(`Kept the build outputs of ${roots.rollback}: locked with git worktree lock`);
+  },
+  60_000,
+);
 
 test.skipIf(process.platform === 'win32')(
   'gc --delete lightens only an idle linked worktree that warm can restore and nothing runs in',

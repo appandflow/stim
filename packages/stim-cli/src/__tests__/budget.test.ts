@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, chmodSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
@@ -291,6 +292,29 @@ describe('reclaiming in a scratch STIM_HOME with a floor above the free disk', (
     expect(existsSync(join(workspaceDir(other), 'derived-data'))).toBe(false);
     expect(existsSync(join(workspaceDir(current), 'derived-data'))).toBe(true);
     expect(readGcLog()).toMatchObject([{ trigger: 'budget', kind: 'workspaceOutputs', status: 'done', label: other }]);
+  });
+
+  test('a real run keeps the outputs of a git-locked worktree and says why', async () => {
+    process.env.STIM_BUDGET_MIN_FREE_DISK_GB = '1000000000';
+    process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '1000000000';
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', ...args], { cwd, timeout: 15_000 });
+    const repo = join(apps, 'repo');
+    mkdirSync(repo);
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+    const current = workspaceWithOutputs('current');
+    const rollback = join(apps, 'rollback');
+    git(repo, 'worktree', 'add', '-q', '--detach', rollback);
+    git(repo, 'worktree', 'lock', rollback);
+    const locked = realpathSync(rollback);
+    upsertProject(locked, { isExpo: false });
+    mkdirSync(join(ensureWorkspaceStorage(locked), 'derived-data', 'Build'), { recursive: true });
+    recordWorkspaceUse(locked, new Date(Date.now() - 60 * 60_000));
+    const notes: string[] = [];
+    await enforceBudget({ root: current, note: (line) => notes.push(line) }, { usage: () => [] });
+    expect(existsSync(join(workspaceDir(locked), 'derived-data'))).toBe(true);
+    expect(notes.join('\n')).toContain(`Kept the build outputs of ${locked}: locked`);
   });
 
   test.each(['devices', 'dev servers'] as const)('cancelling idle %s inventory starts no reclamation', async (kind) => {

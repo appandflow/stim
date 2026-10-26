@@ -16,6 +16,7 @@ import type { MaintenancePlan } from './plan.ts';
 import type { MaintenanceSettings } from './settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
+import { LOCKED_REASON } from '../workspace/worktree.ts';
 
 export async function planSweep({
   settings,
@@ -50,6 +51,8 @@ export async function planSweep({
       : { workspaces: [] };
   for (const entry of outputs.workspaces) {
     const root = entry.projectRoot === null ? null : canonicalPath(entry.projectRoot);
+    if (root !== null && entry.keptCode === 'locked')
+      skips.push({ target: root, reason: LOCKED_REASON, workspace: root });
     if (root === null || !entry.willClear || root === protectedRoot) continue;
     if (pinned(root)) {
       skips.push({ target: root, reason: 'pinned by maintenance.keep', workspace: root });

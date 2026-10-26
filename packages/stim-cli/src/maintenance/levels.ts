@@ -6,6 +6,7 @@ import { collectWorkspaceOutputs, LIGHTEN_AFTER_MS } from '../commands/gc/worksp
 import { readParked } from '../devices/sim-pool.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
+import { LOCKED_REASON } from '../workspace/worktree.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { formatBytes } from '../fs-util.ts';
 import { cachedDeviceActivityAsync, workspaceActiveReason, workspaceActiveReasonAsync } from './activity.ts';
@@ -53,6 +54,8 @@ async function planLevel2({
   ).workspaces
     .flatMap((entry) => {
       const root = entry.projectRoot === null ? null : canonicalPath(entry.projectRoot);
+      if (root !== null && entry.keptCode === 'locked')
+        skips.push({ target: root, reason: LOCKED_REASON, workspace: root });
       if (root === null || !entry.willClear || root === protectedRoot || pinned(root)) return [];
       const used = workspaceLastUsed(root);
       return Number.isFinite(used) ? [{ root, used }] : [];
