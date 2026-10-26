@@ -28,7 +28,7 @@ import { loadConfig, saveConfig, upsertProject, writeConfigSetting } from '../wo
 import { ensureWorkspaceStorage, workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
-import { liveClaimOwner } from './_factories.ts';
+import { liveClaimOwner, plantClaim } from './_factories.ts';
 
 const HOUR_MS = 3_600_000;
 const MINUTE_MS = 60_000;
@@ -437,6 +437,31 @@ test.each<[string, (root: string) => void]>([
       writeFileSync(deviceLeasePath('ios', 'PHONE-9'), '{ not json');
     },
   ],
+  [
+    'a stim-server viewer record that cannot be read',
+    () => {
+      mkdirSync(deviceViewersDir(), { recursive: true });
+      writeFileSync(join(deviceViewersDir(), 'server.json'), '{ not json');
+    },
+  ],
+  [
+    'a build in progress',
+    (root) => {
+      const claims = join(home, 'build-claims');
+      plantClaim(claims, 'exclusive', liveClaimOwner(), { claimId: 'build-1' });
+      const at = new Date().toISOString();
+      writeWorkspaceState(root, {
+        activeBuild: {
+          platform: 'ios',
+          phase: 'prepare',
+          startedAt: at,
+          phaseStartedAt: at,
+          claim: { root: claims, claimId: 'build-1' },
+        },
+      });
+    },
+  ],
+  ['a remote device session', (root) => writeWorkspaceState(root, { remoteDevice: { sessionId: 'remote-1' } })],
 ])('%s keeps the workspace', async (_, act) => {
   const { root } = bootedWorkspace('unknown', 7 * HOUR_MS);
   act(root);
@@ -474,4 +499,13 @@ test.skipIf(!posixModes)('agent-device sessions that cannot be read keep the wor
   expect(result.skips).toEqual([
     expect.objectContaining({ target: root, reason: expect.stringMatching(/agent-device sessions cannot be read/) }),
   ]);
+});
+
+test('a stray file in the agent-device sessions directory does not keep the workspace forever', async () => {
+  const { root } = bootedWorkspace('stray', 7 * HOUR_MS);
+  const sessions = join(workspaceAgentDeviceDir(root), 'sessions');
+  mkdirSync(sessions, { recursive: true });
+  writeFileSync(join(sessions, '.DS_Store'), '');
+
+  expect((await plan()).actions.map((action) => action.target)).toEqual([root]);
 });

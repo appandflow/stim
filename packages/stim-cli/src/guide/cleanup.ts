@@ -77,8 +77,8 @@ with the reason, and status shows the dev server as stopped by automatic
 maintenance. The next start, ios or android starts it
 again. A dev server run through metro.command is kept: Stim sees none of its
 bundle or HMR requests. A Metro log that cannot be read, or that rotated
-within the window, and agent-device sessions or a state.json that cannot be
-read keep the workspace too. A STIM_HOME-scoped home never
+within the window, and agent-device sessions, a state.json or a stim-server
+viewer record that cannot be read or verified keep the workspace too. A STIM_HOME-scoped home never
 idle-stops, because its devices are machine-wide. maintenance.keep does not keep a workspace from idle
 stop, which deletes nothing; set maintenance.idleStopHours 0 at workspace
 scope instead.

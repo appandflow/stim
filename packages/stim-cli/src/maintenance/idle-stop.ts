@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { rotatedLogPath, type StimContext } from '@stim-cli/core';
 import {
   coerceSettingText,
+  deviceViewersDir,
+  readJsonObject,
   parseNdjsonText,
   settingDefinition,
   settingValueError,
@@ -22,6 +24,7 @@ import {
   withWorkspaceProcessLock,
   workspaceProcessLockError,
 } from '../engine/workspace-process-lock.ts';
+import { inspectProcessIdentity } from '../process-identity.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { MODE_COMMAND, readRemoteSession } from '../supervisor/state.ts';
 import { loadConfig } from '../workspace/config.ts';
@@ -122,7 +125,8 @@ function recentAt(activity: DeviceActivity, basis: 'agent-action' | 'viewer'): n
   return Date.parse(activity.recent?.[basis] ?? '');
 }
 
-const missing = (error: unknown) => error instanceof Error && 'code' in error && error.code === 'ENOENT';
+const missing = (error: unknown) =>
+  error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 function agentSessionsActedAt(root: string): number | string {
@@ -172,6 +176,23 @@ function metroRequestAt(root: string, since: number, serving: boolean): number |
   return latest;
 }
 
+function unreadableViewers(): string | null {
+  const dir = deviceViewersDir();
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((name) => name.endsWith('.json'));
+  } catch (error) {
+    return missing(error) ? null : `the stim-server viewer records cannot be read (${message(error)})`;
+  }
+  for (const name of names) {
+    const record = readJsonObject(join(dir, name));
+    if (!record) return `the stim-server viewer record ${name} cannot be read`;
+    if (inspectProcessIdentity(record) === 'unknown')
+      return `the stim-server behind the viewer record ${name} cannot be verified`;
+  }
+  return null;
+}
+
 async function keepReasons(
   root: string,
   devices: readonly OwnedDeviceActivity[],
@@ -200,6 +221,8 @@ async function keepReasons(
     const reason = deviceKeepReason(device, platform);
     if (reason) keep.push(reason);
   }
+  const viewers = devices.length ? unreadableViewers() : null;
+  if (viewers) keep.push(viewers);
   return keep;
 }
 

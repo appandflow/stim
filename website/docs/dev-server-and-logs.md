@@ -164,8 +164,8 @@ each workspace kept past the window with its reason (`stim logs --source mainten
 
 A dev server started through `metro.command` is always kept, because Stim sees
 none of its bundle or HMR requests. A Metro log that cannot be read, or that
-rotated within the window, and agent-device sessions or a `state.json` that
-cannot be read keep the workspace too. A home redirected with
+rotated within the window, and agent-device sessions, a `state.json` or a
+stim-server viewer record that cannot be read or verified keep the workspace too. A home redirected with
 `STIM_HOME` never stops idle workspaces, because simulators and emulators are
 machine-wide. `maintenance.keep` does not keep a
 workspace from this stop, which deletes nothing; set `maintenance.idleStopHours`
