@@ -43,6 +43,65 @@ public struct Capacity: Decodable, Sendable {
   public var committedMb: Int
   public var totalMemoryMb: Int
   public var overCapacity: Bool
+  /// `concurrency.maxBuilds` usage; present only while that cap is set.
+  public var builds: BuildSlots?
+  /// `concurrency.maxDevices` usage; present only while that cap is set.
+  public var devices: DeviceSlots?
+  /// Absent from a `stim` that predates it.
+  public var load: CapacityLoad?
+}
+
+/// The Mac's 5-minute load average per core, and the state `stim` placed it in.
+public struct CapacityLoad: Decodable, Hashable, Sendable {
+  public enum State: String, Decodable, Hashable, Sendable {
+    case free, busy, holding, other
+
+    public init(from decoder: Decoder) throws {
+      self = State(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .other
+    }
+  }
+
+  public var cpus: Int
+  public var loadPerCore: Double
+  /// `server.maxLoadPerCore`: at or over it, placement prefers another machine.
+  public var busyAt: Double
+  /// The load per core at which new local native work waits; nil while no limit is configured.
+  public var limit: Double?
+  public var state: State
+}
+
+public struct BuildSlots: Decodable, Hashable, Sendable {
+  public var max: Int
+  public var inUse: Int
+  public var holders: [BuildSlotHolder]
+}
+
+public struct BuildSlotHolder: Decodable, Hashable, Sendable {
+  public var slot: Int
+  /// The root of the local build holding the slot.
+  public var workspace: String?
+  /// The device id of the client whose offloaded build this Mac runs in the slot.
+  public var client: String?
+  public var since: String?
+  /// A slot whose holder `stim` cannot read; `workspace` and `client` are nil.
+  public var unresolved: Bool?
+}
+
+public struct DeviceSlots: Decodable, Hashable, Sendable {
+  public var max: Int
+  /// Nil when `stim` could not count the owned devices; `unknown` says why.
+  public var inUse: Int?
+  public var unknown: String?
+  public var holders: [DeviceSlotHolder]
+}
+
+public struct DeviceSlotHolder: Decodable, Hashable, Sendable {
+  public var platform: String
+  /// The label of the workspace that records the device, or the device's name when none does.
+  public var label: String
+  public var workspace: String?
+  public var slot: String?
+  public var booting: Bool?
 }
 
 public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {

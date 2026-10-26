@@ -1144,6 +1144,7 @@ struct MachineSummary: View {
   @ViewBuilder private func popover(_ resource: ResourceKind) -> some View {
     switch resource {
     case .cpu: cpuPopover
+    case .load: loadPopover
     case .memory: memoryPopover
     case .disk: DiskPopover(metrics: metrics, gc: gc, openMachine: openMachine).presentationBackground(Palette.surface)
     }
@@ -1151,15 +1152,17 @@ struct MachineSummary: View {
 
   /// macOS 26 draws a glass capsule around a toolbar item even when it draws nothing, so the item is declared only when `row` has content.
   var hasContent: Bool {
-    store.error != nil || showsCPU || showsMemory || metrics.hasVolumes || (!store.watching && store.updatedAt != nil)
+    store.error != nil || showsCPU || showsLoad || showsMemory || metrics.hasVolumes
+      || (!store.watching && store.updatedAt != nil)
   }
 
   var contentKey: String {
-    "\(store.error != nil)\(showsCPU)\(showsMemory)\(metrics.hasVolumes)\(!store.watching && store.updatedAt != nil)"
+    "\(store.error != nil)\(showsCPU)\(showsLoad)\(showsMemory)\(metrics.hasVolumes)\(!store.watching && store.updatedAt != nil)"
   }
 
   private var showsCPU: Bool { metrics.machineCpuFraction != nil }
   private var workspacesCpu: String? { metrics.workspacesCpuFraction.map { formatPercent($0 * 100) } }
+  private var showsLoad: Bool { store.payload?.capacity?.load != nil }
   private var showsMemory: Bool { store.payload?.capacity != nil && metrics.memory != nil }
 
   var body: some View {
@@ -1168,10 +1171,10 @@ struct MachineSummary: View {
         narrowestRow.fixedSize()
       } else {
         ViewThatFits(in: .horizontal) {
-          row(showsCPU: true, showsMemory: true, showsBar: true, showsReclaimable: true)
-          row(showsCPU: true, showsMemory: true, showsBar: true, showsReclaimable: false)
-          row(showsCPU: true, showsMemory: true, showsBar: false, showsReclaimable: false)
-          row(showsCPU: false, showsMemory: true, showsBar: false, showsReclaimable: false)
+          row(showsCPU: true, showsLoad: true, showsMemory: true, showsBar: true, showsReclaimable: true)
+          row(showsCPU: true, showsLoad: true, showsMemory: true, showsBar: true, showsReclaimable: false)
+          row(showsCPU: true, showsLoad: true, showsMemory: true, showsBar: false, showsReclaimable: false)
+          row(showsCPU: false, showsLoad: true, showsMemory: true, showsBar: false, showsReclaimable: false)
           narrowestRow
         }
       }
@@ -1180,10 +1183,14 @@ struct MachineSummary: View {
   }
 
   private var narrowestRow: some View {
-    row(showsCPU: !metrics.hasVolumes, showsMemory: !metrics.hasVolumes, showsBar: false, showsReclaimable: false)
+    row(
+      showsCPU: !metrics.hasVolumes, showsLoad: !metrics.hasVolumes, showsMemory: !metrics.hasVolumes, showsBar: false,
+      showsReclaimable: false)
   }
 
-  private func row(showsCPU includesCPU: Bool, showsMemory: Bool, showsBar: Bool, showsReclaimable: Bool) -> some View {
+  private func row(
+    showsCPU includesCPU: Bool, showsLoad includesLoad: Bool, showsMemory: Bool, showsBar: Bool, showsReclaimable: Bool
+  ) -> some View {
     HStack(spacing: Space.md) {
       if let error = store.error {
         Label(abbreviatingHome(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
@@ -1194,10 +1201,12 @@ struct MachineSummary: View {
       }
       let cap = store.payload?.capacity
       let cpu = includesCPU ? metrics.machineCpuFraction : nil
+      let load = includesLoad ? cap?.load : nil
       let memory = cap == nil || !showsMemory ? nil : metrics.memory
       let lowest = metrics.volumes.min(by: { $0.freeBytes < $1.freeBytes })
       ForEach(
-        Array(ResourceSummary.entries(cpu: cpu != nil, memory: memory != nil, disk: lowest != nil).enumerated()),
+        Array(
+          ResourceSummary.entries(cpu: cpu != nil, load: load != nil, memory: memory != nil, disk: lowest != nil).enumerated()),
         id: \.offset
       ) { _, entry in
         switch entry {
@@ -1205,6 +1214,8 @@ struct MachineSummary: View {
           Rectangle().fill(Palette.secondary.opacity(0.3)).frame(width: 1, height: 16)
         case .item(.cpu):
           if let cpu { cpuItem(cpu) }
+        case .item(.load):
+          if let load { loadItem(load) }
         case .item(.memory):
           if let memory, let cap { memoryItem(memory, cap: cap, showsBar: showsBar) }
         case .item(.disk):
@@ -1247,6 +1258,29 @@ struct MachineSummary: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) {
           expandedResource = .cpu
+        }
+      }
+    }
+  }
+
+  private func loadItem(_ load: CapacityLoad) -> some View {
+    Button {
+      expandedResource = .load
+    } label: {
+      statItem(icon: ResourceKind.load.icon, label: "Load", value: load.text, tone: load.tone)
+        .padding(Space.sm)
+    }
+    .buttonStyle(.hoverRow(radius: Radius.round))
+    .accessibilityLabel("Load details")
+    .accessibilityValue(load.text)
+    .help("The 5-minute load average per core on this Mac. \(load.explanation)")
+    .popover(isPresented: shows(.load), arrowEdge: .bottom) { popover(.load) }
+    .onHover { hovering in
+      if hovering, expandedResource != nil {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+          expandedResource = .load
         }
       }
     }
@@ -1331,6 +1365,19 @@ struct MachineSummary: View {
           )
           .foregroundStyle(Palette.secondary)
         }
+      }
+    }
+  }
+
+  private var loadPopover: some View {
+    MachineResourcePopover(title: "Load", icon: ResourceKind.load.icon, openMachine: openMachine) {
+      if let load = store.payload?.capacity?.load {
+        Text(load.text).font(.stim(.title)).foregroundStyle(Color(load.tone)).monospacedDigit()
+        Text(
+          "The 5-minute load average divided by this Mac's \(load.cpus) cores. CPU reads 100% from about one load per core; Load keeps counting past that."
+        )
+        .foregroundStyle(Palette.secondary)
+        Text(load.explanation).foregroundStyle(Palette.secondary)
       }
     }
   }
