@@ -747,6 +747,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Interval in minutes of the check that shuts down owned simulators and emulators idle for devices.idleShutdownMinutes, also with no dev server running',
   },
   {
+    key: 'maintenance.idleStopHours',
+    type: { kind: 'number', minimum: 0 },
+    scopes: EVERY,
+    default: 6,
+    env: 'STIM_MAINTENANCE_IDLE_STOP_HOURS',
+    description:
+      "Hours with no native run, Metro bundle or HMR request, agent-device command, Stim command or live view before automatic maintenance and gc --delete stop a workspace's dev server and shut down its owned simulators and emulators, as stim stop does; device and app log lines do not count; 0 never",
+  },
+  {
     key: 'maintenance.sweepHours',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: MACHINE,

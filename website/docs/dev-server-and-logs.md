@@ -126,6 +126,52 @@ read when the supervisor is launched.
 
 <StimTabs code={`stim settings set metro.idleStopMinutes 120 --scope workspace`} />
 
+## Idle workspace stop
+
+Automatic maintenance, in its idle check every `maintenance.idleCheckMinutes`
+(5), and `stim gc --delete` stop a workspace whose dev server runs or whose
+owned simulator or emulator is booted once it has had no real activity for
+`maintenance.idleStopHours`: 6 hours by default, `0` never. Six hours outlasts
+a lunch break, a meeting or an agent's pause between tasks, and still frees the
+memory overnight. The setting takes machine and project layers, accepts
+fractions, and `STIM_MAINTENANCE_IDLE_STOP_HOURS` overrides it.
+
+Real activity is the newest of:
+
+- a Stim command in the workspace: `start`, `ios`, `android`, `macos`, `web`,
+  `reload`, `logs` or `worktree warm`;
+- the end of the workspace's last native build;
+- a Metro bundle, Expo manifest or HMR update request;
+- an agent-device command in the workspace's agent-device sessions;
+- an open live view of the device through stim-server, from Stim Desktop or
+  the phone app.
+
+Device and system log lines, in-app console logs, dev server output and
+maintenance's own records never count, and an app that only stays connected to
+Metro does not either. A simulator that logs network chatter every few seconds
+for days is idle.
+
+The stop is the one `stim stop` makes: the dev server stops, owned devices shut
+down (never deleted), the port is released, and device leases stay. A build, a
+running `stim ios`, `android`, `stop` or `start`, a running macOS app, a hosted
+or remote session, an unexpired device lease, a managed tunnel, a running owned
+Chrome, a device driver other than agent-device, or device activity Stim cannot
+read keeps the workspace. Maintenance logs each stop with the idle time and
+each kept workspace with its reason (`stim logs --source maintenance`), and
+`stim status` shows the dev server stopped by automatic maintenance. The next
+`stim start`, `stim ios` or `stim android` starts it again.
+
+<StimTabs code={`stim settings set maintenance.idleStopHours 1 --scope machine`} />
+
+Try it with an agent:
+
+```text
+Run `stim settings get maintenance.idleStopHours` and tell me after how many
+hours without activity Stim stops this workspace's dev server and simulator.
+If I am about to step away for longer, set it for this workspace only with
+`stim settings set maintenance.idleStopHours <hours> --scope workspace`.
+```
+
 ## Why the dev server stopped
 
 When the supervisor stops its dev server, it records the cause in the

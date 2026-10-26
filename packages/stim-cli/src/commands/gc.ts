@@ -125,6 +125,7 @@ import { collectInventory, type GcInventory } from './gc/inventory.ts';
 import { collectParkedHostedDevices, deleteParkedHostedDevices } from './gc/hosted-devices.ts';
 import { collectFinishedDevices, deleteFinishedDevices, ownedDeviceDisk } from './gc/finished-devices.ts';
 import { ownedDeviceUsage } from '../maintenance/devices.ts';
+import { stopIdleWorkspaces } from './gc/idle-workspaces.ts';
 import {
   collectMemoryReport,
   GRADLE_DAEMONS_KIND,
@@ -1166,6 +1167,8 @@ async function runGcCore(
   }
 
   let deleteFailures = idleFailures;
+  throwIfCancelled(signal, 'GC');
+  if (cache === null) deleteFailures += await stopIdleWorkspaces(output, deps.operation);
   throwIfCancelled(signal, 'GC');
   deleteFailures += await deleteArchives(report.archives, output, signal);
   throwIfCancelled(signal, 'GC');

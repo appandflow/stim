@@ -48,6 +48,32 @@ supervisor's idle rules and records (guide lifecycle budget). While the level is
 check also names abnormally large processes (guide lifecycle simslim) in
 status's maintenance block and the maintenance log.
 
+IDLE STOP: the idle check, and gc --delete, stop a workspace whose dev server
+runs or whose owned simulator or emulator is booted once it has had no real
+activity for maintenance.idleStopHours (default 6; 0 never; machine or project
+layers; STIM_MAINTENANCE_IDLE_STOP_HOURS overrides; fractions work). Six hours
+outlasts a lunch break, a meeting or an agent's pause between tasks, and still
+frees the memory overnight. Real activity is the newest of: a Stim command in
+the workspace (start, ios, android, macos, web, reload, logs, worktree warm),
+the end of its last native build, a Metro bundle, manifest or HMR update
+request in metro.ndjson, an agent-device command in the workspace's
+agent-device sessions, and an open stim-server live view of its device.
+Device and system log lines, in-app console logs, dev server output,
+collector writes and maintenance's own records never count, and an app that
+only stays connected does not either. The stop is stim stop's: the dev
+server stops, the owned devices shut down through centralized teardown
+(never deleted), and the port is released; device leases stay. A build, a
+held native-run or metro-start lock, a build lock or slot, a running macOS
+app, a hosted or remote session, an unexpired device lease, a managed tunnel
+or remote lock, a running owned Chrome, a device driver other than
+agent-device, or device activity that cannot be read keeps the workspace;
+the check decides again under the native-run and metro-start locks. Each stop
+is a maintenance_action line naming the idle time, each kept workspace a
+maintenance_skip line with the reason, and status shows the dev server as
+stopped by automatic maintenance. The next start, ios or android starts it
+again.
+  stim settings set maintenance.idleStopHours 1 --scope machine
+
 In on mode a pass runs, cheapest to rebuild first:
   1. orphaned workspace directories whose project is gone, and registered
      caches whose directory no longer exists
@@ -1154,8 +1180,8 @@ WORKSPACE BUILD OUTPUTS
   1 keeps its own rules. A running, building, unverified or hosted macOS app
   keeps its workspace untouched.
     stim gc --delete --cache workspaces --older-than 7
-  Last use is the newest of the lastUsedAt that start, ios, android, reload
-  and worktree warm record in state.json, lastBuild.startedAt,
+  Last use is the newest of the lastUsedAt that start, ios, android, reload,
+  logs and worktree warm record in state.json, lastBuild.startedAt,
   supervisor.startedAt and the mtimes under logs/, so a dev server that keeps
   logging keeps its workspace in use.
   A workspace with none of those was last used when its workspace.json was

@@ -564,6 +564,9 @@ recorded; below disk pressure level 3 a pass never stops dev servers or
 helpers. The idle check shuts down owned simulators and emulators idle for
 their workspace's `devices.idleShutdownMinutes`, also when no dev server runs;
 see [idle shutdown](./owned-devices.md#idle-shutdown).
+The same check stops a whole workspace, dev server and owned devices, after
+`maintenance.idleStopHours` (6) with no real activity; see
+[idle workspace stop](./dev-server-and-logs.md#idle-workspace-stop).
 Removing a finished worktree or orphaned directory does tear down that
 workspace's own dev server, owned devices and Chrome profile, as `gc --delete` does.
 Size, idle, worktree and sweep checks defer under high host load. The size scan covers

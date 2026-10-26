@@ -19,6 +19,8 @@ import { plan, type MaintenancePlan } from './plan.ts';
 import { maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { planSweep, planWorktrees } from './sweep.ts';
 import { planIdleShutdown } from './devices.ts';
+import { cachedDeviceActivity, cachedDeviceActivityAsync } from './activity.ts';
+import { planIdleStop } from './idle-stop.ts';
 import { planPressureLevels } from './levels.ts';
 import { diskPressureLevel, lowestFree } from './pressure.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
@@ -160,7 +162,20 @@ export async function plannedMaintenance(
     merge(planned);
     result.worktreeSweep = planned.sweep;
   }
-  if (idle && devices) merge(planIdleShutdown({ protectedRoot: root, now: Date.now(), env }));
+  if (idle && devices) {
+    merge(planIdleShutdown({ protectedRoot: root, now: Date.now(), env }));
+    const now = Date.now();
+    merge(
+      await planIdleStop({
+        protectedRoot: root,
+        now,
+        env,
+        devices: operation
+          ? cachedDeviceActivityAsync(now, env, operation.signal, operation)
+          : cachedDeviceActivity(now),
+      }),
+    );
+  }
   if (pressure) {
     const level = diskPressureLevel(lowestFree(pressure.disk), budget, settings);
     const pressured = await planPressureLevels(level, {

@@ -207,8 +207,8 @@ WHAT THE SUPERVISOR IS
   (default 60; 0 never stops) with no bundle request, no client log record
   (in-app console logs; for Expo or metro.command, any stdout line of the
   dev server) and no Stim
-  command in the workspace (start, ios, android, reload, worktree warm). It
-  checks once a minute. It keeps running while a bundle response is in
+  command in the workspace (start, ios, android, reload, logs, worktree
+  warm). It checks once a minute. It keeps running while a bundle response is in
   flight, while a build in the workspace is in progress, while a stim ios,
   android or stop run holds the workspace's native-run lock, while the
   workspace holds an unexpired device lease (\`stim device lock\` or a

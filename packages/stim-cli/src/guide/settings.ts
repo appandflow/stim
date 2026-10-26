@@ -631,6 +631,8 @@ floors below; report measures and plans and deletes nothing; off disables it.
 STIM_HOME and CI make the mode off unless STIM_MAINTENANCE is set.
 maintenance.keep is a project setting: pin a workspace so a pass never clears
 its build outputs or removes its worktree.
+maintenance.idleStopHours takes machine or project layers, so one workspace can
+stop sooner, later or never.
 See \`guide cleanup\` for checks, plans and log paths.
 
 ${SETTINGS.filter((setting) => setting.key.startsWith('maintenance.') || /^caches\..*MaxGb$/.test(setting.key))
