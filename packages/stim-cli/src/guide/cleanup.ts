@@ -48,7 +48,8 @@ supervisor's idle rules and records (guide lifecycle budget). While the level is
 check also names abnormally large processes (guide lifecycle simslim) in
 status's maintenance block and the maintenance log.
 
-IDLE STOP: the idle check, and gc --delete, stop a workspace whose dev server
+IDLE STOP: the idle check, and gc --delete unless maintenance.mode is off (its
+dry run lists them in the maintenance plan), stop a workspace whose dev server
 runs or whose owned simulator or emulator is booted once it has had no real
 activity for maintenance.idleStopHours (default 6; 0 never; machine or project
 layers; STIM_MAINTENANCE_IDLE_STOP_HOURS overrides; fractions work). Six hours
@@ -66,7 +67,8 @@ server stops, the owned devices shut down through centralized teardown
 held native-run or metro-start lock, a build lock or slot, a running macOS
 app, a hosted or remote session, an unexpired device lease, a managed tunnel
 or remote lock, a running owned Chrome, a device driver other than
-agent-device, or device activity that cannot be read keeps the workspace;
+agent-device, device activity or an emulator list that cannot be read keeps
+the workspace;
 the check decides again under the native-run and metro-start locks. Each stop
 is a maintenance_action line naming the idle time, each kept workspace a
 maintenance_skip line with the reason, and status shows the dev server as

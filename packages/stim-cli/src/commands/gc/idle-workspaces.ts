@@ -4,11 +4,16 @@ import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-loc
 import { cachedDeviceActivity, cachedDeviceActivityAsync } from '../../maintenance/activity.ts';
 import { planIdleStop, stopIdleWorkspace, type IdleStopOutcome } from '../../maintenance/idle-stop.ts';
 import { triggeringRoot } from '../../maintenance/preview.ts';
+import { resolveMaintenanceSettings } from '../../maintenance/settings.ts';
 import type { GcOutput } from './results.ts';
 
-/** Stops each workspace idle past its maintenance.idleStopHours, as automatic maintenance does; returns failures. */
+/**
+ * Stops each workspace idle past its maintenance.idleStopHours, as automatic maintenance does, unless
+ * maintenance.mode is off, so the dry run's maintenance plan lists every stop; returns failures.
+ */
 export async function stopIdleWorkspaces(output: GcOutput, operation?: StimContext): Promise<number> {
   const env = operation?.env ?? process.env;
+  if (resolveMaintenanceSettings(undefined, env).mode === 'off') return 0;
   const devices = () => {
     const now = Date.now();
     return operation ? cachedDeviceActivityAsync(now, env, operation.signal, operation) : cachedDeviceActivity(now);

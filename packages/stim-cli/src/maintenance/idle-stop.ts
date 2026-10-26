@@ -14,6 +14,7 @@ import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { runStop } from '../commands/stop.ts';
+import { ownedAvdSerialResolver, ownedAvdSerialResolverAsync } from '../devices/android.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { leaseIsExpired, listLeaseFiles } from '../engine/device-lease.ts';
 import {
@@ -243,12 +244,29 @@ function rethrowCleanup(error: unknown, signal: AbortSignal | undefined): void {
   signal?.throwIfAborted();
 }
 
+async function emulatorListError(avdNames: readonly string[], operation?: StimContext): Promise<string | null> {
+  try {
+    if (operation) {
+      const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal: operation.signal, operation });
+      for (const name of avdNames) await resolve(name);
+    } else {
+      const resolve = ownedAvdSerialResolver({ timeoutMs: 5000 });
+      for (const name of avdNames) resolve(name);
+    }
+    return null;
+  } catch (error) {
+    rethrowCleanup(error, operation?.signal);
+    return `its emulators cannot be listed to prove them idle (${error instanceof Error ? error.message : String(error)})`;
+  }
+}
+
 async function candidate(
   path: string,
   env: NodeJS.ProcessEnv,
   devices: DeviceReader,
-  signal?: AbortSignal,
+  operation?: StimContext,
 ): Promise<IdleStopCandidate | { skip: string } | null> {
+  const signal = operation?.signal;
   const project = loadConfig()?.projects?.[path];
   if (!project) return null;
   const supervisor = resolveSupervisorTarget({
@@ -276,6 +294,11 @@ async function candidate(
   }
   if (supervisor.status === 'unverified')
     return { skip: `its dev server supervisor cannot be verified: ${supervisor.reason ?? 'unknown identity'}` };
+  const avdNames = slots.flatMap(({ platforms }) =>
+    platforms.android?.owned && platforms.android.avdName ? [platforms.android.avdName] : [],
+  );
+  const emulators = avdNames.length ? await emulatorListError(avdNames, operation) : null;
+  if (emulators) return supervisor.status === 'ours' ? { skip: emulators } : null;
   if (supervisor.status === 'ours' && readWorkspaceState(path)?.supervisor?.mode === MODE_COMMAND)
     return { skip: 'its dev server runs metro.command, whose bundle and HMR requests Stim cannot see' };
   if (supervisor.status !== 'ours' && booted.length === 0) return null;
@@ -307,7 +330,7 @@ export async function planIdleStop({
     const root = canonicalPath(path);
     if (root === protectedRoot) continue;
     operation?.signal.throwIfAborted();
-    const found = await candidate(path, env, devices, operation?.signal);
+    const found = await candidate(path, env, devices, operation);
     if (!found) continue;
     if ('skip' in found) {
       plan.skips.push({ target: root, reason: found.skip, workspace: root });
@@ -365,7 +388,7 @@ export async function stopIdleWorkspace(
   const path = Object.keys(loadConfig()?.projects ?? {}).find((entry) => canonicalPath(entry) === root) ?? root;
   const stillIdle = async (): Promise<string | null> => {
     const now = Date.now();
-    const found = await candidate(path, env, devices(), operation?.signal);
+    const found = await candidate(path, env, devices(), operation);
     if (!found) return 'nothing of it runs any more';
     if ('skip' in found) return found.skip;
     const idleMs = found.hours * HOUR_MS;

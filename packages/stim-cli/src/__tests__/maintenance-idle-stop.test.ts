@@ -372,15 +372,40 @@ test('a maintenance pass routes a planned idle stop to the stim stop path', asyn
   expect(shutdown.mock.calls).toEqual([[udid, expect.not.objectContaining({ del: true })]]);
 });
 
-test('a failed idle stop in gc --delete is counted and recorded, and gc goes on', async () => {
+test('gc --delete stops idle workspaces only while maintenance is not off, and counts a failed stop', async () => {
   const { root } = bootedWorkspace('failing', 7 * HOUR_MS);
   vi.spyOn(teardown, 'teardownOwnedIosSim').mockRejectedValue(new Error('simctl refused'));
   vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
   const record = vi.fn<GcOutput['record']>();
   const output = { log: () => {}, error: () => {}, record, fail: () => {} };
 
+  expect(await stopIdleWorkspaces(output)).toBe(0);
+  expect(record).not.toHaveBeenCalled();
+
+  vi.stubEnv('STIM_MAINTENANCE', 'on');
   expect(await stopIdleWorkspaces(output)).toBe(1);
   expect(record).toHaveBeenCalledWith('devServer', 'failed', root, expect.anything());
+});
+
+test('a running dev server whose emulators cannot be listed is kept', async () => {
+  const root = serving('emulators', 8100);
+  upsertProject(root, { platforms: { android: { avdName: 'stim-emulators', owned: true } } });
+  appendLog(root, 'metro.ndjson', [{ ts: Date.now() - 7 * HOUR_MS, src: 'metro', event: 'expo_stdout', msg: 'x' }]);
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFile: (file, args, options) => {
+      if (file.endsWith('emulator')) throw new Error('emulator -list-avds timed out');
+      return real.runFile(file, args, options);
+    },
+  });
+
+  const { actions, skips } = await plan(() => []);
+
+  expect(actions).toEqual([]);
+  expect(skips).toEqual([
+    expect.objectContaining({ target: root, reason: expect.stringMatching(/emulators cannot be listed.*timed out/) }),
+  ]);
 });
 
 test.each<[string, (root: string) => void]>([

@@ -129,7 +129,7 @@ read when the supervisor is launched.
 ## Idle workspace stop
 
 Automatic maintenance, in its idle check every `maintenance.idleCheckMinutes`
-(5), and `stim gc --delete` stop a workspace whose dev server runs or whose
+(5), and `stim gc --delete` while `maintenance.mode` is not `off`, stop a workspace whose dev server runs or whose
 owned simulator or emulator is booted once it has had no real activity for
 `maintenance.idleStopHours`: 6 hours by default, `0` never. Six hours outlasts
 a lunch break, a meeting or an agent's pause between tasks, and still frees the
