@@ -2146,7 +2146,10 @@ export interface DesktopMachineAccessEndedEvent {
   message: string;
 }
 
-/** Sent on a `device-host.metro.link` connection when the host pairs it with one Metro stream; binary frames follow. */
+/**
+ * Sent on a `device-host.metro.link` connection when the host pairs it with one Metro stream; binary frames follow.
+ * Only device-host links receive it, so it is not a `ServerEvent`.
+ */
 export interface MetroLinkOpenEvent {
   event: 'device-host.metro.link.open';
 }
@@ -2185,8 +2188,7 @@ export type ServerEvent =
   | FrameDelayedEvent
   | ReplayEndedEvent
   | ErrorEvent
-  | ControlEndedEvent
-  | MetroLinkOpenEvent;
+  | ControlEndedEvent;
 
 export type ServerMessage = ServerResponse | ServerEvent;
 

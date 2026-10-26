@@ -135,6 +135,7 @@ import {
   type PlatformBuildOptions,
   type Methods,
   type RequestId,
+  type MetroLinkOpenEvent,
   type ServerMessage,
   type VideoCodec,
 } from './protocol.ts';
@@ -4129,7 +4130,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             });
             if (socket.bufferedAmount >= METRO_LINK_BUFFERED_BYTES) stream.pause();
           });
-          send(socket, { event: 'device-host.metro.link.open' });
+          send(socket, JSON.stringify({ event: 'device-host.metro.link.open' } satisfies MetroLinkOpenEvent));
           stream.resume();
           return true;
         },
