@@ -389,6 +389,22 @@ describe('runSupervisor', () => {
     expect(typeof startState.supervisor.startedAt).toBe('string');
   });
 
+  test.each([
+    [true, true],
+    [false, undefined],
+  ])('a server that loads the request shim (%s) is recorded as reporting HMR updates', async (observes, recorded) => {
+    const server = fakeServer({ observesRequests: observes });
+    await runSupervisor({
+      root,
+      port: 8091,
+      isExpo: () => false,
+      attachSignals: false,
+      onExit: () => {},
+      startBare: async () => server.handle,
+    });
+    expect(readWorkspaceState(root)?.supervisor?.hmrUpdates).toBe(recorded);
+  });
+
   test('a new supervisor clears a stale Expo tunnel before it starts the server', async () => {
     writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://stale.exp.direct' } });
     const server = fakeServer({ mode: MODE_EXPO, serverPid: 31336 });
@@ -463,6 +479,7 @@ describe('runSupervisor', () => {
     expect(received).toEqual(command);
     expect(receivedSettings).toMatchObject({ metro: { command } });
     expect(readWorkspaceState(root)?.supervisor?.mode).toBe(MODE_COMMAND);
+    expect(readWorkspaceState(root)?.supervisor?.hmrUpdates).toBeUndefined();
   });
 
   test('records the Expo child with a process token that proves it after the supervisor is gone', async () => {

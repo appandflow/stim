@@ -560,10 +560,13 @@ Disk and memory pressure are checked every minute, idle devices every
 finished worktrees every 15 minutes and the age sweep once a day.
 On macOS the memory signal is the sysctl pressure level, with no signal when
 sysctl fails. Only other platforms use `os.freemem()`. Memory pressure is
-recorded; below disk pressure level 3 a pass never stops dev servers or
-helpers. The idle check shuts down owned simulators and emulators idle for
+recorded; below disk pressure level 3 a pass stops a dev server only after
+`maintenance.idleStopHours` without real activity and never stops helpers. The idle check shuts down owned simulators and emulators idle for
 their workspace's `devices.idleShutdownMinutes`, also when no dev server runs;
 see [idle shutdown](./owned-devices.md#idle-shutdown).
+The same check stops a whole workspace, dev server and owned devices, after
+`maintenance.idleStopHours` (6) with no real activity; see
+[idle workspace stop](./dev-server-and-logs.md#idle-workspace-stop).
 Removing a finished worktree or orphaned directory does tear down that
 workspace's own dev server, owned devices and Chrome profile, as `gc --delete` does.
 Size, idle, worktree and sweep checks defer under high host load. The size scan covers

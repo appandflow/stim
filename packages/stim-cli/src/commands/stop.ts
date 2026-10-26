@@ -51,7 +51,12 @@ import {
   type MetroResolution,
 } from '../metro.ts';
 import { isMetroRunning } from '../ports.ts';
-import { logVanishedSupervisor, requestDevServerStop, withdrawDevServerStopRequest } from '../supervisor/stop-cause.ts';
+import {
+  logVanishedSupervisor,
+  requestDevServerStop,
+  withdrawDevServerStopRequest,
+  type StopRequester,
+} from '../supervisor/stop-cause.ts';
 import {
   MODE_COMMAND,
   clearManagedMetroTunnel,
@@ -467,6 +472,7 @@ async function stopWorkspace({
   clearState = (projectRoot, expected) =>
     withWorkspaceStateLockAsync(projectRoot, () => clearSupervisorState(projectRoot, expected)),
   report = (line: string) => console.error(line),
+  requester,
 }: {
   root: string;
   operation?: StimContext;
@@ -502,6 +508,7 @@ async function stopWorkspace({
   clearRegistration?: (root: string, expected?: ProcessRecord | null) => Promise<RegistrationCleanup>;
   clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void | Promise<boolean | void>;
   report?: (line: string) => void;
+  requester?: StopRequester;
 }): Promise<StopResult> {
   const proj = project === undefined ? getProject(root) : project;
   const sup = state === undefined ? readSupervisorState(root) : state;
@@ -569,7 +576,7 @@ async function stopWorkspace({
     ok = false;
     stillHolding = `supervisor pid ${target.pid} could not be verified`;
   } else {
-    outcomes.supervisor = await stopSupervisor(target, { root, killGroup, waiter, report, releaseReverses });
+    outcomes.supervisor = await stopSupervisor(target, { root, killGroup, waiter, report, releaseReverses, requester });
     if (outcomes.supervisor.status !== 'stopped') {
       ok = false;
       stillHolding = outcomes.supervisor.reason;
@@ -879,18 +886,22 @@ async function stopSupervisor(
     waiter,
     report,
     releaseReverses,
+    requester,
   }: {
     root: string;
     killGroup: typeof killMetroTree | typeof killMetroTreeAsync;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     report: (line: string) => void;
     releaseReverses: () => Promise<void>;
+    requester: StopRequester | undefined;
   },
 ): Promise<SupervisorOutcome> {
   await releaseReverses();
   report(chalk.dim(phaseLine('stop', `sending SIGTERM to supervisor process group ${target.pid}`)));
   try {
-    await withWorkspaceStateLockAsync(root, () => requestDevServerStop(root, target.processToken, { by: 'stim stop' }));
+    await withWorkspaceStateLockAsync(root, () =>
+      requestDevServerStop(root, target.processToken, requester ?? { by: 'stim stop' }),
+    );
   } catch {}
   let signalled = false;
   try {

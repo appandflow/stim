@@ -48,6 +48,52 @@ supervisor's idle rules and records (guide lifecycle budget). While the level is
 check also names abnormally large processes (guide lifecycle simslim) in
 status's maintenance block and the maintenance log.
 
+IDLE STOP: the idle check, and gc --delete unless maintenance.mode is off (its
+dry run lists them in the maintenance plan), stop a workspace whose dev server
+runs or whose owned simulator or emulator is booted once it has had no real
+activity for maintenance.idleStopHours (default 6; 0 never; machine or project
+layers; STIM_MAINTENANCE_IDLE_STOP_HOURS overrides; fractions work). Six hours
+outlasts a lunch break, a meeting or an agent's pause between tasks, and still
+frees the memory overnight. Real activity is the newest of: a Stim command in
+the workspace (start, ios, android, macos, web, reload, logs, worktree warm),
+the end of its last native build, the start, progress or end of a Metro
+bundle or manifest request, or an HMR update, in metro.ndjson, an agent-device command in the workspace's
+agent-device sessions, and an open stim-server live view of its device.
+Device and system log lines, in-app console logs, dev server output,
+collector writes and maintenance's own records never count, and an app that
+only stays connected does not either. The stop is stim stop's: the dev
+server stops, the owned devices shut down through centralized teardown
+(never deleted), and the port is released; device leases stay. A build, a
+held native-run or metro-start lock, a build lock or slot, a running macOS
+app, a hosted or remote session, an unexpired device lease, a managed tunnel
+or remote lock, a running owned Chrome, a device driver other than
+agent-device, a live agent-device claim with no session activity to judge,
+device activity, an emulator list or an emulator's AVD name that cannot be read keeps
+the workspace;
+the check decides again under the native-run and metro-start locks. Each stop
+is a maintenance_action line naming the idle time (gc --delete records itself
+as the requester), each workspace kept past the window a maintenance_skip line
+with the reason. The port is released, so status shows the workspace idle as
+after stim stop, and the supervisor_stopped line in metro.ndjson names
+automatic maintenance and the idle time as the requester. The next start, ios or android starts it
+again. An owned emulator the activity check missed keeps the workspace while
+adb lists it, and so does any emulator adb lists without an AVD name, such as
+a stale offline entry that adb kill-server clears. A dev server that may still run after its supervisor
+exited is kept until stim stop ends it. So is a dev server whose requests Stim
+does not record: an Expo project before SDK 54, which cannot load Stim's Metro config
+adapter, or a dev server an older Stim started, until stim stop and stim start
+restart it. Unlike the other actions, it can stop the workspace whose dev server
+supervisor or status --watch timer started the pass; a pass a command starts,
+gc --delete included, never stops the command's own workspace.
+A dev server run through metro.command is kept: Stim sees none of its
+bundle or HMR requests. A Metro log that cannot be read, or that rotated
+within the window, and agent-device sessions, a state.json or a stim-server
+viewer record that cannot be read or verified keep the workspace too. A STIM_HOME-scoped home never
+idle-stops, because its devices are machine-wide. maintenance.keep does not keep a workspace from idle
+stop, which deletes nothing; set maintenance.idleStopHours 0 at workspace
+scope instead.
+  stim settings set maintenance.idleStopHours 1 --scope machine
+
 In on mode a pass runs, cheapest to rebuild first:
   1. orphaned workspace directories whose project is gone, and registered
      caches whose directory no longer exists
@@ -92,7 +138,8 @@ live build lock, or in a Metro store with a running or unverifiable dev
 server. Anything the pass cannot verify is kept. A device is deleted only when
 its workspace is idle: no dev server, native run, build, lease, managed lock,
 driven or busy device, and no recorded use within the window. Below disk
-pressure level 3 a pass never stops a dev server or watchman; removing a
+pressure level 3 a pass stops a dev server only by IDLE STOP above and never
+stops watchman; removing a
 finished worktree or orphaned directory does tear down that workspace's own
 dev server, owned devices and Chrome profile, as gc --delete does. ccache evicts by itself under
 caches.ccacheMaxGb.
@@ -1154,8 +1201,8 @@ WORKSPACE BUILD OUTPUTS
   1 keeps its own rules. A running, building, unverified or hosted macOS app
   keeps its workspace untouched.
     stim gc --delete --cache workspaces --older-than 7
-  Last use is the newest of the lastUsedAt that start, ios, android, reload
-  and worktree warm record in state.json, lastBuild.startedAt,
+  Last use is the newest of the lastUsedAt that start, ios, android, reload,
+  logs and worktree warm record in state.json, lastBuild.startedAt,
   supervisor.startedAt and the mtimes under logs/, so a dev server that keeps
   logging keeps its workspace in use.
   A workspace with none of those was last used when its workspace.json was
