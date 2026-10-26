@@ -341,6 +341,23 @@ describe('reclaiming in a scratch STIM_HOME with a floor above the free disk', (
     );
   });
 
+  test('outputs of a project whose directory is gone are still cleared inside a git checkout', async () => {
+    process.env.STIM_BUDGET_MIN_FREE_DISK_GB = '1000000000';
+    process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '1000000000';
+    const repo = join(apps, 'repo');
+    mkdirSync(repo);
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo, timeout: 15_000 });
+    const current = workspaceWithOutputs('current');
+    const gone = join(realpathSync(repo), 'gone');
+    mkdirSync(gone);
+    upsertProject(gone, { isExpo: false });
+    mkdirSync(join(ensureWorkspaceStorage(gone), 'derived-data', 'Build'), { recursive: true });
+    recordWorkspaceUse(gone, new Date(Date.now() - 60 * 60_000));
+    rmSync(gone, { recursive: true });
+    await enforceBudget({ root: current, note: () => {} }, { usage: () => [] });
+    expect(existsSync(join(workspaceDir(gone), 'derived-data'))).toBe(false);
+  });
+
   test('clearing re-reads the lock a worktree gained after the report was made', async () => {
     const git = (cwd: string, ...args: string[]) =>
       execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', ...args], { cwd, timeout: 15_000 });

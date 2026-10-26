@@ -343,9 +343,9 @@ export function planWorkspaceOutputs(
 
 const SIZE_TIMEOUT_MS = 60_000;
 
-const gitRead = (operation?: StimContext) => ({
+const gitRead = (operation?: StimContext, signal?: AbortSignal) => ({
   env: operation?.env,
-  signal: operation?.signal,
+  signal: signal ?? operation?.signal,
   declareFor: operation,
 });
 
@@ -484,7 +484,7 @@ export function collectWorkspaceOutputs({
         )
       : [];
     const locks = await mapLimited(entries, sizeConcurrency(operation), async ({ projectRoot }) =>
-      projectRoot === null ? null : worktreeLockAsync(projectRoot, gitRead(operation)),
+      projectRoot === null ? null : worktreeLockAsync(projectRoot, gitRead(operation, signal)),
     );
     for (const [index, { paths: _paths, ...entry }] of entries.entries()) {
       signal?.throwIfAborted();
@@ -543,7 +543,7 @@ export async function clearWorkspaceOutputs(
                 lastUsed: workspaceLastUsed(root),
                 nativeUsed: lighten ? lastNativeUseFrom(readWorkspaceState(root)) : NaN,
                 inUse: lighten && workspaceBuildInProgress(root) ? [BUILD_IN_PROGRESS] : [],
-                lock: await worktreeLockAsync(root, gitRead(operation)),
+                lock: await worktreeLockAsync(root, gitRead(operation, signal)),
               },
             ],
             { olderThan, now },

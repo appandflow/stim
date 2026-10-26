@@ -900,8 +900,9 @@ function insideGitCheckout(root: string): boolean {
 }
 
 function lockOf(entries: WorktreeEntry[], root: string): WorktreeLock | null {
-  if (entries.length === 0) return insideGitCheckout(root) ? 'unknown' : null;
-  return matchWorktreeEntry(entries, root)?.locked ? 'locked' : null;
+  const entry = matchWorktreeEntry(entries, root);
+  if (entry) return entry.locked ? 'locked' : null;
+  return existsSync(root) && insideGitCheckout(root) ? 'unknown' : null;
 }
 
 /** Null when `root` is not in a locked worktree; 'unknown' when git lists nothing for a path inside a git checkout. */
