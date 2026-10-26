@@ -77,6 +77,7 @@ export const pathRules = [
   { path: 'packages/agent-driver-agent-device', rows: ['loop'] },
   { path: 'packages/transport', rows: ['loop'] },
   { path: 'packages/transport-tailscale', rows: ['loop'] },
+  { path: 'packages/transport-local', rows: ['loop'] },
   { path: 'packages/server/README.md', exempt: 'documentation' },
   { path: 'packages/server/__tests__', exempt: 'unit tests, run by the section 2 preflight' },
   { path: 'packages/ci', rows: ['loop'] },

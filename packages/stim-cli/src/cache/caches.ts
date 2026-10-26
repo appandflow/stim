@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { cacheDirRefusal, METRO_NAMED_CACHE_LAYOUT, type StimContext } from '@stim-cli/core';
 import { directorySize, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { registeredCaches } from './cache-manifest.ts';
+import { mapLimited, sizeConcurrency } from '../commands/gc/limited.ts';
 
 export interface CacheDescriptor {
   name: string;
@@ -231,8 +232,7 @@ function canonicalCacheDir(dir: string): string {
 const CACHE_SIZE_TIMEOUT_MS = 60_000;
 
 export async function sizeCaches(caches: CacheDescriptor[], operation?: StimContext): Promise<CacheDescriptor[]> {
-  const sized: CacheDescriptor[] = [];
-  for (const cache of caches) {
+  return mapLimited(caches, sizeConcurrency(operation), async (cache) => {
     operation?.signal.throwIfAborted();
     const bytes =
       cache.bytes ??
@@ -241,15 +241,12 @@ export async function sizeCaches(caches: CacheDescriptor[], operation?: StimCont
         operation,
         signal: operation?.signal,
       }));
-    sized.push(
-      Object.assign(
-        {},
-        cache,
-        bytes === null ? { sizeError: 'Size unavailable: measurement failed or exceeded 60 seconds.' } : { bytes },
-      ),
+    return Object.assign(
+      {},
+      cache,
+      bytes === null ? { sizeError: 'Size unavailable: measurement failed or exceeded 60 seconds.' } : { bytes },
     );
-  }
-  return sized;
+  });
 }
 
 export function pruneCache(
@@ -332,18 +329,22 @@ export async function pruneCacheAsync(
     return { removed: 0, bytes: 0, skipped: `${cache.dir} is not a directory this cache owns` };
   const cutoff = now - olderThanDays * 24 * 60 * 60 * 1000;
   let entries = cache.files ?? [cache.dir];
+  let unlisted = 0;
   for (let depth = 0; !cache.files && depth < (cache.entriesDepth ?? 1); depth++) {
     const next: string[] = [];
     for (const parent of entries) {
       signal?.throwIfAborted();
-      const names = await readdir(parent).catch(() => []);
+      const names = await readdir(parent).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') unlisted++;
+        return [];
+      });
       next.push(...names.map((name) => join(parent, name)));
     }
     entries = next;
   }
   let removed = 0;
   let bytes = 0;
-  let failed = 0;
+  let failed = unlisted;
   for (const entry of entries) {
     signal?.throwIfAborted();
     try {

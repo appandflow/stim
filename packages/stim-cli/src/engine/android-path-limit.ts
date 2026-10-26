@@ -100,3 +100,13 @@ export function androidPathRoomRemedy({ maxRootLength }: AndroidPathRoom): strin
     'and run Stim there. A subst drive does not help: Node and Expo autolinking resolve it back to the long path.'
   );
 }
+
+export function androidPathRoomRefusal(
+  root: string,
+  options: Parameters<typeof androidPathRoom>[1],
+): { code: 'STIM_PATH_TOO_LONG'; reason: string; remedy: string } | null {
+  const room = androidPathRoom(root, options);
+  return room
+    ? { code: 'STIM_PATH_TOO_LONG', reason: androidPathRoomMessage(room), remedy: androidPathRoomRemedy(room) }
+    : null;
+}

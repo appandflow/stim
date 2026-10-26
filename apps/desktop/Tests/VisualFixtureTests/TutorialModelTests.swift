@@ -133,6 +133,32 @@
       XCTAssertTrue(anotherLaunch.isOpen)
     }
 
+    @MainActor func testTutorialDoesNotOpenOnItsOwnWhenNotOfferedButOpensByHand() throws {
+      let env = try workspace()
+      for record in [nil, TutorialRecord(version: 2, startedAt: Date(), step: "begin")] {
+        let defaults = isolatedDefaults()
+        defaults.set(false, forKey: AppPreferences.Key.offersTutorial)
+        TutorialRecordStore(defaults).record = record
+        let model = TutorialModel(defaults: defaults, cloneBase: "/nonexistent/stim-tutorial")
+        model.update(workspaces: [env], archived: [], sheetOpen: false)
+        XCTAssertFalse(model.isOpen)
+        model.open()
+        XCTAssertTrue(model.isOpen)
+      }
+    }
+
+    @MainActor func testTurningTheOfferOnLaterLetsAnUnfinishedTutorialResume() throws {
+      let defaults = isolatedDefaults()
+      defaults.set(false, forKey: AppPreferences.Key.offersTutorial)
+      TutorialRecordStore(defaults).record = TutorialRecord(version: 2, startedAt: Date(), step: "begin")
+      let model = TutorialModel(defaults: defaults, cloneBase: "/nonexistent/stim-tutorial")
+      model.update(workspaces: [], archived: [], sheetOpen: false)
+      XCTAssertFalse(model.isOpen)
+      defaults.set(true, forKey: AppPreferences.Key.offersTutorial)
+      model.update(workspaces: [], archived: [], sheetOpen: false)
+      XCTAssertTrue(model.isOpen)
+    }
+
     @MainActor func testResumeRestoresSkippedSteps() throws {
       let defaults = isolatedDefaults()
       TutorialRecordStore(defaults).record = TutorialRecord(

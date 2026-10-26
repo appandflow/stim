@@ -14,7 +14,7 @@ export async function prepareHostedIos(
 export async function placeHostedIos(
   target: HostedIosTarget,
   options: Omit<Parameters<typeof placeHostedNative>[1], 'platform' | 'reserved'> & {
-    reserved: (placement: HostedIosPlacement) => void;
+    reserved: (placement: HostedIosPlacement) => unknown;
   },
 ): Promise<{ placement: HostedIosPlacement; launched: true | 'unverified' }> {
   return (await placeHostedNative(target, {

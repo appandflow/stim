@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
+import { restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
@@ -15,7 +16,7 @@ import { listeningPidsAsync, pidExists, processCwds, resolveProjectMetro, signal
 import { captureProcessToken, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
-import { IDLE_STOP_KEY, queryLogs } from '@stim-cli/core/state';
+import { IDLE_STOP_KEY, queryLogs, trace } from '@stim-cli/core/state';
 import { levelRank } from '../ndjson.ts';
 import {
   ensureWorkspaceStorage,
@@ -23,7 +24,7 @@ import {
   workspaceLogsDir,
   workspaceAgentDeviceDir,
 } from '../workspace/paths.ts';
-import { isMetroRunning, reserveMetroPort } from '../ports.ts';
+import { createPortProbe, isMetroRunning, reserveMetroPort } from '../ports.ts';
 import { PORT_INSPECTION_REMEDY, PortInspectionError } from '../listening-ports.ts';
 import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
@@ -72,6 +73,7 @@ import {
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
   tunnelModeSetting,
+  inertSettingWarning,
   unknownSettingKeys,
   type ProjectSettingsContext,
   type SettingsObject,
@@ -90,6 +92,7 @@ import {
 } from '../engine/tunnel.ts';
 import { budgetGate, type ReclaimedStep } from '../budget.ts';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
+import { groupExitBudgetMs, waitForGroupExit } from '../process-group-exit.ts';
 import { ambientContext, ambientEnv } from '@stim-cli/core';
 
 const DEFAULT_WAIT_SECONDS = 60;
@@ -324,12 +327,11 @@ const DEFAULT_START_DEPS: StartCommandDeps = {
         signalProcessTree(child.pid, 'SIGTERM', { group: true });
       } catch {}
     }
-    return terminateChild(child, {
-      alreadyExited: false,
-      timeoutMs: 1_000,
-      isAlive: pidExists,
-      waitForGroup: process.platform !== 'win32',
-    });
+    const stopped = await terminateChild(child, { alreadyExited: false, timeoutMs: 1_000, isAlive: pidExists });
+    return (
+      stopped &&
+      (process.platform === 'win32' || !child.pid || (await waitForGroupExit(child.pid, groupExitBudgetMs())))
+    );
   },
   withWorktreeLock: withManagedRemoteWorktreeLock,
   withTunnelLock: withManagedTunnelLock,
@@ -415,6 +417,9 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
       if (!root) {
         return fail(NO_PROJECT_REFUSAL);
       }
+      const lightened = (await runProcessOperation(root, (context) => restoreLightenedDependencies(root, context)))
+        .value;
+      if (lightened) return fail(lightened);
       const problem = projectProblem(root, 'dev-server');
       if (problem) {
         return fail({
@@ -447,7 +452,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         });
       }
       for (const key of unknownSettingKeys(settings)) {
-        note(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
+        note(chalk.yellow(inertSettingWarning(settings, key)));
       }
       const cacheProviderError = cacheProviderSettingError(settings);
       if (cacheProviderError) note(chalk.yellow(`Warning: ${cacheProviderError} No cache provider is used.`));
@@ -529,8 +534,16 @@ export interface StartDevServerRequest {
   waitSeconds?: number;
   remote?: boolean;
   resetCache?: boolean;
+  /** The Mac a hosted Expo dev client will run on; a new port must be free there too. */
+  hostedPorts?: HostedMetroPorts;
   out: (line: string) => void;
   note: (line: string) => void;
+}
+
+export interface HostedMetroPorts {
+  machine: string;
+  free: (port: number) => Promise<boolean>;
+  busy: (port: number) => StartError;
 }
 
 export type StartDevServerResult =
@@ -545,6 +558,7 @@ export async function startDevServer(
     waitSeconds = DEFAULT_WAIT_SECONDS,
     remote: remoteFlag = false,
     resetCache = false,
+    hostedPorts,
     out,
     note,
   }: StartDevServerRequest,
@@ -652,7 +666,7 @@ export async function startDevServer(
                 d.platform === 'win32'
                   ? !identity || inspectProcessIdentity(identity) !== 'gone'
                   : processGroupAlive(pid);
-              const deadline = Date.now() + 1000;
+              const deadline = Date.now() + groupExitBudgetMs();
               while (alive() && Date.now() < deadline) await cancellableSleep(25);
               if (alive())
                 throw new WorkspaceProcessCleanupError(
@@ -702,7 +716,7 @@ export async function startDevServer(
 
       const logsDir = workspaceLogsDir(root);
       const logFile = supervisorLogFile(root);
-      const port = await resolvePort(root, settings, note, fail);
+      const port = await resolvePort(root, settings, note, fail, hostedPorts);
       let publicOrigin = remote ? publicUrl : null;
       let resolution = await resolveStartupMetro(port, root);
       let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
@@ -946,7 +960,8 @@ export async function startDevServer(
             }
             const same = spawnedIdentity && inspectProcessIdentity(spawnedIdentity) === 'same';
             const supervisorCleanup =
-              (childExit !== null && !processGroupAlive(child.pid)) ||
+              (childExit !== null &&
+                (same ? !processGroupAlive(child.pid) : await waitForGroupExit(child.pid, groupExitBudgetMs()))) ||
               Boolean(same && supervisorSignalable(child) && (await d.terminateSupervisorChild(child)));
             const publicationRacedCleanup = hasPublishedSupervisor();
             if (
@@ -979,6 +994,7 @@ export async function startDevServer(
         }
       };
 
+      let refusal: StartRefusal | undefined;
       try {
         if (remote && !tunnel && !publicUrl && tunnelMode !== 'off') {
           const available = d.providers(tunnelMode);
@@ -1448,8 +1464,17 @@ export async function startDevServer(
           });
         }
         return startFacts({ root, port, supervisor, logsDir, alreadyRunning: false });
+      } catch (error) {
+        if (error instanceof StartRefusal) refusal = error;
+        throw error;
       } finally {
-        await reconcileSpawnedSupervisor();
+        await reconcileSpawnedSupervisor().catch((cleanup: unknown) => {
+          if (refusal && cleanup instanceof WorkspaceProcessCleanupError) {
+            cleanup.message = `${refusal.message} ${cleanup.message}`;
+            cleanup.cause = refusal;
+          }
+          throw cleanup;
+        });
       }
     };
 
@@ -1535,7 +1560,7 @@ export async function startDevServer(
       return {
         ok: false,
         error: startError(error),
-        lines: [],
+        lines: error.cause instanceof StartRefusal ? (error.cause.refusal.lines ?? []) : [],
         reclaimed,
         retainedClaimRoots: [...new Set(error.claims.map((claim) => claim.root))],
       };
@@ -1550,8 +1575,9 @@ async function resolvePort(
   settings: SettingsObject,
   note: (line: string) => void,
   fail: (refusal: StartRefusalArgs) => never,
+  hostedPorts?: HostedMetroPorts,
 ): Promise<number> {
-  const result = await resolveWorkspaceMetroPort(root, settings, note, 'start');
+  const result = await resolveWorkspaceMetroPort(root, settings, note, 'start', true, hostedPorts);
   return typeof result === 'number' ? result : fail(result);
 }
 
@@ -1561,6 +1587,7 @@ export async function resolveWorkspaceMetroPort(
   note: (line: string) => void,
   command: 'start' | 'web',
   reserve = true,
+  hostedPorts?: HostedMetroPorts,
 ): Promise<number | StartError> {
   const setting = metroPortSetting(settings, ambientEnv());
   if (setting.error) return { code: 'STIM_BAD_ARG', message: setting.error, remedy: SETTING_SHAPE_REMEDY };
@@ -1599,24 +1626,39 @@ export async function resolveWorkspaceMetroPort(
         remedy: 'Stop the process on that port, or set another metro.port.',
       };
     }
+    if (hostedPorts && !held.metro && !(await hostedPorts.free(pinned))) return hostedPorts.busy(pinned);
     if (recorded === pinned) return recorded;
   } else if (recorded) {
     const held = await resolveStartupMetro(recorded, root);
-    if (!held.notOurs) return recorded;
-    const fresh = await reservePort(root, null);
+    const hostBusy =
+      !held.notOurs && hostedPorts && !held.metro && !(await hostedPorts.free(recorded)) ? hostedPorts.machine : null;
+    if (!held.notOurs && !hostBusy) return recorded;
+    const fresh = await reservePort(root, null, hostedPorts);
     if (typeof fresh === 'number' && fresh !== recorded) {
-      note(chalk.yellow(`Port ${recorded} is held by something else (${held.notOurs}).`));
+      note(
+        chalk.yellow(
+          hostBusy
+            ? `Port ${recorded} is in use on ${hostBusy}, where an Expo dev client loads its bundle from this workspace's Metro port.`
+            : `Port ${recorded} is held by something else (${held.notOurs}).`,
+        ),
+      );
       note(chalk.dim(`Reserved port ${fresh} for this project instead.`));
     }
     return fresh;
   }
   if (!reserve && pinned !== null) return pinned;
-  return reservePort(root, pinned);
+  return reservePort(root, pinned, hostedPorts);
 }
 
-async function reservePort(root: string, pinned: number | null): Promise<number | StartError> {
+async function reservePort(
+  root: string,
+  pinned: number | null,
+  hostedPorts?: HostedMetroPorts,
+): Promise<number | StartError> {
+  const local = hostedPorts && createPortProbe();
+  const isFree = local && (async (port: number) => (await local(port)) && (await hostedPorts.free(port)));
   try {
-    return await reserveMetroPort(root, undefined, undefined, pinned, ambientContext()?.signal);
+    return await reserveMetroPort(root, undefined, isFree, pinned, ambientContext()?.signal);
   } catch (error) {
     throwIfCancelled(ambientContext()?.signal, 'Metro startup');
     if (error instanceof PortInspectionError) {
@@ -1643,15 +1685,21 @@ async function waitForMetro({
   aborted?: () => boolean;
   probe?: (port: number, root: string) => Promise<MetroResolution>;
 }): Promise<boolean> {
-  const deadline = Date.now() + seconds * 1000;
-  while (Date.now() < deadline) {
-    const resolution = await probe(port, root);
-    if (resolution.metro) return true;
-    if (aborted()) return false;
-    await waitForStartup(POLL_MS);
-  }
-  const last = await probe(port, root);
-  return Boolean(last.metro);
+  return trace.spanAsync(
+    'wait for metro',
+    async () => {
+      const deadline = Date.now() + seconds * 1000;
+      while (Date.now() < deadline) {
+        const resolution = await probe(port, root);
+        if (resolution.metro) return true;
+        if (aborted()) return false;
+        await waitForStartup(POLL_MS);
+      }
+      const last = await probe(port, root);
+      return Boolean(last.metro);
+    },
+    { port },
+  );
 }
 
 async function waitForExpoTunnel({

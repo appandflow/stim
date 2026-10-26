@@ -5,7 +5,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import { getExecutor, type ExecOptions } from '../exec.ts';
-import { parseLogcatLine } from '../collector/android.ts';
+import { androidLogGroups, isAndroidCrashText, parseLogcatLine } from '../collector/android.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { androidHome, androidToolCwd } from '../devices/android.ts';
 import { launchErrorPreview } from './launch-error-preview.ts';
@@ -30,6 +30,7 @@ interface CrashTarget {
   until?: number;
   appPath?: string | null;
   physical?: boolean;
+  clockOffsetMs?: number | null;
 }
 
 interface CrashFrame {
@@ -130,6 +131,30 @@ export function parseIosCrash(text: string, target: CrashTarget): { record: Ndjs
   }
 }
 
+/**
+ * The symbol dyld could not bind when one image of the app bundle needs a symbol that another image of the same
+ * bundle does not export. Only the bundle's own bytes decide this, so a stored app that does it never launches.
+ */
+export function bundleBindFailure(record: NdjsonRecord): string | null {
+  if (record.event !== 'native_crash' || typeof record.rawReport !== 'string') return null;
+  try {
+    const termination = (JSON.parse(record.rawReport.slice(record.rawReport.indexOf('\n') + 1)) as IosReport)
+      .termination;
+    if (termination?.namespace !== 'DYLD') return null;
+    const bundles = new Map<string, string>();
+    let symbol: string | undefined;
+    for (const line of termination.reasons ?? []) {
+      symbol ??= /^Symbol not found: (\S+)/.exec(line)?.[1];
+      const image = /^(Referenced from|Expected in):\s+<[^>]+> (.*?\.app)\//.exec(line);
+      if (image?.[1] && image[2]) bundles.set(image[1], image[2]);
+    }
+    const bundle = bundles.get('Referenced from');
+    return symbol && bundle && bundle === bundles.get('Expected in') ? symbol : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Extracts crash-buffer groups only when their own process header names the target app. */
 export function parseAndroidCrashes(text: string, target: CrashTarget, clockOffsetMs: number): NdjsonRecord[] {
   const entries = text
@@ -139,14 +164,7 @@ export function parseAndroidCrashes(text: string, target: CrashTarget, clockOffs
       (record): record is NdjsonRecord =>
         record !== null && Number(record.ts) >= target.since && Number(record.ts) <= (target.until ?? Infinity),
     );
-  const groups: NdjsonRecord[][] = [];
-  for (const entry of entries) {
-    const last = groups.at(-1);
-    if (!last || entry.proc !== last.at(-1)?.proc || /^\s*(?:FATAL EXCEPTION:|\*\*\* \*\*\*)/.test(entry.msg ?? ''))
-      groups.push([entry]);
-    else last.push(entry);
-  }
-  return groups.flatMap((group) => {
+  return androidLogGroups(entries).flatMap((group) => {
     const messages = group.map((record) => record.msg ?? '');
     const process = messages
       .map((line) => /^\s*(?:Process: (.+?), PID: \d+|pid: \d+, tid: \d+, name: .*?>>> (.*?) <<<)/.exec(line))
@@ -154,7 +172,7 @@ export function parseAndroidCrashes(text: string, target: CrashTarget, clockOffs
     const appId = process?.[1] ?? process?.[2];
     if (appId !== target.appId) return [];
     const msg = messages.join('\n');
-    if (!/FATAL EXCEPTION:|signal \d+ \(/.test(msg)) return [];
+    if (!isAndroidCrashText(msg)) return [];
     return [
       {
         ts: group[0]!.ts,
@@ -387,6 +405,21 @@ async function simulatorFatalConsole(target: CrashTarget, signal?: AbortSignal):
   return records;
 }
 
+export async function androidCrashClockOffset(deviceId: string, signal?: AbortSignal): Promise<number | null> {
+  const before = Date.now();
+  const clock = (
+    await crashCommand(
+      'adb',
+      ['-s', deviceId, 'shell', 'date', '+%s%3N'],
+      { timeoutMs: 1000, cwd: androidToolCwd() },
+      signal,
+    )
+  )?.trim();
+  const after = Date.now();
+  if (!/^\d{13}$/.test(clock ?? '') || after < before || after - before > 1000) return null;
+  return Math.round((before + after) / 2) - Number(clock);
+}
+
 /** Reads platform crash evidence without starting, stopping or modifying a device. */
 export async function captureNativeCrashes(
   target: CrashTarget,
@@ -420,21 +453,11 @@ export async function captureNativeCrashes(
       }
       if (nativeReports.length) records = nativeReports;
     } else if (target.platform === 'android') {
-      const before = Date.now();
-      const clock = (
-        await crashCommand(
-          'adb',
-          ['-s', target.deviceId, 'shell', 'date', '+%s%3N'],
-          {
-            timeoutMs: 1000,
-            cwd: androidToolCwd(),
-          },
-          signal,
-        )
-      )?.trim();
-      const after = Date.now();
-      if (!/^\d{13}$/.test(clock ?? '') || after < before || after - before > 1000) return [];
-      const offset = Math.round((before + after) / 2) - Number(clock);
+      const offset =
+        target.clockOffsetMs === undefined
+          ? await androidCrashClockOffset(target.deviceId, signal)
+          : target.clockOffsetMs;
+      if (offset === null) return [];
       const text = await crashCommand(
         'adb',
         ['-s', target.deviceId, 'logcat', '-b', 'crash', '-d', '-v', 'time,epoch', '-t', '2000'],

@@ -20,14 +20,14 @@ import { projectRegistry } from '../../integrations/projects.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { artifactCachePolicy, optimizationBuildProfile } from '../../optimizations.ts';
 import { setRemoteLogSink } from '../../remote-log.ts';
-import { getConcurrencyLimits, getProject, upsertProject } from '../../workspace/config.ts';
+import { getConcurrencyLimits, getProject, upsertProject, withConfigLockAsync } from '../../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
 import {
   resolveCacheProviderConfig,
   resolveProjectSettingsAsync,
   SETTING_SHAPE_REMEDY,
 } from '../../workspace/settings.ts';
-import { recordWorkspaceUse } from '../../workspace/workspace-state.ts';
+import { recordWorkspaceUseAsync } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { acquireIosArtifact, type PreparedIosArtifact } from './artifact.ts';
 import { lastBuildRecord } from './result.ts';
@@ -115,8 +115,10 @@ export async function buildIosOperation(
       root,
       { command: 'build', platform: 'ios' },
       async (claim) => {
-        if (!getProject(root)) upsertProject(root, {});
-        recordWorkspaceUse(root, new Date(), context.env, context.cwd);
+        await withConfigLockAsync(() => {
+          if (!getProject(root)) upsertProject(root, {});
+        });
+        await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
         const started = Date.now();
         const startedAt = new Date(started).toISOString();
         const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, note });
@@ -146,11 +148,12 @@ export async function buildIosOperation(
         let directory: string | undefined;
         let built: IosBuildFacts | null = null;
         let failureAfterCleanup: ReturnType<typeof cancelledError> | null = null;
-        const finish = (status: string, appPath?: string, errorCode?: string) => {
+        const finish = (status: string, appPath?: string, errorCode?: string, message?: string) => {
           try {
             recordFinishedBuild(
               root,
               lastBuildRecord({
+                ledger: { scheme: buildScheme, message },
                 startedAt,
                 status,
                 appPath,
@@ -291,14 +294,20 @@ export async function buildIosOperation(
           };
         } catch (error) {
           const failure = runCancellationSignal(context)?.aborted ? cancelledError('iOS build', error) : error;
-          finish('failed', undefined, (failure as { code?: string }).code);
+          finish(
+            'failed',
+            undefined,
+            (failure as { code?: string }).code,
+            failure instanceof Error ? failure.message : String(failure),
+          );
           stats.record({ failed: true, durationMs: Date.now() - started });
           throw failure;
         } finally {
+          artifact?.cancelFingerprintCheck();
           await artifact?.release();
           failureAfterCleanup = built && runCancellationSignal(context)?.aborted ? cancelledError('iOS build') : null;
           if (failureAfterCleanup) {
-            finish('failed', undefined, failureAfterCleanup.code);
+            finish('failed', undefined, failureAfterCleanup.code, failureAfterCleanup.message);
             stats.record({ failed: true, durationMs: Date.now() - started });
           }
           if ((!built || failureAfterCleanup) && directory) await fs.rm(directory, { recursive: true, force: true });

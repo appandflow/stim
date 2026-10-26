@@ -14,19 +14,34 @@ import {
   resolveSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
+  inertSettingWarning,
   unknownSettingKeys,
   type SettingsObject,
 } from '../workspace/settings.ts';
-import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../workspace/config.ts';
+import {
+  getProject,
+  isPathPrefix,
+  loadConfig,
+  removeProject,
+  upsertProject,
+  withConfigLockAsync,
+} from '../workspace/config.ts';
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { relocatePods } from '../workspace/pods-relocate.ts';
 import { isMobileProject, findProjectRoot } from '../workspace/project.ts';
-import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
-import { SERVICE_IN_USE, serviceRunningFrom } from '../workspace/service-guard.ts';
+import { SERVICE_IN_USE, serviceRunningFrom, stimCliEntries, stimCliUseOf } from '../workspace/service-guard.ts';
+import {
+  archiveWorktreeChanges,
+  discardWorktreeArchive,
+  releaseWorktreeArchive,
+  worktreeArchiveMismatch,
+  type WorktreeArchive,
+} from '../workspace/worktree-archive.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { currentDiskLevel, measureDiskAsync } from '../maintenance/measure.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
@@ -34,6 +49,7 @@ import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
 import { withManagedRemoteWorktreeRemovalLock, withManagedTunnelRemovalLock } from '../engine/tunnel.ts';
 import { warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../engine/warm-claim.ts';
+import { trace } from '@stim-cli/core/state';
 import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
 import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
@@ -49,6 +65,8 @@ import {
   hasUncommittedWorkAsync,
   isPodInstallChurn,
   listWorktreesAsync,
+  matchWorktreeEntry,
+  nativeCanonicalPath,
   sourceCheckoutOf,
   podsOutOfSync,
   readWorktreeExclude,
@@ -59,6 +77,7 @@ import {
   warmWorktreePaths,
 } from '../workspace/worktree.ts';
 import type { WorktreeEntry } from '../workspace/worktree.ts';
+import { disposeTrash, moveIgnoredTreesToTrash, restoreTrashedTrees } from '../workspace/worktree-trash.ts';
 import { endedPullRequest, pullRequestLookupAsync } from '../workspace/pull-request.ts';
 import { discoverXcodeProject } from '../integrations/react-native-build.ts';
 
@@ -153,7 +172,7 @@ function reportCarriedStateHealth(root: string, target: string, copied: string[]
   }
   for (const p of podsOutOfSync(target, copied)) {
     const where = p.dir === '.' ? 'Podfile.lock' : `${p.dir}/Podfile.lock`;
-    const pod = podInstallCommand(p.dir === '.' ? target : resolve(target, p.dir, '..'));
+    const pod = podInstallCommand(p.dir === '.' ? target : resolve(target, p.dir, '..'), resolve(target, p.dir));
     out(
       chalk.yellow(
         phaseLine(
@@ -175,7 +194,7 @@ function reportRefreshFailure(failure: RefreshFailure, out: (line: string) => vo
 }
 
 function mainCheckoutAppDir(root: string, target: string, cwd: string): string {
-  const app = findProjectRoot(cwd);
+  const app = warmedWorkspace(root, target, cwd) ?? findProjectRoot(cwd);
   if (!app) return root;
   const rel = relative(target, app);
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return root;
@@ -184,26 +203,34 @@ function mainCheckoutAppDir(root: string, target: string, cwd: string): string {
 
 /**
  * The app workspace a warm prepares: the nearest app below the worktree root, or else the one app registered in
- * the source checkout, at the same place in this worktree, or else the worktree root when it is the app. A monorepo
- * root can declare react-native without being the app.
+ * the source checkout, at the same place in this worktree, or else the one registered in this worktree, or else
+ * the worktree root when it is the app. A monorepo root can declare react-native without being the app.
  */
 export function warmedWorkspace(root: string, target: string, cwd: string): string | null {
   const nearest = findProjectRoot(cwd);
   const app = nearest && isPathPrefix(target, nearest) && isMobileProject(nearest) ? nearest : null;
   if (app && app !== target) return app;
-  const apps = new Set<string>();
-  for (const path of Object.keys(loadConfig()?.projects ?? {})) {
-    const rel = relative(root, path);
-    if (rel.startsWith('..') || isAbsolute(rel)) continue;
-    const mapped = resolve(target, rel);
-    if (isMobileProject(mapped)) apps.add(mapped);
-  }
+  const registered = Object.keys(loadConfig()?.projects ?? {});
+  const appsUnder = (checkout: string): Set<string> => {
+    const apps = new Set<string>();
+    for (const path of registered) {
+      const rel = relative(checkout, path);
+      if (rel.startsWith('..') || isAbsolute(rel)) continue;
+      const mapped = resolve(target, rel);
+      if (isMobileProject(mapped)) apps.add(mapped);
+    }
+    return apps;
+  };
+  const source = appsUnder(root);
+  const apps = source.size ? source : appsUnder(target);
   return apps.size === 1 ? [...apps][0]! : app;
 }
 
-function registerWarmedWorkspace(workspace: string, out: (line: string) => void): void {
+async function registerWarmedWorkspace(workspace: string, out: (line: string) => void): Promise<void> {
   try {
-    if (!getProject(workspace)) upsertProject(workspace, {});
+    await withConfigLockAsync(() => {
+      if (!getProject(workspace)) upsertProject(workspace, {});
+    });
   } catch (error) {
     out(chalk.yellow(`Could not register ${workspace} for status: ${(error as Error)?.message || String(error)}`));
   }
@@ -255,19 +282,22 @@ export async function warmWorktreeTarget(opts: {
     workspace = warmedWorkspace(root, target, opts.cwd);
     const scope = new Set([...reclaimKeys(target), ...(app ? [app] : []), ...(workspace ? [workspace] : [])]);
     for (const key of scope) opts.beforeWarm?.(nativeCanonicalPath(key));
-    if (app) recordWorkspaceUse(app, new Date(), operation.env, opts.cwd);
-    if (workspace && workspace !== app) recordWorkspaceUse(workspace, new Date(), operation.env, opts.cwd);
+    if (app) await recordWorkspaceUseAsync(app, new Date(), operation.env, opts.cwd, operation.signal);
+    if (workspace && workspace !== app)
+      await recordWorkspaceUseAsync(workspace, new Date(), operation.env, opts.cwd, operation.signal);
     if (!workspace) {
       out(
         chalk.dim(
           phaseLine(
             'project',
-            'no single app to register here; run warm from the app directory to list it in status while it warms',
+            opts.refresh
+              ? 'no single app to register here; --refresh updates only the repository root. Run warm --refresh from the app directory to refresh that app and list it in status'
+              : 'no single app to register here; run warm from the app directory to list it in status while it warms',
           ),
         ),
       );
     } else {
-      registerWarmedWorkspace(workspace, out);
+      await registerWarmedWorkspace(workspace, out);
       progress = startWarmProgress(workspace, opts.refresh ? 'refresh' : 'copy', {
         note: (line) => out(chalk.yellow(line)),
       });
@@ -281,7 +311,7 @@ export async function warmWorktreeTarget(opts: {
         return null;
       }
       for (const key of unknownSettingKeys(settings)) {
-        out(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
+        out(chalk.yellow(inertSettingWarning(settings, key)));
       }
       return settings;
     };
@@ -317,7 +347,9 @@ export async function warmWorktreeTarget(opts: {
             }
             const excluded = readWorktreeExclude(root);
             const patterns = excluded?.length ? excluded : (settings as WorktreeSettings).worktree?.exclude || [];
-            const result = await cloneIgnoredEntries({ root, target, patterns, operation });
+            const result = await trace.spanAsync('carry ignored entries', () =>
+              cloneIgnoredEntries({ root, target, patterns, operation }),
+            );
             for (const entry of result.skipped) {
               out(chalk.dim(phaseLine('carry', `kept ${entry.file} (${entry.reason})`)));
             }
@@ -511,25 +543,6 @@ export function excludePodChurn(
   return { lines: kept, restore };
 }
 
-interface MatchedWorktreeEntry extends WorktreeEntry {
-  index: number;
-}
-
-// On Windows, Node's JS realpath keeps 8.3 short names (C:\Users\RUNNER~1) and
-// the caller's letter case, while git reports long names; the native realpath
-// resolves both.
-function nativeCanonicalPath(path: string): string {
-  const missing: string[] = [];
-  for (let existing = resolve(path); ; existing = dirname(existing)) {
-    try {
-      return resolve(realpathSync.native(existing), ...missing);
-    } catch {
-      if (dirname(existing) === existing) return resolve(path);
-      missing.unshift(basename(existing));
-    }
-  }
-}
-
 /** Other worktrees git lists inside `path`, which removing `path` would delete with it. */
 export function nestedWorktrees(entries: readonly WorktreeEntry[], path: string): string[] {
   const root = nativeCanonicalPath(path);
@@ -537,19 +550,6 @@ export function nestedWorktrees(entries: readonly WorktreeEntry[], path: string)
     .filter((candidate) => !candidate.bare && nativeCanonicalPath(candidate.path) !== root)
     .filter((candidate) => isPathPrefix(root, nativeCanonicalPath(candidate.path)))
     .map((candidate) => candidate.path);
-}
-
-export function matchWorktreeEntry(
-  entries: WorktreeEntry[] | null | undefined,
-  path: string,
-): MatchedWorktreeEntry | null {
-  let best: MatchedWorktreeEntry | null = null;
-  const target = nativeCanonicalPath(path);
-  (entries || []).forEach((entry, index) => {
-    if (!entry?.path || !isPathPrefix(nativeCanonicalPath(entry.path), target)) return;
-    if (!best || entry.path.length > best.path.length) best = { ...entry, index };
-  });
-  return best;
 }
 
 export function removalRemedy(
@@ -586,12 +586,14 @@ function pathArgs(lines: string[] | null | undefined, limit = 5): string {
   return `${shown.join(' ')}${paths.length > shown.length ? ' ...' : ''}`;
 }
 
+const DIRTY_BLOCKER = 'uncommitted changes or untracked files';
+
 export function removalBlockers({ dirty, unpushed }: { dirty: boolean | null; unpushed: string[] | null }): string[] {
   const blockers: string[] = [];
   if (dirty === null || unpushed === null) {
     blockers.push('could not determine git status; re-run with --force to override');
   }
-  if (dirty) blockers.push('uncommitted changes or untracked files');
+  if (dirty) blockers.push(DIRTY_BLOCKER);
   if (unpushed && unpushed.length) {
     blockers.push(`${plural(unpushed.length, 'commit')} not on any remote or any other local branch`);
   }
@@ -907,6 +909,18 @@ interface RemoveOptions {
   mergedHead?: string;
   /** The HEAD the caller approved for removal; the worktree is kept when HEAD is anything else under the locks. */
   expectedHead?: string;
+  /**
+   * Archive uncommitted and untracked files under `$STIM_HOME/archive/worktrees` instead of refusing them; the worktree
+   * is kept when the archive cannot be written or verified, or the files change before git removes it.
+   */
+  archiveDirty?: {
+    pullRequest: { number: number; url: string; state: string } | null;
+    onArchived: (archive: WorktreeArchive) => void;
+  };
+}
+
+function blockersOf(inspection: RemovalInspection, opts: RemoveOptions): string[] {
+  return opts.archiveDirty ? inspection.blockers.filter((blocker) => blocker !== DIRTY_BLOCKER) : inspection.blockers;
 }
 
 interface RemovalInspection {
@@ -1053,6 +1067,38 @@ function printRemovalCleanup(result: ReclaimAllResult, failed: boolean, output: 
   }
 }
 
+async function archiveBeforeRemoval(
+  path: string,
+  repository: string,
+  branch: string | null,
+  head: string | null,
+  opts: RemoveOptions,
+  output: RemovalOutput,
+): Promise<WorktreeArchive | null> {
+  try {
+    if (!head) throw new Error('its HEAD could not be read');
+    return await archiveWorktreeChanges({
+      path,
+      repository,
+      branch,
+      head,
+      pullRequest: opts.archiveDirty?.pullRequest ?? null,
+      operation: opts.operation,
+    });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    opts.operation?.signal.throwIfAborted();
+    output.error(
+      chalk.red(
+        `Refusing to remove ${path}: could not archive its uncommitted changes: ${(error instanceof Error ? error.message : String(error)).split('\n')[0]}`,
+      ),
+    );
+    output.fail();
+    return null;
+  }
+}
+
 export async function removeWorktreeTarget(target: string | undefined, opts: RemoveOptions = {}): Promise<boolean> {
   let removed = false;
   await runRemove(target, opts, () => {
@@ -1120,7 +1166,7 @@ async function removeOrRefuse(
       }
       opts.beforeRemove?.(removalPath(mainRoot));
       if (!(await branchExistsAsync(mainRoot, branch, options))) {
-        removeProject(path);
+        await withConfigLockAsync(() => removeProject(path));
         output.error(chalk.dim(phaseLine('branch', `${branch} is already absent; cleared its pending cleanup record`)));
         return;
       }
@@ -1146,7 +1192,7 @@ async function removeOrRefuse(
       }
       try {
         await deleteBranchAsync(mainRoot, branch, pending.worktreePendingBranchSha, options);
-        removeProject(path);
+        await withConfigLockAsync(() => removeProject(path));
         output.error(chalk.dim(phaseLine('branch', `deleted ${branch}; cleared its pending cleanup record`)));
       } catch (error) {
         if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
@@ -1250,6 +1296,13 @@ async function removeOrRefuse(
     output.fail();
     return;
   }
+  const cli = stimCliUseOf(path, nativeCanonicalPath, stimCliEntries(opts.operation?.env));
+  if (cli.length) {
+    output.error(chalk.red(`Refusing to remove ${path}: ${cli.join('; ')}.`));
+    output.error(chalk.dim('Run stim from another checkout or install, or point PATH elsewhere, then retry.'));
+    output.fail();
+    return;
+  }
 
   const project = getProject(path);
   const branch = entry.branch;
@@ -1275,7 +1328,7 @@ async function removeOrRefuse(
       );
     }
   }
-  if (inspection.blockers.length && !opts.force) {
+  if (blockersOf(inspection, opts).length && !opts.force) {
     await printRemovalRefusal(path, inspection, output, opts.operation);
     return;
   }
@@ -1292,6 +1345,8 @@ async function removeOrRefuse(
           : null;
   const branchDeleteCwd = source.path;
 
+  let archive: WorktreeArchive | null = null;
+  let gitRemoving = false;
   await withManagedRemoteWorktreeRemovalLock(
     path,
     () =>
@@ -1308,16 +1363,25 @@ async function removeOrRefuse(
             return;
           }
           const current = await inspectRemoval(path, mergedHead, opts.operation);
-          if (current.blockers.length && !opts.force) {
+          if (blockersOf(current, opts).length && !opts.force) {
             await printRemovalRefusal(path, current, output, opts.operation);
             return;
           }
+          if (opts.archiveDirty && !opts.force && current.dirtyLines.length) {
+            const saved = await archiveBeforeRemoval(path, source.path, branch ?? null, inspectedHead, opts, output);
+            if (!saved) return;
+            archive = saved;
+          }
+          const discardArchive = async (): Promise<void> => {
+            if (archive) await discardWorktreeArchive(archive);
+          };
           const result = await reclaimAll(path, lockedKeys, {
             preserveRootProject: true,
             removedBy: opts.removedBy ?? 'worktree-remove',
             operation: opts.operation,
           });
           if (result.keptEntries.length) {
+            await discardArchive();
             reportRetainedResources(path, result, output);
             return;
           }
@@ -1330,6 +1394,7 @@ async function removeOrRefuse(
                 throw error;
               opts.operation?.signal.throwIfAborted();
               if (!isTimeoutError(error)) throw error;
+              await discardArchive();
               await printRemovalRefusal(path, timedOutInspection(error), output, opts.operation);
               output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
               printRemovalCleanup(result, true, output);
@@ -1337,6 +1402,7 @@ async function removeOrRefuse(
             }
           }
           if (headMoved) {
+            await discardArchive();
             output.error(chalk.red(`Refusing to remove ${path}: its HEAD moved while its environment was reclaimed.`));
             output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
             printRemovalCleanup(result, true, output);
@@ -1346,15 +1412,55 @@ async function removeOrRefuse(
           await restorePodChurn(path, current.podChurn, output, opts.operation);
           options.signal?.throwIfAborted();
           deleteWatchmanCookies(path, current.cookies);
+          const trash = await moveIgnoredTreesToTrash(path, {
+            env: options.env,
+            signal: options.signal,
+            declareFor: opts.operation,
+          });
+          let stale: string | null = null;
+          if (archive) {
+            try {
+              stale = await worktreeArchiveMismatch(path, archive, opts.operation);
+            } catch (error) {
+              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+                throw error;
+              stale = `its archive could not be checked: ${error instanceof Error ? error.message : String(error)}`;
+            }
+          }
+          if (stale) {
+            const unrestored = trash ? await restoreTrashedTrees(trash) : [];
+            if (trash && unrestored.length) {
+              output.error(
+                chalk.yellow(
+                  `Could not move ${unrestored.join(', ')} back into ${path}; ${unrestored.length === 1 ? 'it stays' : 'they stay'} in ${trash.dir}, which stim gc keeps while ${path} exists.`,
+                ),
+              );
+            }
+            await discardArchive();
+            output.error(chalk.red(`Refusing to remove ${path}: ${stale}.`));
+            output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
+            printRemovalCleanup(result, true, output);
+            output.fail();
+            return;
+          }
+          gitRemoving = true;
           try {
             await removeWorktreeAsync(path, {
               from: source.path,
-              force: opts.force,
+              force: opts.force || archive !== null,
               env: options.env,
               signal: options.signal,
               declareFor: opts.operation,
             });
           } catch (error) {
+            const unrestored = trash ? await restoreTrashedTrees(trash) : [];
+            if (trash && unrestored.length) {
+              output.error(
+                chalk.yellow(
+                  `Could not move ${unrestored.join(', ')} back into ${path}; ${unrestored.length === 1 ? 'it stays' : 'they stay'} in ${trash.dir}, which stim gc keeps while ${path} exists.`,
+                ),
+              );
+            }
             if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
               throw error;
             const message = String((error as Error)?.message || error);
@@ -1367,80 +1473,128 @@ async function removeOrRefuse(
               );
             }
             output.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
+            if (archive) output.error(chalk.dim(`Its uncommitted changes stay archived in ${archive.dir}.`));
             printRemovalCleanup(result, true, output);
             output.fail();
             return;
           }
+          if (archive) {
+            opts.archiveDirty?.onArchived(archive);
+            output.error(
+              chalk.dim(
+                phaseLine(
+                  'archive',
+                  `saved ${plural(archive.tracked.length + archive.untracked.length, 'uncommitted file')} to ${archive.dir}; restore: ${archive.restore.join(' && ')}`,
+                ),
+              ),
+            );
+          }
           onRemoved();
-          forgetStatusMeasures(path, result.reclaimedKeys);
-          const finish = (): void => {
-            printRemovalCleanup(result, false, output);
-            output.error(chalk.dim(phaseLine('removed', path)));
-          };
-          if (deleteOwnedBranch && branch) {
-            if (!approvedBranchSha) {
-              output.error(
-                chalk.yellow(phaseLine('branch', `kept ${branch} (Stim could not record its commit before removal)`)),
+          try {
+            forgetStatusMeasures(path, result.reclaimedKeys);
+            const finish = (): void => {
+              printRemovalCleanup(result, false, output);
+              output.error(chalk.dim(phaseLine('removed', path)));
+            };
+            if (deleteOwnedBranch && branch) {
+              if (!approvedBranchSha) {
+                output.error(
+                  chalk.yellow(phaseLine('branch', `kept ${branch} (Stim could not record its commit before removal)`)),
+                );
+                output.fail();
+                finish();
+                return;
+              }
+              await withConfigLockAsync(() =>
+                upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha }),
               );
-              output.fail();
-              finish();
-              return;
+              let checkedOutAt: string | undefined;
+              try {
+                checkedOutAt = (await listWorktreesAsync(branchDeleteCwd, options)).find(
+                  (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
+                )?.path;
+              } catch (error) {
+                if (
+                  error instanceof WorkspaceProcessCleanupError ||
+                  (error instanceof Error && 'reportCleanup' in error)
+                )
+                  throw error;
+                opts.operation?.signal.throwIfAborted();
+                if (!isTimeoutError(error)) throw error;
+                output.error(
+                  chalk.yellow(
+                    phaseLine('branch', `kept ${branch} (git did not list the worktrees in time to check it)`),
+                  ),
+                );
+                output.error(chalk.dim(`  Retry: stim worktree remove ${path}`));
+                output.fail();
+                finish();
+                return;
+              }
+              if (checkedOutAt) {
+                output.error(
+                  chalk.yellow(phaseLine('branch', `kept ${branch} (it is checked out at ${checkedOutAt})`)),
+                );
+                output.error(
+                  chalk.dim(`  Switch that worktree to another branch, then retry: stim worktree remove ${path}`),
+                );
+                output.fail();
+                finish();
+                return;
+              }
+              try {
+                await deleteBranchAsync(branchDeleteCwd, branch, approvedBranchSha, options);
+                output.error(chalk.dim(phaseLine('branch', `deleted ${branch}`)));
+              } catch (error) {
+                if (
+                  error instanceof WorkspaceProcessCleanupError ||
+                  (error instanceof Error && 'reportCleanup' in error)
+                )
+                  throw error;
+                output.error(
+                  chalk.yellow(phaseLine('branch', `kept ${branch} (${String((error as Error)?.message || error)})`)),
+                );
+                output.error(chalk.dim(`  Retry with: git -C ${branchDeleteCwd} branch -D -- ${branch}`));
+                output.fail();
+                finish();
+                return;
+              }
+            } else if (branch && retainedBranchReason) {
+              output.error(chalk.dim(phaseLine('branch', `kept ${branch} (${retainedBranchReason})`)));
             }
-            upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha });
-            let checkedOutAt: string | undefined;
-            try {
-              checkedOutAt = (await listWorktreesAsync(branchDeleteCwd, options)).find(
-                (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
-              )?.path;
-            } catch (error) {
-              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-                throw error;
-              opts.operation?.signal.throwIfAborted();
-              if (!isTimeoutError(error)) throw error;
+            await withConfigLockAsync(() => removeProject(path));
+            finish();
+          } finally {
+            if (trash) {
+              const moved = plural(trash.moved.length, 'ignored directory', 'ignored directories');
+              const disposed = await disposeTrash(trash, opts.operation);
               output.error(
-                chalk.yellow(
-                  phaseLine('branch', `kept ${branch} (git did not list the worktrees in time to check it)`),
+                chalk.dim(
+                  phaseLine(
+                    'trash',
+                    disposed === 'background'
+                      ? `deleting ${moved} in the background from ${trash.dir}`
+                      : disposed === 'deleted'
+                        ? `deleted ${moved}`
+                        : `left ${moved} in ${trash.dir}; stim gc --delete deletes them`,
+                  ),
                 ),
               );
-              output.error(chalk.dim(`  Retry: stim worktree remove ${path}`));
-              output.fail();
-              finish();
-              return;
             }
-            if (checkedOutAt) {
-              output.error(chalk.yellow(phaseLine('branch', `kept ${branch} (it is checked out at ${checkedOutAt})`)));
-              output.error(
-                chalk.dim(`  Switch that worktree to another branch, then retry: stim worktree remove ${path}`),
-              );
-              output.fail();
-              finish();
-              return;
-            }
-            try {
-              await deleteBranchAsync(branchDeleteCwd, branch, approvedBranchSha, options);
-              output.error(chalk.dim(phaseLine('branch', `deleted ${branch}`)));
-            } catch (error) {
-              if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
-                throw error;
-              output.error(
-                chalk.yellow(phaseLine('branch', `kept ${branch} (${String((error as Error)?.message || error)})`)),
-              );
-              output.error(chalk.dim(`  Retry with: git -C ${branchDeleteCwd} branch -D -- ${branch}`));
-              output.fail();
-              finish();
-              return;
-            }
-          } else if (branch && retainedBranchReason) {
-            output.error(chalk.dim(phaseLine('branch', `kept ${branch} (${retainedBranchReason})`)));
           }
-          removeProject(path);
-          finish();
         },
         opts.operation,
         opts.beforeRemove,
       ),
     { signal: opts.operation?.signal, declareSpawnsFor: opts.operation },
-  );
+  )
+    .catch(async (error: unknown) => {
+      if (archive && !gitRemoving) await discardWorktreeArchive(archive);
+      throw error;
+    })
+    .finally(() => {
+      if (archive) releaseWorktreeArchive(archive);
+    });
 }
 
 export function registerRemove(worktree: Command): void {

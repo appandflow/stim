@@ -4,6 +4,7 @@ import assert from 'node:assert';
 import { workspaceId } from '@stim-cli/core';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { captureProcessToken } from '../process-identity.ts';
+import { processGroupAlive } from '../ownership-claim.ts';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { once } from 'node:events';
@@ -1558,62 +1559,65 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(exec.calls.spawn).toEqual([]);
   });
 
-  test('a supervisor handoff write failure reaps a child that ignores SIGTERM', async () => {
-    const port = 8189;
-    const real = getExecutor();
-    const exec = metroExecutor({ listeners: {} });
-    let child: ChildProcess | undefined;
-    const signals: Array<NodeJS.Signals | number | undefined> = [];
-    exec.spawn = (cmd, args, opts) => {
-      exec.calls.spawn.push({ cmd, args, opts });
-      child = real.spawn(
-        process.execPath,
-        ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
-        opts,
-      );
-      const kill = child.kill.bind(child);
-      child.kill = (signal) => {
-        signals.push(signal);
-        return kill(signal);
+  test.skipIf(process.platform === 'win32')(
+    'a supervisor handoff write failure reaps a child that ignores SIGTERM',
+    async () => {
+      const port = 8189;
+      const real = getExecutor();
+      const exec = metroExecutor({ listeners: {} });
+      let child: ChildProcess | undefined;
+      const signals: Array<NodeJS.Signals | number | undefined> = [];
+      exec.spawn = (cmd, args, opts) => {
+        exec.calls.spawn.push({ cmd, args, opts });
+        child = real.spawn(
+          process.execPath,
+          ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+          opts,
+        );
+        const kill = child.kill.bind(child);
+        child.kill = (signal) => {
+          signals.push(signal);
+          return kill(signal);
+        };
+        return child;
       };
-      return child;
-    };
-    setExecutor(exec);
-    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+      setExecutor(exec);
+      upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
 
-    let result;
-    try {
-      result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
-        registerPosixStart(cmd, {
-          providers: () => ['ngrok'],
-          startTunnelSequence: async () => ({
-            provider: 'ngrok',
-            url: 'https://ready.ngrok.app',
-            pid: 4343,
-            processToken: 'linux:100',
-            cleanup: successfulTunnelCleanup,
+      let result;
+      try {
+        result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
+          registerPosixStart(cmd, {
+            providers: () => ['ngrok'],
+            startTunnelSequence: async () => ({
+              provider: 'ngrok',
+              url: 'https://ready.ngrok.app',
+              pid: 4343,
+              processToken: 'linux:100',
+              cleanup: successfulTunnelCleanup,
+            }),
+            isTunnelAlive: () => true,
+            writeSupervisorRecord: () => {
+              throw new Error('disk full');
+            },
           }),
-          isTunnelAlive: () => true,
-          writeSupervisorRecord: () => {
-            throw new Error('disk full');
-          },
-        }),
-      );
-    } finally {
-      if (child && child.exitCode === null && child.signalCode === null) {
-        const exited = once(child, 'exit');
-        child.kill('SIGKILL');
-        await exited;
+        );
+      } finally {
+        if (child && child.exitCode === null && child.signalCode === null) {
+          const exited = once(child, 'exit');
+          child.kill('SIGKILL');
+          await exited;
+        }
       }
-    }
 
-    expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_SUPERVISOR_EXITED');
-    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
-    assert(child);
-    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
-    expect(readMetroTunnel(root)).toMatchObject({ pid: 4343 });
-  });
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_SUPERVISOR_EXITED');
+      expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
+      assert(child);
+      expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+      expect(readMetroTunnel(root)).toMatchObject({ pid: 4343 });
+    },
+  );
 
   test.each([
     {
@@ -1714,6 +1718,11 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
 
     const failure = JSON.parse(result.logs[0] ?? '');
     expect(failure.code).toBe('STIM_CLAIM_UNAVAILABLE');
+    expect(failure.message).toMatch(
+      new RegExp(
+        `^Could not record supervisor pid ${IMPOSSIBLE_PID} before .*Could not confirm cleanup of supervisor pid ${IMPOSSIBLE_PID}`,
+      ),
+    );
     expect(failure.remedy).toContain(String(IMPOSSIBLE_PID));
     expect(failure.remedy).toContain(join(workspaceLogsDir(root), '..', 'metro-start.lock'));
   });
@@ -2299,6 +2308,38 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       expect(exec.calls.spawn[1]?.args).toContain(String(facts.port));
       expect(result.errs.join('\n')).toContain(`Port ${takenPort} was taken by another process`);
     });
+
+    test('a lost supervisor whose helper is still exiting is waited out and the port race retried', async () => {
+      const exec = racingExecutor(bindError);
+      const stub = exec.spawn.bind(exec);
+      const real = getExecutor();
+      let supervisorPid: number | undefined;
+      exec.spawn = (cmd, args, opts) => {
+        if (exec.calls.spawn.length > 0) return stub(cmd, args, opts);
+        exec.calls.spawn.push({ cmd, args, opts });
+        const port = Number(args[args.indexOf('--port') + 1]);
+        const child = real.spawn(
+          process.execPath,
+          [
+            '-e',
+            `require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 2000)'], { stdio: 'ignore' }); process.stdout.write(${JSON.stringify(bindError(port))}); process.exit(1);`,
+          ],
+          opts,
+        );
+        supervisorPid = child.pid;
+        return child;
+      };
+      setExecutor(exec);
+      upsertProject(root, { metroPort: takenPort });
+
+      const result = await runAction({ json: true, wait: '30' });
+
+      expect(result.exitCode).toBe(null);
+      expect(JSON.parse(result.logs.at(-1) ?? '').port).not.toBe(takenPort);
+      expect(exec.calls.spawn).toHaveLength(2);
+      assert(supervisorPid);
+      expect(processGroupAlive(supervisorPid)).toBe(false);
+    }, 30_000);
 
     test('start gives up after three lost ports and names the race', async () => {
       const exec = racingExecutor(bindError, Infinity);

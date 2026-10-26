@@ -12,6 +12,7 @@ interface ChildExitInfo {
 export interface ChildServerHandle {
   mode: string;
   serverPid: number | null;
+  observesRequests?: boolean;
   child: ChildProcess;
   onExit(cb: (info: ChildExitInfo | null) => void): void;
   close(): Promise<void>;

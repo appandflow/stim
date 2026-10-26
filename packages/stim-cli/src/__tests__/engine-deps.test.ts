@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, sep } from 'node:path';
 import {
@@ -165,6 +165,7 @@ describe('podEnvForRuby (#43, #44)', () => {
     });
     expect(env.PATH).toBe(`${rvmBin}${delimiter}/usr/bin`);
     expect(env.GEM_HOME).toBe(rvmGems);
+    expect(env.GEM_PATH).toBe([rvmGems, `${rvmGems}@global`].join(delimiter));
     const none = podEnvForRuby('3.3.10', {
       env: { PATH: '/usr/bin' },
       home: '/home/u',
@@ -173,6 +174,23 @@ describe('podEnvForRuby (#43, #44)', () => {
     });
     expect(none.PATH).toBe('/usr/bin');
     expect(none.GEM_HOME).toBeUndefined();
+  });
+
+  test("gives a pinned rvm Ruby the gemset and @global bins and GEM_PATH that 'rvm use' sets", () => {
+    const rvm = join('/home/u', '.rvm');
+    const gems = join(rvm, 'gems', 'ruby-3.4.8');
+    const global = `${gems}@global`;
+    const ruby = join(rvm, 'rubies', 'ruby-3.4.8', 'bin');
+    const present = new Set([ruby, gems, join(gems, 'bin'), join(global, 'bin')]);
+    const env = podEnvForRuby('3.4.8', {
+      env: { PATH: '/usr/bin' },
+      home: '/home/u',
+      exists: (p) => present.has(p),
+      loginEnv: () => null,
+    });
+    expect(env.PATH).toBe([join(gems, 'bin'), join(global, 'bin'), ruby, '/usr/bin'].join(delimiter));
+    expect(env.GEM_HOME).toBe(gems);
+    expect(env.GEM_PATH).toBe([gems, global].join(delimiter));
   });
 
   test("uses rvm's default Ruby without reading the login shell when the project pins none", () => {
@@ -444,6 +462,72 @@ describe('runPodInstall', () => {
   });
 });
 
+describe('runPodInstall build configuration markers (#4377)', () => {
+  const MARKER = '.last_build_configuration';
+  const markerPath = (pod: string) => join(root, 'ios', 'Pods', pod, MARKER);
+
+  function installPod(pod: string, marker: string | null) {
+    mkdirSync(join(root, 'ios', 'Pods', pod, 'React.xcframework'), { recursive: true });
+    if (marker !== null) writeFileSync(markerPath(pod), marker);
+  }
+
+  function podInstallThat(mutate: () => void) {
+    return () => {
+      mutate();
+      return fakePodChild();
+    };
+  }
+
+  test('puts back the marker that pod install removed from a pod it left in place', async () => {
+    installPod('React-Core-prebuilt', 'Release');
+    installPod('hermes-engine', 'Release');
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: podInstallThat(() => {
+        rmSync(markerPath('React-Core-prebuilt'));
+        rmSync(markerPath('hermes-engine'));
+      }),
+    });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(markerPath('React-Core-prebuilt'), 'utf-8')).toBe('Release');
+    expect(readFileSync(markerPath('hermes-engine'), 'utf-8')).toBe('Release');
+    expect(result.notes?.join('\n')).toContain('React-Core-prebuilt');
+  });
+
+  test('leaves a pod that pod install replaced without a marker, since a fresh install is Debug', async () => {
+    installPod('React-Core-prebuilt', 'Release');
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: podInstallThat(() => {
+        const pod = join(root, 'ios', 'Pods', 'React-Core-prebuilt');
+        mkdirSync(join(root, 'ios', 'Pods', 'fresh', 'React.xcframework'), { recursive: true });
+        rmSync(pod, { recursive: true });
+        renameSync(join(root, 'ios', 'Pods', 'fresh'), pod);
+      }),
+    });
+    expect(result.ok).toBe(true);
+    expect(existsSync(markerPath('React-Core-prebuilt'))).toBe(false);
+    expect(result.notes).toEqual([]);
+  });
+
+  test('writes no marker for a pod that had none', async () => {
+    installPod('React-Core-prebuilt', null);
+    const result = await runPodInstall(root, collectingWriter(), { spawnFn: podInstallThat(() => {}) });
+    expect(result.ok).toBe(true);
+    expect(existsSync(markerPath('React-Core-prebuilt'))).toBe(false);
+  });
+
+  test('puts the marker back when pod install fails after cleaning', async () => {
+    installPod('React-Core-prebuilt', 'Release');
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: () => {
+        rmSync(markerPath('React-Core-prebuilt'));
+        return fakePodChild({ code: 1 });
+      },
+    });
+    expect(result.failed).toBe(true);
+    expect(readFileSync(markerPath('React-Core-prebuilt'), 'utf-8')).toBe('Release');
+  });
+});
+
 describe('runPodInstall through bundler (#137)', () => {
   const COCOAPODS_LOCK = [
     'GEM',
@@ -470,10 +554,10 @@ describe('runPodInstall through bundler (#137)', () => {
     '',
   ].join('\n');
 
-  function pinnedProject({ lock = COCOAPODS_LOCK }: { lock?: string | null } = {}) {
+  function pinnedProject({ lock = COCOAPODS_LOCK, at = '.' }: { lock?: string | null; at?: string } = {}) {
     mkdirSync(join(root, 'ios'), { recursive: true });
-    writeFileSync(join(root, 'Gemfile'), "source 'https://rubygems.org'\ngem 'cocoapods'\n");
-    if (lock !== null) writeFileSync(join(root, 'Gemfile.lock'), lock);
+    writeFileSync(join(root, at, 'Gemfile'), "source 'https://rubygems.org'\ngem 'cocoapods'\n");
+    if (lock !== null) writeFileSync(join(root, at, 'Gemfile.lock'), lock);
   }
 
   function router(
@@ -491,24 +575,29 @@ describe('runPodInstall through bundler (#137)', () => {
 
   const ok = () => fakePodChild({ lines: ['Pod installation complete!'] });
 
-  test('a Gemfile with a Gemfile.lock checks the bundle, then pods through bundler', async () => {
-    pinnedProject();
-    const calls: SpawnCall[] = [];
-    const result = await runPodInstall(root, collectingWriter(), {
-      spawnFn: router(calls, {
-        'bundle check --dry-run': () => fakePodChild({ lines: ['The Gemfile dependencies are satisfied'] }),
-        'bundle exec pod install': ok,
-      }),
-    });
-    expect(result.ok).toBe(true);
-    expect(result.command).toBe('bundle exec pod install');
-    expect(calls.map((c) => [c.cmd, ...c.args].join(' '))).toEqual([
-      'bundle check --dry-run',
-      'bundle exec pod install',
-    ]);
-    expect(calls[0]?.opts.cwd).toBe(root);
-    expect(calls[1]?.opts.cwd).toBe(join(root, 'ios'));
-  });
+  test.each(['.', 'ios'])(
+    'a Gemfile with a Gemfile.lock in %s checks the bundle, then pods through bundler',
+    async (at) => {
+      pinnedProject({ at });
+      const calls: SpawnCall[] = [];
+      const result = await runPodInstall(root, collectingWriter(), {
+        spawnFn: router(calls, {
+          'bundle check --dry-run': () => fakePodChild({ lines: ['The Gemfile dependencies are satisfied'] }),
+          'bundle exec pod install': ok,
+        }),
+      });
+      expect(result.ok).toBe(true);
+      expect(result.command).toBe('bundle exec pod install');
+      expect(calls.map((c) => [c.cmd, ...c.args].join(' '))).toEqual([
+        'bundle check --dry-run',
+        'bundle exec pod install',
+      ]);
+      expect(calls[0]?.opts.cwd).toBe(join(root, at));
+      expect(calls[1]?.opts.cwd).toBe(join(root, 'ios'));
+      for (const call of calls)
+        expect((call.opts.env as NodeJS.ProcessEnv).BUNDLE_GEMFILE).toBe(join(root, at, 'Gemfile'));
+    },
+  );
 
   test('bundler never gets to write the lockfile: --dry-run on check, BUNDLE_FROZEN on every spawn', async () => {
     pinnedProject();
@@ -662,8 +751,8 @@ describe('runPodInstall through bundler (#137)', () => {
     expect(calls.map((c) => c.cmd)).toEqual(['bundle', 'bundle']);
   });
 
-  test('a lockfile bundler refuses to rewrite is reported as frozen mode, not as a missing gem', async () => {
-    pinnedProject();
+  test.each(['.', 'ios'])('a lockfile in %s that bundler refuses to rewrite is reported as frozen mode', async (at) => {
+    pinnedProject({ at });
     const result = await runPodInstall(root, collectingWriter(), {
       spawnFn: router([], {
         'bundle check --dry-run': () => fakePodChild({ code: 1 }),
@@ -680,7 +769,7 @@ describe('runPodInstall through bundler (#137)', () => {
     });
     expect(result.failed).toBe(true);
     expect(result.remedy).toMatch(/BUNDLE_FROZEN/);
-    expect(result.remedy).toMatch(new RegExp(`cd ${root} && bundle install`.replace(/[$^*+?.()|[\]{}\\]/g, '\\$&')));
+    expect(result.remedy).toContain(`cd ${join(root, at)} && bundle install`);
   });
 
   test('a frozen-mode refusal from `bundle exec pod install` gets the same remedy', async () => {

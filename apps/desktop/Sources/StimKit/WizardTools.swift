@@ -1,7 +1,7 @@
 import Foundation
 
-/// One row of the wizard's Tools step. A row blocks Next only when the chosen capability cannot work at all;
-/// every other problem is a warning that names its consequence.
+/// One row of the wizard's Tools step. A blocking row is shown in red when the chosen capability cannot work at all;
+/// every other problem is a warning that names its consequence. Neither disables Next.
 public struct WizardTool: Equatable, Identifiable, Sendable {
   public enum State: Equatable, Sendable {
     case checking, ok
@@ -22,13 +22,15 @@ public struct WizardTool: Equatable, Identifiable, Sendable {
   public var onThisMac = false
   public var blocks = false
   public var consequence: String?
+  /// An `ok` row that still says something the person should know, shown in amber.
+  public var warns = false
 }
 
 private let androidCodes: Set<String> = ["jdk", "android-sdk", "ndk", "build-tools", "compile-sdk"]
 
 /// The Tools step's rows. A Linux or Windows machine (`androidOnly`) builds Android only, so it gets no Xcode, iOS runtime or
-/// CocoaPods rows, and a missing Android SDK or any JDK problem doctor reports blocks Next there, since no build could
-/// offload. Setup's own tool check, used until doctor compares, never blocks.
+/// CocoaPods rows, and a missing Android SDK or any JDK problem doctor reports is red there, since no build could
+/// offload. Setup's own tool check, used until doctor compares, is never red.
 public func toolsReport(
   journal: SetupJournal?, status: BuildMachineStatus?, capabilities: Set<SetupCapability>, android: Bool = false,
   findings: [DoctorReport.Finding] = [], androidOnly: Bool = false
@@ -43,6 +45,7 @@ public func toolsReport(
           && ["Remote machine", "Remote Mac"].contains { finding.title.hasPrefix("\($0) \(status.machine) ") }
       }
     }
+    if let commands = finding?.fix, commands.contains("\n") { return commands }
     return step?.fix ?? finding?.fix
       ?? (isLocal(code, reason) ? "Check this problem on this Mac." : "Check this problem on the remote machine.")
   }
@@ -90,6 +93,12 @@ public func toolsReport(
         .joined(separator: "\n")
       row.state = missing ? .missing(fix) : .mismatch(fix)
       (row.blocks, row.consequence) = policy(code: code, missing: missing, builds: builds, hosts: hosts, androidOnly: androidOnly)
+      return row
+    }
+    let notes = status?.notes?.filter { codes.contains($0.code) } ?? []
+    if !notes.isEmpty {
+      var row = WizardTool(id: code, title: title, detail: notes.map(\.reason).joined(separator: "\n"), state: .ok)
+      row.warns = true
       return row
     }
     if isAndroid, let step, !(androidOnly && status?.state == .approved && status?.offloadable != nil) {
@@ -200,7 +209,16 @@ private func cocoapodsAdvice(problems: [BuildMachineStatus.Problem], machine: St
 public func wizardFixIsCommand(_ fix: String) -> Bool {
   let commands = [
     "sudo", "brew", "gem", "bundle", "xcodebuild", "xcode-select", "sdkmanager", "stim", "stim-server", "npx", "npm",
+    "winget", "xcodes",
   ]
-  return !fix.contains("\n") && !fix.contains("`") && !fix.contains("<")
-    && commands.contains(String(fix.split(separator: " ").first ?? ""))
+  let program: Substring
+  if let quote = fix.first, quote == "\"" || quote == "'" {
+    let rest = fix.dropFirst()
+    program = rest.range(of: "\(quote) ").map { rest[..<$0.lowerBound] } ?? rest
+  } else {
+    program = fix.prefix { $0 != " " }
+  }
+  var name = String(program.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last ?? "")
+  if name.hasSuffix(".bat") { name.removeLast(4) }
+  return !fix.contains("\n") && !fix.contains("`") && !fix.contains("<") && commands.contains(name)
 }

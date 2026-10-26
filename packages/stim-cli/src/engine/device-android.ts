@@ -10,15 +10,21 @@ import {
   releaseAndroidConsolePort,
   setDevice,
   withConfigLock,
+  withConfigLockAsync,
 } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { pidExists } from '../metro.ts';
-import { memoryCulpritsUnder, readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
+import {
+  memoryCulpritsUnderAsync,
+  readHostMemoryPressure,
+  reportMemoryCulprits,
+  type HostMemoryPressure,
+} from '../host-memory.ts';
 import { memoryCulpritAdvice } from '../memory-culprits.ts';
-import { listAllIosSims } from '../devices/ios.ts';
+import { listAllIosSimsAsync } from '../devices/ios.ts';
 import { adoptParked, isLegacyDeletionClaim, parkedMaxSetting, readParked } from '../devices/sim-pool.ts';
 import {
-  assertOwnedAvdStopped,
+  assertOwnedAvdStoppedAsync,
   avdPoolConfiguration,
   DEFAULT_AVD_DEVICE_PROFILE,
   OWNED_AVD_CONFIG_DEFAULTS,
@@ -29,7 +35,6 @@ import {
   bootAndroidEmulator,
   configureNewOwnedAvd,
   getAvdNameForSerialAsync,
-  listAdbDevices,
   listAdbDevicesAsync,
   listAvdsAsync,
   nextConsolePort,
@@ -43,7 +48,7 @@ import { AvdBootError, AvdRecoveryError, prepareOwnedAvd } from './android-avd-s
 import { claimFailure } from '../ownership-claim.ts';
 import {
   DeviceAdmissionRefusal,
-  countLiveOwnedDevices,
+  countLiveOwnedDevicesFrom,
   withDeviceBootAdmission,
   type DeviceSlotWaitPolicy,
 } from './device-capacity.ts';
@@ -101,9 +106,7 @@ export async function ensureOwnedAndroidDevice({
     const cleanup = await teardownAvd(avdName, {
       del: true,
       owner: { projectPath, slot, expectedRecord: record },
-      onRemoved: () => {
-        clearDevice(projectPath, 'android', slot, avdName);
-      },
+      onRemoved: () => withConfigLockAsync(() => clearDevice(projectPath, 'android', slot, avdName)),
     });
     if (cleanup.status === 'failed' || cleanup.status === 'skipped') {
       throw new AvdRecoveryError(
@@ -127,9 +130,7 @@ export async function ensureOwnedAndroidDevice({
     const cleanup = await teardownAvd(avdName, {
       del: true,
       owner: { projectPath, slot, expectedRecord: record },
-      onRemoved: () => {
-        clearDevice(projectPath, 'android', slot, avdName);
-      },
+      onRemoved: () => withConfigLockAsync(() => clearDevice(projectPath, 'android', slot, avdName)),
     });
     if (cleanup.status === 'failed' || cleanup.status === 'skipped') {
       throw new AvdRecoveryError(
@@ -149,7 +150,9 @@ export async function ensureOwnedAndroidDevice({
   );
   if (record?.avdName) {
     if (record.owned) {
-      const resolved = await resolveOwnedAvdSerialAsync(record.avdName);
+      const resolved = await resolveOwnedAvdSerialAsync(record.avdName, {
+        preferredSerial: record.consolePort ? `emulator-${record.consolePort}` : undefined,
+      });
       const currentProfile = resolved.notOwned || resolved.missing ? null : ownedAvdDeviceProfile(record.avdName);
       if (requestedProfile && currentProfile && currentProfile !== requestedProfile) {
         throw new AvdRecoveryError(
@@ -180,7 +183,7 @@ export async function ensureOwnedAndroidDevice({
           owned: true,
           deviceName: record.deviceName ?? record.avdName,
         };
-        setDevice(projectPath, 'android', updated, slot);
+        await withConfigLockAsync(() => setDevice(projectPath, 'android', updated, slot));
         return {
           ...updated,
           systemImage: ownedAvdSystemImage(record.avdName),
@@ -258,7 +261,7 @@ export async function ensureOwnedAndroidDevice({
       }
       if (resolved.notOwned || resolved.serial) continue;
       try {
-        assertOwnedAvdStopped(parked.name);
+        await assertOwnedAvdStoppedAsync(parked.name);
       } catch (error) {
         out(phaseLine('device', `kept parked ${parked.name}: ${String((error as Error)?.message || error)}`));
         continue;
@@ -278,7 +281,8 @@ export async function ensureOwnedAndroidDevice({
         poolConfiguration: parked.configuration,
         adoptionPending: true,
       };
-      if (!adoptParked({ platform: 'android', projectPath, slot, udid: parked.udid, device: adopted })) continue;
+      if (!(await adoptParked({ platform: 'android', projectPath, slot, udid: parked.udid, device: adopted })))
+        continue;
       if (parked.configuration !== configuration) {
         try {
           configureAvd(parked.name, { dataPartitionSizeGb: androidDataPartitionSizeGbSetting(settings), avdConfig });
@@ -396,8 +400,8 @@ export function claimAndroidConsolePort(
   });
 }
 
-function liveAndroidConsolePorts(): number[] {
-  const adbLive = listAdbDevices();
+async function liveAndroidConsolePorts(): Promise<number[]> {
+  const adbLive = await listAdbDevicesAsync();
   return [
     ...adbLive.emulators.map((e) => e.consolePort),
     ...adbLive.unhealthy.map((u) => u.consolePort).filter((p): p is number => p != null),
@@ -426,14 +430,10 @@ async function bootOwnedAvdOnFreshPort({
   return withDeviceBootAdmission(
     { platform: 'android', key: avdName },
     async () => {
-      const claim = claimAndroidConsolePort({
-        projectPath,
-        slot,
-        avdName,
-        deviceName,
-        livePorts: liveAndroidConsolePorts(),
-        metadata,
-      });
+      const livePorts = await liveAndroidConsolePorts();
+      const claim = await withConfigLockAsync(() =>
+        claimAndroidConsolePort({ projectPath, slot, avdName, deviceName, livePorts, metadata }),
+      );
       const serial = `emulator-${claim.consolePort}`;
       try {
         reportAndroidMemoryPressure(out);
@@ -447,12 +447,12 @@ async function bootOwnedAvdOnFreshPort({
             `${serial} is running AVD ${running}, not this workspace's owned AVD ${avdName}; refusing to use it.`,
           );
         }
-        clearAndroidBootPending(projectPath, avdName, slot);
+        await withConfigLockAsync(() => clearAndroidBootPending(projectPath, avdName, slot));
         await muteBootedEmulator(serial, avdName, out);
         const { bootPending: _booted, ...booted } = claim;
         return { ...booted, serial, setup: true };
       } catch (error) {
-        releaseAndroidConsolePort(projectPath, claim.consolePort, slot);
+        await withConfigLockAsync(() => releaseAndroidConsolePort(projectPath, claim.consolePort, slot));
         throw error;
       }
     },
@@ -501,29 +501,29 @@ async function muteBootedEmulator(serial: string, avdName: string, out: Notify):
 function reportAndroidMemoryPressure(out: Notify): void {
   const pressure = readHostMemoryPressure();
   if (pressure === 'warning' || pressure === 'critical') {
-    const named = memoryCulpritAdvice(memoryCulpritsUnder(pressure));
     out(
       chalk.dim(
         phaseLine(
           'memory',
-          `macOS reports ${pressure} host memory pressure; emulator boot may be slow.${named ? ` ${named}` : ''} Free memory with \`stim stop\` only in workspaces you own; ask before closing other apps or devices.`,
+          `macOS reports ${pressure} host memory pressure; emulator boot may be slow. Free memory with \`stim stop\` only in workspaces you own; ask before closing other apps or devices.`,
         ),
       ),
     );
+    reportMemoryCulprits(pressure, (named) => out(chalk.dim(phaseLine('memory', named))));
   }
 }
 
-function androidBootRemedy(pressure: HostMemoryPressure | null): string {
+async function androidBootRemedy(pressure: HostMemoryPressure | null): Promise<string> {
   let count: number | null = null;
   try {
-    const live = countLiveOwnedDevices({
-      sims: () => (process.platform === 'darwin' ? listAllIosSims({ timeoutMs: 2000 }) : []),
-      adb: () => ({ ...listAdbDevices({ timeoutMs: 2000 }), unhealthy: [] }),
+    const live = await countLiveOwnedDevicesFrom({
+      sims: () => (process.platform === 'darwin' ? listAllIosSimsAsync({ timeoutMs: 2000 }) : []),
+      adb: async () => ({ ...(await listAdbDevicesAsync({ timeoutMs: 2000 })), unhealthy: [] }),
       booting: [],
     });
     count = typeof live === 'number' ? live : null;
   } catch {}
-  const named = memoryCulpritAdvice(memoryCulpritsUnder(pressure));
+  const named = memoryCulpritAdvice(await memoryCulpritsUnderAsync(pressure));
   const observation =
     pressure === 'warning' || pressure === 'critical'
       ? `macOS reports ${pressure} host memory pressure. ${named ? `${named} ` : ''}`
@@ -578,7 +578,7 @@ async function waitForAndroidBoot({
     reason: `${reason} Diagnostic: ${JSON.stringify(result.diagnostic)}`,
     remedy: exited
       ? 'Inspect the emulator log for the process exit, fix what it reports, then run `stim android` again.'
-      : androidBootRemedy(pressure),
+      : await androidBootRemedy(pressure),
   };
 }
 
@@ -605,7 +605,9 @@ export async function ensureAndroidBooted({
 
   let resolved;
   try {
-    resolved = await resolveOwnedAvdSerialAsync(device.avdName);
+    resolved = await resolveOwnedAvdSerialAsync(device.avdName, {
+      preferredSerial: device.consolePort ? `emulator-${device.consolePort}` : undefined,
+    });
   } catch (e) {
     return { failed: true, reason: `Could not list AVDs: ${(e as Error)?.message || e}` };
   }
@@ -619,8 +621,8 @@ export async function ensureAndroidBooted({
     return { failed: true, reason: `AVD ${device.avdName} is not Stim-owned; refusing to boot it.` };
   }
   const avdName = device.avdName;
-  const booted = (result: BootResult): BootResult => {
-    if (!result.failed) clearAndroidBootPending(projectPath, avdName, slot);
+  const booted = async (result: BootResult): Promise<BootResult> => {
+    if (!result.failed) await withConfigLockAsync(() => clearAndroidBootPending(projectPath, avdName, slot));
     return result;
   };
   if (resolved.serial) {
@@ -633,14 +635,17 @@ export async function ensureAndroidBooted({
   }
 
   const boot = async (): Promise<BootResult> => {
-    const claim = claimAndroidConsolePort({
-      projectPath,
-      slot,
-      avdName,
-      deviceName: device.deviceName,
-      livePorts: liveAndroidConsolePorts(),
-      metadata: device,
-    });
+    const livePorts = await liveAndroidConsolePorts();
+    const claim = await withConfigLockAsync(() =>
+      claimAndroidConsolePort({
+        projectPath,
+        slot,
+        avdName,
+        deviceName: device.deviceName,
+        livePorts,
+        metadata: device,
+      }),
+    );
     const serial = `emulator-${claim.consolePort}`;
     reportAndroidMemoryPressure(out);
     out(chalk.dim(phaseLine('device', `booting ${avdName} as ${serial}`)));
@@ -648,14 +653,14 @@ export async function ensureAndroidBooted({
     try {
       pid = await bootAndroidEmulator(avdName, claim.consolePort, { logFile });
     } catch (e) {
-      releaseAndroidConsolePort(projectPath, claim.consolePort, slot);
+      await withConfigLockAsync(() => releaseAndroidConsolePort(projectPath, claim.consolePort, slot));
       return {
         failed: true,
         reason: `Could not start emulator for AVD ${avdName}: ${(e as Error)?.message || e}`,
       };
     }
     const result = await waitForAndroidBoot({ serial, timeoutMs, pid, alive, out });
-    if (result.failed) releaseAndroidConsolePort(projectPath, claim.consolePort, slot);
+    if (result.failed) await withConfigLockAsync(() => releaseAndroidConsolePort(projectPath, claim.consolePort, slot));
     else await muteBootedEmulator(serial, avdName, out);
     return booted(result);
   };

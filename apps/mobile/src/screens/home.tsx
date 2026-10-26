@@ -23,6 +23,7 @@ import { useMenuDrawer } from '@/components/menu-drawer';
 import { WorkspaceGroupRow, WorktreeRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useInbox } from '@/hooks/inbox';
+import { useLargeText } from '@/hooks/large-text';
 import { useArchiveItems, useMacs, usePairedMacs, useWorkspaceItems, useWorktreeItems } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { useWelcome } from '@/hooks/welcome';
@@ -315,6 +316,7 @@ export function Home() {
 
 function RepoHeader({ section }: { section: HomeSection }) {
   const { project, live, idle } = section;
+  const large = useLargeText();
   const counts = [live ? t`${live} active` : null, idle ? t`${idle} idle` : null].filter(Boolean).join(' \u00B7 ');
   return (
     <View
@@ -323,14 +325,16 @@ function RepoHeader({ section }: { section: HomeSection }) {
       accessibilityLabel={[project, live ? t`${live} active` : null, idle ? t`${idle} idle` : null]
         .filter(Boolean)
         .join(', ')}
-      style={styles.repoHeader}
+      style={[styles.repoHeader, large && styles.repoHeaderStacked]}
     >
-      <Text variant="headline" numberOfLines={1} style={styles.repoName}>
+      <Text variant="headline" numberOfLines={large ? 3 : 1} style={styles.repoName}>
         {project}
       </Text>
-      <Text variant="footnote" tone="tertiary">
-        {counts}
-      </Text>
+      {counts ? (
+        <Text variant="footnote" tone="tertiary">
+          {counts}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -443,6 +447,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.separator,
   },
+  repoHeaderStacked: { flexDirection: 'column', alignItems: 'flex-start', gap: theme.space.xs },
   repoName: { flexShrink: 1 },
   chips: { gap: theme.space.md, paddingHorizontal: theme.space.xxl, paddingBottom: theme.space.xs },
   gridRow: { flexDirection: 'row', gap: theme.space.lg, paddingHorizontal: theme.space.xl, paddingTop: theme.space.lg },

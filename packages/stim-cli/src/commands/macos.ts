@@ -5,7 +5,8 @@ import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
 import { LOG_ROTATE_BYTES, ambientEnv, type StimContext } from '@stim-cli/core';
 import { processContext, runProcessOperation } from '../cli-operation.ts';
-import { validHostedAppArguments, type MacosAppRecord, type MacosBuild } from '@stim-cli/core/state';
+import { placementWord, validHostedAppArguments, type MacosAppRecord, type MacosBuild } from '@stim-cli/core/state';
+import { automaticDevicePlacement, devicePlacementLine } from '../device-host/auto-placement.ts';
 import { connectHost, placeHostedMacos } from '../device-host/hosted-macos.ts';
 import {
   NO_BUILD_PROGRESS,
@@ -15,6 +16,7 @@ import {
   tapBuildLog,
   type BuildProgress,
 } from '../engine/build-progress.ts';
+import { errorRemedy } from '../engine/build-ledger.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
@@ -31,36 +33,34 @@ import { stopBundleInstances, stopMacosAppHeld } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import { spawnEntry } from '../spawn-entry.ts';
-import { upsertProject } from '../workspace/config.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir, workspaceAgentDeviceDir } from '../workspace/paths.ts';
+import { upsertProject, withConfigLockAsync } from '../workspace/config.ts';
+import {
+  ensureWorkspaceStorageAsync,
+  workspaceDir,
+  workspaceLogsDir,
+  workspaceAgentDeviceDir,
+} from '../workspace/paths.ts';
 import { findProjectRoot } from '../workspace/project.ts';
-import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
-import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import {
+  resolveProjectSettingsAsync,
+  settingShapeErrors,
+  settingValueAt,
+  SETTING_SHAPE_REMEDY,
+} from '../workspace/settings.ts';
+import { recordWorkspaceUseAsync, writeWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 
 /**
- * Builds the Debug app and launches it here, or with `remote` on that approved remote Mac. A named host never falls
- * back to a local launch.
+ * Builds the Debug app and launches it where `remoteFlag` or `macos.remote` says: here, on one named approved remote
+ * Mac with no fallback, or on the Mac an automatic placement word chooses. A recorded hosted app keeps its Mac.
  */
 export async function runMacos(
   context: StimContext,
   root: string,
   note: (line: string) => void = console.error,
-  remote?: string,
+  remoteFlag?: string,
   buildMachineFlag?: string,
 ): Promise<MacosAppRecord> {
-  const backend = remote?.trim().toLowerCase();
-  if (backend === 'eas' || backend === 'proxy')
-    throw Object.assign(
-      new Error('stim macos --remote takes a remote Mac name from remote.machines; macOS has no eas or proxy backend.'),
-      { code: 'STIM_BAD_ARG' },
-    );
-  if (backend === 'auto')
-    throw Object.assign(
-      new Error(
-        'stim macos --remote auto is not available yet: automatic placement has not shipped. Name a hosting Mac from remote.machines.',
-      ),
-      { code: 'STIM_BAD_ARG' },
-    );
+  refuseDeviceBackend(remoteFlag);
   if (process.platform !== 'darwin') throw new Error('stim macos requires a Mac with Swift installed.');
   root = realpathSync(root);
   const operation = projectRegistry.selectMacos(root);
@@ -78,8 +78,11 @@ export async function runMacos(
   const selected = resolveBuildPlacement(buildMachineFlag);
   if (selected.failure) throw Object.assign(new Error(selected.failure.message), selected.failure);
   const buildMachine = selected.selected;
+  const configured = settingValueAt(settings, 'macos.remote');
+  const requested = remoteFlag ?? (typeof configured === 'string' ? configured : undefined);
+  refuseDeviceBackend(requested);
   const macos = await (await operation.load()).prepare(context, settings);
-  ensureWorkspaceStorage(root);
+  await ensureWorkspaceStorageAsync(root, context.signal);
   return withNativeBuildRun(
     context,
     root,
@@ -91,6 +94,7 @@ export async function runMacos(
         'macos-launch',
         async () => {
           const previous = requiredMacosRecord(root);
+          const remote = await macosHost({ requested, previous, root, buildMachine, note, signal: context.signal });
           if (previous?.host && previous.host.machine !== remote) {
             throw new Error(
               `This workspace's macOS app runs on ${previous.host.machine}. Run stim stop first, then stim macos${remote ? ` --remote ${remote}` : ''}.`,
@@ -100,10 +104,15 @@ export async function runMacos(
             throw new Error(
               'macos.arguments is too large for a hosted app: at most 32 arguments of 1024 characters (8192 in total), without NUL or line breaks.',
             );
-          if (remote) (await connectHost(remote)).connection.close();
+          let hostServerKey: string | undefined;
+          if (remote) {
+            const probe = await connectHost(remote);
+            hostServerKey = probe.credential.serverKey;
+            probe.connection.close();
+          }
           if (!previous?.host) await stopMacosAppHeld(root);
-          upsertProject(root, {});
-          recordWorkspaceUse(root, new Date(), context.env, context.cwd);
+          await withConfigLockAsync(() => upsertProject(root, {}));
+          await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
           const bundle = join(macosDir(root), `${macos.product}.app`);
           const record: MacosAppRecord = {
             product: macos.product,
@@ -116,7 +125,16 @@ export async function runMacos(
             build: { state: 'running', startedAt: new Date().toISOString(), buildMachine },
             ...(previous?.host ? { host: previous.host, hostLaunched: previous.hostLaunched ?? false } : {}),
           };
-          const handoff = await buildBundle(context, root, macos, record, remote !== undefined, note, progress);
+          const handoff = await buildBundle(
+            context,
+            root,
+            macos,
+            record,
+            remote !== undefined,
+            hostServerKey,
+            note,
+            progress,
+          );
           progress.step('launch');
           const launched = (): void => {
             try {
@@ -132,7 +150,7 @@ export async function runMacos(
           }
           const connection = await connectHost(remote);
           const write = (patch: Partial<MacosAppRecord>) =>
-            writeWorkspaceState(root, { macos: { ...record, ...patch } });
+            writeWorkspaceStateAsync(root, { macos: { ...record, ...patch } });
           let placement = record.host;
           try {
             const run = await placeHostedMacos(connection, {
@@ -144,7 +162,7 @@ export async function runMacos(
               recorded: previous?.host,
               reserved: (reserved) => {
                 placement = reserved;
-                write({ host: reserved, hostLaunched: false });
+                return write({ host: reserved, hostLaunched: false });
               },
               note,
             });
@@ -155,11 +173,11 @@ export async function runMacos(
               host: run.placement,
               hostLaunched: run.launched,
             };
-            writeWorkspaceState(root, { macos: placed });
+            await writeWorkspaceStateAsync(root, { macos: placed });
             launched();
             return placed;
           } catch (error) {
-            write({ supervisor: undefined, ...(placement ? { host: placement, hostLaunched: false } : {}) });
+            await write({ supervisor: undefined, ...(placement ? { host: placement, hostLaunched: false } : {}) });
             throw error;
           } finally {
             connection.connection.close();
@@ -172,18 +190,64 @@ export async function runMacos(
   );
 }
 
+function refuseDeviceBackend(requested: string | undefined): void {
+  if (requested !== undefined && ['eas', 'proxy'].includes(requested.trim().toLowerCase()))
+    throw Object.assign(
+      new Error(
+        'stim macos --remote and macos.remote take local, auto, remote, remote-only or a remote Mac name from remote.machines; macOS has no eas or proxy backend.',
+      ),
+      { code: 'STIM_BAD_ARG' },
+    );
+}
+
+async function macosHost({
+  requested,
+  previous,
+  root,
+  buildMachine,
+  note,
+  signal,
+}: {
+  requested: string | undefined;
+  previous: MacosAppRecord | null | undefined;
+  root: string;
+  buildMachine: string;
+  note: (line: string) => void;
+  signal: AbortSignal;
+}): Promise<string | undefined> {
+  if (requested === undefined) return undefined;
+  const word = placementWord(requested);
+  if (word === 'local') return undefined;
+  if (word === null) return requested.trim();
+  if (previous?.host) return previous.host.machine;
+  const placed = await automaticDevicePlacement({
+    root,
+    slot: 'default',
+    platform: 'macos',
+    placement: word,
+    selectors: {},
+    buildMachine,
+    noWait: false,
+    onWait: (line) => note(phaseLine('placement:', line)),
+    signal,
+  });
+  note(phaseLine('placement:', devicePlacementLine(placed.placement, placed.skipped)));
+  return placed.placement.decision === 'hosted' ? placed.placement.machine : undefined;
+}
+
 async function buildBundle(
   context: StimContext,
   root: string,
   recipe: MacosArtifactRecipe,
   record: MacosAppRecord,
   hosted: boolean,
+  hostServerKey: string | undefined,
   note: (line: string) => void,
   progress: BuildProgress = NO_BUILD_PROGRESS,
 ): Promise<BuildHandoff | null> {
   const started = Date.parse(record.build.startedAt);
   const scratch = join(macosDir(root), 'build');
-  writeWorkspaceState(root, { macos: record });
+  await writeWorkspaceStateAsync(root, { macos: record });
   const writer = tapBuildLog(createNdjsonWriter(macosLogFile(root), { maxBytes: LOG_ROTATE_BYTES }), progress);
   try {
     const base = recipe.bundleId;
@@ -202,6 +266,7 @@ async function buildBundle(
       progress,
       record: record.build,
       buildMachine: record.build.buildMachine!,
+      hostServerKey,
     });
     record.bundleId = built.bundleId;
     record.displayName = displayName;
@@ -213,7 +278,7 @@ async function buildBundle(
       finishedAt: new Date().toISOString(),
       durationMs: Date.now() - started,
     };
-    writeWorkspaceState(root, { macos: record });
+    await writeWorkspaceStateAsync(root, { macos: record });
     recordMacosBuild(root, record.build, progress.steps());
     return built.handoff;
   } catch (error) {
@@ -229,15 +294,15 @@ async function buildBundle(
         ? { errorCode: (error as { code: string }).code }
         : {}),
     };
-    writeWorkspaceState(root, { macos: { ...record, supervisor: undefined, build } });
-    recordMacosBuild(root, build, progress.steps());
+    await writeWorkspaceStateAsync(root, { macos: { ...record, supervisor: undefined, build } });
+    recordMacosBuild(root, build, progress.steps(), errorRemedy(error));
     throw error;
   } finally {
     writer.close();
   }
 }
 
-function recordMacosBuild(root: string, build: MacosBuild, compileSteps: number | null): void {
+function recordMacosBuild(root: string, build: MacosBuild, compileSteps: number | null, remedy?: string): void {
   recordFinishedBuild(root, {
     platform: 'macos',
     status: build.state === 'ok' ? 'ok' : 'failed',
@@ -254,6 +319,7 @@ function recordMacosBuild(root: string, build: MacosBuild, compileSteps: number 
     offloadedTo: build.offloadedTo,
     offloadFallback: build.offloadFallback,
     ...(compileSteps === null ? {} : { compileSteps }),
+    ...(build.error ? { ledger: { message: build.error, remedy } } : {}),
   });
 }
 
@@ -322,12 +388,15 @@ export default function macosCommand(program: Command): void {
     .description('Build and launch an owned Swift Package macOS Debug app.')
     .option(
       '--remote-build <value>',
-      'Build on auto, local, or one named machine; a name refuses without fallback',
+      'Build on local, auto, remote (remote machines first), remote-only (never here), or one named machine; a name refuses without fallback',
       parseBuildMachineOption,
     )
     .option('--json', 'print one launch or plan payload; build output goes to stderr')
     .option('--plan', 'validate the next SwiftPM Debug build without building or launching')
-    .option('--remote <machine>', 'run it on this approved remote Mac from remote.machines')
+    .option(
+      '--remote <placement>',
+      'run it here (local), on the Mac a placement word chooses (auto, remote, remote-only), or on one approved remote Mac from remote.machines',
+    )
     .action(async (options: { json?: boolean; plan?: boolean; remote?: string; remoteBuild?: string }) => {
       const root = findProjectRoot(process.cwd());
       if (options.plan) {

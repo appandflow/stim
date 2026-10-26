@@ -21,12 +21,13 @@ import {
   CAPACITY_REFUSAL_LIMIT,
   CAPACITY_REFUSAL_MAX_AGE_MS,
   PLACEMENT_DECISIONS,
+  PLACEMENT_WORDS,
+  REPLACED_SETTINGS,
 } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_FINGERPRINT_IGNORES } from '../cache/build-cache.ts';
-import { OUTPUT_LABELS } from '../command-output.ts';
 import { WATCHMAN_NESTED_WORKTREES } from '../diagnostics/doctor-watchman.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
 import { AUTOMATION_TOOLS } from '../devices/automation-tools.ts';
@@ -65,6 +66,8 @@ function allBodies(): string[] {
 
 const NOT_A_REFUSAL_CODE = new Set([
   'STIM_HOME',
+  'STIM_TRACE',
+  'STIM_TRACE_OWNER',
   'STIM_ANDROID_CAS_TOOLCHAIN',
   'STIM_BACKGROUND_LAUNCH',
   'STIM_ACCESS_TICKET',
@@ -77,7 +80,59 @@ function scrapedCodes(source: string): Set<string> {
   );
 }
 
-const SUMMARY_ONLY_LABELS = ['app', 'compilation cache'];
+const PHASE_LABELS = [
+  'agent-device',
+  'branch',
+  'budget',
+  'build',
+  'cache',
+  'caches',
+  'carry',
+  'checkout',
+  'daemons',
+  'deps',
+  'device',
+  'devices',
+  'error',
+  'failed',
+  'findings',
+  'fingerprint',
+  'gems',
+  'install',
+  'installs',
+  'ip.txt',
+  'lan',
+  'launch',
+  'lease',
+  'lock',
+  'log',
+  'logs',
+  'meaning',
+  'metro',
+  'pods',
+  'port',
+  'prebuild',
+  'project',
+  'readiness',
+  'ready',
+  'remedy',
+  'removed',
+  'resolved',
+  'result',
+  'services',
+  'setting',
+  'settings',
+  'setup',
+  'state',
+  'stats',
+  'stop',
+  'storage',
+  'swap',
+  'verify',
+  'version',
+  'workspace',
+  'worktrees',
+];
 
 test('every advertised topic renders non-empty content', () => {
   for (const name of topicNames()) {
@@ -176,9 +231,7 @@ test('the lifecycle topic grids every label the output vocabulary allows, and no
   const start = body.indexOf('The labels are a closed set');
   expect(start).toBeGreaterThan(-1);
   const grid = body.slice(body.indexOf('column:', start) + 'column:'.length, body.indexOf('`app` and', start));
-  expect(grid.trim().split(/\s+/).toSorted()).toEqual(
-    OUTPUT_LABELS.filter((label) => label !== '' && !SUMMARY_ONLY_LABELS.includes(label)).toSorted(),
-  );
+  expect(grid.trim().split(/\s+/).toSorted()).toEqual(PHASE_LABELS.toSorted());
 });
 
 test('native-build cache fields are documented in the JSON failure contract', () => {
@@ -445,6 +498,23 @@ test('the settings topic documents every registered setting and its environment 
   expect(names.filter((name) => !body.includes(name))).toEqual([]);
 });
 
+test('the placement words are documented for every workload, and a removed setting only in the settings topic', () => {
+  for (const body of [renderTopic('settings'), renderTopic('macos'), renderSection('lifecycle', 'hosted-ios')]) {
+    assert(body);
+    expect(PLACEMENT_WORDS.filter((word) => !body.includes(word))).toEqual([]);
+  }
+  for (const body of [renderTopic('macos'), renderSection('lifecycle', 'hosted-ios')]) {
+    for (const key of Object.keys(REPLACED_SETTINGS)) expect(body).not.toContain(key);
+  }
+  const settings = renderTopic('settings');
+  assert(settings);
+  expect(settings).toContain(`stim settings set remote.machines '["fast-mini","slow-mini"]'`);
+  for (const [key, replaced] of Object.entries(REPLACED_SETTINGS)) {
+    for (const name of [`\`${key}\``, replaced.env ?? key, `stim settings unset ${key}`])
+      expect(settings).toContain(name);
+  }
+});
+
 test('the static skill is only the agent guide router', () => {
   const dir = fileURLToPath(new URL('../../skill/', import.meta.url));
   expect(readdirSync(dir).toSorted()).toEqual(['SKILL.md']);
@@ -678,7 +748,7 @@ test('the agent and cleanup guides shut down owned simulators without an occupan
 test('the guide names every path Stim ignores by default', () => {
   const lifecycle = renderSection('lifecycle', 'builds') ?? '';
   for (const path of DEFAULT_FINGERPRINT_IGNORES) {
-    const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*$/, '');
+    const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*(\/\*)?$/, '');
     expect(lifecycle).toContain(bare);
   }
 });

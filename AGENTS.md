@@ -73,8 +73,11 @@ read-capable session serves the same Stim home, and for device replay and a leas
 device's screen. Status and explicit refresh use only the matching server's views;
 connection errors retain the last good display without a CLI status fallback. It runs remaining Stim commands
 through the CLI, never by reading or writing `$STIM_HOME`. It connects to
-stim-server only over the server's Unix socket `$STIM_HOME/server/local.sock`,
-which serves the server's own user without pairing or Noise. Build and test it with `swift build` and
+stim-server only over the server's Unix socket, normally `$STIM_HOME/server/local.sock`.
+When that path exceeds macOS's 103-byte limit, core and Desktop use
+`/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`. Its directory
+is mode 0700 and owned by the server's user; the socket serves only that user
+without pairing or Noise. Build and test it with `swift build` and
 `swift test` from that directory, both with `-Xswiftc -warnings-as-errors` in
 CI. Format and lint its Swift sources with `scripts/format.sh` and
 `scripts/format.sh --check`. Its design tokens and empty-state agent prompts are generated from
@@ -186,7 +189,10 @@ pick another. When you choose an issue yourself, take the highest priority among
 free issues, and treat an unlabeled issue as `priority: P2`. To claim, comment
 `Claimed: <branch>`, then push the branch to `origin` before implementing
 anything. The open pull request replaces the claim. If you stop without one,
-comment `Released:` and delete the branch.
+comment `Released:` and delete the branch. The `stale-claims` workflow posts
+`Released:` on a claim older than two days with no open pull request or recent
+commit on its branch; it never deletes a branch, so release your own claim when
+you stop.
 
 Implement each valid issue in its own git worktree and branch created from the
 refreshed `origin/main`. Independent issues may run in parallel worktrees. Keep
@@ -296,9 +302,17 @@ outside it moves to its own issue and pull request.
 - **Cache contracts.** The cache packages must work without `Stim` installed.
   Keep their config path, cache root, cache key, and registration behavior
   aligned with the CLI. Resolution order is environment, machine config, then
-  default. Update `cache-packages.test.ts` when those rules change.
+  default. Update `cache-packages.test.ts` when those rules change. Published
+  packages depend on each other at the exact release version (`workspace:*`,
+  never `workspace:^`), so a cache package installed beside a different `stim`
+  version brings its own copy of `@stim-cli/core`.
 - **Source format.** Keep files under `src/`, `bin/`, and `test/` ASCII-only.
   Markdown can use Unicode.
+- **SwiftPM TMPDIR.** Run `swift` children with the ambient `TMPDIR`. SwiftPM
+  places every cross-process lock for its shared caches there, named after the
+  protected path, and offers no separate setting, so a private `TMPDIR` lets
+  concurrent builds race on the shared repository cache. `gc` cleans the
+  `TemporaryDirectory.*` entries SwiftPM leaves.
 - **Concurrency limits.** Build and device caps are opt-in through config or
   environment variables.
 - **Settings registry.** `packages/core/state/settings-registry.ts` defines
@@ -335,10 +349,26 @@ outside it moves to its own issue and pull request.
   `server/build-clients.json`, apart from `devices.json`. The client names its
   remote machines in `remote.machines` and pins each one's stim-server key in
   `build-machines.json`; a worker that cannot prove that key is refused.
-  `remote.buildMode` places iOS simulator Debug builds and Android emulator
-  debug builds and macOS SwiftPM Debug builds;
-  every offload failure falls back to a local build, and no failure path
-  writes the cache. A hosted macOS session takes a build the same Mac ran for
+  `remote.build` places iOS simulator Debug builds and Android emulator
+  debug builds and macOS SwiftPM Debug builds with the placement words every
+  workload shares (`local`, `auto`, `remote`, `remote-only` or one machine),
+  trying the machines of `remote.machines` in that order, each only while it
+  has a free slot and a load under its own `server.maxLoadPerCore`;
+  every offload failure falls back to a local build unless the selection is
+  `remote-only` or one machine, and no failure path
+  writes the cache. Two machines build for each other, and reuse each other's
+  completed React Native and SwiftPM artifacts, when their bundled Stim
+  reports the same `STIM_BUILD_COMPAT`
+  (`packages/stim-cli/src/offload/toolchain.ts`, in the `stim` package because
+  `@stim-cli/core` is a ranged dependency); a machine that reports none needs
+  the same Stim build digest. Bump it when a machine with the same value but
+  the other version of a file listed in `scripts/build-compat.json` would
+  build a different artifact or read a build or artifact message
+  differently; a fix that makes a failing worker build succeed, or a field
+  negotiated by a `hello` feature, needs no bump. `pnpm run lint` fails until
+  `node scripts/build-compat.mjs --update` records the change, and the
+  reviewer checks that record against this rule. The compatibility version
+  never enters the local cache key. A hosted macOS session takes a build the same Mac ran for
   it, instead of an upload, only when the build client and the device-host
   client are approved for the same client key, and only bytes matching the
   client's verified bundle manifest. The worker builds each client and
@@ -407,11 +437,12 @@ outside it moves to its own issue and pull request.
   The host's person lists and stops sessions through
   `device-host.sessions` and `device-host.sessions.stop` on Desktop's Unix
   socket connection; person-side stop uses the existing stop path.
-  A session's Metro endpoint listens only on worker loopback and reaches only the
-  authenticated client's peer address. The client gateway listens only on its own
-  tailnet address, pins the worker peer, requires a fresh secret and forwards only
-  to its verified loopback Metro. Stop and revocation close the bridge and active
-  streams. Keep the recorded worker port on reconnect; refuse an occupied port.
+  A session's Metro endpoint listens only on worker loopback. The worker never
+  connects to the client: each accepted connection rides one idle
+  `device-host.metro.link` connection the session's own client opened and
+  authenticated, and the client forwards it only to its verified loopback Metro.
+  Stop and revocation close the bridge, idle links and active streams. Keep the
+  recorded worker port on reconnect; refuse an occupied port.
   App transfer uses bounded digest chunks, including the manifest itself. The
   worker validates content, contained links, simulator platform, architecture
   and minimum OS before installing on the exact ledger-owned device. Hold the
@@ -511,12 +542,16 @@ use, leased, driven, locked or pinned by `maintenance.keep`. Parking keeps the d
 record names the installed app and its cache key. Parked devices are
 Stim-owned and listed in the pool record. Adoption removes other third-party
 apps and clears the adopting app's data before launch, on every adoption, and
-skips the install only after verifying the installed bytes. Android adoption
+skips the install only after verifying the installed bytes. On Android that proof is the installed
+APK's size and the SHA-256 of its tail, from the v2 or v3 signing block through the end of the file,
+matching the values recorded after one `apksigner verify` of the local APK; an APK without a recorded
+tail, or a device that cannot answer that probe, compares the SHA-256 of the whole APK. Android adoption
 matches the system image and recorded AVD creation settings and keeps the AVD
 name. When an adopted emulator lacks room on `/data` for the install, trim app
 caches, then wipe its user data through centralized teardown. Delete parked
 devices only by eviction, adoption-time reconciliation of a listed unavailable
-simulator, `gc --delete`, or automatic maintenance at disk pressure level 2; erase them only with `gc --cache parked
+simulator, `gc --delete`, or automatic maintenance at disk pressure level 2 or
+in its age sweep after `maintenance.olderThanDays`; erase them only with `gc --cache parked
 --delete`. Every route uses centralized teardown and ownership revalidation.
 `gc --delete` deletes parked hosted devices through their owning session home.
 
@@ -533,7 +568,9 @@ used but not owned. Hardware cannot be created or booted, so those paths
 install, launch, and read what logs they can, and nothing more. The only
 state a physical device leaves is its lease: the file under
 `$STIM_HOME/device-locks/` and the holder's token in that workspace's
-`state.json`. For live view and control of a leased Android phone, stim-server pushes the
+`state.json`, plus, for Android, the serial and Metro port of the `adb reverse`
+the run added, recorded in that `state.json` so `stop` and `worktree remove`
+remove the reverses that point at that Metro port and nothing else on the phone. For live view and control of a leased Android phone, stim-server pushes the
 scrcpy server jar to `/data/local/tmp`, runs it with `app_process` over an
 `adb forward`, and removes the jar and the forward when the stream stops; it
 changes no setting. A serial or UDID never enters the project registry, and
@@ -604,6 +641,12 @@ This redirects Stim state, not machine-global simulators or emulators. Never
 bypass the scoped GC guard for real-tool validation. Clean up only exact devices
 created by that validation, using centralized teardown and retained fixture records.
 
+The unit suite runs in a private `TMPDIR` (`vitest.global-tmpdir.ts`) and fails
+when it leaves an entry with one of the prefixes listed there. Other prefixes
+are not enforced, and a child started with a hand-built `env` bypasses the
+redirect. Remove every directory a test creates in `afterEach`, `afterAll` or
+`onTestFinished`.
+
 The EAS session ledger and project lock under `~/.stim/machine/eas` ignore
 `STIM_HOME` so every Stim home finds billable sessions. A test that reaches
 them passes a temporary `ledgerRoot`, `machineRoot`, or `easLedgerRoot`, or
@@ -648,7 +691,10 @@ tool at least once. Use a timeout around `simctl`.
 initial lookup and single-flight lock on the pre-mutation key. After a mutation,
 fingerprint again and resolve once under the new key before compiling. Store
 the artifact, `lastBuild`, and remote upload only under the post-mutation key.
-Do not store the same artifact under both keys.
+Do not store the same artifact under both keys. A recorded fingerprint from
+`$STIM_HOME/fingerprint-memo` may stand in only for the pre-mutation lookup.
+The post-mutation fingerprint, the build worker and `doctor` always compute it
+in full. Write a record only from a full fingerprint, never from a recorded one.
 
 ### 11. Preserve launch status semantics
 

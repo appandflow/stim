@@ -821,7 +821,7 @@ test('the iOS ccache finding no longer claims ccache cannot cross worktrees at a
 
 test('ccache on PATH is silent, and ccache absent costs time with a full remedy', () => {
   expect(checkCcacheInstalled(true)).toBe(null);
-  const f = checkCcacheInstalled(false);
+  const f = checkCcacheInstalled(false, 'darwin');
   assert(f);
   expect(f.level).toBe('cost');
   expect(f.title).toMatch(/ccache is not on PATH, so Android C\+\+ recompiles in every worktree/);
@@ -832,6 +832,13 @@ test('ccache on PATH is silent, and ccache absent costs time with a full remedy'
   expect(f.fix).toMatch(/android\/app\/\.cxx/);
   expect(f.fix).toMatch(/node_modules\/\*\*\/android\/\.cxx/);
   expect(f.fix).toMatch(/\/opt\/homebrew\/bin/);
+});
+
+test('ccache absent on Linux names apt and no Homebrew path', () => {
+  const f = checkCcacheInstalled(false, 'linux');
+  assert(f);
+  expect(f.fix).toMatch(/^sudo apt install ccache, then/);
+  expect(f.fix).not.toMatch(/brew|homebrew/i);
 });
 
 test('the ccache finding belongs to the Android group and is filtered out by --platform ios', async () => {
@@ -1525,6 +1532,32 @@ describe('a directory that is not an app', () => {
   });
 });
 
+test('doctor notes an app whose sources carry no readiness marker until the entry file logs one', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doc-readiness-'));
+  try {
+    writeFileSync(
+      join(project, 'package.json'),
+      JSON.stringify({ main: 'index.js', dependencies: { 'react-native': '0.81.0' } }),
+    );
+    writeFileSync(join(project, 'index.js'), "AppRegistry.registerComponent('main', () => App);\n");
+    mkdirSync(join(project, 'node_modules', 'some-lib'), { recursive: true });
+    writeFileSync(join(project, 'node_modules', 'some-lib', 'index.js'), "console.info('[stim:readiness] pending');\n");
+    const options = { concurrency: () => ({ maxBuilds: 0, maxDevices: 0 }) };
+    const missing = (await runDoctor(project, options)).find((f) => f.code === 'readiness-markers-missing');
+    assert(missing);
+    expect(missing.level).toBe('note');
+    expect(missing.fix).toContain('stim guide lifecycle readiness');
+
+    writeFileSync(
+      join(project, 'index.js'),
+      "if (__DEV__) console.info('[stim:readiness] pending');\nAppRegistry.registerComponent('main', () => App);\n",
+    );
+    expect((await runDoctor(project, options)).some((f) => f.code === 'readiness-markers-missing')).toBe(false);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
 test('runDoctor stays silent about concurrency when nothing is set', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-conc-'));
   writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
@@ -1625,6 +1658,27 @@ test('runDoctor reports a configured SimSlim profile when the binary is missing'
       lookupSimSlim: () => false,
     });
     expect(findings.some((finding) => /SimSlim/.test(finding.title) && finding.level === 'cost')).toBe(true);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test('runDoctor reports ios.simslim on without the binary, and says nothing once it is installed', async () => {
+  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-simslim-default-'));
+  try {
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+    writeFileSync(join(project, '.stim.json'), JSON.stringify({ ios: { simslim: 'on' } }));
+    const options = { host: 'darwin' as const, concurrency: { maxBuilds: 0, maxDevices: 0 } };
+    const missing = await runDoctor(project, { ...options, lookupSimSlim: () => false });
+    expect(missing).toContainEqual(
+      expect.objectContaining({
+        level: 'cost',
+        title: expect.stringContaining('SimSlim is not installed'),
+        fix: expect.stringContaining('brew install'),
+      }),
+    );
+    const installed = await runDoctor(project, { ...options, lookupSimSlim: () => true });
+    expect(installed.some((finding) => /SimSlim/.test(finding.title))).toBe(false);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

@@ -7,6 +7,14 @@ const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 // https://github.com/facebook/metro/blob/main/packages/metro/src/Server.js (`writeChunk` with done, total, percent).
 const PROGRESS_PART = /^\{"done":(\d+),"total":(\d+),"percent":(\d+)\}$/;
 const PROGRESS_INTERVAL_MS = 1000;
+const MANIFEST_PATHS = new Set(['/', '/manifest', '/index.exp']);
+const observedServers = new WeakSet();
+// Metro's HmrServer reports no reporter event when it pushes a change: it sends `update-start` with
+// `isInitialUpdate: false` over the `/hot` websocket, and `isInitialUpdate: true` when a client registers.
+// https://github.com/facebook/metro/blob/main/packages/metro/src/HmrServer.js (`_handleFileChange`)
+const HMR_UPDATE = ['"type":"update-start"', '"isInitialUpdate":false'];
+const HMR_UPDATE_INTERVAL_MS = 60_000;
+const hmrServers = new WeakSet();
 
 function clientPidFromLsof(output, clientPort, serverPort) {
   const connection = new RegExp(`:${clientPort}->\\S*:${serverPort}$`);
@@ -28,9 +36,89 @@ function lookupClientPid(req, runLsof) {
     .catch(() => null);
 }
 
-function bundleResponseMiddleware(write, { runLsof } = {}) {
+function manifestPlatform(req) {
+  if (req.method !== 'GET') return null;
+  let url;
+  try {
+    url = new URL(req.url, 'http://localhost');
+  } catch {
+    return null;
+  }
+  if (!MANIFEST_PATHS.has(url.pathname)) return null;
+  const platform = url.searchParams.get('platform') || req.headers['expo-platform'] || req.headers['exponent-platform'];
+  return platform === 'ios' || platform === 'android' ? platform : null;
+}
+
+// @expo/cli mounts ManifestMiddleware ahead of Metro's middleware and answers without calling next(),
+// so only a listener on the HTTP server itself sees a manifest request.
+function observeManifestRequests(server, write) {
+  if (!server || observedServers.has(server)) return;
+  observedServers.add(server);
+  server.prependListener('request', (req, res) => {
+    const platform = manifestPlatform(req);
+    if (!platform || req.headers['x-stim-metro-warmup'] === '1') return;
+    const requestId = randomUUID();
+    const emit = (stage, statusCode) => {
+      try {
+        write({
+          ts: Date.now(),
+          src: 'metro',
+          level: 'debug',
+          event: `manifest_request_${stage}`,
+          platform,
+          requestId,
+          ...(statusCode ? { statusCode } : {}),
+          msg: `${platform} manifest request ${stage}`,
+        });
+      } catch {}
+    };
+    emit('started');
+    let ended = false;
+    const finish = (complete) => {
+      if (ended) return;
+      ended = true;
+      emit(complete && res.statusCode === 200 ? 'finished' : 'failed', res.statusCode);
+    };
+    res.once('finish', () => finish(true));
+    res.once('close', () => finish(false));
+  });
+}
+
+function observeHmrUpdates(server, write) {
+  if (!server || hmrServers.has(server)) return;
+  hmrServers.add(server);
+  let recordedAt = 0;
+  server.prependListener('upgrade', (req, socket) => {
+    let pathname;
+    try {
+      pathname = new URL(req.url, 'http://localhost').pathname;
+    } catch {
+      return;
+    }
+    if (pathname !== '/hot') return;
+    const send = socket.write;
+    socket.write = function (chunk, ...rest) {
+      const now = Date.now();
+      if (
+        now - recordedAt >= HMR_UPDATE_INTERVAL_MS &&
+        (typeof chunk === 'string' || Buffer.isBuffer(chunk)) &&
+        HMR_UPDATE.every((part) => chunk.includes(part))
+      ) {
+        recordedAt = now;
+        try {
+          write({ ts: now, src: 'metro', level: 'debug', event: 'hmr_update', msg: 'HMR update sent to the app' });
+        } catch {}
+      }
+      return send.call(this, chunk, ...rest);
+    };
+  });
+}
+
+function bundleResponseMiddleware(write, { runLsof, manifests = false } = {}) {
   return (req, res, next) => {
+    observeHmrUpdates(req.socket.server, write);
     if (req.method === 'GET' && req.url === '/_stim/metro-warmup') {
+      if (manifests) observeManifestRequests(req.socket.server, write);
       res.end('ready');
       return;
     }
@@ -59,6 +147,7 @@ function bundleResponseMiddleware(write, { runLsof } = {}) {
           requestId,
           ...(progress ?? { statusCode }),
           msg: progress ? `${platform} bundle ${progress.percent}%` : `${platform} bundle ${kind} ${stage}`,
+          ...(stage === 'started' && !prefetch ? { url: `${url.pathname}${url.search}` } : {}),
           ...(pid ? { clientPid: pid } : {}),
         });
       } catch {}

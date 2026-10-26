@@ -170,9 +170,10 @@ async function finishProviderDownload(
 
 async function expoRemoteHit(lookup: CachedBuildLookup, deps: CachedBuildLookupDeps): Promise<string | null> {
   if (!lookup.expoRemote) return null;
-  const { root, platform, isExpo, fingerprint } = lookup;
+  const { root, platform, isExpo, fingerprint, sources } = lookup;
   const loaded = await deps.loadProjectProvider(root, {
     isExpo,
+    sources,
     context: deps.operation,
   });
   if (loaded?.unavailable) {

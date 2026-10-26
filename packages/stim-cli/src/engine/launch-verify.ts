@@ -1,7 +1,8 @@
 import { isAppLaunchError } from '../command-output.ts';
+import { cancellableSleep } from '../cancellation.ts';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
-import { readNdjsonGenerations, type NdjsonRecord } from '../ndjson.ts';
+import { createNdjsonTail, readNdjsonGenerations, type NdjsonRecord } from '../ndjson.ts';
 import { DEV_MENU_LAUNCH_ARGS } from '../collector/ios-device.ts';
 import { APP_READINESS_TIMEOUT_MS, appReadinessSignal, type AppReadiness } from './app-readiness.ts';
 import { ANDROID_DISABLE_AUTO_LAUNCH_EXTRA, androidAppProcess, deviceShellArg } from './app-install.ts';
@@ -18,6 +19,7 @@ export type VerifyLaunchResult = {
   mode: string | null;
   waitedMs: number;
   readiness?: AppReadiness;
+  jsRunning?: true;
 };
 
 export const RELEASE_VERIFY_WAIT_MS = 3000;
@@ -90,8 +92,12 @@ export const LAUNCH_BUNDLING = 'bundling';
 export const LAUNCH_FATAL = 'fatal';
 
 export const VERIFY_TIMEOUT_MS = 20000;
+export const MANIFEST_GRACE_MS = 15000;
+export const MANIFEST_VERIFY_TIMEOUT_MS = 60000;
 export const STABILITY_WINDOW_MS = 3000;
+const JS_RUNNING_SETTLE_MS = 500;
 const VERIFY_POLL_MS = 500;
+const DEVICE_LOG_LAG_LIMIT_MS = 10_000;
 
 const BUNDLE_EVENTS = new Set([
   'bundle_build_started',
@@ -141,8 +147,93 @@ export function isBundleRequestProof(
   return BUNDLE_URL_PATH.test(rec.msg);
 }
 
+const JS_RUNNING = /^Running "[^"]*"/;
+
+function isJsRunning(record: NdjsonRecord, platform: 'ios' | 'android' | null): boolean {
+  return (
+    record.src === 'device' &&
+    record.platform === platform &&
+    (record.level === 'info' || record.level === 'debug') &&
+    typeof record.msg === 'string' &&
+    JS_RUNNING.test(record.msg)
+  );
+}
+
+function jsRunningSince(
+  signals: NdjsonRecord[],
+  since: number | null,
+  runtimeWaiting: boolean,
+  platform: 'ios' | 'android' | null,
+): number | null {
+  if (since === null || runtimeWaiting) return null;
+  const running = signals.find((record) => Number(record.ts) >= since && isJsRunning(record, platform));
+  return running ? Number(running.ts) : null;
+}
+
+function settledWindowEnd(stabilityDeadline: number | null, jsRunningAt: number | null): number | null {
+  return stabilityDeadline !== null && jsRunningAt !== null
+    ? Math.min(stabilityDeadline, jsRunningAt + JS_RUNNING_SETTLE_MS)
+    : stabilityDeadline;
+}
+
+function jsRunningFields(jsRunningAt: number | null): { jsRunning?: true } {
+  return jsRunningAt === null ? {} : { jsRunning: true };
+}
+
 function expoBundleLine(msg: string) {
   return /\bBundl(?:ing|ed)\b/.test(msg);
+}
+
+function createCrashProbe({
+  firstAt,
+  everyMs,
+  now,
+  run,
+}: {
+  firstAt: number;
+  everyMs: number;
+  now: () => number;
+  run: () => Promise<VerifyLaunchResult | null>;
+}): {
+  readonly pending: Promise<void> | null;
+  poll(): VerifyLaunchResult | null;
+  settle(): Promise<VerifyLaunchResult | null>;
+} {
+  let nextAt = firstAt;
+  let pending: Promise<void> | null = null;
+  let outcome: { result: VerifyLaunchResult | null } | { error: unknown } | null = null;
+  const consume = (): VerifyLaunchResult | null => {
+    const done = outcome;
+    if (!done) return null;
+    pending = null;
+    outcome = null;
+    if ('error' in done) throw done.error;
+    return done.result;
+  };
+  return {
+    get pending() {
+      return pending;
+    },
+    poll() {
+      const found = consume();
+      if (found) return found;
+      if (!pending && now() >= nextAt) {
+        nextAt = now() + everyMs;
+        pending = (async () => {
+          try {
+            outcome = { result: await run() };
+          } catch (error) {
+            outcome = { error };
+          }
+        })();
+      }
+      return null;
+    },
+    async settle() {
+      await pending;
+      return consume();
+    },
+  };
 }
 
 async function nativeLaunchFailure({
@@ -170,6 +261,26 @@ async function nativeLaunchFailure({
     : null;
 }
 
+function manifestDeadline(
+  records: NdjsonRecord[],
+  { startedAt, timeoutMs }: { startedAt: number; timeoutMs: number },
+): number {
+  const base = startedAt + timeoutMs;
+  const open = new Set<unknown>();
+  let servedAt: number | null = null;
+  for (const record of records.toSorted((a, b) => Number(a.ts) - Number(b.ts))) {
+    if (record.event === 'manifest_request_started') {
+      open.add(record.requestId);
+    } else {
+      open.delete(record.requestId);
+      if (record.event === 'manifest_request_finished') servedAt = Number(record.ts);
+    }
+  }
+  const cap = startedAt + Math.max(timeoutMs, MANIFEST_VERIFY_TIMEOUT_MS);
+  if (open.size > 0) return cap;
+  return servedAt === null ? base : Math.min(cap, Math.max(base, servedAt + MANIFEST_GRACE_MS));
+}
+
 export async function verifyLaunch({
   slot,
   appPid,
@@ -190,8 +301,10 @@ export async function verifyLaunch({
   processAlive = null,
   onReadinessPending = null,
   onActivity,
+  deviceLogsThrough,
   now = Date.now,
-  sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
+  signal,
+  sleep = (ms: number) => cancellableSleep(ms, { signal, what: 'launch readiness check' }),
 }: {
   slot?: string;
   appPid?: number | null;
@@ -217,15 +330,29 @@ export async function verifyLaunch({
    * record time.
    */
   onActivity?: ((name: 'bundling' | 'waiting-ready' | null, at: number) => void) | null;
+  /**
+   * The time through which the device records are complete, for a device log copied from another machine. The
+   * stability and readiness windows end only once the copy covers them, or `DEVICE_LOG_LAG_LIMIT_MS` after they end.
+   */
+  deviceLogsThrough?: (() => number | null) | null;
   now?: () => number;
+  /** Rejects the wait with STIM_CANCELLED once aborted. Ignored when `sleep` is passed. */
+  signal?: AbortSignal;
   sleep?: (ms: number) => Promise<unknown>;
 } = {}): Promise<VerifyLaunchResult> {
   const delivered = (record: NdjsonRecord) => deliveryOwner(record, { slot, appPid, platformShared }) === 'this';
-  const read = readRecords || (() => readMetroRecords(logsDir));
-  const readDevice = readDeviceRecords || (() => readNdjson(logsDir, 'device.ndjson'));
-  const readClient = readClientRecords || (() => readNdjson(logsDir, 'client.ndjson'));
+  const read = readRecords || tailNdjson(logsDir, 'metro.ndjson');
+  const readDevice = readDeviceRecords || tailNdjson(logsDir, 'device.ndjson');
+  const readClient = readClientRecords || tailNdjson(logsDir, 'client.ndjson');
+  const deviceNow = () => {
+    const at = now();
+    return deviceLogsThrough
+      ? Math.max(Math.min(at, deviceLogsThrough() ?? -Infinity), at - DEVICE_LOG_LAG_LIMIT_MS)
+      : at;
+  };
   const startedAt = now();
-  const bundleDeadline = startedAt + Math.max(0, timeoutMs);
+  const baseTimeoutMs = Math.max(0, timeoutMs);
+  let bundleDeadline = startedAt + baseTimeoutMs;
   let proof: NdjsonRecord | null = null;
   let activity: NdjsonRecord | null = null;
   let stabilityDeadline: number | null = null;
@@ -233,7 +360,13 @@ export async function verifyLaunch({
   let deliveryId: string | null = null;
   let runtimeLoadingAt: number | null = null;
   let runtimeStartedAt: number | null = null;
-  let nextCrashCheck = startedAt + 1000;
+  const crashProbe = createCrashProbe({
+    firstAt: startedAt + 1000,
+    everyMs: 2000,
+    now,
+    run: () =>
+      nativeLaunchFailure({ readCrashes: readNativeCrashes, since, platform, processAlive, mode, waitedMs: 0 }),
+  });
   let bundlingAt: NdjsonRecord | null = null;
   let reported: 'bundling' | 'waiting-ready' | null = null;
   const report = (name: typeof reported, at: number) => {
@@ -241,191 +374,221 @@ export async function verifyLaunch({
     reported = name;
     onActivity?.(name, at);
   };
-  while (true) {
-    const metroRecords = read().filter((record) => after(record, since));
-    const bundleRecords = metroRecords.filter(
-      (record) => (!requireBundleResponse || String(record.event).startsWith('bundle_response_')) && delivered(record),
-    );
-    const deviceRecords = readDevice().filter(
-      (record) => after(record, since) && (slot === undefined || (record.slot ?? 'default') === slot),
-    );
-    const clientRecords = readClient().filter((record) => after(record, since) && !platformShared);
-    if (now() >= nextCrashCheck) {
-      nextCrashCheck = now() + 2000;
-      const crash = await nativeLaunchFailure({
-        readCrashes: readNativeCrashes,
-        since,
-        platform,
-        processAlive,
-        mode,
-        waitedMs: now() - startedAt,
-      });
-      if (crash) return crash;
-    }
-    if (deliveryId === null) {
-      const request = bundleRecords.find(
+  const loop = async (): Promise<VerifyLaunchResult> => {
+    while (true) {
+      const metroRecords = read().filter((record) => after(record, since));
+      const bundleRecords = metroRecords.filter(
         (record) =>
-          record.event === 'bundle_response_started' &&
-          typeof record.requestId === 'string' &&
-          isBundleProof(record, since, platform),
+          (!requireBundleResponse || String(record.event).startsWith('bundle_response_')) && delivered(record),
       );
-      if (request) {
-        deliveryId = request.requestId as string;
-        bundlingAt = request;
-        proof = null;
-        stabilityDeadline = null;
+      const deviceRecords = readDevice().filter(
+        (record) => after(record, since) && (slot === undefined || (record.slot ?? 'default') === slot),
+      );
+      const clientRecords = readClient().filter((record) => after(record, since) && !platformShared);
+      bundleDeadline = manifestDeadline(
+        metroRecords.filter(
+          (record) =>
+            String(record.event).startsWith('manifest_request_') && (!platform || record.platform === platform),
+        ),
+        { startedAt, timeoutMs: baseTimeoutMs },
+      );
+      const crash = crashProbe.poll();
+      if (crash) return { ...crash, waitedMs: now() - startedAt };
+      if (deliveryId === null) {
+        const request = bundleRecords.find(
+          (record) =>
+            record.event === 'bundle_response_started' &&
+            typeof record.requestId === 'string' &&
+            isBundleProof(record, since, platform),
+        );
+        if (request) {
+          deliveryId = request.requestId as string;
+          bundlingAt = request;
+          proof = null;
+          stabilityDeadline = null;
+        }
       }
-    }
-    for (const record of bundleRecords) {
-      if (isBundleProof(record, since, platform)) activity = record;
-      const completed =
-        deliveryId === null
-          ? isBundleReadyProof(record, since, platform)
-          : record.event === 'bundle_response_finished' &&
+      for (const record of bundleRecords) {
+        if (isBundleProof(record, since, platform)) activity = record;
+        const completed =
+          deliveryId === null
+            ? isBundleReadyProof(record, since, platform)
+            : record.event === 'bundle_response_finished' &&
+              record.requestId === deliveryId &&
+              isBundleProof(record, since, platform);
+        if (!proof && completed) {
+          proof = record;
+          stabilityDeadline = Number(record.ts) + Math.max(0, stabilityMs);
+        }
+      }
+      const signals = deviceRecords
+        .filter((record) => Number(record.ts) <= now())
+        .toSorted((a, b) => Number(a.ts) - Number(b.ts));
+      if (platform === 'android' && runtimeLoadingAt === null) {
+        // ReactHostImpl's Loading JS Bundle state precedes asynchronous ReactInstance.loadJSBundle evaluation.
+        const loading = signals.find(
+          (record) =>
+            record.src === 'device' &&
+            record.platform === 'android' &&
+            /^(?:unknown:)?BridgelessReact\(\d+\)$/.test(String(record.proc)) &&
+            /^ReactHost\{\d+\}\.getOrCreateReactInstanceTask\(\): Loading JS Bundle$/.test(String(record.msg)) &&
+            (stabilityDeadline === null || Number(record.ts) <= stabilityDeadline),
+        );
+        if (loading) runtimeLoadingAt = Number(loading.ts);
+      }
+      if (runtimeLoadingAt !== null && runtimeStartedAt === null) {
+        const executing = signals.find(
+          (record) =>
+            record.src === 'device' &&
+            record.platform === 'android' &&
+            Number(record.ts) >= runtimeLoadingAt! &&
+            (/^ReactNativeJS\(\d+\)$/.test(String(record.proc)) || appReadinessSignal(record, platform) !== null),
+        );
+        if (executing) runtimeStartedAt = Number(executing.ts);
+      }
+      const runtimeWaiting = runtimeLoadingAt !== null && runtimeStartedAt === null;
+      const completedAt = proof ? Math.max(Number(proof.ts), runtimeStartedAt ?? 0) : null;
+      if (completedAt !== null) stabilityDeadline = completedAt + Math.max(0, stabilityMs);
+      const jsRunningAt = jsRunningSince(signals, completedAt, runtimeWaiting, platform);
+      const windowEnd = settledWindowEnd(stabilityDeadline, jsRunningAt);
+      const readinessDeadline = completedAt !== null ? completedAt + APP_READINESS_TIMEOUT_MS : bundleDeadline;
+      if (pendingAt === null) {
+        const pending = signals.find(
+          (record) =>
+            appReadinessSignal(record, platform) === 'pending' &&
+            (runtimeWaiting || stabilityDeadline === null || Number(record.ts) <= stabilityDeadline),
+        );
+        if (pending) {
+          pendingAt = Number(pending.ts);
+          onReadinessPending?.();
+        }
+      }
+      report(...launchActivity(pendingAt, proof, bundlingAt));
+      const ready =
+        pendingAt !== null &&
+        signals.some(
+          (record) =>
+            Number(record.ts) >= pendingAt! &&
+            Number(record.ts) <= readinessDeadline &&
+            appReadinessSignal(record, platform) === 'ready',
+        );
+      const bundleErrors = bundleRecords.filter(
+        (record) =>
+          isFatalLaunchError(record, platform) ||
+          (deliveryId !== null &&
+            record.event === 'bundle_response_failed' &&
             record.requestId === deliveryId &&
-            isBundleProof(record, since, platform);
-      if (!proof && completed) {
-        proof = record;
-        stabilityDeadline = Number(record.ts) + Math.max(0, stabilityMs);
-      }
-    }
-    const signals = deviceRecords
-      .filter((record) => Number(record.ts) <= now())
-      .toSorted((a, b) => Number(a.ts) - Number(b.ts));
-    if (platform === 'android' && runtimeLoadingAt === null) {
-      // ReactHostImpl's Loading JS Bundle state precedes asynchronous ReactInstance.loadJSBundle evaluation.
-      const loading = signals.find(
-        (record) =>
-          record.src === 'device' &&
-          record.platform === 'android' &&
-          /^(?:unknown:)?BridgelessReact\(\d+\)$/.test(String(record.proc)) &&
-          /^ReactHost\{\d+\}\.getOrCreateReactInstanceTask\(\): Loading JS Bundle$/.test(String(record.msg)) &&
-          (stabilityDeadline === null || Number(record.ts) <= stabilityDeadline),
+            isBundleProof(record, since, platform)),
       );
-      if (loading) runtimeLoadingAt = Number(loading.ts);
-    }
-    if (runtimeLoadingAt !== null && runtimeStartedAt === null) {
-      const executing = signals.find(
-        (record) =>
-          record.src === 'device' &&
-          record.platform === 'android' &&
-          Number(record.ts) >= runtimeLoadingAt! &&
-          (/^ReactNativeJS\(\d+\)$/.test(String(record.proc)) || appReadinessSignal(record, platform) !== null),
-      );
-      if (executing) runtimeStartedAt = Number(executing.ts);
-    }
-    const runtimeWaiting = runtimeLoadingAt !== null && runtimeStartedAt === null;
-    const completedAt = proof ? Math.max(Number(proof.ts), runtimeStartedAt ?? 0) : null;
-    if (completedAt !== null) stabilityDeadline = completedAt + Math.max(0, stabilityMs);
-    const readinessDeadline = completedAt !== null ? completedAt + APP_READINESS_TIMEOUT_MS : bundleDeadline;
-    if (pendingAt === null) {
-      const pending = signals.find(
-        (record) =>
-          appReadinessSignal(record, platform) === 'pending' &&
-          (runtimeWaiting || stabilityDeadline === null || Number(record.ts) <= stabilityDeadline),
-      );
-      if (pending) {
-        pendingAt = Number(pending.ts);
-        onReadinessPending?.();
-      }
-    }
-    report(...launchActivity(pendingAt, proof, bundlingAt));
-    const ready =
-      pendingAt !== null &&
-      signals.some(
-        (record) =>
-          Number(record.ts) >= pendingAt! &&
-          Number(record.ts) <= readinessDeadline &&
-          appReadinessSignal(record, platform) === 'ready',
-      );
-    const bundleErrors = bundleRecords.filter(
-      (record) =>
-        isFatalLaunchError(record, platform) ||
-        (deliveryId !== null &&
-          record.event === 'bundle_response_failed' &&
-          record.requestId === deliveryId &&
-          isBundleProof(record, since, platform)),
-    );
-    if (bundleErrors.length) {
-      const alive = processAlive ? await processAlive() : null;
-      const fatalRecord = bundleErrors[bundleErrors.length - 1];
-      const fatalAt = Number(fatalRecord?.ts ?? since ?? 0);
-      const errors = metroRecords.filter(
-        (record) =>
-          after(record, fatalAt) && recordCouldBelongToPlatform(record, platform) && isLaunchError(record, platform),
-      );
-      return {
-        verified: false,
-        fatal: true,
-        errors,
-        processAlive: alive,
-        record: fatalRecord,
-        mode,
-        waitedMs: now() - startedAt,
-        ...(pendingAt !== null ? { readiness: 'error' as const } : {}),
-      };
-    }
-
-    if (proof && stabilityDeadline !== null && (pendingAt !== null || now() >= stabilityDeadline)) {
-      const errorSince = pendingAt === null ? Number(proof.ts ?? since ?? 0) : Number(since ?? 0);
-      const errors = [
-        ...metroRecords.filter((record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform)),
-        ...deviceRecords.filter((record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform)),
-        ...clientRecords.filter((record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform)),
-      ].filter((record) => isLaunchError(record, platform));
-      const alive = processAlive ? await processAlive() : null;
-      const waitedMs = now() - startedAt;
-      if (alive === false) {
+      if (bundleErrors.length) {
+        const alive = processAlive ? await processAlive() : null;
+        const fatalRecord = bundleErrors[bundleErrors.length - 1];
+        const fatalAt = Number(fatalRecord?.ts ?? since ?? 0);
+        const errors = metroRecords.filter(
+          (record) =>
+            after(record, fatalAt) && recordCouldBelongToPlatform(record, platform) && isLaunchError(record, platform),
+        );
         return {
           verified: false,
           fatal: true,
           errors,
           processAlive: alive,
-          record: proof,
+          record: fatalRecord,
           mode,
-          waitedMs,
+          waitedMs: now() - startedAt,
           ...(pendingAt !== null ? { readiness: 'error' as const } : {}),
         };
       }
-      const actionableErrors = errors.filter((record) => !isIosConnectionRefusal(record, platform));
-      const appErrors = actionableErrors.some(isAppLaunchError);
-      if ((!runtimeWaiting && pendingAt === null) || appErrors || ready || now() >= readinessDeadline) {
-        return {
-          verified: true,
-          record: proof,
-          errors: actionableErrors,
-          processAlive: alive,
-          mode,
-          waitedMs,
-          ...(pendingAt !== null ? { readiness: appErrors ? 'error' : ready ? 'ready' : 'timed-out' } : {}),
-        };
-      }
-    }
 
-    if ((!proof || runtimeWaiting) && now() >= bundleDeadline) {
-      return await bundleTimeoutOutcome({
-        requested: findBundleRequest(deviceRecords, since, metroPort, platform) ?? activity,
-        unattributed:
-          metroRecords.find(
-            (record) =>
-              record.event === 'bundle_response_finished' &&
-              deliveryOwner(record, { slot, appPid, platformShared }) === 'unknown' &&
-              isBundleProof(record, since, platform),
-          ) ?? null,
-        processAlive,
-        deviceRecords,
-        platform,
-        mode,
-        waitedMs: now() - startedAt,
-      });
+      if (proof && windowEnd !== null && (pendingAt !== null || deviceNow() >= windowEnd)) {
+        const errorSince = pendingAt === null ? Number(proof.ts ?? since ?? 0) : Number(since ?? 0);
+        const errors = [
+          ...metroRecords.filter(
+            (record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform),
+          ),
+          ...deviceRecords.filter(
+            (record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform),
+          ),
+          ...clientRecords.filter(
+            (record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform),
+          ),
+        ].filter((record) => isLaunchError(record, platform));
+        const alive = processAlive ? await processAlive() : null;
+        const waitedMs = now() - startedAt;
+        if (alive === false) {
+          return {
+            verified: false,
+            fatal: true,
+            errors,
+            processAlive: alive,
+            record: proof,
+            mode,
+            waitedMs,
+            ...(pendingAt !== null ? { readiness: 'error' as const } : {}),
+          };
+        }
+        const actionableErrors = errors.filter((record) => !isIosConnectionRefusal(record, platform));
+        const appErrors = actionableErrors.some(isAppLaunchError);
+        if ((!runtimeWaiting && pendingAt === null) || appErrors || ready || deviceNow() >= readinessDeadline) {
+          return {
+            verified: true,
+            record: proof,
+            errors: actionableErrors,
+            processAlive: alive,
+            mode,
+            waitedMs,
+            ...(pendingAt !== null ? { readiness: appErrors ? 'error' : ready ? 'ready' : 'timed-out' } : {}),
+            ...jsRunningFields(jsRunningAt),
+          };
+        }
+      }
+
+      if ((!proof || runtimeWaiting) && now() >= bundleDeadline) {
+        return await bundleTimeoutOutcome({
+          requested: findBundleRequest(deviceRecords, since, metroPort, platform) ?? activity,
+          unattributed:
+            metroRecords.find(
+              (record) =>
+                record.event === 'bundle_response_finished' &&
+                deliveryOwner(record, { slot, appPid, platformShared }) === 'unknown' &&
+                isBundleProof(record, since, platform),
+            ) ?? null,
+          processAlive,
+          deviceRecords,
+          platform,
+          mode,
+          waitedMs: now() - startedAt,
+        });
+      }
+      const deadline = runtimeWaiting
+        ? bundleDeadline
+        : proof && pendingAt !== null
+          ? readinessDeadline
+          : (windowEnd ?? bundleDeadline);
+      const nap = sleep(Math.min(pollMs, Math.max(0, deadline - deviceNow())));
+      await (crashProbe.pending ? Promise.race([nap, crashProbe.pending]) : nap);
     }
-    const deadline = runtimeWaiting
-      ? bundleDeadline
-      : proof && pendingAt !== null
-        ? readinessDeadline
-        : (stabilityDeadline ?? bundleDeadline);
-    await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
+  };
+  let result: VerifyLaunchResult;
+  try {
+    result = await loop();
+  } catch (error) {
+    await crashProbe.settle().catch(() => {});
+    throw error;
   }
+  const probed = crashProbe.pending !== null;
+  const late = await crashProbe.settle();
+  if (late) return { ...late, waitedMs: now() - startedAt };
+  if (probed && result.verified && (await processAlive?.()) === false)
+    return {
+      ...result,
+      verified: false,
+      fatal: true,
+      processAlive: false,
+      waitedMs: now() - startedAt,
+      ...(result.readiness ? { readiness: 'error' as const } : {}),
+    };
+  return result;
 }
 
 function launchActivity(
@@ -561,6 +724,10 @@ export function readCollectorRecords(logsDir: string | undefined): NdjsonRecord[
 
 function readNdjson(logsDir: string | undefined, name: string): NdjsonRecord[] {
   return logsDir ? readNdjsonGenerations(join(logsDir, name)) : [];
+}
+
+function tailNdjson(logsDir: string | undefined, name: string): () => NdjsonRecord[] {
+  return logsDir ? createNdjsonTail(join(logsDir, name)) : () => [];
 }
 
 export function unattributedLaunchLines({

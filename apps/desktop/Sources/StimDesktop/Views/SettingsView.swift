@@ -6,6 +6,8 @@ import SwiftUI
 struct SettingsView: View {
   @ObservedObject var store: StatusStore
   @StateObject private var model: SettingsModel
+  @StateObject private var history: GcHistoryModel
+  @StateObject private var builds: BuildLedgerModel
   @ObservedObject private var openRequests = OpenRequests.shared
   @ObservedObject private var flags = FeatureFlagStore.shared
   @State private var workspace: String?
@@ -25,11 +27,13 @@ struct SettingsView: View {
     self.machine = machine
     self.buildMachines = buildMachines
     _model = StateObject(wrappedValue: SettingsModel(cli: cli, machine: machine))
+    _history = StateObject(wrappedValue: GcHistoryModel(cli: cli))
+    _builds = StateObject(wrappedValue: BuildLedgerModel(cli: cli))
   }
 
   var body: some View {
     TabView(selection: $tab) {
-      AppPreferencesView(stimHome: store.stimHome)
+      AppPreferencesView(stimHome: store.stimHome, settings: machine, history: history)
         .tabItem { Label("App", systemImage: "macwindow") }
         .tag("app")
       if flags.phoneApp {
@@ -37,7 +41,7 @@ struct SettingsView: View {
           .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
           .tag("phones")
       }
-      BuildMachinesView(model: buildMachines, store: store, workspace: workspace, actions: actions)
+      BuildMachinesView(model: buildMachines, ledger: builds, store: store, workspace: workspace, actions: actions)
         .tabItem { Label("Remote Machines", systemImage: "hammer") }
         .tag("build-machines")
       stimSettings

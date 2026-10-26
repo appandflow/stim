@@ -203,14 +203,22 @@ const swiftpmArtifactInputs: JsonSchema = {
     environment: { type: 'array', maxItems: 1000, items: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]*$' } },
   },
 };
+const buildCompat: JsonSchema = {
+  type: 'integer',
+  minimum: 1,
+  description: 'The Stim build compatibility version, sent to a stim-server with the build-compat feature.',
+};
+const stimIdentity: JsonSchema[] = [{ required: ['stimBuild'] }, { required: ['compat'] }];
 const swiftpmArtifactQuery: JsonSchema = {
   type: 'object',
-  required: ['project', 'sourceDigest', 'stimBuild', 'inputs', 'build'],
+  required: ['project', 'sourceDigest', 'inputs', 'build'],
+  oneOf: stimIdentity,
   additionalProperties: false,
   properties: {
     project: { type: 'string' },
     sourceDigest: sha256,
     stimBuild: { type: 'string', minLength: 1, maxLength: 256 },
+    compat: buildCompat,
     inputs: swiftpmArtifactInputs,
     build: {
       type: 'object',
@@ -247,10 +255,11 @@ const reactNativeArtifactQuery: JsonSchema = {
     platform: { enum: ['ios', 'android'] },
     toolchain: {
       type: 'object',
-      required: ['stimBuild'],
+      oneOf: stimIdentity,
       additionalProperties: false,
       properties: {
         stimBuild: { type: 'string', minLength: 1 },
+        compat: buildCompat,
         arch: { type: 'string', minLength: 1 },
         xcode: { type: 'string', minLength: 1 },
         simulatorSdk: { type: 'string', minLength: 1 },
@@ -569,6 +578,7 @@ export function protocolJsonSchema(): JsonSchema {
             properties: {
               cpus: { type: 'integer', minimum: 1 },
               loadPerCore: { type: 'number', minimum: 0 },
+              maxLoadPerCore: { type: 'number', exclusiveMinimum: 0 },
               memoryFreeBytes: { type: 'number', minimum: 0 },
               memoryPressure: { enum: ['normal', 'warning', 'critical', null] },
               workerDiskFreeBytes: { type: ['number', 'null'], minimum: 0 },
@@ -1442,16 +1452,18 @@ export function protocolJsonSchema(): JsonSchema {
           ),
           request(
             'device-host.metro.open',
-            session(
-              {
-                gatewayPort: { type: 'integer', minimum: 1, maximum: 65535 },
-                clientMetroPort: { type: 'integer', minimum: 1, maximum: 65535 },
-                secret: { type: 'string', pattern: '^[a-f0-9]{64}$' },
-              },
-              ['gatewayPort', 'secret'],
-            ),
+            session({ clientMetroPort: { type: 'integer', minimum: 1, maximum: 65535 } }),
           ),
+          request('device-host.metro.ports', {
+            type: 'object',
+            required: ['ports'],
+            additionalProperties: false,
+            properties: {
+              ports: { type: 'array', maxItems: 256, items: { type: 'integer', minimum: 1, maximum: 65535 } },
+            },
+          }),
           request('device-host.metro.close', session({})),
+          request('device-host.metro.link', session({})),
           request(
             'device-host.frames.subscribe',
             session({
@@ -1544,7 +1556,9 @@ export function protocolJsonSchema(): JsonSchema {
           optionalParams('route.setup', { type: 'object', maxProperties: 0 }),
           request('desktop.reports.get', { $ref: '#/$defs/DesktopReportTarget' }),
           request('desktop.reports.subscribe', { $ref: '#/$defs/DesktopReportTarget' }),
-          optionalParams('desktop.reports.invalidate', { type: 'object', maxProperties: 0 }),
+          optionalParams('desktop.reports.invalidate', {
+            oneOf: [{ type: 'object', maxProperties: 0 }, { $ref: '#/$defs/DesktopReportTarget' }],
+          }),
           optionalParams('desktop.settings.schema', { type: 'object', maxProperties: 0 }),
           request('desktop.settings.get', {
             type: 'object',
@@ -1975,6 +1989,34 @@ export function protocolJsonSchema(): JsonSchema {
               scheme: { type: ['string', 'null'] },
               runtime: { type: ['string', 'null'], minLength: 1 },
               fingerprint: { type: ['string', 'null'], minLength: 1 },
+              fingerprintSources: {
+                type: 'array',
+                maxItems: 20000,
+                description: 'The id and hash of each source of fingerprint, to name the sources that differ.',
+                items: {
+                  type: 'object',
+                  required: ['id', 'hash'],
+                  additionalProperties: false,
+                  properties: {
+                    id: { type: 'string', minLength: 1, maxLength: 1024 },
+                    hash: { type: ['string', 'null'], pattern: '^[0-9a-f]{1,128}$' },
+                  },
+                },
+              },
+              fingerprintIgnored: {
+                type: 'array',
+                maxItems: 20000,
+                description:
+                  'Paths relative to project that git ignores for fingerprint on the caller, such as through .git/info/exclude.',
+                items: { type: 'string', minLength: 1, maxLength: 1024 },
+              },
+              fingerprintTracked: {
+                type: 'array',
+                maxItems: 20000,
+                description:
+                  'Top-level entries of project that the caller git tracks for fingerprint although an ignore pattern matches them.',
+                items: { type: 'string', minLength: 1, maxLength: 255, pattern: '^[^/\\u0000]+$' },
+              },
               native: {
                 oneOf: [
                   {
@@ -2053,6 +2095,16 @@ export function protocolJsonSchema(): JsonSchema {
               },
               cacheArtifact: { type: 'boolean' },
               stimBuild: { type: 'string', minLength: 1 },
+              compat: {
+                ...buildCompat,
+                description: 'Compared instead of stimBuild by a machine whose build.offer toolchain reports compat.',
+              },
+              jdk: {
+                type: 'string',
+                pattern: '^[0-9]{1,3}$',
+                description:
+                  'The JDK major an Android build runs on, sent to a stim-server with the build-jdk feature.',
+              },
             },
           }),
           request('build.cancel', buildJob),

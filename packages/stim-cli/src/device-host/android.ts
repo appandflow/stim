@@ -32,7 +32,7 @@ import {
   pickDefaultSystemImage,
   waitForBoot,
 } from '../devices/android.ts';
-import { forgetCreatedDevice } from '../devices/created-devices.ts';
+import { forgetCreatedDeviceAsync } from '../devices/created-devices.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { ensureConfig, loadConfig, withConfigLockAsync } from '../workspace/config.ts';
 import type { HostedWorkerResult } from './worker.ts';
@@ -223,7 +223,7 @@ export async function runHostedAndroidDevice(
       throw new Error('The hosted AVD or its data still exists; deletion could not be verified.');
     if ((await getAvdNameForSerialAsync(device.serial)) === device.avdName)
       throw new Error('The hosted Android emulator is still running.');
-    if (ledger === 'listed') forgetCreatedDevice('android', device.avdName);
+    if (ledger === 'listed') await forgetCreatedDeviceAsync('android', device.avdName);
     removeHostedAppData(home);
     return { state: 'stopped', device };
   } catch (error) {

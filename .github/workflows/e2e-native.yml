@@ -191,6 +191,15 @@ jobs:
       # caching while keeping the preview SDK out of other fixture lanes.
       STIM_E2E_EXPO_INIT: npx --yes create-expo-app@latest {dir} --template expo-template-blank@sdk-58 --no-install
     steps:
+      # The xcode-27 image indexes with Spotlight, and mds_stores competes with
+      # each simulator's first boot for the runner's 3 vCPUs and 7 GB. Turn it off
+      # before the install and the fixture write thousands of files.
+      - name: Turn off Spotlight indexing
+        continue-on-error: true
+        run: |
+          sudo mdutil -a -i off
+          mdutil -a -s
+
       - uses: actions/checkout@v4
       - run: mkdir -p "$TMPDIR" "$STIM_BUILD_CACHE"
 
@@ -614,6 +623,7 @@ jobs:
             D:\e\stim-home\workspaces\**\logs\*
             D:\e\stim-home\logs\debug\*
             D:\e\stim-home\archive\**\logs\*
+            D:\e\adb.log
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7

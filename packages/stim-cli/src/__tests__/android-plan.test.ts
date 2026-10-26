@@ -15,7 +15,7 @@ import type { AndroidPlanDeps } from '../integrations/react-native-android-plan.
 import { reactNativeAndroidProject } from '../integrations/react-native-android.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { buildCacheKey, entryDir } from '../cache/build-cache.ts';
-import { upsertProject } from '../workspace/config.ts';
+import { getProject, upsertProject } from '../workspace/config.ts';
 import { hostSystemImageArch } from '../devices/android.ts';
 import { readProductFlavors } from '../integrations/react-native-build.ts';
 
@@ -110,6 +110,76 @@ test('a plan binds build selectors and cache policy to the selected emulator', a
     kind: 'emulator',
     systemImage: 'installed-image',
     deviceProfile: '7.6in Foldable',
+  });
+});
+
+describe('the local build preflight', () => {
+  const refusal = { code: 'STIM_PATH_TOO_LONG', reason: 'too long', remedy: 'move it' };
+
+  async function plan(overrides: Partial<AndroidPlanInputs>, pairedMachines = 0) {
+    const asked: unknown[] = [];
+    const result = await resolveAndroidRunPlan(inputs(overrides), {
+      ...inspection([]),
+      buildMachines: () => Array.from({ length: pairedMachines }),
+      preflight: (target) => {
+        asked.push(target);
+        return refusal;
+      },
+    });
+    return { result, asked };
+  }
+
+  test('an emulator run is refused with the preflight failure before any device exists, for the host ABI', async () => {
+    const { result, asked } = await plan({ systemImage: 'installed-image', variant: 'productionDebug' });
+    expect(result).toMatchObject({ ok: false, code: 'STIM_PATH_TOO_LONG', message: 'too long', remedy: 'move it' });
+    expect(asked).toEqual([{ abi: hostSystemImageArch(), variant: 'productionDebug' }]);
+  });
+
+  test('the ABI is the one of the explicit system image, and every ABI when narrowing is off', async () => {
+    const x86 = 'system-images;android-35;google_apis;x86';
+    const images = [{ api: 35, tag: 'google_apis', arch: 'x86', pkg: x86 }];
+    const ask = async (overrides: Partial<AndroidPlanInputs>, targetAbiOnly: boolean) => {
+      const asked: unknown[] = [];
+      const base = inspection([]);
+      const compilerCache = base.resolveCompilerCache;
+      assert(compilerCache);
+      await resolveAndroidRunPlan(inputs(overrides), {
+        ...base,
+        listSystemImages: () => images,
+        resolveCompilerCache: (args) => {
+          const resolved = compilerCache(args);
+          return {
+            ...resolved,
+            optimizations: {
+              ...resolved.optimizations,
+              android: { ...resolved.optimizations.android, targetAbiOnly },
+            },
+          };
+        },
+        preflight: (target) => {
+          asked.push(target);
+          return null;
+        },
+      });
+      return asked;
+    };
+    expect(await ask({ systemImage: x86 }, true)).toEqual([{ abi: 'x86', variant: null }]);
+    expect(await ask({ systemImage: x86 }, false)).toEqual([{ abi: null, variant: null }]);
+  });
+
+  test('a release build asks about every ABI', async () => {
+    const { asked } = await plan({ variant: 'productionRelease' });
+    expect(asked).toEqual([{ abi: null, variant: 'productionRelease' }]);
+  });
+
+  test.each([
+    ['a physical device', { device: 'serial-1' }, 0],
+    ['an EAS profile', { easProfile: 'development' }, 0],
+    ['a paired build machine', { buildMachine: 'auto' }, 1],
+  ])('%s is not asked, because no local build follows', async (_name, overrides, paired) => {
+    const { result, asked } = await plan(overrides, paired);
+    expect(result.ok).toBe(true);
+    expect(asked).toEqual([]);
   });
 });
 
@@ -241,7 +311,7 @@ const REFUSALS: Array<{
     name: 'a malformed remote target refuses at shape validation',
     inputs: { settings: { unused: true, android: { remote: 'bad name' } } },
     message:
-      /^Invalid android\.remote setting "bad name"\. Expected eas, proxy, auto, local, or a tailnet machine name\.$/,
+      /^Invalid android\.remote setting "bad name"\. Expected eas, proxy, local, auto, remote, remote-only, or a tailnet machine name\.$/,
     events: ['pool'],
   },
   {
@@ -391,6 +461,33 @@ describe('planAndroid', () => {
     upsertProject(app, { platforms: { android: { avdName: 'stim-fixture', owned: true } } });
     const { payload } = await plan({ systemImage: X86.pkg }, { avdSystemImage: () => ARM.pkg });
     expect(payload.cacheKey).toBe(buildCacheKey('android', HASH, { variant: 'debug', abi: 'x86_64' }));
+  });
+
+  test("an explicit --system-image replaces a never-booted AVD, so the key carries the requested image's ABI", async () => {
+    upsertProject(app, { platforms: { android: { avdName: 'stim-fixture', owned: true, bootPending: true } } });
+    const { payload, exitCode } = await plan(
+      { systemImage: X86.pkg },
+      { avdDirectory: () => join(app, 'avd'), avdSystemImage: () => ARM.pkg },
+    );
+    expect(exitCode).toBeUndefined();
+    expect(payload.cacheKey).toBe(buildCacheKey('android', HASH, { variant: 'debug', abi: 'x86_64' }));
+  });
+
+  test.each([
+    { variant: 'debug', remote: undefined },
+    { variant: 'release', remote: undefined },
+    { variant: 'debug', remote: 'auto' },
+  ])('an explicit --system-image refuses to replace an AVD that finished a boot (%j)', async ({ variant, remote }) => {
+    if (remote) writeFileSync(join(app, '.stim.json'), JSON.stringify({ android: { remote } }));
+    upsertProject(app, { platforms: { android: { avdName: 'stim-fixture', owned: true } } });
+    const before = getProject(app);
+    const { payload, exitCode } = await plan(
+      { systemImage: X86.pkg, variant },
+      { avdDirectory: () => join(app, 'avd'), avdSystemImage: () => ARM.pkg },
+    );
+    expect(exitCode).toBe(1);
+    expect(payload).toMatchObject({ code: 'STIM_BAD_ARG', message: expect.stringContaining('never finished a boot') });
+    expect(getProject(app)).toEqual(before);
   });
 
   test('no installed system image refuses, because the ABI in the key is unknown', async () => {

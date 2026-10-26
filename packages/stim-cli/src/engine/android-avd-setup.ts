@@ -16,7 +16,7 @@ import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { getExecutor } from '../exec.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import {
-  assertOwnedAvdStopped,
+  assertOwnedAvdStoppedAsync,
   createOwnedAvd,
   listAvdsAsync,
   ownedAvdDeviceProfile,
@@ -182,7 +182,7 @@ export async function prepareOwnedAvd({
             cause: error,
           });
         }
-        if (!resolved.serial) assertOwnedAvdStopped(avdName);
+        if (!resolved.serial) await assertOwnedAvdStoppedAsync(avdName);
         prepared = {
           avdName,
           created: false,
@@ -243,9 +243,7 @@ export async function prepareOwnedAvd({
     const cleanup = await teardown(avdName, {
       del: true,
       owner: { projectPath, slot, expectedRecord: reservation },
-      onRemoved: () => {
-        clearDevice(projectPath, 'android', slot, avdName);
-      },
+      onRemoved: () => withConfigLockAsync(() => clearDevice(projectPath, 'android', slot, avdName)),
     });
     const kept = cleanup.status === 'failed' || cleanup.status === 'skipped';
     const orphan = kept

@@ -2,20 +2,33 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, normalize } from 'node:path';
-import { dependencyInstall } from '../dependency-install.ts';
+import { dependencyInstall, reusableDependencies } from '../dependency-install.ts';
 
 test.each([
-  ['pnpm-lock.yaml', 'mobile', 'pnpm', ['install', '--frozen-lockfile', '--filter', 'mobile...']],
-  ['pnpm-lock.yaml', null, 'pnpm', ['install', '--frozen-lockfile']],
-  ['yarn.lock', 'mobile', 'yarn', ['install', '--frozen-lockfile']],
-  ['package-lock.json', 'mobile', 'npm', ['ci']],
-] as const)('preserves the worker install invocation for %s and package %s', (file, name, command, args) => {
+  ['pnpm-lock.yaml', 'pnpm', ['install', '--frozen-lockfile']],
+  ['yarn.lock', 'yarn', ['install', '--frozen-lockfile']],
+  ['package-lock.json', 'npm', ['ci']],
+] as const)('installs the whole workspace of a member app with %s', (file, command, args) => {
   const root = mkdtempSync(join(tmpdir(), 'stim-dependency-install-'));
   try {
+    mkdirSync(join(root, 'apps', 'mobile'), { recursive: true });
+    writeFileSync(join(root, 'apps', 'mobile', 'package.json'), JSON.stringify({ name: 'mobile' }));
     writeFileSync(join(root, file), 'lockfile');
-    expect(dependencyInstall(root, name)).toMatchObject({ command, args });
+    expect(dependencyInstall(root, 'apps/mobile')).toMatchObject({ command, args, dir: '.' });
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('finds no install for a project path that is not below the root', () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-dependency-install-'));
+  const elsewhere = mkdtempSync(join(tmpdir(), 'stim-dependency-install-'));
+  try {
+    writeFileSync(join(root, 'pnpm-lock.yaml'), 'lockfile');
+    expect(dependencyInstall(root, elsewhere)).toBeNull();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
   }
 });
 
@@ -26,7 +39,7 @@ test('changes the marker identity when the major of the pinned Node the worker i
     mkdirSync(join(nvm, 'versions', 'node', version, 'bin'), { recursive: true });
     writeFileSync(join(nvm, 'versions', 'node', version, 'bin', 'node'), '');
   };
-  const digest = () => dependencyInstall(root, 'mobile', 'apps/mobile', { NVM_DIR: nvm })?.digest;
+  const digest = () => dependencyInstall(root, 'apps/mobile', { NVM_DIR: nvm })?.digest;
   try {
     mkdirSync(join(root, 'apps', 'mobile'), { recursive: true });
     writeFileSync(join(root, 'pnpm-lock.yaml'), 'lockfile');
@@ -62,10 +75,29 @@ test.each([
     const lockfile = createHash('sha256')
       .update(readFileSync(join(root, lock)))
       .digest('hex');
-    const install = dependencyInstall(root, 'mobile', 'apps/mobile');
+    const install = dependencyInstall(root, 'apps/mobile');
     expect(install).toMatchObject({ command, dir: normalize(dir), lockfile });
     expect(install?.marker === 'dependencies').toBe(dir === '.');
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  ['package-lock.json', 'hoisted to the workspace root', true],
+  ['package-lock.json', 'missing everywhere', false],
+] as const)('reuses a %s install %s by where the install ran', (file, _, installed) => {
+  const area = mkdtempSync(join(tmpdir(), 'stim-dependency-install-'));
+  try {
+    const src = join(area, 'src');
+    mkdirSync(join(src, 'apps', 'mobile'), { recursive: true });
+    writeFileSync(join(src, file), 'lockfile');
+    const install = dependencyInstall(src, 'apps/mobile');
+    if (!install) throw new Error('expected an install');
+    writeFileSync(join(area, install.marker), install.digest);
+    if (installed) mkdirSync(join(src, 'node_modules'));
+    expect(reusableDependencies(area, 'apps/mobile', install.lockfile)).toBe(installed);
+  } finally {
+    rmSync(area, { recursive: true, force: true });
   }
 });

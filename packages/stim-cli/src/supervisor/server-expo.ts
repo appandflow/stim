@@ -158,13 +158,13 @@ export function recordFromLine(
   if (stream === 'stderr' && msg.startsWith('stim-bundle-response: ')) {
     try {
       const record = JSON.parse(msg.slice('stim-bundle-response: '.length));
-      if (
-        record.src === 'metro' &&
-        /^bundle_(response|prefetch)_(started|progress|finished|failed)$/.test(record.event) &&
+      const request =
+        /^(?:bundle_(?:response|prefetch)_(?:started|progress|finished|failed)|manifest_request_(?:started|finished|failed))$/.test(
+          record.event,
+        ) &&
         ['ios', 'android'].includes(record.platform) &&
-        typeof record.requestId === 'string' &&
-        Number.isFinite(record.ts)
-      )
+        typeof record.requestId === 'string';
+      if (record.src === 'metro' && (request || record.event === 'hmr_update') && Number.isFinite(record.ts))
         return record;
     } catch {}
   }
@@ -195,6 +195,10 @@ export function expoProxyEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return publicUrl ? { EXPO_PACKAGER_PROXY_URL: publicUrl.replace(/\/+$/, '') } : {};
 }
 
+export function expoTelemetryEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  return env.EXPO_NO_TELEMETRY === undefined ? { EXPO_NO_TELEMETRY: '1' } : {};
+}
+
 const WAITING_ON_RE = /^Waiting on (\S+)/;
 const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const HTTP_SCHEME_RE = /^https?:\/\//i;
@@ -209,7 +213,7 @@ export function parseExpoWaitingOnUrl(line: unknown): string | null {
 
 function resolveMetroStoreInjection(
   root: string,
-  { log, env, settings }: { log: NdjsonWriter; env: NodeJS.ProcessEnv; settings: SettingsObject },
+  { log, env, settings, port }: { log: NdjsonWriter; env: NodeJS.ProcessEnv; settings: SettingsObject; port: number },
 ): Record<string, string> | null {
   const sharedCache = resolveMetroSharedCache(settings);
   if (!sharedCache) {
@@ -246,6 +250,7 @@ function resolveMetroStoreInjection(
   const storeRoot = sharedCache ? metroStoreRoot(root) : '';
   const additions = expoMetroStoreEnv({
     root,
+    port,
     storeRoot,
     adapterPath,
     existingOverride: env.EXPO_OVERRIDE_METRO_CONFIG,
@@ -303,6 +308,7 @@ export async function startExpoServer({
     log,
     env: process.env,
     settings: settings ?? resolveProjectSettings(root).settings,
+    port,
   });
 
   // On Windows the package bin's shebang resolves `node` through PATH, where pnpm
@@ -328,6 +334,7 @@ export async function startExpoServer({
       ...node.env,
       FORCE_COLOR: '0',
       ...expoProxyEnv(process.env),
+      ...expoTelemetryEnv(process.env),
       ...storeEnv,
       // Expo's legacy tunnel uses port 8081; v2 uses this workspace's reserved port.
       ...(tunnel ? { EXPO_UNSTABLE_TUNNEL_V2: '1' } : {}),
@@ -335,7 +342,7 @@ export async function startExpoServer({
   });
 
   let tunnelUrlSeen = false;
-  return superviseChildServer({
+  const handle = superviseChildServer({
     mode: 'expo-child',
     child,
     log,
@@ -351,4 +358,6 @@ export async function startExpoServer({
       }
     },
   });
+  handle.observesRequests = storeEnv !== null;
+  return handle;
 }

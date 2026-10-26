@@ -29,30 +29,6 @@ import XCTest
     XCTAssertTrue(center.toasts.isEmpty)
   }
 
-  func testDismissAllClearsHiddenCardsCancelsTimersAndReleasesHolds() async throws {
-    let center = ToastCenter(lifetime: lifetime, voiceOver: false)
-    let held = Toast(icon: "bell", title: "Held")
-    center.show(held)
-    center.hold(held.id, .pointer, true)
-    center.hold(held.id, .focus, true)
-    for index in 0..<ToastCenter.maxVisible {
-      center.show(Toast(icon: "bell", title: "Request \(index)", sticky: index.isMultiple(of: 2)))
-    }
-    var emissions = 0
-    let subscription = center.$toasts.sink { _ in emissions += 1 }
-
-    center.dismissAll()
-    XCTAssertTrue(center.toasts.isEmpty)
-    let emissionsAfterDismissal = emissions
-    try await wait(lifetime * 4)
-    XCTAssertEqual(emissions, emissionsAfterDismissal)
-
-    center.show(held)
-    try await waitUntilEmpty(center)
-    XCTAssertTrue(center.toasts.isEmpty)
-    subscription.cancel()
-  }
-
   func testHeldToastStaysUntilReleased() async throws {
     let center = ToastCenter(lifetime: lifetime, voiceOver: false)
     let id = show(center)

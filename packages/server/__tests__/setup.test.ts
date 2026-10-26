@@ -107,6 +107,8 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
       return false;
     },
     preflight: async () => ({ dnsName: 'worker.ts.net' }),
+    fingerprint: () => 'server-fingerprint',
+    firewall: async () => null,
     claim: setupClaim,
     write: (hash, journal) => {
       writeSetupJournal(hash, journal);
@@ -311,6 +313,33 @@ test.each([false, true])(
   },
 );
 
+test('while it waits for the requesting machine, setup says so and then confirms the connection', async () => {
+  const f = fixture();
+  f.client.spends = false;
+  const sleep = f.deps.sleep;
+  f.deps.sleep = async (ms) => {
+    await sleep(ms);
+    if (f.deps.now() >= now + 5000 && !f.records.some((r) => r.id === 'build-id')) f.records.push(record('build'));
+  };
+  expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(0);
+  const waiting = f.stdout.findIndex((line) => line.includes('Stim Desktop sends this automatically'));
+  const connected = f.stdout.findIndex((line) => /approved .* for builds/.test(line));
+  expect(waiting).toBeGreaterThanOrEqual(0);
+  expect(connected).toBeGreaterThan(waiting);
+  expect(
+    f.snapshots.some((j) =>
+      j.steps.some((s) => s.id === 'approve' && s.detail?.startsWith('Waiting for the requesting')),
+    ),
+  ).toBe(true);
+});
+
+test('a requesting machine that never connects still gets the waiting line before the ticket expires', async () => {
+  const f = fixture();
+  f.client.spends = false;
+  expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(2);
+  expect(f.stdout.some((line) => line.includes('Stim Desktop sends this automatically'))).toBe(true);
+});
+
 test.each([false, true])(
   'no --yes with tty=%s cannot turn an unanswered or N confirmation into approval',
   async (tty) => {
@@ -412,6 +441,69 @@ test('Funnel refuses before approval and records the off command', async () => {
     state: 'failed',
     fix: 'tailscale funnel --https=7443 off',
   });
+});
+
+test('a worker without Tailscale sets up on the local network, prints its key fingerprint and warns about the firewall', async () => {
+  const noRoute = async () => {
+    throw new Error('a local network setup must not touch tailscale serve');
+  };
+  const reused = fixture().deps.health;
+  const f = fixture({
+    preflight: async () => ({ dnsName: null, lan: true }),
+    health: async (port) => {
+      const found = await reused(port);
+      return found && { ...found, lan: { addresses: ['10.0.0.92'], port: 7787 } };
+    },
+    firewall: async () => true,
+    route: noRoute,
+    prepareRoute: noRoute,
+    createRoute: noRoute,
+  });
+  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
+  const output = JSON.parse(f.stdout.join('\n'));
+  expect(output).toMatchObject({
+    ok: true,
+    route: { state: 'local-network', dnsName: null },
+    lan: ['ws://10.0.0.92:7787'],
+    fingerprint: 'server-fingerprint',
+    granted: [{ capability: 'build', id: 'build-id' }],
+  });
+  expect(output.warnings).toEqual([expect.stringMatching(/^The macOS firewall is on: when macOS asks whether \/node/)]);
+  expect(
+    f.snapshots.some((j) =>
+      j.steps.some((s) => s.id === 'approve' && s.detail?.includes('server key fingerprint, server-fingerprint')),
+    ),
+  ).toBe(true);
+});
+
+test('a local network setup whose server listens on no local address refuses before storing the ticket', async () => {
+  const f = fixture({ preflight: async () => ({ dnsName: null, lan: true }) });
+  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(1);
+  expect(f.stored).toEqual([]);
+  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'lan')).toMatchObject({
+    state: 'failed',
+    detail: expect.stringContaining('server.lanAddresses'),
+  });
+});
+
+test('a worker with Tailscale and a local network listener checks both, so tailnet clients keep their route', async () => {
+  const reused = fixture().deps.health;
+  const f = fixture({
+    preflight: async () => ({ dnsName: 'worker.ts.net', lan: true }),
+    health: async (port) => {
+      const found = await reused(port);
+      return found && { ...found, lan: { addresses: ['10.0.0.92'], port: 7787 } };
+    },
+  });
+  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
+  expect(JSON.parse(f.stdout.join('\n'))).toMatchObject({
+    route: { state: 'routed', dnsName: 'worker.ts.net', port: 7447 },
+    lan: ['ws://10.0.0.92:7787'],
+  });
+  expect(readSetupJournal(options.journal)?.steps.filter((s) => s.id === 'lan' || s.id === 'route')).toEqual([
+    expect.objectContaining({ id: 'lan', state: 'ok' }),
+    expect.objectContaining({ id: 'route', state: 'ok' }),
+  ]);
 });
 
 test('journals precede server work, include every completed step, and JSON stdout holds only the final payload', async () => {

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -904,3 +904,29 @@ test.each(['default', 'tablet'])(
     }
   },
 );
+
+test('STIM_TRACE records each build phase the run enters under the name stats.json uses', () => {
+  const file = join(home, 'build-trace.json');
+  process.env.STIM_TRACE = file;
+  const claim = takeClaim();
+  try {
+    let now = T0;
+    const progress = startBuildProgress({ root, platform: 'android', slot: 'default', claim, now: () => now });
+    for (const phase of ['cache-lookup', 'compile', 'install'] as const) {
+      now += 1000;
+      progress.step(phase);
+    }
+    const durations = progress.durations();
+    progress.clear();
+    const events: { name: string; cat?: string }[] = JSON.parse(
+      `${readFileSync(file, 'utf8').trimEnd().replace(/,$/, '')}]`,
+    );
+    const spans = events.filter((event) => event.cat === 'phase');
+    expect(spans.map((event) => event.name)).toEqual(['prepare', 'cache-lookup', 'compile', 'install']);
+    expect(Object.keys(durations)).toEqual(spans.map((event) => event.name));
+  } finally {
+    releaseClaim(claim);
+    delete process.env.STIM_TRACE;
+    delete process.env.STIM_TRACE_OWNER;
+  }
+});

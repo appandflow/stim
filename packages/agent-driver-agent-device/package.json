@@ -1,6 +1,6 @@
 {
   "name": "@stim-cli/agent-driver-agent-device",
-  "version": "1.23.1",
+  "version": "1.28.0",
   "description": "agent-device driver for stim-server hosted apps.",
   "license": "MIT",
   "repository": {
@@ -27,8 +27,8 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@stim-cli/agent-driver": "workspace:^",
-    "@stim-cli/core": "workspace:^"
+    "@stim-cli/agent-driver": "workspace:*",
+    "@stim-cli/core": "workspace:*"
   },
   "engines": {
     "node": ">=22.12.0"

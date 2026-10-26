@@ -182,6 +182,27 @@ test('a build-only grant, an uncertain answer and a revocation keep the hosting 
   expect(readDeviceHostMachines()[0]).toMatchObject({ state: 'approved', serverKey: SERVER_KEY });
 });
 
+test('names the same layer for hosting as for builds, so doctor prints one finding', async () => {
+  await approvedHosting();
+  const unready: TailnetMachineIo = {
+    ...fakeIo([
+      {
+        failed: 'stim-server answers behind its tailscale serve route but is not serving clients (HTTP 503)',
+        transport: { kind: 'http', status: 503 },
+      },
+    ]).io,
+    startup: async () => ({ state: 'degraded', cause: 'home-unreadable' }),
+  };
+  const { findings, machines } = await inspectDeviceHostMachines({ fix: false }, unready, ['mini']);
+  expect(machines).toEqual([
+    expect.objectContaining({
+      state: 'unreachable',
+      diagnosis: expect.objectContaining({ layer: 'server', code: 'server-not-ready' }),
+    }),
+  ]);
+  expect(findings).toHaveLength(1);
+});
+
 test('only a definite refusal and fix make a new ticket', async () => {
   await approvedHosting();
   const { io, calls } = fakeIo([{ error: { code: 'unauthorized', message: 'revoked' } }, notYet]);
@@ -300,4 +321,37 @@ test('automatic hosting considers only the remote machines this machine asked fo
   for (const os of ['linux', 'windows']) expect(await hostingMachines(async () => status(os))).toEqual([]);
   writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: 'mini' } }));
   expect(await hostingMachines(() => status())).toBeNull();
+});
+
+test('a local network machine asks for hosting without Tailscale and pins its key only once a person confirms it', async () => {
+  const LAN = 'local:10.0.0.92';
+  const noTailscale = (replies: HelloReply[]) => {
+    const fake = fakeIo(replies);
+    fake.io.status = () => {
+      throw new Error('a local network machine must not read tailscale status');
+    };
+    return fake;
+  };
+  const first = await inspectDeviceHostMachines({ fix: true }, noTailscale([notYet]).io, [LAN]);
+  expect(first.machines).toEqual([expect.objectContaining({ machine: LAN, state: 'pending' })]);
+  const asked: string[] = [];
+  const confirmKey = (answer: boolean) => async (_machine: string, key: string) => {
+    asked.push(key);
+    return answer;
+  };
+  const declined = await inspectDeviceHostMachines(
+    { fix: true, confirmKey: confirmKey(false) },
+    noTailscale([hosting()]).io,
+    [LAN],
+  );
+  expect(declined.machines).toEqual([expect.objectContaining({ state: 'key-unconfirmed' })]);
+  expect(readDeviceHostMachines()[0]).not.toHaveProperty('serverKey');
+  const accepted = await inspectDeviceHostMachines(
+    { fix: true, confirmKey: confirmKey(true) },
+    noTailscale([hosting()]).io,
+    [LAN],
+  );
+  expect(accepted.machines).toEqual([expect.objectContaining({ state: 'approved' })]);
+  expect(readDeviceHostMachines()[0]).toMatchObject({ transport: 'local', serverKey: SERVER_KEY });
+  expect(asked).toEqual([SERVER_KEY, SERVER_KEY]);
 });

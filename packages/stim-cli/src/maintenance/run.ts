@@ -29,6 +29,7 @@ import { measureDisk, measurePressure, measureSizes, sizeScanDeferred } from './
 import { diskRecovered, executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
+import { maintenanceItem, openGcLog, type GcLog } from '../commands/gc/log.ts';
 import { diskPressureLevel, levelFloors, levelStillShort, lowestFree } from './pressure.ts';
 
 function writeState(state: MaintenanceState): void {
@@ -104,6 +105,7 @@ const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
   'would-clear-build-dirs': 3,
   'would-empty-cache': 3,
   'would-remove-worktree': 4,
+  'would-shutdown-device': 5,
   'would-stop-workspace': 5,
   'would-delete-devices': 5,
   'would-delete-dependencies': 6,
@@ -165,7 +167,11 @@ function describeDone(action: MaintenanceAction): string {
     case 'would-delete-gradle-version':
       return `Deleted the unpinned Gradle ${action.target} caches and distributions`;
     case 'would-stop-workspace':
-      return `Stopped ${name} and deleted its owned devices`;
+      return action.check === 'idle'
+        ? `Stopped ${name} and shut down its owned devices`
+        : `Stopped ${name} and deleted its owned devices`;
+    case 'would-shutdown-device':
+      return `Shut down the idle device ${action.target} of ${name}`;
     default:
       return `Unregistered the stale cache ${action.target}`;
   }
@@ -175,6 +181,8 @@ const actionKey = (action: MaintenanceState['plan'][number]) => JSON.stringify([
 const stableText = (text: string) => text.replace(/\d+(?:\.\d+)?/g, '#');
 const sameSet = (before: Set<string>, after: Set<string>) =>
   before.size === after.size && [...before].every((key) => after.has(key));
+
+const BACKGROUND_TRIGGERS = new Set(['supervisor', 'status-watch']);
 
 export async function runMaintenance(trigger: string): Promise<void> {
   const startedAt = Date.now();
@@ -187,6 +195,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
   }
   if (!claim) return;
   let logger: ReturnType<typeof maintenanceLogger> | undefined;
+  let gcLog: GcLog | undefined;
   try {
     const settings = resolveMaintenanceSettings();
     if (settings.mode === 'off') return;
@@ -201,6 +210,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
     };
     const checks = due(state, settings, startedAt);
     if (checks.length === 0) return;
+    const background = BACKGROUND_TRIGGERS.has(trigger);
     let writeError: string | null = null;
     const noteWriteError = (error: unknown) => {
       writeError ??= error instanceof Error ? error.message : String(error);
@@ -217,6 +227,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
     } catch (error) {
       noteWriteError(error);
     }
+    gcLog = openGcLog({ trigger: 'maintenance', runId: `p-${claim.claimId}`, via: trigger });
     const record = (
       event: MaintenanceRecord['event'],
       level: MaintenanceRecord['level'],
@@ -256,7 +267,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
       delete state.deferredAt?.[check];
       keepState();
       try {
-        if (check === 'worktree' || check === 'sweep') continue;
+        if (check === 'worktree' || check === 'sweep' || check === 'idle') continue;
         if (check === 'pressure') {
           state.pressure = measurePressure(settings, state.pressure, state.lastAt[check]!);
           state.pressure.diskLevel = diskPressureLevel(lowestFree(state.pressure.disk), budget, settings);
@@ -319,11 +330,15 @@ export async function runMaintenance(trigger: string): Promise<void> {
         record('maintenance_failure', 'error', `${check} check failed: ${message}`, { target: check, error: message });
       }
     }
+    const plannedWorktrees =
+      ran.has('worktree') || (ran.has('sweep') && settings.removeFinishedWorktrees && settings.removeIdleWorktrees);
     let result: PlannedMaintenance;
     try {
       result = await plannedMaintenance(state.pressure, state.sizes, settings, {
         sweep: ran.has('sweep'),
-        worktrees: ran.has('worktree'),
+        worktrees: plannedWorktrees,
+        idle: ran.has('idle'),
+        background,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -341,6 +356,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
       const context = {
         settings,
         budget,
+        background,
         protectedRoot: triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
         pressureSweep: result.pressureSweep,
@@ -361,6 +377,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
           outcome = { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
         }
         results.push({ action, outcome });
+        if (outcome.status !== 'kept') gcLog?.record(maintenanceItem(action, outcome));
         const fields = {
           action: {
             kind: executedKind(action),
@@ -374,7 +391,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
           record(
             'maintenance_action',
             action.kind === 'would-remove-worktree' ? 'warn' : 'info',
-            `${describeDone(action)} (${formatBytes(outcome.bytes)}): ${action.reason}`,
+            `${describeDone(action)} (${formatBytes(outcome.bytes)}): ${action.kind === 'would-remove-worktree' ? outcome.detail : action.reason}`,
             fields,
           );
         else if (outcome.status === 'failed') {
@@ -386,6 +403,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
           });
         } else if (!loggedSkips.has(action.target)) {
           loggedSkips.add(action.target);
+          gcLog?.record(maintenanceItem(action, outcome));
           record('maintenance_skip', 'info', `Kept ${action.target}: ${outcome.detail}`, {
             target: action.target,
             reason: outcome.detail,
@@ -396,7 +414,11 @@ export async function runMaintenance(trigger: string): Promise<void> {
       return results;
     }
     const retained = state.plan.filter(
-      (action) => (action.check === 'sweep' || action.check === 'worktree') && !ran.has(action.check),
+      (action) =>
+        (action.check === 'sweep' && !ran.has('sweep')) ||
+        (action.check === 'worktree' && !plannedWorktrees) ||
+        (action.kind === 'would-shutdown-device' && action.check === undefined && !ran.has('idle')) ||
+        (action.check === 'idle' && !ran.has('idle')),
     );
     const previousActions = new Set(state.plan.map(actionKey));
     const previousSkips = new Set(state.skipKeys ?? []);
@@ -454,7 +476,13 @@ export async function runMaintenance(trigger: string): Promise<void> {
         );
     } else {
       const blocked = [...result.blocked, ...failures];
-      const planned = [...result.actions, ...retained];
+      const keys = new Set<string>();
+      const planned = [...result.actions, ...retained].filter((action) => {
+        const key = actionKey(action);
+        if (keys.has(key)) return false;
+        keys.add(key);
+        return true;
+      });
       const nextActions = new Set(planned.map(actionKey));
       const changed =
         !state.lastPass ||

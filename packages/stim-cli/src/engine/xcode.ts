@@ -696,7 +696,13 @@ export async function buildXcode({
       ? await compilationCache({ derivedDataPath: dd, exec: executor })
       : compilationCache || [];
   // Xcode forces ONLY_ACTIVE_ARCH=NO for a generic destination; only an explicit ARCHS narrows the build.
-  const buildSettings = arch ? [...cacheSettings, `ARCHS=${arch}`, 'ONLY_ACTIVE_ARCH=YES'] : cacheSettings;
+  const debugSettings =
+    configuration === 'Debug' && sdk === 'iphonesimulator' ? ['DEBUG_INFORMATION_FORMAT=dwarf'] : [];
+  const buildSettings = [
+    ...cacheSettings,
+    ...debugSettings,
+    ...(arch ? [`ARCHS=${arch}`, 'ONLY_ACTIVE_ARCH=YES'] : []),
+  ];
   const casPathSetting = 'COMPILATION_CACHE_CAS_PATH=';
   const casDir = cacheSettings.includes('COMPILATION_CACHE_ENABLE_CACHING=YES')
     ? (cacheSettings.find((setting) => setting.startsWith(casPathSetting))?.slice(casPathSetting.length) ?? null)
@@ -721,7 +727,7 @@ export async function buildXcode({
     event: 'build_start',
   });
 
-  const diagnosticCollector = createXcodeDiagnosticCollector(root, sdk);
+  const diagnosticCollector = createXcodeDiagnosticCollector(root, sdk, resolvedTarget.dir || root);
   const tail: string[] = [];
   let transcriptLines = 0;
   let compilationCacheActivity: CompilationCacheActivity = COMPILATION_CACHE_UNAVAILABLE;

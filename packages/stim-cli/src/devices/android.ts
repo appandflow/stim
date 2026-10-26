@@ -7,7 +7,7 @@ import {
   configuredAndroidEmulatorApp,
   openEmulatorInStimDesktop,
 } from './android-emulator-viewer.ts';
-import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
+import { forgetCreatedDeviceAsync, recordCreatedDeviceAsync } from './created-devices.ts';
 import { isStimOwnedAvd } from './device-ownership.ts';
 import {
   existsSync,
@@ -281,7 +281,7 @@ export async function createOwnedAvd(
     );
   }
   const avdName = ownedAvdName(label);
-  recordCreatedDevice('android', avdName);
+  await recordCreatedDeviceAsync('android', avdName);
   const tool = androidToolPath('avdmanager');
   const args = ['create', 'avd', '-n', avdName, '-k', pick.pkg, '--device', deviceProfile];
   // avdmanager (cmdline-tools 19.0) writes to $XDG_CONFIG_HOME/.android/avd when XDG_CONFIG_HOME is set, and
@@ -417,7 +417,7 @@ export async function deleteAvd(avdName: string, operation?: StimContext): Promi
       ...(root ? { env: { ANDROID_AVD_HOME: root } } : {}),
     },
   );
-  forgetCreatedDevice('android', avdName);
+  await forgetCreatedDeviceAsync('android', avdName);
 }
 
 export function parseAvdList(text: string): string[] {
@@ -1015,7 +1015,10 @@ export async function resetAdoptedAvd(avdName: string, serial: string, keepPacka
   const commandTimeout = (timeoutMs: number) =>
     recoveryDeadline === undefined ? timeoutMs : Math.max(1, Math.min(timeoutMs, recoveryDeadline - Date.now()));
   const assertTarget = async () => {
-    const resolved = await resolveOwnedAvdSerialAsync(avdName, { timeoutMs: commandTimeout(30000) });
+    const resolved = await resolveOwnedAvdSerialAsync(avdName, {
+      timeoutMs: commandTimeout(30000),
+      preferredSerial: serial,
+    });
     unavailableTarget = Boolean(resolved.notRunning);
     if (resolved.serial !== serial) throw new Error(`AVD ${avdName} is no longer running on ${serial}.`);
   };
@@ -1347,6 +1350,61 @@ export async function shutdownAndroidEmulator(
   await run(['-s', serial, 'emu', 'kill'], Math.max(1, timeoutMs - (Date.now() - started)));
 }
 
+function reverseDevicePortsTo(listing: unknown, hostPorts: readonly number[]): string[] {
+  return String(listing ?? '')
+    .split('\n')
+    .flatMap((line) => {
+      const [, device, host] = line.trim().split(/\s+/);
+      return device?.startsWith('tcp:') && hostPorts.some((port) => host === `tcp:${port}`) ? [device] : [];
+    });
+}
+
+/**
+ * Removes the reverses that point an owned emulator at `metroPort`, verified by the emulator's own
+ * console. The adb server connects a reverse stream from the device to the host port synchronously
+ * on its single event thread (packages/modules/adb services.cpp `service_to_fd`), and on Windows a
+ * refused loopback connect takes seconds, so an app retrying a stopped Metro stalls every adb call.
+ * https://github.com/appandflow/stim/issues/4101
+ */
+export async function removeOwnedEmulatorMetroReverses(
+  avdName: string,
+  serial: string,
+  metroPort: number,
+  operation?: StimContext,
+): Promise<void> {
+  if ((await getAvdNameForSerialAsync(serial, { operation })) !== avdName) return;
+  await removeMetroReverses(serial, [metroPort], operation);
+}
+
+export async function removeMetroReverses(
+  serial: string,
+  hostPorts: readonly number[],
+  operation?: StimContext,
+): Promise<void> {
+  const adb = androidToolPath('adb', process.platform, operation?.env);
+  const options = {
+    timeoutMs: ADB_PROP_TIMEOUT_MS,
+    killSignal: 'SIGKILL' as const,
+    cwd: androidToolCwd() ?? operation?.cwd,
+  };
+  const listing = await runOperationFileQuiet(
+    operation,
+    getExecutor(),
+    adb,
+    ['-s', serial, 'reverse', '--list'],
+    options,
+  );
+  for (const devicePort of reverseDevicePortsTo(listing, hostPorts)) {
+    await runOperationFileQuiet(
+      operation,
+      getExecutor(),
+      adb,
+      ['-s', serial, 'reverse', '--remove', devicePort],
+      options,
+    );
+  }
+}
+
 function avdProcessLockPaths(avdDirectory: string, platform: NodeJS.Platform): string[] {
   const names = ['hardware-qemu.ini.lock', 'userdata-qemu.img.lock'];
   return names.map((name) => join(avdDirectory, name, ...(platform === 'win32' ? ['pid'] : [])));
@@ -1409,16 +1467,31 @@ function listAvdEmulatorProcesses(avdName: string, platform: NodeJS.Platform): n
   return out === null ? null : parseAvdEmulatorProcesses(out, avdName);
 }
 
+const PROCESS_TABLE_READ_TIMEOUTS_MS = [5000, 15_000];
+
+async function readProcessTableAsync(
+  operation: StimContext | undefined,
+  args: string[],
+  options: { cwd?: string } = {},
+): Promise<string | null> {
+  for (const timeoutMs of PROCESS_TABLE_READ_TIMEOUTS_MS) {
+    const out = await runOperationFileQuiet(operation, getExecutor(), 'ps', args, {
+      timeoutMs,
+      killSignal: 'SIGKILL',
+      ...options,
+    });
+    if (out !== null) return out;
+  }
+  return null;
+}
+
 async function listAvdEmulatorProcessesAsync(
   avdName: string,
   platform: NodeJS.Platform,
   operation?: StimContext,
 ): Promise<number[] | null> {
   if (platform === 'win32') return [];
-  const out = await runOperationFileQuiet(operation, getExecutor(), 'ps', ['-axww', '-o', 'pid=,command='], {
-    timeoutMs: 5000,
-    killSignal: 'SIGKILL',
-  });
+  const out = await readProcessTableAsync(operation, ['-axww', '-o', 'pid=,command=']);
   return out === null ? null : parseAvdEmulatorProcesses(out, avdName);
 }
 
@@ -1481,9 +1554,7 @@ export async function assertOwnedAvdStoppedAsync(
     const stat =
       process.platform === 'win32'
         ? null
-        : await runOperationFileQuiet(operation, getExecutor(), 'ps', ['-o', 'stat=', '-p', String(processId)], {
-            timeoutMs: 5000,
-            killSignal: 'SIGKILL',
+        : await readProcessTableAsync(operation, ['-o', 'stat=', '-p', String(processId)], {
             cwd: operation?.cwd,
           });
     if (stat === null || !stat.trim().startsWith('Z')) live.add(processId);
@@ -1713,21 +1784,31 @@ export function resolveOwnedAvdSerial(avdName: string, opts: { timeoutMs?: numbe
   return ownedAvdSerialResolver(opts)(avdName);
 }
 
-/** `resolveOwnedAvdSerial` without blocking the event loop, with the same reads and the same timeout budget. */
+/**
+ * `resolveOwnedAvdSerial` without blocking the event loop, with the same reads and the same timeout budget.
+ * `preferredSerial` is the serial this workspace recorded for the AVD: it is read first, and the other
+ * emulators are read only when it does not run the AVD.
+ */
 export async function resolveOwnedAvdSerialAsync(
   avdName: string,
-  opts: { timeoutMs?: number; signal?: AbortSignal; operation?: StimContext } = {},
+  opts: { timeoutMs?: number; signal?: AbortSignal; operation?: StimContext; preferredSerial?: string } = {},
 ): Promise<ResolvedAvdSerial> {
-  return ownedAvdSerialResolverAsync(opts)(avdName);
+  return ownedAvdSerialResolverAsync(opts)(avdName, opts.preferredSerial);
 }
 
-/** Shares bounded asynchronous AVD, adb and emulator-name reads across the requested AVDs. */
+/**
+ * Shares bounded asynchronous AVD, adb and emulator-name reads across the requested AVDs. Emulators are
+ * read concurrently within each tier (the preferred serial, then healthy ones, then unhealthy ones), and
+ * the reads still pending are cancelled once one runs the requested AVD, so a wedged foreign emulator
+ * neither adds up across serials nor delays the match.
+ */
 export function ownedAvdSerialResolverAsync({
   timeoutMs,
   signal,
   operation,
 }: { timeoutMs?: number; signal?: AbortSignal; operation?: StimContext } = {}): (
   avdName: string,
+  preferredSerial?: string,
 ) => Promise<ResolvedAvdSerial> {
   const started = Date.now();
   const remaining = () => ({
@@ -1738,27 +1819,70 @@ export function ownedAvdSerialResolverAsync({
   });
   const avds = once(() => listAvdsAsync(remaining()));
   const adb = once(() => listAdbDevicesAsync(remaining()));
-  const names = new Map<string, Promise<string | null>>();
+  const reads = new Map<string, { name: Promise<string | null>; settled: boolean; cancel: () => void }>();
   const avdNameOf = (serial: string) => {
-    let name = names.get(serial);
-    if (!name) {
-      name = getAvdNameForSerialAsync(serial, remaining());
-      names.set(serial, name);
+    let read = reads.get(serial);
+    if (!read) {
+      const own = new AbortController();
+      const options = remaining();
+      const entry = {
+        name: getAvdNameForSerialAsync(serial, {
+          ...options,
+          signal: options.signal ? AbortSignal.any([options.signal, own.signal]) : own.signal,
+        }),
+        settled: false,
+        cancel: () => {
+          if (entry.settled) return;
+          own.abort();
+          reads.delete(serial);
+        },
+      };
+      const settle = () => {
+        entry.settled = true;
+      };
+      entry.name.then(settle, settle);
+      reads.set(serial, entry);
+      read = entry;
     }
-    return name;
+    return read;
   };
-  return async (avdName) => {
+  const firstRunning = async (serials: string[], avdName: string) => {
+    try {
+      return await new Promise<string | undefined>((settle, reject) => {
+        let pending = serials.length;
+        if (pending === 0) return settle(undefined);
+        for (const serial of serials) {
+          avdNameOf(serial).name.then((name) => {
+            if (name === avdName) settle(serial);
+            else if (--pending === 0) settle(undefined);
+            return name;
+          }, reject);
+        }
+      });
+    } finally {
+      for (const serial of serials) reads.get(serial)?.cancel();
+    }
+  };
+  return async (avdName, preferredSerial) => {
     signal?.throwIfAborted();
     if (!(await avds()).includes(avdName)) return { missing: true };
     if (!isStimOwnedAvd(avdName)) return { notOwned: true };
     const devices = await adb();
     signal?.throwIfAborted();
-    const candidates = [
-      ...devices.emulators,
-      ...devices.unhealthy.filter((entry) => entry.kind === 'emulator' && entry.consolePort !== undefined),
+    const healthy = devices.emulators.map((entry) => entry.serial);
+    const unhealthy = devices.unhealthy
+      .filter((entry) => entry.kind === 'emulator' && entry.consolePort !== undefined)
+      .map((entry) => entry.serial);
+    const preferred = preferredSerial && [...healthy, ...unhealthy].includes(preferredSerial) ? preferredSerial : null;
+    const tiers = [
+      ...(preferred ? [[preferred]] : []),
+      healthy.filter((serial) => serial !== preferred),
+      unhealthy.filter((serial) => serial !== preferred),
     ];
-    for (const candidate of candidates) {
-      if ((await avdNameOf(candidate.serial)) === avdName) return { serial: candidate.serial };
+    for (const tier of tiers) {
+      const serial = await firstRunning(tier, avdName);
+      signal?.throwIfAborted();
+      if (serial) return { serial };
     }
     return { notRunning: true };
   };

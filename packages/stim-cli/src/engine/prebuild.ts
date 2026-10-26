@@ -9,8 +9,13 @@ import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts'
 import { spawnDeclared } from './spawn-claims.ts';
 import { remoteCliInvocation } from './node-cli.ts';
 import { detectIsExpo } from '../workspace/project.ts';
-import { expoBinPath, expoBinRefusal, expoSdkMajor } from '../supervisor/server-expo.ts';
-import { readWorkspaceState, updateWorkspaceState, type WorkspaceState } from '../workspace/workspace-state.ts';
+import { expoBinPath, expoBinRefusal, expoSdkMajor, expoTelemetryEnv } from '../supervisor/server-expo.ts';
+import {
+  readWorkspaceState,
+  updateWorkspaceState,
+  type WorkspaceState,
+  withWorkspaceStateLockAsync,
+} from '../workspace/workspace-state.ts';
 import { ambientContext } from '@stim-cli/core';
 
 export const PREBUILD_ERROR = 'STIM_PREBUILD_FAILED';
@@ -141,6 +146,11 @@ export function recordPrebuild(root: string, platform: string, fingerprint: stri
     ...state,
     prebuild: { ...prebuildRecord(state), [platform]: fingerprint },
   }));
+}
+
+/** Records the prebuild fingerprint after waiting for the workspace state lock without blocking the event loop. */
+export function recordPrebuildAsync(root: string, platform: string, fingerprint: string | null): Promise<void> {
+  return withWorkspaceStateLockAsync(root, () => recordPrebuild(root, platform, fingerprint));
 }
 
 /**
@@ -276,7 +286,12 @@ export async function runPrebuild(
       spawn(invocation.file, invocation.args, {
         cwd: root,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...(ambientContext()?.env ?? process.env), FORCE_COLOR: '0', CI: '1' },
+        env: {
+          ...(ambientContext()?.env ?? process.env),
+          ...expoTelemetryEnv(ambientContext()?.env ?? process.env),
+          FORCE_COLOR: '0',
+          CI: '1',
+        },
       }),
     );
   } catch (err) {

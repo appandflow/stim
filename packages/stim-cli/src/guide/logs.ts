@@ -69,6 +69,8 @@ FLAGS
                   shared untagged Metro and app client records (not the web
                   page's); default also includes untagged legacy records
   --source <s...>  metro, client, device, build, agent, maintenance, placement (one or more), or all.
+                   gc alone reads the machine-wide gc log (GC LOG below);
+                   builds alone reads the machine-wide build ledger (BUILD LEDGER below).
                    An unknown value is REJECTED rather than quietly matching
                    nothing.
   --level <l>      minimum level: debug, info, warn, error, fatal
@@ -121,7 +123,8 @@ serve bounded log queries.
   SecTrust, WebKit, CoreUI) that have nothing to do with your app. The proven
   ones are demoted to info by the collector, and iOS main-thread
   "Synchronous URL loading" performance diagnostics (Expo icons served by
-  Metro raise them) to warn, so a launch does not count them as app errors;
+  Metro raise them) and SwiftUI "Invalid Configuration" faults (the Expo dev
+  launcher raises them for a duplicated server entry) to warn, so a launch does not count them as app errors;
   the scope rule covers the rest.
   The metro stream carries exactly one demotion of its own, and it is Stim's
   doing: the dev-client deep link \`ios\`/\`android\` open to wire the app to
@@ -174,6 +177,10 @@ serve bounded log queries.
   sources that crash was reported as nothing at all. The cost of the rule is
   the safe direction: a client redbox that Fast Refresh already fixed keeps
   being reported until the next launch.
+
+  RUN FAILURES. A run that builds or reuses an app and then fails before the app
+  is running adds one build record with event run_failed, its code and the
+  phase it failed in, so \`status\` and \`logs --errors\` agree.
 
   OUTPUT. Every logs command, including --errors and --follow, shows full captured
   error, component and native stacks, with no frame or message-length limit.
@@ -235,11 +242,106 @@ THE RECORD
              there are none. Stim adds it at query time; it is not in the
              log files.
 
+IOS BOOT RECORDS
+Booting an owned iOS simulator writes records to the workspace's device.ndjson:
+src device, platform ios, deviceId the simulator udid, slot when it is not
+default, level info unless noted. They show in a plain \`logs\` and in
+\`--source device\`, and never in \`--errors\`.
+  event ios_boot, with phase:
+    boot_requested      just before simctl boot; boot is adopted (a parked
+                        simulator), created, existing (an owned simulator
+                        that was shut down) or restart
+    bootstatus_done     simctl bootstatus -b returned
+    springboard_started SpringBoard finished starting; pid is its pid
+    viewer_opened       the simulator viewer was asked to open it
+    simslim_reboot      SimSlim changed the simulator and SpringBoard's pid
+                        changed; pidBefore and pidAfter are null when the pid
+                        could not be read
+    restart             warn: SpringBoard is not running after boot and the
+                        simulator was shut down; Stim boots it once more
+  event springboard_crash_reports, written before that restart and again if
+    SpringBoard is still missing after it. files lists the SpringBoard-*.ips
+    reports that name this simulator and were captured in the last ten minutes,
+    copied from ~/Library/Logs/DiagnosticReports and its Retired folder into
+    the workspace logs directory; level is warn, or info with an empty files
+    when none matched. dropped counts matching reports that exceeded the limits
+    below and were not copied; failure is the message of a write that failed,
+    with the reports copied before it in files. macOS deletes the originals
+    after about two days; Stim only reads that folder. It looks at the newest
+    100 reports of at most 1 MiB each, copies at most 8 MiB per run, and keeps
+    at most 40 in the directory.
+
 Maintenance records use src: maintenance and appear in the plain timeline.
   stim logs --source maintenance
 Add --errors to --source maintenance to show only maintenance_failure events;
 failures before a later launch marker are hidden. Machine passes are reported in
 status and maintenance/maintenance.ndjson; this command reads workspace logs.
+
+GC LOG
+stim logs --source gc reads $STIM_HOME/gc/gc.ndjson from any directory: one
+record per item that a gc run, a maintenance action or the budget gate
+cleared, kept or failed to clear. It cannot be combined with other sources,
+and --source all does not include it. --errors shows the failed items.
+Each record has src: gc, level (info, or error for a failed item), msg and
+  runId    the stim invocation, or the pass id of maintenance.ndjson
+  trigger  manual (stim gc in a terminal), desktop (STIM_DESKTOP_APP is set, so also a gc run through a stim-server Desktop started),
+           maintenance, or budget (the disk, memory or workspace check before
+           start, ios and android)
+  via      maintenance only: the command whose run started the pass
+  options  gc only: delete, worktrees, olderThan, cache, idleMs
+  kind     what the item was (the kind of gc --json results, plus devServer
+           for a dev server the budget gate stops; maintenance also writes
+           buildDirectory and dependencies)
+  status   done, kept or failed
+  label, id, path, bytes, detail
+           name, identifier, absolute path when the item is one, bytes freed,
+           and the reason a kept or failed item was left
+Records of one run share runId. See stim guide cleanup, WHAT WAS CLEARED.
+
+BUILD LEDGER
+stim logs --source builds reads $STIM_HOME/builds/builds.ndjson from any
+directory: one record per native build run (ios, android or macos; compiled
+here, offloaded or fetched from a cache; succeeded, failed or cancelled). It
+keeps the newest 500 records, outlives the workspace that ran the build, and
+is never removed by gc. It cannot be combined with other sources, and --source
+all does not include it. --errors shows the failed runs. A record has
+src: builds, event: build, level (info, warn for cancelled, error for failed),
+msg and
+  ts, startedAt   epoch milliseconds when the run finished and started
+  id              the run
+  project, workspace, branch
+                  project root, workspace id and the branch checked out
+  platform        ios, android or macos
+  scheme, variant, configuration
+                  the iOS scheme when one was selected, the Android variant,
+                  the build configuration
+  placement       { where: local | offloaded, machine?, fellBack?, reason? };
+                  machine is the build machine that compiled the app, and
+                  fellBack with reason marks a build that considered
+                  offloading and compiled here
+  cache           { result: hit | miss | bypassed, source?: local | remote,
+                  key, fingerprint, missReason? }
+  durationMs, phases
+                  wall time and milliseconds in each local phase (prepare,
+                  cache-lookup, wait, prebuild, pods, compile, device,
+                  install, launch)
+  offloadPhases   milliseconds on the build machine: sync, deps, prebuild,
+                  pods, build, fetch
+  outcome         succeeded, failed or cancelled
+  failure         failed or cancelled runs: { code, message, remedy, phase }
+  device          { name, runtime? } of the simulator, emulator or device;
+                  never its serial or UDID
+  loadPerCore     this machine's 5-minute load average per CPU when the run
+                  started, to one decimal
+  boot            { startedAt, loadPerCore } of the run's first owned
+                  simulator or emulator boot: epoch milliseconds when it
+                  started, once any concurrency.maxDevices wait was over,
+                  and the load per core then. Absent when the run booted
+                  nothing.
+  stimVersion     the stim that ran the build
+Records written before these fields existed lack loadPerCore and boot.
+A run that stopped before it had an app to build (a refused flag, a missing
+project) writes no record. Writing the record never changes the run's result.
 
 REMOTE REQUEST RECORDS
 A request to another machine that fails is a warn record with src: build in the
@@ -270,16 +372,45 @@ Events: run_start, run_end { exit, ms }, exec { program, ms, ok, exit? }, and
 remote_connect and remote_request { ms, ok, code? } for requests to another
 machine. They carry no arguments, tokens or tickets.
 
+TIMING TRACES
+STIM_TRACE=<path> makes a stim command write a timeline of where it spent its
+time, as Chrome trace events. Open the file in Perfetto (ui.perfetto.dev) or
+chrome://tracing. Unset, nothing is written and no file is opened. There is no
+setting for it, and the trace goes only to that file, never to stdout or stderr.
+Use a new path for each command: the command you start truncates the file, and
+the processes it starts (a Metro supervisor, collectors, a nested stim) append
+to it.
+  STIM_TRACE=/tmp/ios.json stim ios
+The file is a JSON array with one event per line and no closing bracket, so
+read it with JSON.parse(text.trimEnd().replace(/,$/, '') + ']'). Every event
+has pid; spans have ts and dur in microseconds since the epoch. Events:
+  command  one span named "stim <command>" with the exit code in args.exit
+  exec     one span per child process. args.argv (or args.command for a shell
+           command) has the values of secret-looking flags, credentials in
+           URLs and token shapes replaced by [redacted], and the credentials
+           of curl -u and security import -P; other short flags such as -p
+           and -u are kept. args also has cwd, ok, exit and signal
+  phase    the build phases of an ios, android or macos run on a
+           "phases: <platform> build" track, named as in stats.json and the
+           build ledger (prepare, cache-lookup, wait, prebuild, pods, compile,
+           device, install, launch), and the steps of worktree warm
+  span     fingerprint, wait for metro and carry ignored entries
+  mark     instant events such as a fingerprint memo hit
+Children running at the same time are drawn on separate tracks. A span still
+open when its process exits is written with unfinished: true; a process ended
+by a signal writes none. A trace holds
+full paths and arguments, so treat it like a log.
+
 Placement records use src: placement and sit in the run's build log
 (build-*.ndjson), so a new run replaces the previous run's. A run writes one
 record per decision it makes (a build that compiles and has a remote machine to
-consider, or ios/android --remote auto), with event build_placement,
+consider, or ios/android --remote auto|remote|remote-only), with event build_placement,
 device_placement or placement_fallback. A cache hit, a project with no paired
 remote machine and a named --remote target write none:
   stim logs --source placement
   stim logs --source placement --json
 Fields: kind (build or device), platform, settings [{ key, value, from }] with
-from flag, env, setting or default (remote.build and remote.buildMode for a
+from flag, env, setting or default (remote.build for a
 build, ios.remote or android.remote, plus remote.easFallback when it is on, for
 a device), candidates [{ machine, code,
 msg, detail? }], choice { machine, code, msg } with machine local when the run
@@ -300,7 +431,21 @@ they stay in the local logs. These records carry no tokens.
 
 WHAT WRITES WHAT
   maintenance.ndjson   workspace maintenance actions, failures and explaining skips
-  metro.ndjson         the bundler, in every supervisor mode
+  $STIM_HOME/gc/gc.ndjson  machine-wide, not in a workspace: what gc, maintenance
+                       and the budget gate cleared (stim logs --source gc)
+  $STIM_HOME/builds/builds.ndjson  machine-wide: the last 500 native builds
+                       (stim logs --source builds)
+  metro.ndjson         the bundler, in every supervisor mode. Stim's
+                       middleware adds one record per bundle request
+                       (bundle_response_started, _progress, _finished,
+                       _failed; _started carries the request's path and
+                       query as url, which the next warmup prefetches)
+                       and, on Expo, one per dev-client manifest
+                       request (manifest_request_started, _finished,
+                       _failed: debug level, with platform and requestId;
+                       launch verification reads them as progress), and
+                       an hmr_update debug record, at most once a minute,
+                       when Metro pushes a Fast Refresh change to the app
   client.ndjson        in-app console logs and redboxes -- BARE PROJECTS ONLY.
                        In expo-child and command-child mode everything the
                        dev server prints lands in metro.ndjson with raw: true,
@@ -314,7 +459,8 @@ WHAT WRITES WHAT
                        -- and, on iOS, where every Apple framework running in
                        the app's process also logs. The proven noise sources
                        are recorded at info rather than error (Synchronous
-                       URL loading diagnostics at warn); the rest is why
+                       URL loading diagnostics and SwiftUI Invalid Configuration
+                       faults at warn); the rest is why
                        --errors leaves this source out unless asked. A VERIFIED
                        LAUNCH counts these records and prints one line:
 
@@ -325,7 +471,7 @@ WHAT WRITES WHAT
                        The count does not attribute unknown OS errors to the app.
                        Known JavaScript errors also print individually: Android
                        ReactNativeJS records, and iOS com.facebook.react.log /
-                       javascript records. These can interrupt an optional
+                       javascript records. These can interrupt a recommended
                        readiness wait even without a client or Metro copy.
                        Client and Metro errors still print individually.
                        A native app that loaded its bundle but reported app errors

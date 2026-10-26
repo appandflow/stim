@@ -36,7 +36,7 @@ jobs:
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e-smoke')
     name: ${{ matrix.platform }} app lifecycle
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -82,6 +82,11 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          # GitHub's ubuntu runner has 16 GB RAM and 3 GB swap; the Gradle build beside the booted emulator exhausts both (#4170).
+          sudo fallocate -l 8G /stim-ci.swap
+          sudo chmod 600 /stim-ci.swap
+          sudo mkswap /stim-ci.swap
+          sudo swapon /stim-ci.swap
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platform-tools' 'emulator' 'system-images;android-34;google_apis;x86_64'
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
@@ -96,7 +101,7 @@ jobs:
           project: ${{ matrix.project }}
           command: node ../../scripts/ci/app-smoke.mjs
           artifacts: stim-ci-results/${{ matrix.platform }}/first
-          timeout: '2400'
+          timeout: ${{ matrix.platform == 'ios' && '3600' || '2400' }}
           artifact-name: stim-ci-${{ matrix.platform }}-first
           retention-days: '7'
 

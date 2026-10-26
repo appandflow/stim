@@ -4,15 +4,23 @@ import { isAbsolute, sep } from 'node:path';
 import type { MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
 import { cacheLabel, trimmableCaches } from '../budget.ts';
 import { readManifest } from '../cache/cache-manifest.ts';
-import { collectOrphanedWorkspaces, collectWorkspaceOutputs, isInsideWorkspaces } from '../commands/gc/workspaces.ts';
+import {
+  collectOrphanedWorkspaces,
+  collectWorkspaceOutputs,
+  isInsideWorkspaces,
+  keptByLock,
+} from '../commands/gc/workspaces.ts';
 import { collectWorktreeSweep, worktreeRemovalReason, type WorktreeSweep } from '../commands/gc/worktrees.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
+import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
+import { readParked } from '../devices/sim-pool.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { finishedWorkspaces, planDeviceDeletion, planDeviceDeletionAsync } from './devices.ts';
 import type { MaintenancePlan } from './plan.ts';
 import type { MaintenanceSettings } from './settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { endedPullRequest } from '../workspace/pull-request.ts';
 
 export async function planSweep({
   settings,
@@ -35,15 +43,20 @@ export async function planSweep({
   const skips: MaintenancePlan['skips'] = [];
   const blocked: string[] = [];
   const days = settings.olderThanDays;
-  const outputs = await collectWorkspaceOutputs({
-    olderThan: days,
-    now,
-    measure: false,
-    signal: operation?.signal,
-    operation,
-  });
+  const outputs =
+    days > 0
+      ? await collectWorkspaceOutputs({
+          olderThan: days,
+          now,
+          measure: false,
+          signal: operation?.signal,
+          operation,
+        })
+      : { workspaces: [] };
   for (const entry of outputs.workspaces) {
     const root = entry.projectRoot === null ? null : canonicalPath(entry.projectRoot);
+    if (root !== null && keptByLock(entry) && entry.keptReason)
+      skips.push({ target: root, reason: entry.keptReason, workspace: root });
     if (root === null || !entry.willClear || root === protectedRoot) continue;
     if (pinned(root)) {
       skips.push({ target: root, reason: 'pinned by maintenance.keep', workspace: root });
@@ -60,9 +73,9 @@ export async function planSweep({
       check: 'sweep',
     });
   }
-  for (const cache of trimmableCaches(operation?.env, operation?.cwd).filter(
-    (candidate) => !isInsideWorkspaces(candidate.dir),
-  ))
+  for (const cache of days > 0
+    ? trimmableCaches(operation?.env, operation?.cwd).filter((candidate) => !isInsideWorkspaces(candidate.dir))
+    : [])
     actions.push({
       kind: 'would-trim-cache',
       target: cacheLabel(cache),
@@ -112,6 +125,23 @@ export async function planSweep({
     actions.push(...reaped.actions);
     skips.push(...reaped.skips);
   }
+  if (devices && days > 0 && !deviceSweepIsScoped(operation?.env ?? process.env))
+    for (const kind of ['ios', 'android'] as const)
+      for (const record of readParked(kind)) {
+        const parkedDays = Math.floor((now - Date.parse(record.parkedAt)) / 86_400_000);
+        if (!(parkedDays >= days)) continue;
+        const label = `parked ${kind === 'ios' ? 'simulator' : 'emulator'} ${record.name}`;
+        actions.push({
+          kind: 'would-delete-parked-device',
+          target: kind === 'ios' ? record.udid : record.name,
+          bytes:
+            sizes.find((size) => size.category === 'owned-devices' && !size.workspace && size.name === label)?.bytes ??
+            0,
+          olderThanDays: days,
+          reason: `${label} unused for ${parkedDays} days, older than ${days} days (age sweep)`,
+          check: 'sweep',
+        });
+      }
   const mounted = listMountedVolumes();
   for (const cache of readManifest().caches) {
     if (!isAbsolute(cache.dir) || existsSync(cache.dir) || !isOnMountedVolume(cache.dir, mounted)) continue;
@@ -140,12 +170,14 @@ export async function planWorktrees({
   sizes,
   protectRecentMs = 0,
   refresh,
+  idleDays = null,
   operation,
 }: {
   protectedRoot: string;
   pinned: (workspace: string) => boolean;
   now: number;
   level?: 3;
+  idleDays?: number | null;
   graceMs?: number;
   sizes?: readonly MaintenanceSize[];
   protectRecentMs?: number;
@@ -153,10 +185,10 @@ export async function planWorktrees({
   operation?: StimContext;
 }): Promise<WorktreePlan> {
   const sweep = await collectWorktreeSweep({
-    idle: false,
-    olderThan: null,
+    idle: idleDays !== null,
+    olderThan: idleDays,
     now,
-    removesNoOwnCommits: level === 3,
+    underPressure: level === 3,
     operation,
     ...(graceMs === undefined ? {} : { graceMs }),
     ...(refresh === undefined ? {} : { refresh }),
@@ -183,7 +215,10 @@ export async function planWorktrees({
       target: worktree.path,
       bytes: 0,
       reason: worktreeRemovalReason(worktree, sweep),
-      check: 'worktree',
+      check:
+        level === undefined && idleDays !== null && !worktree.merge?.merged && !endedPullRequest(worktree.pullRequest)
+          ? 'sweep'
+          : 'worktree',
       ...(level ? { level } : {}),
     });
   }

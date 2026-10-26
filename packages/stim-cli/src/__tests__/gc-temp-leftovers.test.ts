@@ -46,7 +46,7 @@ const TMP_KEYS = ['TMPDIR', 'TEMP', 'TMP'] as const;
 const realTmp = Object.fromEntries(TMP_KEYS.map((key) => [key, process.env[key]]));
 
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-')));
+  home = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-')));
   fakeTmp = join(home, 'tmp');
   outside = join(home, 'outside');
   mkdirSync(fakeTmp);
@@ -111,7 +111,7 @@ test('only recognized Stim temp directories and xctrace recordings idle for a da
   const unrelated = oldDir('stim-s3-test-abc123');
   const other = oldDir('metro-cache');
 
-  expect((await collectTempLeftovers())?.root).toBe(realpathSync(fakeTmp));
+  expect((await collectTempLeftovers())?.root).toBe(realpathSync.native(fakeTmp));
   expect((await leftovers()).map((entry) => [entry.path, entry.willDelete])).toEqual([
     [trace, true],
     [idle, true],
@@ -122,6 +122,46 @@ test('only recognized Stim temp directories and xctrace recordings idle for a da
   expect(await deleteTempLeftovers()).toEqual({ count: 2, bytes: expect.any(Number), failures: 0 });
   expect([existsSync(idle), existsSync(trace)]).toEqual([false, false]);
   expect([existsSync(recent), existsSync(unrelated), existsSync(other)]).toEqual([true, true, true]);
+});
+
+test('SwiftPM TemporaryDirectory.* directories are listed and deleted once idle and no swift process runs', async () => {
+  const idle = oldDir('TemporaryDirectory.0Hkz40', { '.keep-directory': '', 'inputs-1.LinkFileList': 'x' });
+  const recent = oldDir('TemporaryDirectory.2kjCOS');
+  writeFileSync(join(recent, 'inputs-1.LinkFileList'), 'x');
+  const lookalike = oldDir('TemporaryDirectory.toolong1');
+  const lock = join(fakeTmp, '_Users_me_.swiftpm.lock');
+  writeFileSync(lock, '');
+  age(lock, 2 * DAY_MS);
+
+  expect((await leftovers()).map((entry) => [entry.kind, entry.path, entry.willDelete])).toEqual([
+    ['swiftpm', idle, true],
+    ['swiftpm', recent, false],
+  ]);
+  expect(await kept(recent)).toMatch(/24h/);
+
+  processes = '/usr/bin/swift\n';
+  expect(await kept(idle)).toBe('swift is running');
+  processes = '/usr/bin/xcodebuild\n';
+  expect(await kept(idle)).toBe('xcodebuild is running');
+  setExecutor({
+    ...getExecutor(),
+    runFileAsync: async () => {
+      throw new Error('ps failed');
+    },
+  });
+  expect(await kept(idle)).toBe('the running processes could not be listed');
+  expect((await deleteTempLeftovers()).count).toBe(0);
+  expect(existsSync(idle)).toBe(true);
+
+  processes = '/sbin/launchd\n';
+  setExecutor({ ...getExecutor(), runFileAsync: async () => processes });
+  expect(await deleteTempLeftovers()).toEqual({ count: 1, bytes: expect.any(Number), failures: 0 });
+  expect([existsSync(idle), existsSync(recent), existsSync(lookalike), existsSync(lock)]).toEqual([
+    false,
+    true,
+    true,
+    true,
+  ]);
 });
 
 test.skipIf(!POSIX)('a symlink is never followed, at the top level or inside a deleted directory', async () => {
@@ -238,7 +278,7 @@ test("the caller's environment chooses the TMPDIR that is swept", async () => {
   const env = { TMPDIR: clientTmp, TEMP: clientTmp, TMP: clientTmp };
 
   expect(await collectTempLeftovers({ env })).toEqual(
-    expect.objectContaining({ root: realpathSync(clientTmp), entries: [] }),
+    expect.objectContaining({ root: realpathSync.native(clientTmp), entries: [] }),
   );
 });
 
@@ -265,7 +305,7 @@ test('maintenance at disk pressure level 2 plans and deletes the idle leftovers'
     now: Date.now(),
   });
   const action = planned.actions.find((entry) => entry.kind === 'would-delete-temp-leftovers');
-  expect(action).toEqual(expect.objectContaining({ target: realpathSync(fakeTmp), level: 2 }));
+  expect(action).toEqual(expect.objectContaining({ target: realpathSync.native(fakeTmp), level: 2 }));
   if (!action) return;
 
   const outcome = await executeAction(action, {

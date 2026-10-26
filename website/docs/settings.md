@@ -78,7 +78,7 @@ Nested objects merge by key. Arrays replace lower-precedence arrays. Unknown
 keys produce a warning. Every key below takes one type: a string, an array of
 strings, a number, a boolean, or an object such as `android.avdConfig`,
 `cache.options`, and the nested `optimizations` settings.
-`ios.remote`, `android.remote`, `metro.tunnel`,
+`ios.remote`, `android.remote`, `macos.remote`, `metro.tunnel`,
 `optimizations.android.compilerCache` and `optimizations.android.pch` take only
 their listed choices. A value of the wrong type or outside those choices is
 refused by name on every command that resolves settings, `stim ios` included,
@@ -141,8 +141,9 @@ project's own `metro.config.js` calls `sharedCacheStores()` from
 `@stim-cli/metro`.
 
 `metro.warmupUrl.ios` and `metro.warmupUrl.android` replace the bundle URL that
-`ios` and `android` prefetch while the native build runs. Unset, Stim uses
-Expo's manifest or the bare React Native default. Give an HTTP(S) URL or a path
+`ios` and `android` prefetch while the native build runs. Unset, Stim uses the
+app's most recent bundle request on that platform from the workspace's metro
+log (skipped when its entry file no longer exists), then Expo's manifest or the bare React Native default. Give an HTTP(S) URL or a path
 ending in `.bundle` with the app's full query, including a matching `platform`.
 Stim keeps the path and query but always requests this workspace's Metro port.
 The setting only changes the prefetch, not the app. Setting
@@ -176,6 +177,26 @@ A model or runtime the machine value names that no installed toolchain offers
 refuses with `STIM_BAD_ARG`, the same way an unresolvable per-project or
 per-invocation value does, and the message names the machine layer so it is
 clear where to fix it.
+
+### SimSlim for every owned simulator
+
+`ios.simslim` takes `on` or `off`, default `off`, and can be set at any layer.
+Set it on the machine layer to slim every Stim-owned iOS simulator on that Mac
+with SimSlim's default service categories, without adding a profile to each
+app:
+
+```sh
+stim settings set ios.simslim on --scope machine
+```
+
+A project `ios.simslimProfile` still applies in place of the defaults, whatever
+`ios.simslim` says. A workspace, repo, or committed `ios.simslim` of `off` opts
+that app out and restores stock services on its simulator. SimSlim's defaults
+disable push, StoreKit, iCloud, Safari sync, Mail, Calendar and Contacts
+services among others, so move an app that needs them to a profile that keeps
+those categories or to `off`. Install SimSlim once per Mac with
+`brew install mobai-app/tap/simslim`; without it `doctor` reports the gap and
+`stim ios` boots normally with a one-line note.
 
 ### Android AVD overrides
 
@@ -227,7 +248,7 @@ Run `stim guide settings` for the complete key and value list.
   "androidEmulatorApp": "emulator",
   "tempDir": "/Volumes/SSD/stim-tmp",
   "pool": { "iosParkedMax": 3, "androidParkedMax": 3 },
-  "remote": { "machines": ["janics-mac-mini"], "build": "auto", "buildMode": "auto" },
+  "remote": { "machines": ["janics-mac-mini"], "build": "auto" },
   "caches": {
     "buildCache": "/Volumes/Cache/stim/build-cache",
     "metroCache": "/Volumes/Cache/stim/metro-cache"
@@ -245,8 +266,9 @@ new devices wait in FIFO order across the Stim home for 600 seconds by default.
 Use `--wait <seconds>` to change the bound, or `--no-wait` / `--wait 0` to
 refuse immediately. A workspace's own live device bypasses the queue. Waiting
 prints holder names and elapsed time, followed by the queue position, head
-workspace name and `$STIM_HOME/device-waits` path. Timeout names the same head
-and path. `stim stop` cancels a queued run and releases its ticket without
+workspace name and `$STIM_HOME/device-waits` path. Workspaces that share a
+project name show the directory that tells them apart, as in
+`mobile (qa-b-p2)`. Timeout names the same head and path. `stim stop` cancels a queued run and releases its ticket without
 booting its device. Status adds `build.waitingFor`, and
 stats records `capacityWaits` and positive placement `deviceSlotWaitMs`.
 `0` or an unset cap means unlimited devices.
@@ -333,8 +355,20 @@ last configured, approved member of either pool. A remote that Tailscale reports
 running an OS other than macOS never counts for the device pool. Excluding local
 prevents local fallback. See [automatic machine pools](./remote-machines.md#automatic-machine-pools).
 
+`remote.easMaxDurationMinutes` (default 30) is the number of minutes after which EAS
+stops each EAS Simulator session Stim creates, for `--remote eas` and
+`remote.easFallback`. It bounds the cost of a session that nobody ended, such as one
+whose workspace was deleted by hand. `stim stop` and `stim gc --delete` still end a
+session sooner, and a later run replaces an expired one. EAS rejects a value above
+the account plan's session limit. A run reuses a live session without checking how
+much of the cap is left.
+
 `remote.machines` names the remote machines this machine may build on and host owned
-simulator sessions on, by MagicDNS name and optional serve port (default 7443).
+simulator sessions on, by MagicDNS name and optional serve port (default 7443),
+or, for a machine on the local network without Tailscale, as `local:` and its
+private IPv4 address or host name with an optional stim-server port (default
+7787); that machine lists where it listens in `server.lanAddresses`, which is
+empty by default. See [Local network, without Tailscale](./remote-machines.md#local-network-without-tailscale).
 Name each node and port once. Set it with
 `stim settings set remote.machines '["janics-mac-mini"]'`, then run
 `stim doctor --fix` in an app directory. Build and device-host approvals are
@@ -342,9 +376,9 @@ separate, and a remote machine is used only for what it approved; a listed machi
 never granted one is not used for it, and doctor reports it. Doctor makes a setup
 ticket and prints the `stim-server setup` command a person runs on the remote
 machine to approve this one; one ticket covers builds and hosting. Hosting approval grants no
-read, control or build access. [`stim macos --remote <machine>`](./macos.md#run-it-on-another-mac)
-runs a macOS app on an approved machine. [iOS placement](./owned-devices.md#run-ios-on-another-mac) uses
-`stim ios|android --remote <machine>` or `ios.remote` / `android.remote` and the same approval. `auto` places on an approved Mac when this machine is full or busy. To view or control a hosted macOS app, a person on
+read, control or build access. [`stim macos --remote <placement>`](./macos.md#run-it-on-another-mac)
+or `macos.remote` runs a macOS app on an approved machine. [iOS placement](./owned-devices.md#run-ios-on-another-mac) uses
+`stim ios|android --remote <placement>` or `ios.remote` / `android.remote` and the same approval. `auto` places on an approved Mac when this machine is full or busy; `remote` and `remote-only` try the approved Macs first. To view or control a hosted macOS app, a person on
 that Mac approves Screen & System Audio Recording and Device Control and Data Access
 (Accessibility on macOS 26 and earlier) for Stim Host, the app
 `stim-server service install` runs the server under.
@@ -378,17 +412,39 @@ machine and prints the `stim-server setup` command a person runs there to
 approve this one. The next doctor run pins that machine's stim-server key, and
 Stim connects only to a server that proves it holds that key. Doctor reports each remote machine's build pairing state under `remoteMachines`.
 
+The order of `remote.machines` is the priority order for every workload. A
+build, simulator, emulator or macOS app goes to the first listed machine that has
+approval, a free slot and a 5-minute load per core under that machine's own
+`server.maxLoadPerCore`; a machine at its caps, over that limit, unreachable or
+without approval is skipped and the next one in order is tried. Load does not
+rank the machines that qualify, so the first one fills before the next is used.
+`stim status` shows this Mac's load per core against its own
+`server.maxLoadPerCore`, as `capacity.load` in `--json`.
+Put the fastest machine first and set the order with
+`stim settings set remote.machines '["fast-mini","slow-mini"]'`;
+`stim doctor` prints it as `placement order`, and its JSON gives each machine a
+`priority`. Desktop's Remote Macs list shows the order and moves a machine up or down.
+
 `remote.build` is a machine setting, defaulting to `auto`. On `ios`,
-`android` and `macos`, `--remote-build <auto|local|name>` overrides
+`android` and `macos`, `--remote-build <local|auto|remote|remote-only|name>` overrides
 `STIM_REMOTE_BUILD`, which overrides the setting. A blank environment value
-is unset. Trimmed `auto`/`local` are case-insensitive; names match configured
+is unset, and `stim doctor` flags an invalid value in the machine config or in
+`STIM_REMOTE_BUILD`. Trimmed placement words are case-insensitive; names match configured
 names case-insensitively with port 7443 when omitted. Reports use the configured
 entry:
 
-- `auto` follows `remote.buildMode` within enabled pool members, with local fallback only while local is enabled.
 - `local` keeps the build on this machine for this run.
+- `auto` builds here while this machine has capacity and otherwise on the first accepting remote machine in order, within enabled pool members, with local fallback only while local is enabled.
+- `remote` builds on the first remote machine in order that accepts the build, and here only when none does.
+- `remote-only` is `remote` without the local build: it refuses with `STIM_OFFLOAD_REFUSED` when no remote machine accepts the build, or the build cannot leave this machine.
 - A tailnet name requires a matching entry in `remote.machines`, already
-  paired and approved. It ignores `remote.buildMode` and this machine's load and slots.
+  paired and approved. It ignores this machine's load and slots.
+
+`remote.buildMode` and `STIM_REMOTE_BUILD_MODE` were removed and are no longer read.
+`stim doctor` and `stim settings` report any left in a config file or the environment.
+Use `remote.build` instead: `auto` stays `auto`, `force` becomes `remote` and `off`
+becomes `local`. `stim settings unset remote.buildMode` removes the leftover key from
+every layer that has it, and `--scope` removes it from one.
 
 A named selection never prompts for pairing, uses another machine or falls
 back locally. Missing configuration/pairing, denied or pending approval,
@@ -399,14 +455,14 @@ message names the worker and the concrete reason. Run `stim doctor --fix` to
 ask for build access if not paired. Check `stim settings get remote.machines`;
 a person on the worker approves this machine by running the `stim-server setup`
 command doctor printed. To change placement,
-rerun with `--remote-build auto` or `--remote-build local`.
+rerun with `--remote-build auto`, `remote` or `local`.
 
 Device, Release/non-Debug, `--remote`, Android CAS compiler, build-cache-off
 and unknown simulator runtime builds refuse a named worker on a cache miss.
 Invalid values, unlisted names and unpaired names refuse at setup before the
 cache is consulted, without a build record or failed-run stats. A listed paired
 name with a cache hit needs no build and contacts no worker. Prebuild and pod
-install still run on this machine before a named offload. `stim status` and its JSON
+install still run on this machine before a named offload; for `stim ios` the worker's toolchain is checked first. `stim status` and its JSON
 record `buildMachine` (the selected value) and `builtOn` (`here` or the worker
 name, absent when no build ran). Ctrl-C cancels the worker build and starts no
 local xcodebuild, Gradle or SwiftPM compile.
@@ -418,27 +474,30 @@ Run stim ios --remote-build janics-mac-mini. If it refuses, report the
 STIM_OFFLOAD_REFUSED reason and remedy; do not retry with another placement.
 ```
 
-With `remote.build` set to `auto`, `remote.buildMode` decides where `stim ios` compiles a simulator Debug build and
-where `stim android` compiles an emulator debug build, and where `stim macos`
-compiles a SwiftPM Debug build:
+A build that leaves this machine goes to the first machine in `remote.machines`
+order that accepts it: a free slot (`concurrency.maxBuilds`), at least 10 GB free,
+a matching toolchain and a load per core under its own `server.maxLoadPerCore`.
+A machine that already holds the exact completed artifact goes ahead of the
+order. Where `stim ios` compiles a simulator Debug build, `stim android` an
+emulator debug build and `stim macos` a SwiftPM Debug build depends on the
+selection:
 
 - `auto` (default) builds here while this machine has capacity: a free
   `concurrency.maxBuilds` slot (always, with no build limit) and a load per
-  core under `server.maxLoadPerCore`. Otherwise it builds on a machine that
-  accepts the build and is expected to be faster: any accepting machine while
-  every slot here is busy, or a machine less loaded than this machine while only
-  the load here is high. A remote machine too old to report its load is used
-  only while every slot here is busy.
-- `force` builds on a remote machine whenever one accepts the build.
-- `off` builds here when local remains enabled in the automatic build pool.
+  core under `server.maxLoadPerCore`. Otherwise it builds on the first
+  accepting remote machine in order. A remote machine too old to report its
+  load is used only while every slot here is busy.
+- `remote` builds on the first accepting remote machine in order, whatever the
+  load here, and builds here when none accepts.
+- `remote-only` does the same and refuses when none accepts.
 
 Load per core is the 5-minute load average divided by the CPU count.
 `server.maxLoadPerCore` (default 2) is also the busy threshold for automatic
-iOS and Android device placement. It is the load per core at which a machine
-counts as saturated: this machine stops preferring itself, and a remote machine
-declines offloaded builds.
+iOS, Android and macOS placement. It is the load per core at which a machine
+counts as saturated: each machine applies its own value, a remote machine
+declines offloaded builds past it, and automatic placement skips it.
 
-`STIM_REMOTE_BUILD_MODE` overrides it for one command in `auto`. Device, Release and
+Device, Release and
 `--remote eas|proxy` builds, Android builds with the Apple Clang CAS compiler cache, and
 iOS/Android runs with the build cache off, always build here. Hosted iOS Debug
 builds can use a separate `--remote-build`, targeting the hosting Mac's
@@ -446,19 +505,23 @@ architecture and runtime.
 
 In `auto`, an offloaded iOS/Android build runs prebuild (and `pod install` for iOS) here, then asks
 every paired machine what it can build. Stim picks one whose Stim build
-matches and, for iOS and macOS, whose CPU architecture matches the target simulator, with at least 10 GB free, that does
-not decline, preferring the one that already holds this repository, then the
-least loaded. When a machine that offered fails the sync or refuses to start
+compatibility version matches and, for iOS and macOS, whose CPU architecture matches the target simulator, with at least 10 GB free, that does
+not decline, taking the first in `remote.machines` order. When a machine that offered fails the sync or refuses to start
 the build, for example because it got busy meanwhile, Stim tries the next one
 in that order:
 
 - For iOS, its Xcode and simulator SDK must match, and it needs an iPhone
-  simulator on the target runtime. Its project-selected CocoaPods must match too, unless the
-  project's `Gemfile.lock` pins CocoaPods: both machines then run that version
-  through Bundler, so the machine needs only Bundler on its stim-server `PATH`
-  and installs the pinned gems itself on the first build. The comparison uses
+  simulator on the target runtime. A missing or different global CocoaPods keeps `auto`, `remote` and
+  `remote-only` placement from choosing the machine for a project that does not pin it, unless the
+  machine already holds the exact artifact. The placement line says why and
+  `stim doctor` shows the install command. A named `--remote-build` still sends the build;
+  a `pod install` that fails there reports "pod install failed" with the fix on that
+  machine. When the project's `Gemfile.lock`, in `ios/` or the project root, pins CocoaPods, both machines run that version
+  through Bundler, so the machine needs Bundler on its stim-server `PATH`
+  and installs the pinned gems itself on the first build. This machine's side of
+  the comparison runs `pod --version` in the directory `pod install` runs in. The comparison uses
   `.ruby-version` when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.
-- For macOS, its Xcode and macOS SDK must match. The worker needs network
+- For macOS, its Xcode and macOS SDK must match, unless `--remote-build` and `--remote` name the same Mac, which builds and runs the app and then needs only the same Stim build compatibility version (see [macOS development](./macos.md#run-it-on-another-mac)). The worker needs network
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally. Completed
   caching requires `macos.artifactInputs` and a locally verified compile; remote
@@ -466,7 +529,9 @@ in that order:
 - For Android, its CPU architecture may differ, so an x86_64 Linux or Windows machine
   running stim-server can build for an Apple silicon Mac. Its JDK major version must match (the vendor may differ), and
   its Android SDK must hold the NDK, build-tools and compile platform that the
-  project's React Native version names in `gradle/libs.versions.toml`. Gradle
+  project's React Native version names in `gradle/libs.versions.toml`, or have
+  its licenses accepted so Gradle downloads what is missing on the first build
+  (unless the project sets `android.builder.sdkDownload=false`). Gradle
   and the Android Gradle plugin come from the synced project. It builds with
   this machine's variant, target ABI, Gradle build cache, PCH and compiler cache
   choices, so the APK matches the ABI-narrowed cache key.
@@ -494,7 +559,7 @@ offloaded app lands only in this machine's build cache, not in a remote cache
 provider. A project whose `xcodebuild` changes its own fingerprinted inputs
 builds on the machine, fails the fingerprint check there; `auto` builds here and a named selection
 refuses, so
-set `remote.buildMode` to `off` for it. The `--json` payload and `lastBuilds` carry
+set `remote.build` to `local` for it. The `--json` payload and `lastBuilds` carry
 `offloadedTo`, or `offloadFallback` with the reason it built here,
 `stim status` shows the machine and its step while a build runs there, and
 `stim stats` counts offloaded runs apart from cold runs and keeps where each
@@ -518,10 +583,12 @@ remote machine's `concurrency.maxBuilds` slots, so a local `stim ios` or
 slot is freed when the build ends, is cancelled, or its process is gone. Delete
 a client's directory there to reclaim its space.
 
-For Android builds, start stim-server on the remote machine with `JAVA_HOME`
-pointing at a JDK of the same major version as the clients (otherwise it
-uses the macOS default JDK, which `java_home` may not find, for example with
-Homebrew's `openjdk@17`) and `ANDROID_HOME` at its Android SDK (default
+For Android builds, the remote machine builds on an installed JDK of the same
+major version as the client (found in the system JVM directories, Homebrew,
+Android Studio and SDKMAN) even when its default JDK is another one; a machine
+with none gets the install command as the fix. Start stim-server with
+`JAVA_HOME` at such a JDK only to choose it for every build, and with
+`ANDROID_HOME` at its Android SDK (default
 `~/Library/Android/sdk`, or `~/Android/Sdk` on Linux). After an Android build, the client's Gradle daemon
 stays warm for `server.gradleDaemonIdleMinutes` (default 30; `0` stops it
 when each build ends), so the client's next build skips a JVM start of about
@@ -545,7 +612,11 @@ reports the process, its health, the route, Stim Host's permissions and
 whether its Stim build matches the `stim` on PATH. Doctor points to this
 command when a named machine does not answer.
 
-Offload needs the same Stim build on both machines. To move the remote machine's
+Offload needs Stim releases with the same build compatibility version on both
+machines. It changes only in a release that changes what a worker builds, how it
+builds, or the build messages, so two machines on different Stim builds usually
+offload to each other. A stim-server too old to report its compatibility version
+needs the same Stim build as this machine. To move the remote machine's
 service to another build, run one of these there:
 
 ```bash
@@ -613,7 +684,10 @@ workspaces, clears the build outputs of workspaces idle for 10 minutes (least
 recently used first), and
 trims shared cache entries unused for 14 days. The last two steps run only for
 disk. Each step prints a `budget` line on stderr, and `--json` output lists them
-under `reclaimed`. The current workspace, a device someone is driving or has
+under `reclaimed`. A cache trim that removed nothing is not repeated for 5
+minutes while the same caches exist and free disk has not fallen by more than
+1 GB; the skipped run prints one `budget` line saying so. `stim gc` and
+automatic maintenance never skip. The current workspace, a device someone is driving or has
 locked, and a workspace with a build in progress are never reclaimed. A memory
 or workspace limit never refuses a command. `0` turns a check off. When
 `STIM_HOME` is set, the budget is off unless its environment variable is set.
@@ -625,7 +699,9 @@ stim settings set budget.minFreeDiskGb 40
 ```
 
 Without waiting for a budget, `devices.idleShutdownMinutes` shuts down a
-workspace's owned simulators and emulators once they have been idle that long.
+workspace's owned simulators and emulators once they have been idle that long,
+through the workspace's dev server supervisor or, with no supervisor, through
+automatic maintenance every `maintenance.idleCheckMinutes` (5).
 It is on by default at 30 minutes; see
 [idle shutdown](./owned-devices.md#idle-shutdown).
 
@@ -687,8 +763,8 @@ stim settings set workspace.hidden true
 
 `workspace.hidden` is false by default and lives only in the workspace layer, so
 it takes no `--scope`. `stim status --json` reports `hidden: true` on that
-environment. The next `start`, `ios`, `android`, `web`, `macos`, `reload` or
-`worktree warm` in the workspace clears it, so a workspace in use is never
+environment. The next `start`, `ios`, `android`, `web`, `macos`, `reload`, `logs`
+or `worktree warm` in the workspace clears it, so a workspace in use is never
 hidden. `stim settings unset workspace.hidden` shows it again, and
 `worktree remove` drops it with the workspace.
 
@@ -710,6 +786,7 @@ Stim also reads these variables, which have no setting:
 | `STIM_METRO_PUBLIC_URL` | Public Metro URL for remote use                                                                                                                                                  |
 | `STIM_NO_UPDATE_CHECK`  | Set to disable the daily check for a newer Stim release in `stim guide`                                                                                                          |
 | `STIM_RUN_ID`           | Id for this `stim` invocation (letters, digits, `.`, `_`, `-`, at most 64); stamped as `runId` on every log record it writes and sent to stim-server. Default: generated per run |
+| `STIM_TRACE`            | Path of a Chrome trace file the command writes its timeline to; see [Timing traces](#timing-traces). Default: unset, nothing written                                             |
 
 Processes a command starts, such as the Metro supervisor and the collectors, inherit its `STIM_RUN_ID`, so their records carry the id of the command that started them.
 
@@ -742,6 +819,13 @@ largest kind of the oldest archive while total caps are exceeded. Artifact
 expiry keeps records. Turning `recording.enabled` off at machine scope deletes
 archived recordings on the next retention pass.
 
+The same `archive.enabled`, `archive.maxAgeDays` and `archive.maxTotalGb` govern
+the uncommitted changes gc archives before it removes a dirty finished worktree
+([remove finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk)).
+Those archives have their own `archive.maxTotalGb` budget, so all archives
+together can take twice that, and `archive.enabled false` keeps such worktrees
+instead.
+
 <StimTabs code="stim settings set archive.enabled false --scope repo" />
 
 See [archived workspaces](./worktrees.md#archived-workspaces) for privacy and deletion.
@@ -754,7 +838,9 @@ measures, plans and logs and deletes nothing, and `off` disables passes.
 `STIM_HOME` and `CI` make the mode `off` unless `STIM_MAINTENANCE` is set.
 All of these settings have machine scope except `maintenance.keep`, a project
 setting that pins a workspace: automatic passes never clear its build outputs,
-delete its owned devices or remove its worktree. GB and MB below mean GiB and MiB.
+delete its owned devices or remove its worktree. `maintenance.idleStopHours`
+takes machine and project layers; see
+[idle workspace stop](./dev-server-and-logs.md#idle-workspace-stop). GB and MB below mean GiB and MiB.
 
 <MaintenanceSettings />
 
@@ -769,13 +855,15 @@ build holds its claim on it or that claim is unresolved.
 `maintenance.urgentFreeDiskGb`, `maintenance.criticalFreeDiskGb` and
 `maintenance.pressureProtectMinutes` set the
 [disk pressure levels](./build-caches.md#disk-pressure-levels). `caches.ccacheMaxGb` is
-passed to ccache, which evicts by itself. `maintenance.sweepHours` and
-`maintenance.olderThanDays` set the daily sweep of idle build outputs and old
-cache entries; `maintenance.deviceIdleDays` sets how long a workspace stays idle
+passed to ccache, which evicts by itself. `maintenance.sweepHours` (24) sets how
+often the age sweep runs. `maintenance.olderThanDays` (7; 0 turns these off) is how long
+something stays unused before that sweep removes it: workspace build outputs,
+shared cache entries, parked simulators and emulators, and clean, pushed linked
+worktrees (only with `maintenance.removeIdleWorktrees`, off by default); `maintenance.deviceIdleDays` sets how long a workspace stays idle
 before that sweep deletes its owned simulators and emulators (0 turns it off);
 `maintenance.gradleVersionIdleDays` (7) sets how long a Gradle version no project pins stays unmodified before level 3 stops the idle Gradle and Kotlin daemons that keep it and deletes it (0 turns that off);
 `maintenance.removeFinishedWorktrees` controls the worktree
-check. Memory pressure is recorded; below disk pressure level 3 a pass never stops a dev server (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
+check. Memory pressure is recorded; below disk pressure level 3 a pass stops a dev server only after `maintenance.idleStopHours` without real activity (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
 
 ## Debug logs
@@ -798,4 +886,33 @@ Try this with your agent:
 Turn on debug.logs, rerun the command that stalled, then read
 ~/.stim/logs/debug/cli.ndjson and tell me which child process or remote request
 took the time.
+```
+
+## Timing traces
+
+`STIM_TRACE=<path>` writes a timeline of one command to `<path>` as Chrome trace
+events. Open the file in [Perfetto](https://ui.perfetto.dev) or `chrome://tracing`
+to see where `worktree warm`, `start`, `ios`, `android` or `stop` spent its time:
+one span per child process, one per build phase (the phases `stats.json` and the
+build ledger record), and spans for the fingerprint and the wait for Metro.
+Unset, Stim writes nothing. There is no setting for it, and the trace goes only
+to that file, never to stdout or stderr, so `--json` output is unchanged.
+
+<StimTabs code="STIM_TRACE=/tmp/ios.json stim ios" />
+
+The command you start truncates the file; the processes it starts, such as the
+Metro supervisor, append to it, so use a new path for each command. The file is a
+JSON array with one event per line and no closing bracket, which Perfetto and
+`chrome://tracing` accept. Argument values of flags that look like secrets,
+credentials in URLs and common token shapes are replaced with `[redacted]`, as
+are the credentials of `curl -u` and `security import -P`. Other programs'
+short flags such as `-p` and `-u` are kept, because they usually mean a path, a
+port or a user. A trace still holds full paths and arguments, so treat it like a
+log.
+
+Try this with your agent:
+
+```text
+Run stim ios with STIM_TRACE=/tmp/ios.json, then read the file and tell me which
+build phase and which child process took the most time.
 ```

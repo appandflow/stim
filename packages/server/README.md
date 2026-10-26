@@ -42,15 +42,15 @@ serving command: see [Run as a service](#run-as-a-service). When serving, a bare
 `pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
 `from` (where it paired from, as a label only), `keyFingerprint`, `pairedAt`,
-`lastSeenAt` and `capabilities`, followed by the [build clients](#build-access)
+`lastSeenAt` (refreshed by a hello at most once a minute) and `capabilities`, followed by the [build clients](#build-access)
 and [device-host clients](#device-host-approval). The plain listing shows
 `from` and the first 12 characters of the key fingerprint.
 `log --json` prints `{ "actions": [...] }`, the records described under
 [Actions](#actions).
 
 `GET http://127.0.0.1:7787/health` answers requests from this machine with the
-server's name, versions, `stimBuild` (the digest of the bundled Stim's build,
-which offload compares between machines), protocol, `stimHome`, `startup`, `busy`
+server's name, versions, `stimBuild` (the digest of the bundled Stim's build),
+protocol, `stimHome`, `startup`, `busy`
 (the offloaded `builds` and `hostedSessions` running now) and the current
 Tailscale state. It answers HTTP 200 once `startup.state` is `ready`; while the
 state is `pending` or `degraded` (see the LaunchAgent notes below) it answers
@@ -93,7 +93,7 @@ it appends the default Node of nvm, fnm, Volta, mise or asdf, Homebrew,
 `JAVA_HOME` to a Homebrew `openjdk` (17, then 21, then the newest), else Android
 Studio's bundled runtime, when no JDK is installed under
 `/Library/Java/JavaVirtualMachines`. It never replaces a variable it was given,
-and its own Node's directory is always the last `PATH` entry. CocoaPods uses the
+and its own Node's directory is always the last `PATH` entry. The build host repeats this discovery for each build offer, toolchain read and build start, so a tool installed after the server started, such as Homebrew's directory, a JDK or the Android SDK, is found without a restart, within the minute the toolchain report is cached. A `PATH` line added to a shell profile is never read. CocoaPods uses the
 project's `.ruby-version` Ruby, else rvm's or rbenv's default Ruby, and reads the
 login shell only when neither exists. Anything else a shell profile sets, such as
 `STIM_*` variables, reaches the server only through its environment or `--env`.
@@ -275,7 +275,9 @@ reports without starting a CLI process. `desktop.reports.get` takes
 Doctor accepts a selected folder before it is registered with Stim. The result is
 `{ "pending": false, "value": { ... }, "measuredAt": "..." }`; a failed read
 returns `stim-failed`. Doctor never repairs the project or records a CLI run, and
-GC never deletes anything.
+GC never deletes anything. The GC report, here and in `machine.details`, takes
+worktree build-state sizes only from the disk-usage cache and runs no `du` for
+them; a stale size is `null`.
 
 The local-only `desktop-report-platform` feature adds an optional `"platform": "ios"`
 or `"platform": "android"` to doctor targets. Omitting it checks all selected platforms.
@@ -291,12 +293,17 @@ Active subscriptions refresh after 60 seconds; no refresh timer runs without
 subscribers. `unsubscribe` and disconnect remove the subscription. Cancelling a
 get request does not cancel another reader's shared work.
 
-After changing settings, running an action, or explicitly refreshing a view,
-Desktop calls `desktop.reports.invalidate` without parameters. This invalidates
-all report targets and refreshes active subscriptions. Results started before
-invalidation cannot replace a newer result or satisfy a waiting get. The existing
-request and subscription caps, report byte quota, API execution and cleanup
-budgets, and 150-second server limit apply. At most four shared report probes run
+`desktop.reports.invalidate` without parameters invalidates all report targets
+and refreshes active subscriptions. With the local-only
+`desktop-report-invalidate-target` feature it also takes a report target, as
+`desktop.reports.get` does, and invalidates only that target, so a fresh read
+of one report does not restart the others. Results started before
+invalidation cannot replace a newer result or satisfy a waiting get; invalidation
+aborts such a probe, so a waiting get waits only for the fresh one. A waiting get
+does not use one of the connection's request slots: a connection can wait for 16
+reports at a time, and more fail with `limit-exceeded`. The subscription cap,
+report byte quota, API execution and cleanup budgets, and 150-second server limit
+apply. At most four shared report probes run
 at once across connections and targets. A new target above that limit returns a
 busy error without starting or queuing work; invalidate and retry after a probe
 finishes. Unsubscribing does not release a probe's slot before it drains.
@@ -359,7 +366,10 @@ person approves does setup store the ticket's derived PSK and lookup in
 gets `unknown-secret`, and its `stim doctor` reports the machine as pending and
 tries again on every run. The requester's next first-contact handshake with the
 ticket records its public key once per approved capability, which spends the
-ticket. From then on the ticket admits only that key, until it expires, so a
+ticket. While it waits, setup says so ("Waiting for the requesting machine to
+connect. Stim Desktop sends this automatically.", or the `stim doctor`
+instruction for a Doctor-made command) and confirms each approval when it
+arrives. From then on the ticket admits only that key, until it expires, so a
 requester that lost the reply can retry; setup deletes an unspent secret when it
 ends. Build and
 device-host approvals are separate records. A build grant carries no `read` or
@@ -460,8 +470,9 @@ connection itself with a Noise handshake (see [Pairing](#pairing)), so
 Tailscale's identity of a peer only labels it. You need Tailscale on the Mac and on the phone, in the
 same tailnet or with the Mac shared to the phone's user.
 
-`stim-server` listens only on `127.0.0.1` and on the machine's Tailscale
-addresses, never on every interface. It re-reads the Tailscale state in the
+`stim-server` listens only on `127.0.0.1`, on the machine's Tailscale
+addresses and on the local network addresses `server.lanAddresses` names (see
+[Local network](#local-network)), never on every interface. It re-reads the Tailscale state in the
 background, so a server that started before Tailscale was up, or while it did
 not answer, starts listening on the Tailscale addresses once it runs, and stops
 when it goes away. In Stim Desktop, the Pair a Phone wizard (Settings > Phones) creates and
@@ -499,6 +510,38 @@ through Funnel. Only the fixed `tailscale serve --bg --https=<free port>
 http://127.0.0.1:<server port>` invocation runs, followed by route verification.
 No LaunchAgent or Funnel configuration is created. Failure output remains
 available for an explicit retry, including Tailscale's HTTPS approval link.
+
+## Local network
+
+Without Tailscale, `stim-server` also serves machines and phones on the same
+local network through `@stim-cli/transport-local`, on the private IPv4
+addresses the machine setting `server.lanAddresses` names: network interface
+names such as `en0`, or addresses. The setting is empty by default, which
+listens on no local network address, and wildcard (`0.0.0.0`), loopback, public
+and IPv6 addresses are refused; the log names each entry it cannot use. The
+server re-reads the setting and the interfaces every few seconds, so a change or
+a new DHCP lease applies without a restart, and the local `/health` reports the
+addresses it listens on as `lan: { addresses, port }`.
+
+A local network connection is plain WebSocket on the server's own port. Every
+connection runs the Noise handshake before any request, so it needs no TLS and
+the address never identifies a client. Before a client authenticates, each
+network listener holds at most 64 connections, 16 from one address; it closes a
+connection that sends no request within 10 seconds or does not finish the
+handshake within 5, and turns an address away for a minute after 5 failed
+handshakes or 60 first contacts naming a pairing token or setup ticket it does
+not hold. `/health` tells a peer only the version, and `/setup/<journal>`
+serves only setup progress, never a secret. Prefer addresses to interface names
+on a machine that moves between networks: an interface name follows it onto
+any private network it joins.
+
+When `server.lanAddresses` is set, `stim-server setup` waits up to 15 seconds for the local network
+listener, and skips the tailnet route only when Tailscale is not running. It prints its endpoints and this server's key fingerprint, and warns when
+the macOS application firewall is on, since other machines cannot connect until
+a person allows stim-server's `node` there. Setup never changes the firewall.
+The requesting machine pins the worker's key only after a person confirms that
+fingerprint in `stim doctor --fix`. `stim-server pair` uses the first local
+network address as the pairing endpoint when Tailscale is not running.
 
 ## Pairing
 
@@ -547,8 +590,11 @@ are not carried over: phones pair again, and remote machines are approved
 again with a new setup ticket.
 
 Stim Desktop and other clients of the server's own user on the same machine do
-not pair. They connect to the Unix socket `$STIM_HOME/server/local.sock`, mode
-0600 in a 0700 directory, which serves only this user and needs no handshake.
+not pair. They connect to the Unix socket `$STIM_HOME/server/local.sock`. If
+that path exceeds the platform's limit (103 UTF-8 bytes on macOS, 107 on Linux), the socket instead lives at
+`/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`, so long hosted
+session homes remain usable and distinct homes keep distinct sockets. The
+socket is mode 0600 in a mode 0700 directory owned by this user and needs no handshake.
 That connection gets read and control. The Desktop-only methods (`route.setup`,
 `machines.update.*`, `device-host.sessions` and `device-host.sessions.stop`)
 work only there; on a server Desktop started, only after the private Desktop
@@ -556,8 +602,13 @@ bootstrap proof (see [Private Desktop bootstrap](#private-desktop-bootstrap)).
 Windows has no socket.
 
 The network address, `tailscale whois` and the `X-Forwarded-For` header that
-`tailscale serve` adds never authenticate. They only label a record (`from` in
-`stim-server devices`) and key the rate limits below.
+`tailscale serve` adds never authenticate. They label a record (`from` in
+`stim-server devices`) and key the rate limits below. Tailscale rewrites the
+header to the real tailnet source, so remote clients cannot forge it. A local
+process on the host can connect to the loopback port and forge it to lock one
+named peer, or the shared local bucket, out for the lockout window. It
+authenticates nothing and reads nothing. This is accepted because it needs
+local code execution on the host.
 
 A connection must finish the handshake and send `hello` within 5 seconds of
 each step. Five failed attempts from the same peer address within a minute
@@ -1118,18 +1169,35 @@ app is running. Automatic CLI placement remains a follow-up in [#2403](https://g
 
 ### Private hosted Metro
 
-The client keeps its verified workspace Metro on loopback. It creates a
-`createMetroGateway` from `@stim-cli/core`, binds it only to its own Tailscale
-address, and supplies the pinned worker's literal tailnet address, local Metro
-port and a fresh 32-byte secret encoded as 64 lowercase hex characters. The
-gateway accepts only that worker address and authenticates each connection
-before forwarding to the fixed local Metro port. It never targets a client
-supplied URL. Close the gateway when its session ends.
+The client keeps its verified workspace Metro on loopback, and the worker never
+connects to the client. On its own approved `device-host` connections, the
+client calls `device-host.metro.link` with `{session}`. The server answers `{}`
+and holds that connection as an idle link of the session; it refuses a session
+that is not this client's ready iOS or Android session and a second link on the
+same connection. A session holds at most 16 idle links: a new one closes the
+oldest, so links whose client vanished without closing them cannot crowd out
+live ones. The server pings each idle link every 15 seconds and ends one that
+missed the previous pong. A link carrying a stream is not checked this way,
+since backpressure can hold its pongs; it ends when either side closes it or
+its TCP connection fails. The feature `hosted-metro-link` advertises it.
 
-Call `device-host.metro.open` with `{session, gatewayPort, secret, clientMetroPort?}` on the
-approved hosted connection. The server connects only to that connection's
-authenticated tailnet peer and returns `{port}` for the worker's loopback
-endpoint. `clientMetroPort` is required for Android and validated as an integer
+Call `device-host.metro.open` with `{session, clientMetroPort?}` on the approved
+hosted connection; it returns `{port}` for the worker's loopback endpoint. A
+request that still carries the retired `gatewayPort` or `secret` comes from a
+client that predates links and is refused with `protocol-unsupported`, naming
+the client update. For each connection the hosted device makes to that
+endpoint, the server takes the newest idle link, waiting up to 10 seconds for
+one, sends it the event `device-host.metro.link.open`, and then carries that
+one TCP stream as binary frames in both directions with backpressure. A clean
+end on either side closes the link connection with code 1000, and the other side
+ends its socket after writing what it already received, on the server as
+long as the device keeps reading within 30 seconds. A device or Metro connection that fails or resets closes the link
+with 4410, and the other side resets its socket too. The client forwards a link only to its fixed loopback
+Metro port, never to a client supplied URL, and opens a replacement link for
+each one the server opens. Client frames stay within the 64 KiB client message
+limit.
+
+`clientMetroPort` is required for Android and validated as an integer
 from 1 through 65535. The session records it alongside the bridge port. Android
 development installation reverses `tcp:<clientMetroPort>` to `tcp:<port>` on
 the exact ledger-owned serial and sets `debug_http_host` to
@@ -1138,16 +1206,21 @@ a fixed reverse worker under its child-aware claim, serialized with install
 and stop, so a client reload restores the mapping after a host adb server
 restart. The worker never restarts the shared adb server. iOS development
 installation uses the bridge port for `RCT_jsLocation` and,
-when offered, the Expo development-client deep link. HTTP and WebSocket bytes
-stream over WireGuard with socket backpressure; no public tunnel, Funnel or
-Tailscale serve configuration change is needed. The 64 KiB server message
-limit remains unchanged.
+when offered, the Expo development-client deep link. No public tunnel, Funnel
+or Tailscale serve configuration change is needed, and the worker needs no
+network path to the client.
+
+An approved client calls `device-host.metro.ports` with `{ports}`, at most 256
+of them, before it starts Metro for an iOS Expo dev client, and the host
+answers `{busy}`: the listed ports that already accept loopback connections,
+apart from the client's own dev-client bridges. The feature
+`hosted-metro-ports` advertises it.
 
 Replaying the same open request keeps the port. Client disconnection leaves
 the bridge available for the same session while its server owner lives. Call
-`device-host.metro.close` to replace a gateway, then reopen on the same port;
+`device-host.metro.close` to change the client Metro port, then reopen on the same port;
 an occupied port refuses rather than sending the app to another listener.
-Closing a bridge interrupts its active streams. Stop, revocation and server
+Closing a bridge closes its idle links and interrupts its active streams. Stop, revocation and server
 shutdown close its sockets before device retirement. After a server owner
 disappears, the retained session requires explicit stop, as app delivery does.
 
@@ -1346,7 +1419,10 @@ event loop. Until that read returns, `/health` answers HTTP 503 with
 requests get 503, and no status follower, native helper, file watcher or
 recorder starts. A read that does not return within 10 seconds, plus up to one
 second to stop the child, leaves the server listening with
-`startup: { "state": "degraded", "reason": "..." }` and HTTP 503 on `/health`,
+`startup: { "state": "degraded", "reason": "...", "cause": "home-unreadable" }`
+(`start-failed` when starting failed after the read returned) and HTTP 503 on
+`/health` (a tailnet peer sees only `{ "version", "startup": { "state",
+"cause" } }`, because the reason names the Stim home path),
 logs the reason once, and reads again every 30 seconds. When a read returns,
 the server starts its watchers and recorder, `/health` answers 200 with
 `startup: { "state": "ready" }`, and no restart is needed. `service status`
@@ -1601,13 +1677,20 @@ connected since stim-server started keeps its directory when revoked.
   same Ruby selection and UTF-8 locale defaults as `pod install`; omitting
   `rubyVersion` uses the worker's default Ruby. It
   returns `toolchain` (`stimBuild`, a digest of the bundled Stim's built code;
+  `compat`, the bundled Stim's build compatibility version, which a client
+  compares instead of `stimBuild` when it is present;
   `os`, the OS stim-server runs on as Node names it (`darwin`, `linux`, `win32`);
   `arch`; `xcode`; `simulatorSdk`; `macosSdk` (from
   `xcrun --sdk macosx --show-sdk-version`); `cocoapods`; `runtimes`, the simulator
   runtimes with an iPhone simulator to build for; `jdk`, the major version of
-  the JDK in `JAVA_HOME` or the macOS default; and `androidSdk`, the `ndk`,
+  the JDK in `JAVA_HOME` or the macOS default; `jdks`, the majors of every JDK it finds
+  (`JAVA_HOME`, the system JVM directories, Homebrew, Android Studio's JBR, SDKMAN), the default included; `developerDir` (what `xcode-select -p` prints) and `xcodeApps` (the Xcode apps in
+  `/Applications` with `version`, `build` and, while `xcode` is null, the `license` and `firstLaunch` checks of each), on a Mac; and `androidSdk`, the `ndk`,
   `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME`, else `~/Library/Android/sdk` on macOS or
-  `~/Android/Sdk` on Linux, null without one), `capacity` and `warm`
+  `~/Android/Sdk` on Linux, null without one), `androidHome` (that directory) and
+  `androidLicenses` (whether `licenses/android-sdk-license` in it has content, so
+  Gradle can download a missing package; both absent from a server older than
+  them, and from a worker without an SDK), `capacity` and `warm`
   (`checkout`, `dependencies`, and the legacy `build` field, now always false)
   for that repository. For React Native and Expo builds, clients supporting `build-dependency-cache` can send
   `dependencies: { project, packageName }` alongside `lockfile`; the dependency
@@ -1638,8 +1721,10 @@ connected since stim-server started keeps its directory when revoked.
   architecture and target options. These are exact lookups, not a full inventory.
   With `react-native-peer-cache`, a React Native/Expo development offer can send
   `reactNativeArtifact: { project, fingerprint, isExpo, platform, toolchain, ios | android }`.
-  The query includes the caller's compatible toolchain and normalized native
-  build choices; the worker constructs its own receipt around compilation.
+  The query includes the caller's compatible toolchain, whose `toolchain.compat`
+  takes the place of `stimBuild` with `build-compat`, and normalized native
+  build choices; a caller sends React Native and SwiftPM queries only to a
+  server with `build-compat`; the worker constructs its own receipt around compilation.
   The returned identity is opaque, not an alias for the caller's local cache key.
   The completed receipt binds the worker-verified post-mutation fingerprint
   and native options to the toolchain checked before and after compilation.
@@ -1647,7 +1732,7 @@ connected since stim-server started keeps its directory when revoked.
   does not discard a matching archive. Older workers receive no new query
   parameters and continue through their normal build path.
   With `swiftpm-peer-cache`, `swiftpmArtifact` carries `project`, `sourceDigest`,
-  `stimBuild`, complete `inputs` (`ignored`, `outputs`, `localFiles`,
+  `stimBuild` or, with `build-compat`, `compat` in its place, complete `inputs` (`ignored`, `outputs`, `localFiles`,
   `environment`) and `build` (`product`, `infoPlist`, `resources`, `assetCatalog`).
   Resource and catalog paths are repository-relative; the plist is
   project-relative. The worker verifies actual transferred files and full
@@ -1697,14 +1782,27 @@ connected since stim-server started keeps its directory when revoked.
   simulator runtime identifier, required for `ios`, null for `android`),
   `fingerprint`, `packageName`, `isExpo`, `optimizations`, `android` (for
   `android`: `variant`, `abi`, `gradleBuildCache`, `pch` and `compilerCache`,
-  `ccache` or `none`) and `stimBuild`, after the whole manifest of `repo` was
+  `ccache` or `none`), `stimBuild` and, from a caller that saw `build-compat`, `compat`, and, for Android from a caller
+  that saw `build-jdk`, `jdk` (the JDK major its Gradle runs on; the build runs with `JAVA_HOME` at an installed JDK of
+  that major, and fails if there is none), after the whole manifest of `repo` was
   synced on this connection. A peer-cache-capable React Native caller can set
   `cacheArtifact: true` to retain a completed development archive when its cache
-  write and remote policies allow it. It returns `{ "job" }`. It fails with
+  write and remote policies allow it. With the `fingerprint-sources` feature, a
+  caller can send `fingerprintSources`, the `id` and `hash` of each source of
+  `fingerprint`, and a `fingerprint-mismatch` failure names the sources that
+  differ and the synced files prebuild or `pod install` rewrote. With the
+  `fingerprint-ignored` feature, it can send `fingerprintIgnored`, the paths
+  relative to `project` that its git ignores for `fingerprint` through
+  `.git/info/exclude` or a global excludes file, which the machine's synced
+  checkout has no copy of. With the `fingerprint-tracked` feature, it can
+  send `fingerprintTracked`, the top-level entry names of `project` that its
+  git tracks although an ignore pattern matches them, which the machine's
+  empty index would skip. It returns `{ "job" }`. It fails with
   `build-busy` while the offer would be declined, naming the reason, or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with
-  `build-refused` when `stimBuild` differs. The build runs `offload-worker.mjs` of the bundled Stim with
+  `build-refused` when `compat` differs from this machine's, or, when either
+  side has no `compat`, when `stimBuild` differs. The build runs `offload-worker.mjs` of the bundled Stim with
   `STIM_HOME` set to the repository's area. It makes the area's checkout
   hold exactly the manifest (a file git lists as untracked and not ignored,
   and not in the manifest, is deleted; ignored dependencies and generated
@@ -1916,7 +2014,7 @@ Events are `{ "event", "subscription", ... }`.
   retained logs and agent-device session actions locally through core, with the same JSON filters, ordering,
   markers and error context. Archive reads are synchronous and queued per
   connection, yielding to the event loop between requests. Pending archive
-  reads share the four-request limit with commands. Archived session actions
+  reads share the connection's request limit with commands. Archived session actions
   retain available platform and device attribution; device ids and Stim slot
   assignments absent from retained files are unavailable after removal. They never follow files or use a hosted relay.
   An archive subscription sends its records in the same batches and limits,
@@ -2326,9 +2424,10 @@ Events are `{ "event", "subscription", ... }`.
 
 `workspace` is an environment `path` from a status payload. Any other path is
 refused with `unknown-workspace` and runs nothing. A connection holds at most
-32 subscriptions and runs at most 4 `logs.query`, `stats.get`,
+32 subscriptions and runs at most 32 `logs.query`, `stats.get`,
 `settings.get`, `build.plan`, `workspace.files` and `workspace.diff` requests at
-a time. `logs.query`, `stats.get` and `settings.get` fail after 60 seconds,
+a time, actions included. A tailnet device runs at most 16 across all its
+connections; more fail with `limit-exceeded`. `logs.query`, `stats.get` and `settings.get` fail after 60 seconds,
 `build.plan` after 150; these four fail at 32 MiB of output. Closing the
 connection stops running requests. When the command refuses with Stim's error
 contract on stdout, the `stim-failed` message is its code, message and remedy;
@@ -2497,7 +2596,6 @@ silent only when every notification it sums up is. An older server ignores
 `levels` and alerts for every event but `started`.
 
 The server and phone import the same pure rules from `@stim-cli/core/oversight`.
-The phone formats home attention messages locally from the facts the shared rule selects.
 `__tests__/oversight-agreement.test.ts` checks their categories, workspace names
 and needs-attention vectors. Notification delivery remains local to each.
 

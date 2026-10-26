@@ -1,4 +1,4 @@
-import { WATCH_CPU_STEP_PERCENT, WATCH_MEMORY_STEP_MB } from '../status-watch.ts';
+import { WATCH_CPU_STEP_PERCENT, WATCH_LOAD_STEP_PER_CORE, WATCH_MEMORY_STEP_MB } from '../status-watch.ts';
 import type { GuideTopic } from './types.ts';
 
 const lifecycle: GuideTopic = {
@@ -96,16 +96,19 @@ STIM_SUPERVISOR_EXITED, ...) before any build work. Release builds and
 \`--no-metro-check\` neither check nor start the dev server; hosted Debug iOS
 refuses --no-metro-check with STIM_BAD_ARG. \`--remote\`
 with eas or proxy starts it the way \`stim start --remote\` does. A named
-hosting Mac keeps Metro local through a private bridge; see hosted-ios. Step 2 remains useful to warm
+hosting Mac keeps Metro local through links this machine opens; see hosted-ios. Step 2 remains useful to warm
 Metro while other work happens.
 
 Each time Stim boots an owned local simulator or emulator, it mutes it: iOS
-simulators to volume zero through Xcode's devicectl once SpringBoard has
-finished starting, because SpringBoard resets the volume while it starts, and
-Android 15 and later emulators to media volume zero. A device that is already
-running keeps its volume. Turn sound on for one device with Sound (iOS) or
-Media sound (Android) in its Stim Desktop options; the choice lasts until that
-device next boots. Android 14 and older images have no shell command that can
+simulators to volume zero through Xcode's devicectl, and Android 15 and later
+emulators to media volume zero. The iOS mute runs after SimSlim has applied its
+profile and once SpringBoard has finished starting, because both a SimSlim
+reboot and SpringBoard's startup reset the volume. A device that is already
+running keeps its volume, except that a running simulator SimSlim reboots (a
+first slim, a profile change, or restoring stock services) is muted again once
+SpringBoard is back; an already slim simulator is not touched. Turn sound on
+for one device with Sound (iOS) or Media sound (Android) in its Stim Desktop
+options; the choice lasts until that device next boots. Android 14 and older images have no shell command that can
 set media volume, so startup warns, as it does whenever a mute is not
 confirmed. Host volume, Android alarm and ringtone volumes, hosted devices and
 physical devices are unchanged.
@@ -116,15 +119,24 @@ not part of the normal workflow. It is the explicit recovery path when Fast
 Refresh cannot clear the current screen, and on Android after a failed first
 bundle load. It reloads JavaScript and never restarts the app. Use \`stim
 reload ios\` or \`stim reload android\` to select a platform when both owned
-apps are live. For a physical device that reached Metro, use \`agent-device
-metro reload --metro-port <reported-port>\`. The detected iOS Local Network
+apps are live. With no owned launch recorded, it reloads the apps connected to
+this workspace's Metro, such as one on a physical device (--device); an
+Android phone needs its adb reverse. An app in an EAS Simulator session may not
+connect to Metro through the tunnel; then reload finds no app and the way to
+restart it is stim ios|android --remote eas.
+The detected iOS Local Network
 first-load remedy uses agent-device UI automation because no Metro peer exists
-yet. It never builds, installs, boots, or cold-launches. It acts only on a live
-app on this workspace's owned local simulator or emulator, and refuses release
-builds, stopped or unowned devices, a missing or foreign Metro, and an
-ambiguous no-platform request. Every reload goes over this workspace's Metro
+yet. It never builds, installs, boots, or cold-launches. It acts on a live app
+on this workspace's owned local simulator or emulator, or on the apps connected
+to this workspace's Metro, and refuses release builds, stopped or unowned
+devices, a missing or foreign Metro, and an ambiguous no-platform request. Every reload goes over this workspace's Metro
 websocket, on both platforms. It never reopens a development-client URL,
 because that restarts the app rather than reloading its JavaScript.
+
+Before sending, Stim checks that the app process exists. The iOS probe
+(\`simctl spawn launchctl list\`) waits 5 seconds, scaled up with host load to at
+most 30. When the device tool still does not answer, Stim sends the reload anyway;
+\`STIM_RELOAD_PROBE_FAILED\` is then reported only if Metro finds no peer for the app after the reload fails.
 
 An Android reload first lists \`adb reverse\` on each live owned emulator
 launched against this Metro and re-applies the Metro port's reverse where it is
@@ -152,7 +164,7 @@ dev menu.
 When Metro reports no peer for the app, Stim broadcasts a reload anyway before
 giving up, because matching is best-effort and an unmatched peer may still be
 this app. So verify the UI first: it may already have recovered. If it did not,
-retry: a client reconnects every 2 seconds, which is also this probe's timeout,
+retry: a client reconnects every 2 seconds, which is also the Metro probe's timeout,
 so a single miss can be a reconnect window rather than an app that never
 connected. If it stays unreachable on iOS, an error in the first bundle leaves
 the app without a packager connection at all, and no retry will make it a peer.
@@ -184,8 +196,9 @@ does not restart initialization. Confirm the bundle request and expected UI.
 
 Debug Android launches on an owned emulator that the run creates, or whose
 adoption from the pool it finishes, get up to 60 seconds for bundle loading;
-the verify phase names that budget. Existing emulators, remote targets, and physical devices keep the
-20-second budget.
+the verify phase names that budget. Existing emulators, remote targets, and physical devices get 20 seconds,
+extended up to 60 while an Expo dev client's manifest request is pending or was
+just served.
 Bundle delivery still requires the usual stability or app readiness check;
 an observed fatal error ends verification without waiting for the deadline.
 
@@ -263,7 +276,8 @@ WAITING FOR A CHANGE
   status payload per line: one at once, then one each time the payload
   changes, never two identical ones in a row. In a watch line, a usage
   figure repeats its value in the previous line until it moves by a step: an owner's cpuPercent ${WATCH_CPU_STEP_PERCENT} points, an
-  owner's or environment's memoryMb and capacity.committedMb ${WATCH_MEMORY_STEP_MB} MB. An owner's row
+  owner's or environment's memoryMb and capacity.committedMb ${WATCH_MEMORY_STEP_MB} MB, and
+  capacity.load as a whole until its loadPerCore moves ${WATCH_LOAD_STEP_PER_CORE} per core or its state changes. An owner's row
   changes as a whole, so its residentMb and processes update with it. A change
   in only a bookkeeping timestamp prints no line: each pullRequest.checkedAt,
   maintenance.lastChecks, maintenance.lastPass.startedAt and durationMs, and
@@ -490,9 +504,9 @@ If Stim is not installed globally, replace stim with npx stim.
 
 A person on the host approves device-host access, separately from build, read
 and control. The setup in hosted-ios also serves Android. android.remote sets
-a workspace default. eas and proxy remain backends. --remote auto or
-android.remote = auto places automatically; see hosted-ios for the shared
-policy. No flag or setting runs on this machine.
+a workspace default. eas and proxy remain backends. --remote auto, remote or
+remote-only (or the same android.remote value) places automatically; see
+hosted-ios for the shared policy. No flag or setting runs on this machine.
 
 A named Mac is strict: refusal, unreachable, declined or failed preparation
 returns STIM_HOSTING_REFUSED without fallback. --device with --remote
@@ -509,8 +523,8 @@ soon as it exists, then delivers one App.apk. The emulator boots headless;
 androidEmulatorApp is ignored with a note.
 
 React Native Debug requires the local Metro supervisor. metro.publicUrl and metro.tunnel
-are ignored with a note. A private tailnet gateway reaches the host loopback
-bridge; the host reverses the client's Metro port into that bridge on its exact
+are ignored with a note. Connections this machine opens to the host carry each
+device connection from the host loopback bridge to local Metro; the host reverses the client's Metro port into that bridge on its exact
 ledger-owned serial and sets debug_http_host to localhost:<clientMetroPort>.
 Each run and stim reload android restores the reverse, including after a host
 adb server restart. Reload broadcasts through the local Metro and never runs
@@ -533,7 +547,7 @@ session probe states; a conflicting local emulator remains visible with a
 warning. A recorded placement keeps the workspace in use and blocks idle stop.
 
 stop and worktree remove wait for device-host.stop, park the host's eligible owned
-emulator within pool.androidParkedMax (delete otherwise), close the gateway and clear placement. stop --json reports
+emulator within pool.androidParkedMax (delete otherwise), close the Metro links and clear placement. stop --json reports
 outcomes.device["android:host:<slot>"]. Forbidden or unknown-session also clears
 placement; an unreachable host keeps it and fails cleanup. A clean host restart
 parks eligible devices; a later reserve by the same client adopts a compatible
@@ -619,8 +633,8 @@ Logcat retains a finite buffer; records already evicted or persisted beyond the
 overlap may be unavailable. An oversized query retries the recent tail and writes
 a device warning naming any dropped interval. Followers share a child-aware log
 claim; install and stop cancel and settle the worker before native operations.
-Stop copies logs before and after the host's final collection and teardown, with
-each client drain bounded to 30 seconds and progress on stderr. Collected logs
+Stop copies logs once, after the host's final collection and teardown, bounded to
+30 seconds with progress on stderr; Ctrl-C cancels the copy and keeps the placement. Collected logs
 remain readable after stop. The host advertises hosted-android-data for Android
 handoff and native logs. Older hosts get a newer stim-server note, use upload
 and show records already copied here.`,
@@ -640,28 +654,44 @@ If Stim is not installed globally, replace stim with npx stim.
   stim reload ios
   stim stop
 
-The same setup serves macos --remote. Approval is separate from build, read
+The same setup serves macos --remote and macos.remote. Approval is separate from build, read
 and phone control. Set ios.remote to the machine name for a default (machine scope for every app on this machine);
 no flag or setting runs here. eas and proxy keep their remote backend meanings.
 --remote auto (or ios.remote = auto / android.remote = auto) stays here when
 there is a free concurrency.maxDevices slot (0 means unlimited), no device
 waiter ahead, normal host memory pressure, no budget shortfall,
 and 5-minute load per core below server.maxLoadPerCore. Without remote.machines,
-auto is local. An unknown local device count also stays local; boot admission
+auto and remote are local and remote-only refuses with STIM_HOSTING_REFUSED. An unknown local device count also stays local; boot admission
 still decides. The default without a flag or setting stays local. remote.devicePoolDisabled excludes
 members from new automatic placement only; an excluded local member is never a
 fallback. Existing sessions keep their owner and named placement bypasses the pool.
 See stim guide settings for separate build/device membership controls.
 
+--remote remote (or ios.remote = remote) skips that local check and asks the hosts
+first, in remote.machines order; the simulator runs here only when none admits
+it, with the same wait and EAS fallback as auto. --remote remote-only never runs
+here and never joins the local queue or uses EAS. When every host that answered is
+only full, loaded or short of memory, it waits for one to have room, polling every
+5 seconds for --wait seconds (default 600) and printing one placement line; --no-wait,
+--wait 0 or the end of the wait refuse with STIM_AT_CAPACITY. When no host can ever take
+the run (none configured, unreachable, declined for another reason such as paused),
+it refuses at once with STIM_HOSTING_REFUSED, naming each skipped host and its reason.
+--plan never waits. It prints the same STIM_HOSTING_REFUSED, or a STIM_BAD_ARG naming
+an invalid remote.build or STIM_REMOTE_BUILD.
+Excluding local in remote.devicePoolDisabled has the same effect on auto and remote.
+
 Otherwise Stim asks every approved remote.machines host in parallel, skipping
 one that tailscale status reports as running an OS other than macOS, with a
 3-second probe timeout and this run's model/runtime or image/profile selectors.
-A compatible choice, no declined reason, normal memory pressure and available
-capacity are required. With a free local slot, a host must report a lower load;
-with a full cap or a queue ahead, an admitted host with unknown load is allowed.
-Hosts rank by the build preference (flag > STIM_REMOTE_BUILD > remote.build)
-when it names a machine, then lowest load, most free memory and remote.machines order. Automatic build
-offload resolves later, after the device architecture is known.
+A compatible choice, no declined reason, normal memory pressure, available
+capacity and a load per core under the host's own server.maxLoadPerCore are
+required (a host that reports no limit uses this machine's). With a free local
+slot, a host with unknown load is skipped under auto (remote admits it); with a full cap or a queue ahead, an
+admitted host with unknown load is allowed. Admitted hosts are tried in order:
+the host named by the build preference (flag > STIM_REMOTE_BUILD > remote.build)
+when it names a machine, then remote.machines order, so the first listed host with
+room fills before the next gets a run. Load and free memory do not rank hosts.
+Automatic build offload resolves later, after the device architecture is known.
 
 When no host admits and this machine is at its concurrency.maxDevices cap (or runs
 are queued ahead), remote.easFallback (default false; EAS Simulator is billed)
@@ -676,9 +706,9 @@ is on PATH, the slot is default, no --runtime, --system-image or
 another platform or model, and a Debug run's Metro is reachable (not
 metro.tunnel off; on an Expo tunnel, run stim start --remote first). A recorded
 EAS session is not sticky: once this machine has room, auto runs here and the
-session bills until stim stop. If any check fails, or the
+session bills until stim stop or remote.easMaxDurationMinutes. If any check fails, or the
 setting is off, auto runs here and may wait in the existing FIFO device
-slot queue; --no-wait and --wait 0 refuse with STIM_AT_CAPACITY. The placement
+slot queue; --no-wait and --wait 0 refuse with STIM_AT_CAPACITY (remote-only has no local queue and waits for a remote host instead, as described above). The placement
 line explains the decision, the skipped hosts and why EAS was not used
 (machine "eas"). JSON progress goes to stderr.
 The same decision, with a reason code per host, is a src: placement record in
@@ -690,8 +720,8 @@ A reserve refusal after a successful offer can race with another run. It fails
 with STIM_HOSTING_REFUSED naming the host and asking to retry. Stim does not
 try the next host or local placement after the build has targeted that host's
 architecture, and never falls back once a hosted session exists. A named machine remains strict. --device
-cannot combine with --remote auto, and a --device run ignores ios.remote and
-android.remote. eas/proxy and macOS placement are unchanged.
+cannot combine with --remote auto, remote or remote-only, and a --device run ignores ios.remote and
+android.remote. eas/proxy placement is unchanged; macOS placement follows macos.remote (stim guide macos).
 --simulator-app is honoured locally with auto and ignored with a note on a host.
 Placement measures budgets without reclaiming; only a new local run reclaims.
 Android --remote <machine> uses an owned emulator on that Mac; see hosted-android.
@@ -723,16 +753,19 @@ sessions.
 
 
 Stim builds or fetches before reserving, records the session immediately, then
-uploads the app on every run. React Native and Expo Debug keep Metro here; the supervisor owns a
-private gateway bound to this machine's Tailscale address, pinned to the host peer
-and protected by a per-session secret. The host exposes only a loopback bridge.
+uploads the app on every run. React Native and Expo Debug keep Metro here; the supervisor keeps
+authenticated connections open to the host, and the host pairs one with each
+connection the simulator makes to its loopback-only bridge. The host never
+connects back to this machine.
 For an Expo dev client the bridge listens on this machine's Metro port, because
-the dev server writes that port into the manifest's bundle URL. If that port
-already accepts loopback connections on the host, the run refuses: pin a Metro
-port free on both Macs with metro.port, run stim stop; stim start, then retry.
+the dev server writes that port into the manifest's bundle URL. When this run
+starts Metro, it asks the host and picks a port free on both Macs, moving the
+recorded port if the host uses it. A running Metro or a metro.port pin on a port
+the host uses refuses before the build: run stim stop, then stim ios --remote
+<machine> without stim start, or pin a port free on both Macs.
 No start --remote is needed; metro.tunnel and metro.publicUrl are ignored.
-Debug requires a running supervisor with private gateway support before reserving
-a simulator. --no-metro-check refuses with STIM_BAD_ARG for hosted Debug runs.
+Debug requires a running supervisor and a host stim-server that support these
+links before reserving a simulator. --no-metro-check refuses with STIM_BAD_ARG for hosted Debug runs.
 If its supervisor is missing or older, run stim stop; stim start, then retry.
 Non-Debug runs skip Metro. Launch is unverified until this workspace's Metro
 provides bundle evidence, or the host proves a live release process. Native Xcode
@@ -745,14 +778,14 @@ hosting Mac, refuses for that slot: run stim stop first.
 Status adds ios.host { machine, session, selected, device: { name, runtime },
 agent, state } per slot. A shutdown local simulator is replaced in status; a
 booted or unknown local simulator stays visible alongside ios.host with a warning.
-The default slot appears only in ios, never in slots[]. No host UDID or gateway secret enters local device state or
+The default slot appears only in ios, never in slots[]. No host UDID enters local device state or
 status. Ready is normal; stopped has a rerun hint; unknown or unreachable is
 unverified. A clean host server restart stops its sessions and retains eligible
 parked devices. A running session left by a crash stays unknown until explicit
 stop; the restarted server never re-attaches to a booted device.
 
 stop and worktree remove wait for the host to stop, park its eligible owned
-simulator within pool.iosParkedMax (delete otherwise), close the gateway and clear placement. stop --json
+simulator within pool.iosParkedMax (delete otherwise), close the Metro links and clear placement. stop --json
 reports each hosted slot under outcomes.device["ios:host:<slot>"], retaining
 local device outcomes and successful siblings when another slot fails. Revoked or
 missing sessions clear placement too. An unreachable host retains placement
@@ -969,8 +1002,8 @@ If another run holds the artifact claim, wait for it to finish and retry.`,
     },
 
     readiness: {
-      summary: 'implement optional pending/ready app logs, deadlines, errors, and platform isolation',
-      body: () => `OPTIONAL APP READINESS
+      summary: 'implement recommended pending/ready app logs, deadlines, errors, and platform isolation',
+      body: () => `RECOMMENDED APP READINESS
 
 No package or SDK is needed. This applies to debug ios/android launches with
 Metro verification enabled, not release builds or --no-metro-check.
@@ -1010,12 +1043,18 @@ Metro verification enabled, not release builds or --no-metro-check.
    a missing ready message, and a startup error. Retain the relevant output.
 
 Without an observed pending, Stim keeps its default 3-second stability window
-after bundle delivery. Managed Metro servers report the native bundle response
+after bundle delivery. The window ends early, half a second after the app's
+React Native runtime logs \`Running "<name>"\` for this launch on either
+platform. A fatal record or an exited process before the window ends still
+fails the launch. An error after it, such as a first render that takes longer
+than that half second to throw, appears in \`stim logs --errors\`.
+Managed Metro servers report the native bundle response
 finishing; build-complete output alone does not close an observed request.
 Without response capture, Stim falls back to the build-complete marker.
 When Android reports queued JavaScript loading, Stim waits for a device
 JavaScript log before starting stability, bounded by the bundle timeout.
-Pending must be observed before the stability window closes. It opts into
+Pending must be observed before the stability window closes, early end
+included, so log it before the root component renders. It opts into
 waiting for ready until 30 seconds after the same completion signal.
 Repeated pending messages never extend the deadline. Ready can end the wait
 early; an app error or process exit interrupts it. No ready means readiness
@@ -1025,7 +1064,10 @@ Only exact standalone info/debug messages captured from this app's device log
 for this platform and current launch are accepted. Stale, other-platform,
 error-level, and embedded example messages are ignored. Unlabelled shared
 Metro output cannot identify a platform. If pending is not captured in time,
-including when device logs are unavailable, the default check applies.
+including when device logs are unavailable, the default check applies. On a
+device hosted on another Mac (--remote <machine>), the device log is the copy
+pulled from that Mac during the launch check, and each window waits up to 10
+seconds for the copy to cover it.
 
 The app declares readiness; Stim does not inspect a rendered frame. This does
 not change launched JSON semantics or the need to inspect the expected UI and
@@ -1318,7 +1360,8 @@ result as proof instead of requiring an unrelated screenshot.`,
 
   \`gc --older-than <days>\` reports and deletes, or with \`--cache parked\`
   erases, only the devices parked at least that long; one parked at an unknown
-  time stays.
+  time stays. Automatic maintenance's daily age sweep deletes the devices
+  parked for maintenance.olderThanDays (7; 0 never) the same way.
 
   If simulator listing or deletion fails, \`gc --delete\` reports the failure
   and keeps that entry. It never turns an unverified absence into a dropped
@@ -1491,11 +1534,27 @@ IOS SCHEME SELECTION
 
 AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
   Both platforms store the artifact verbatim, so its hash is its identity.
-  Before installing, Stim hashes the artifact it is about to install and the
-  one the device already has -- \`pm path\` then \`sha256sum\` on Android, the
-  \`simctl get_app_container\` bundle on iOS. Byte-identical means the install
-  is skipped. The phase still reports the cost of proving that identity, but
-  avoids the ~43s a 400MB APK can cost to copy and install over USB.
+  Before installing, Stim compares the artifact it is about to install with
+  the one the device already has. On iOS it hashes both bundles: the
+  \`simctl get_app_container\` bundle and the one about to be installed.
+  Byte-identical means the install is skipped. The phase still reports the
+  cost of proving that identity, but avoids the ~43s a 400MB APK can cost to
+  copy and install over USB.
+
+  On Android the proof is one \`adb shell\` call that returns the installed
+  APK's path, size, and the SHA-256 of its tail: the v2 or v3 signing block,
+  the central directory, and the end record. That tail carries the signed
+  digests of every other byte, and Android verified them when it installed
+  the APK. Stim verifies the local APK against the same digests once, with
+  \`apksigner verify\`, and keeps the size and tail digest in
+  \`apk-signed-tail.json\` beside the APK in its build cache entry (stored with
+  the build; an older entry gets it on first use). The same size and tail
+  digest mean the same file, on an owned emulator, an adopted one, a
+  \`--device\` phone and a plain rerun. A different size or tail digest
+  installs without hashing the whole APK. An APK outside a build cache entry,
+  one without a v2 or v3 signing block, an apksigner that is missing or fails,
+  and a device whose \`tail\` or \`stat\` does not answer as expected fall back
+  to \`pm path\` then \`sha256sum\` of the whole installed APK.
 
     install     unchanged (emulator-5584 already has this build) (0.4s)
 
@@ -1508,8 +1567,9 @@ AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
     install     unchanged (stim-app already has this build) (0.4s)
     install     dev client prepared (0.9s)
 
-  The skip needs PROOF. A package that is not installed, a split install, an
-  image without \`sha256sum\`, and any adb or simctl failure all read as
+  The skip needs PROOF. A package that is not installed, a split install, a
+  device that answers neither probe (no \`tail\` and no \`sha256sum\`), and any
+  adb or simctl failure all read as
   "cannot determine", and the run installs exactly as it always did. A release
   run swaps this workspace's JS into a COPY of the artifact, which is a
   different artifact and is therefore always installed.
@@ -1520,9 +1580,10 @@ AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
 A RUNNING APP IS RESTARTED, LIKE XCODE'S RUN
   Before it launches, \`ios\` and \`android\` read the device's process list.
   When the app is already running, from an earlier run or after an install
-  that was skipped, Stim stops it and launches it fresh: \`simctl terminate\`
-  on a simulator, \`am force-stop\` on an emulator or an \`android --device\`
-  phone. The new process requests its bundle, so launch verification has real
+  that was skipped, Stim stops it and launches it fresh: \`simctl launch
+  --terminate-running-process\` on a simulator (a separate \`simctl
+  terminate\` when the app opens through a URL), \`am force-stop\` on an
+  emulator or an \`android --device\` phone. The new process requests its bundle, so launch verification has real
   evidence instead of an old process that fetched nothing. In-app state from
   the previous session does not survive. The launch line says so:
 
@@ -1709,6 +1770,67 @@ THE BUILD CACHE HAS THREE LEVELS
   trims, and clears local caches only: the provider contract has no delete
   operation, so no local command can remove data a team or CI system shares.
 
+  WHAT THE KEY COUNTS. Stim runs @expo/fingerprint with its default
+  \`balanced\` preset, the one the project's own Expo uses. An installed
+  dependency, and a config plugin loaded from node_modules, counts by its name
+  and version, not by its files. A package whose real path is outside
+  node_modules -- a workspace package, a link: dependency, a local Expo module
+  -- counts by its files, and so do patches/, the app's committed ios/ or
+  android/, the evaluated app config and its local plugins. patches/ and
+  .yarn/patches/ next to a monorepo's lockfile count too, and so do the patch
+  hashes pnpm-lock.yaml records, wherever the patch files live. The app's
+  version, ios.buildNumber and android.versionCode, eas.json, .easignore and
+  the path overrides of react-native.config.js are left out, so a Release
+  cache hit keeps the version it was built with. A project that wants native
+  package files hashed sets \`preset: 'strict'\` in fingerprint.config.js, at
+  about twice the fingerprint's CPU.
+
+  AN EDIT INSIDE node_modules/ IS NOT SEEN. Editing a dependency's native file
+  in place (node_modules/<pkg>/ios, android, cpp, a podspec or build.gradle)
+  leaves the key unchanged, so the next run installs the cached app without
+  the edit. Make the change a patch (patch-package's patches/, or pnpm patch,
+  whose patches the fingerprint hashes), or build it with
+  \`--no-build-cache --remote-build local\`. --no-build-cache alone can still
+  place the build on another machine, which installs dependencies from the
+  lockfile and so builds without the edit. The fresh build is stored under the
+  unchanged key in the machine-wide cache and handed to any cache provider, so
+  every worktree reuses it, edit included, until the dependency's version or
+  patches change; undo the edit with another --no-build-cache build.
+
+  A KNOWN TREE SKIPS THE FULL FINGERPRINT. After a full fingerprint at the
+  first lookup of a React Native or Expo run, Stim records it in
+  $STIM_HOME/fingerprint-memo (~/.stim by default) under a static digest of
+  the tree: git blob ids of the native inputs git tracks, the contents of the
+  untracked, modified and ignored ones, the app config's sources and the files
+  and directories it names, each installed package's path, version and native
+  markers, the lockfile, and the environment variables the config and its
+  .env files read. Any worktree whose tree has the same digest, a fresh one
+  included, reuses the record instead of evaluating the config and running
+  autolinking:
+
+    fingerprint matches a recorded fingerprint of this tree; confirming it in the background
+
+  A full fingerprint then runs at low priority while the app installs and
+  launches. The record is put back only when it agrees. If the run reaches its
+  end first, it waits up to 3 seconds more, then gives the check up and leaves
+  no record, so the next run fingerprints in full. A disagreement prints a
+  warning naming both hashes at the end of the run and writes a
+  fingerprint_memo_stale record to the build log; run the command again to use
+  the current tree.
+
+  A config the digest cannot follow always fingerprints in full: a dynamic
+  require or import, process.env used other than by literal name, file,
+  process or network access while it is evaluated, a dotenv import, a
+  fileHookTransform, or a preset that hashes package files. A local config
+  plugin counts as evaluated too, with one exception: the digest does not
+  track the files a plugin that applies mods reads, assuming it reads them in
+  its mods at prebuild. A plugin that also puts what it reads into the config
+  is a gap only the background check catches. So does a project outside git or on Yarn Plug'n'Play. The record is
+  never consulted after prebuild or pod install, by a build worker, by doctor,
+  or with --no-build-cache; ios --plan and android --plan read one without
+  writing. Records are 0600, at most 256 per platform, and gc prunes them by
+  age with the other caches.
+
   A MISS EXPLAINS ITSELF. Each local cache entry keeps the per-source hashes
   of its fingerprint (hashes only, pruned with the entry). Before compiling,
   Stim compares the sources it is about to store with a baseline: the entry
@@ -1818,8 +1940,11 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   BUILD is what breaks that, and it fails silently -- a cache that never hits
   looks exactly like a cache that is not there.
 
-  Stim ignores two paths a fresh checkout never has and no native build reads:
-  android/local.properties and android/.idea. A project does not repeat those.
+  Stim ignores paths a fresh checkout never has and no native Debug build
+  reads: android/local.properties, android/.idea, *.xcodeproj/xcuserdata, and,
+  while a .gitignore pattern matches them (even when committed), the
+  \`react-native bundle\` output ios/main.jsbundle and ios/assets. A project
+  does not repeat those.
   Everything else is the project's call, including a lockfile whose checksums
   embed machine paths -- ignoring a path any project might read turns a slow
   build into a wrong one.
@@ -1942,8 +2067,10 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             Waiting prints the count, holder workspace names
                             and elapsed time at once and about every 10s, then
                             the queue position, head workspace name and
-                            $STIM_HOME/device-waits path. Timeout names the
-                            same head and path. Stop cancels a queued run and
+                            $STIM_HOME/device-waits path. Workspaces that
+                            share a project name show the directory that tells
+                            them apart, as in mobile (qa-b-p2). Timeout names
+                            the same head and path. Stop cancels a queued run and
                             releases its ticket without booting its device.
                             Status JSON adds build.waitingFor independently
                             of phase: { kind: "device-slot" | "build-slot",
@@ -2021,7 +2148,14 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
        (\`gc --delete\` semantics; the next build installs from the shared
        cache). A workspace whose last use is unknown is kept
     4. trim shared cache entries nothing has used for 14 days
-       (\`gc --delete --older-than 14\` for the caches)
+       (\`gc --delete --older-than 14\` for the caches). Caches with nothing
+       to trim print one line, not one each. A trim that removed nothing is
+       recorded in $STIM_HOME/budget-sweep.json and not repeated for 5
+       minutes while the set of caches is the same and free disk has not
+       fallen by more than 1 GB since; the run prints one budget line saying
+       it skipped. \`gc\` and automatic maintenance never skip, and a dry
+       run (\`doctor\`) still plans the step. The STIM_LOW_DISK message
+       measures the largest uses of disk at the same time.
 
   IDLE SHUTDOWN (30 MINUTES BY DEFAULT): with devices.idleShutdownMinutes above
   0, a workspace's supervisor shuts down that workspace's owned simulators and
@@ -2038,9 +2172,13 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   status\` shows "shut down after 30m idle" on the device until the next
   \`ios\` or \`android\` run boots it again. When metro.idleStopMinutes is
   shorter, the dev server's idle stop first shuts down the devices idle that
-  long, because no supervisor is left to check afterwards. The supervisor
-  path does not check without a supervisor: release runs, and after
-  \`stim stop\`. The setting is read when the supervisor starts. Stim Desktop's simulator view is not a
+  long, because no supervisor is left to check afterwards. Devices with no
+  supervisor (release runs, a dev server that exited) are shut down by
+  automatic maintenance while maintenance.mode is on (guide cleanup): every maintenance.idleCheckMinutes
+  (5) a command starts a background check that applies each workspace's
+  current setting with the same idle rules, native-run lock recheck, status
+  and log record, and skips the workspace of the command that started it.
+  The supervisor reads the setting when it starts. Stim Desktop's simulator view is not a
   stim-server client and does not count as a viewer. Change it with
   \`stim settings set devices.idleShutdownMinutes <minutes> --scope machine\`;
   0 turns it off, and an explicit 0 stays 0.
@@ -2087,8 +2225,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
-  ios             --remote-build <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|auto|machine>
-  android         --remote-build <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
+  ios             --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|local|auto|remote|remote-only|machine>
+  android         --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas|local|auto|remote|remote-only|machine>
   ios/android --wait bounds owned-device slot waits (default 600s), or physical
   leases with --device (default 60s). Remote targets do not join this local
   slot queue. --no-wait refuses a full/queued owned
@@ -2169,7 +2307,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
   Warm registers the app it prepares, so \`stim status\` lists the workspace
   with phase "warming" while it runs and "ready" once it succeeds, until the
-  first start, ios, android, web or reload there or for 2 hours
+  first start, ios, android, web, reload or logs there or for 2 hours
   (\`guide facts status\`). In a monorepo worktree root, that app is the one
   the source checkout has registered.
 
@@ -2196,12 +2334,24 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   .stim.json, else \`git symbolic-ref --short refs/remotes/origin/HEAD\`;
   when neither answers it says so and makes no warning.
 
-  Dependencies install where the lockfile is, which in a monorepo is the
-  repository root, when the lockfile moved or nothing is installed. Pods run
-  for the app the command was invoked from, and only that app, when its
-  ios/Podfile.lock moved or ios/Pods/Manifest.lock does not match it. Each
-  completed or skipped deps and pods step names its source directory and
-  reason. A failed install refuses with STIM_DEPS_FAILED and nothing is copied.
+  The app is the one warm prepares: the app the command was invoked from, or,
+  from a monorepo root, the one app registered in the source checkout or in
+  the worktree. With no such app, a refresh from the root updates only the
+  repository root and says so on stderr.
+  Dependencies install where the repository root's lockfile is and, when the
+  app has its own lockfile (a nested package outside the root workspaces),
+  there too; a root that has neither installed dependencies nor an install
+  record is left alone when the app has its own lockfile. Each installs when
+  its lockfile moved, when its patches/ directory moved (npm projects only),
+  when nothing is installed, or when npm reports a tree that differs from the
+  one it reported after the last completed install. An npm project whose
+  npm config sets ignore-scripts gets no postinstall from \`npm ci\`, so when its
+  package.json defines one the refresh runs \`npm run postinstall\` next
+  (patch-package, usually); dependencies' own install scripts stay blocked.
+  Pods run for that app, and only that app, when its ios/Podfile.lock moved or
+  ios/Pods/Manifest.lock does not match it. Each completed or skipped deps and
+  pods step names its source directory and reason. A failed install or
+  postinstall refuses with STIM_DEPS_FAILED and nothing is copied.
 
   An install that did not finish is remembered, and a PLAIN warm reads that
   before it copies. The refresh records the completed install of the lockfile it
@@ -2255,11 +2405,22 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   paths eligible under the source checkout's Git ignore rules, including .env
   and local configuration. The source's nonempty
   .worktreeexclude replaces its resolved worktree.exclude setting. Nested
-  registered worktrees, .DS_Store, .DerivedData, .idea, .jj, a project-local
-  .pnpm-store, and android/build/generated/autolinking caches are excluded,
-  including inside newly copied directories; pnpm refills its store from the
-  network or its global store. Gradle regenerates autolinking
-  for the destination checkout on its next build. Warm also skips paths
+  registered worktrees and ignored entries named .DS_Store, .DerivedData,
+  .idea, .jj or .pnpm-store are not copied, and neither is
+  android/build/generated/autolinking. Warm never walks a copied directory, so
+  a .DS_Store or .idea inside a copied directory stays. Warm deletes only
+  these paths from the copy: .pnpm-store in a copied node_modules (pnpm
+  refills it from the network or its global store), the autolinking directory
+  under a copied android, android/build or android/build/generated (Gradle
+  regenerates it for the destination checkout on its next build), and the
+  expo-modules-jsi/apple/.DerivedData Xcode build state, directly under
+  node_modules or in the pnpm virtual store. An ignored directory that Git
+  reports above those names (for example an app directory with no tracked
+  files) is copied as is. Warm renames those deleted paths into
+  $STIM_HOME/trash and a detached, low-priority rm deletes them after warm
+  returns (through the programmatic API, before the call resolves); when the
+  rename is not possible (Windows, $STIM_HOME on another volume), warm deletes
+  them before it returns. Warm also skips paths
   overlapping a nested destination worktree or below a symlink ancestor.
   Tracked .idea settings come from Git and stay untouched by warm.
 
@@ -2298,7 +2459,10 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
   Warm copies directly into the destination, without intermediate staging.
   Keep the source checkout and the linked worktree on the same volume to
-  retain copy-on-write cloning where supported. Cross-volume copies require
+  retain copy-on-write cloning where supported. On macOS with the Command Line
+  Tools, an ignored directory on the same APFS volume, such as node_modules or
+  ios/Pods, is cloned in one step, so a large one takes seconds; elsewhere
+  warm clones or copies file by file. Cross-volume copies require
   full file data; doctor reports that cost. STIM_TMPDIR and machine tempDir do
   not affect warming.
 
@@ -2782,10 +2946,34 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
 
     { "ios": { "simslimProfile": ".simslim/dev.json" } }
 
+  To slim every Stim-owned iOS simulator on a Mac without a profile per app,
+  set it on the machine layer:
+
+    stim settings set ios.simslim on --scope machine
+
+  With \`ios.simslim\` on and no \`ios.simslimProfile\`, Stim runs
+  \`simslim on <udid>\` with SimSlim's default categories. A project profile
+  always applies in place of the defaults. A workspace, repo or committed
+  \`ios.simslim off\` opts that app out and restores stock services on its
+  simulator. The defaults disable push, StoreKit, iCloud, Safari sync, Mail,
+  Calendar and Contacts services, among others; move an app that needs them
+  to a profile that keeps those categories, or to \`off\`. A running
+  simulator is slimmed on the next \`stim ios\`, without a boot first, and a
+  parked simulator when Stim adopts it. An already slim simulator is left
+  alone, so only the first slim reboots it.
+  Without the \`simslim\` command, doctor reports it and \`stim ios\` boots
+  the simulator unslimmed with a one-line note. Hosted simulators on a named
+  Mac are never slimmed, whatever either Mac's setting says.
+
   SimSlim 0.8 requires iOS 18.5 or newer. On each local \`stim ios\`,
   Stim reconciles that profile on the owned simulator before the app build.
-  The first change can update services and reboot the simulator. A matching
-  profile is a fast no-op on later launches. The settings persist across normal
+  The first change can update services and reboot the simulator. Stim records
+  the applied profile (the default categories, or a hash of the profile file)
+  and the boot of the simulator it was applied on, so a later launch on the
+  same boot with the same profile skips the \`simslim\` call. A changed
+  profile, a reboot, or a missing record reconciles again. A manual
+  \`simslim off\` on a running simulator is not noticed until the simulator
+  reboots or the profile changes. The settings persist across normal
   shutdowns and reboots. Removing the setting restores stock services when
   Stim applied the profile. Stim never changes an unowned or remote simulator.
   Each SimSlim operation has a 12-minute outer deadline, including discovery.
@@ -2840,6 +3028,8 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
     Watchman                       stim gc --delete --cache watchman
     Gradle or Kotlin daemon        stim gc --delete --cache gradle-daemons
   Any other process is named with its size only; ask before quitting it.
+  Boot does not wait for this read: the pressure message prints at once and the
+  named processes follow on a second memory line when top finishes.
   Doctor skips this check when STIM_HOME is set: processes are machine-global.
 
   If pressure is elevated, free host memory before retrying. Use \`stim stop\`

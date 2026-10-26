@@ -21,7 +21,7 @@ let home: string;
 let child: ChildProcess | undefined;
 
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-gc-eas-probes-')));
+  home = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-gc-eas-probes-')));
   vi.stubEnv('STIM_HOME', home);
   resetExecutor();
   takeGcResults();
@@ -148,7 +148,7 @@ test('a stalled second EAS page kills its child and refuses deletion of a partia
   mkdirSync(root);
   ensureWorkspaceStorage(root);
   const ledger = join(home, 'eas-ledger');
-  recordEasSessionClaim(
+  await recordEasSessionClaim(
     {
       sessionId: 'drs_owned',
       name: 'stim-owned',
@@ -200,7 +200,7 @@ test('asynchronous EAS verification retains both deletion locks until the stop r
   mkdirSync(root);
   ensureWorkspaceStorage(root);
   const ledger = join(home, 'eas-ledger');
-  recordEasSessionClaim(
+  await recordEasSessionClaim(
     {
       sessionId: 'drs_owned',
       name: 'stim-owned',
@@ -262,7 +262,7 @@ test('cancelling default EAS verification drains its child without stopping the 
   mkdirSync(root);
   ensureWorkspaceStorage(root);
   const ledger = join(home, 'eas-ledger');
-  recordEasSessionClaim(
+  await recordEasSessionClaim(
     {
       sessionId: 'drs_owned',
       name: 'stim-owned',
@@ -320,7 +320,9 @@ test('cancelling default EAS verification drains its child without stopping the 
     ]);
     controller.abort();
     await expect(pending).rejects.toBe(controller.signal.reason);
-    expect(child?.signalCode).toBe('SIGKILL');
+    expect(process.platform === 'win32' ? (child?.exitCode ?? null) !== null : child?.signalCode === 'SIGKILL').toBe(
+      true,
+    );
     expect(calls).toEqual(['simulator:get']);
     expect(readEasSessionLedger(ledger).claims.has('drs_owned')).toBe(true);
     await withEasProjectLock(root, async () => {}, { machineRoot: ledger, waitMs: 0 });
@@ -338,7 +340,7 @@ test.each(['inventory', 'get', 'stop'] as const)(
     mkdirSync(root);
     ensureWorkspaceStorage(root);
     const ledger = join(home, 'eas-ledger');
-    recordEasSessionClaim(
+    await recordEasSessionClaim(
       {
         sessionId: 'drs_owned',
         name: 'stim-owned',

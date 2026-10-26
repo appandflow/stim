@@ -19,8 +19,10 @@ import {
 } from '../engine/device-remote.ts';
 import { PUBLIC_METRO_ENV } from '../engine/metro-reach.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
+import { withDirLockTransaction } from '@stim-cli/core';
 import { easSessionLedgerLock } from '@stim-cli/core/state';
 import { readEasSessionLedger, recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
+import { saveConfig } from '../workspace/config.ts';
 
 const EAS_CLI_VERSION = () => 'eas-cli/24.8.0 darwin-arm64 node-v22.22.2';
 
@@ -890,10 +892,39 @@ describe('session creation', () => {
     expect(exec.calls[0]?.cwd).toBe(root);
   });
 
-  test('sends no duration of its own, because the cap is per-account', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    await remoteIosDeps(ctx()).ensureBooted({});
-    expect(exec.calls[0]?.args ?? []).not.toContain('--max-duration-minutes');
+  describe('session duration cap', () => {
+    const create = async () => {
+      const resolved = await resolveRemoteContext({
+        root,
+        backend: 'eas',
+        easBin: '/bin/eas',
+        env: {},
+        lookupAgentDevice: () => '/bin/agent-device',
+        readEasCliVersion: EAS_CLI_VERSION,
+      });
+      if (!('ctx' in resolved)) return resolved;
+      const exec = mockExec({ outputs: { sim: CREATED } });
+      await remoteIosDeps({ ...resolved.ctx, easLedgerRoot: tmpHome, sleep: async () => {} }).ensureBooted({});
+      const args = exec.calls[0]?.args ?? [];
+      return args[args.indexOf('--max-duration-minutes') + 1];
+    };
+
+    test('every session Stim creates is capped at 30 minutes unless the machine setting says otherwise', async () => {
+      expect(await create()).toBe('30');
+    });
+
+    test('remote.easMaxDurationMinutes in the machine config sets the cap', async () => {
+      saveConfig({ projects: {}, repos: {}, remote: { easMaxDurationMinutes: 45 } });
+      expect(await create()).toBe('45');
+    });
+
+    test('an invalid machine value refuses instead of creating an uncapped session', async () => {
+      saveConfig({ projects: {}, repos: {}, remote: { easMaxDurationMinutes: 0 } });
+      expect(await create()).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        failed: expect.stringContaining('remote.easMaxDurationMinutes'),
+      });
+    });
   });
 
   test('a caller-chosen duration is still sent', async () => {
@@ -919,6 +950,23 @@ describe('session creation', () => {
     const booted = await remoteIosDeps(ctx()).ensureBooted({});
     expect(booted.failed).toBe(true);
     expect(booted.reason).toContain('eas sim failed');
+  });
+
+  test('an Expo app without an EAS project gets the EAS link remedy, not the owned-simulator one', async () => {
+    const stderr = [
+      '★ eas-cli@25.3.0 is now available.',
+      'EAS project not configured. This command cannot configure it in non-interactive mode. Run one of the following, then re-run this command:',
+      '  eas init --id <project-id> --non-interactive',
+    ].join('\n');
+    mockExec({ errors: { sim: Object.assign(new Error('simulator command failed.'), { stderr }) } });
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+    expect(booted).toEqual({
+      failed: true,
+      code: 'STIM_REMOTE_EAS_UNAVAILABLE',
+      reason: 'The Expo app is not linked to an EAS project, so no EAS Simulator session was created.',
+      remedy:
+        'Link it with `eas init --id <project-id> --non-interactive` (existing project) or `eas init --account <account-name> --non-interactive` (new project), then run `stim ios --remote eas` again.',
+    });
   });
 
   test('every eas and agent-device call runs under a deadline', async () => {
@@ -993,9 +1041,45 @@ describe('session creation', () => {
 });
 
 describe('fixed ownership claim teardown', () => {
+  test('recording a session claim waits for a held ledger lock without blocking the event loop', async () => {
+    const ledgerRoot = join(tmpHome, 'machine-eas');
+    let release = () => {};
+    const holding = withDirLockTransaction(
+      easSessionLedgerLock(ledgerRoot),
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+      { ensureParent: () => mkdirSync(ledgerRoot, { recursive: true }) },
+    );
+    let ticks = 0;
+    const timer = setInterval(() => {
+      if (++ticks === 10) release();
+    }, 20);
+    try {
+      await recordEasSessionClaim(
+        {
+          sessionId: 'drs_waited',
+          name: 'stim-wt',
+          platform: 'ios',
+          workspaceRoot: root,
+          workspaceHome: tmpHome,
+          stateFile: workspaceStateFile(root),
+        },
+        ledgerRoot,
+      );
+    } finally {
+      clearInterval(timer);
+      release();
+      await holding;
+    }
+    expect(ticks).toBeGreaterThanOrEqual(10);
+    expect([...readEasSessionLedger(ledgerRoot).claims.keys()]).toEqual(['drs_waited']);
+  });
+
   test('verified teardown removes the claim', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
-    recordEasSessionClaim(
+    await recordEasSessionClaim(
       {
         sessionId: 'drs_42',
         name: 'stim-wt',
@@ -1028,7 +1112,7 @@ describe('fixed ownership claim teardown', () => {
 
   test('failed teardown keeps the claim', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
-    recordEasSessionClaim(
+    await recordEasSessionClaim(
       {
         sessionId: 'drs_42',
         name: 'stim-wt',
@@ -1047,7 +1131,7 @@ describe('fixed ownership claim teardown', () => {
 
   test('verified teardown contains a throwing claim removal and reports reconciliation', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
-    recordEasSessionClaim(
+    await recordEasSessionClaim(
       {
         sessionId: 'drs_42',
         name: 'stim-wt',
@@ -1080,7 +1164,7 @@ describe('fixed ownership claim teardown', () => {
 
   test('verified teardown reports a false claim removal for reconciliation', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
-    recordEasSessionClaim(
+    await recordEasSessionClaim(
       {
         sessionId: 'drs_42',
         name: 'stim-wt',
@@ -1858,7 +1942,7 @@ describe('a re-run does not orphan the session it already has', () => {
   test('a stopped recorded session with an unreconciled claim is not replaced', async () => {
     recordSession('drs_dead');
     const ledgerRoot = join(tmpHome, 'machine-eas');
-    recordEasSessionClaim(
+    await recordEasSessionClaim(
       {
         sessionId: 'drs_dead',
         name: 'stim-wt',

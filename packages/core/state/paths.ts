@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { configDir, workspaceStateDir as workspaceDir } from '../index.ts';
@@ -58,6 +59,11 @@ export function supervisorPidFile(projectRoot: string): string {
 
 export function workspaceStateFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'state.json');
+}
+
+/** The dependency directories `gc --delete` deleted from the workspace's worktree, apart from state.json so writing it is not workspace activity. */
+export function workspaceLightenedFile(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'lightened.json');
 }
 
 export function workspaceStateLock(projectRoot: string): string {
@@ -157,6 +163,14 @@ export function deviceViewersDir(): string {
   return join(configDir(), 'viewers');
 }
 
+export function budgetSweepFile(): string {
+  return join(configDir(), 'budget-sweep.json');
+}
+
+export function budgetSweepLock(): string {
+  return join(configDir(), 'budget-sweep.lock');
+}
+
 export function statsFile(): string {
   return join(configDir(), 'stats.json');
 }
@@ -177,12 +191,37 @@ export function maintenanceNdjsonFile(): string {
   return join(maintenanceDir(), 'maintenance.ndjson');
 }
 
+export function gcLogDir(): string {
+  return join(configDir(), 'gc');
+}
+
+export function gcLogFile(): string {
+  return join(gcLogDir(), 'gc.ndjson');
+}
+
+export function buildLedgerDir(): string {
+  return join(configDir(), 'builds');
+}
+
+export function buildLedgerFile(): string {
+  return join(buildLedgerDir(), 'builds.ndjson');
+}
+
+export function buildLedgerLock(): string {
+  return join(buildLedgerDir(), 'builds.lock');
+}
+
 export function maintenanceChildLogFile(): string {
   return join(maintenanceDir(), 'child.log');
 }
 
 export function maintenanceRunClaims(): string {
   return join(maintenanceDir(), 'run.claims');
+}
+
+/** Dependency trees `worktree remove` moved out of a worktree before git removed it; gc deletes what is left. */
+export function trashRoot(): string {
+  return join(configDir(), 'trash');
 }
 
 export function archiveRoot(): string {
@@ -197,14 +236,26 @@ export function archiveLock(): string {
   return join(archiveRoot(), '.lock');
 }
 
+/** Uncommitted changes of removed worktrees: `<repository>/<branch-or-dir>-<timestamp>/` holding `manifest.json`. */
+export function worktreeArchiveRoot(): string {
+  return join(archiveRoot(), 'worktrees');
+}
+
 /** This machine's own long-term X25519 key as a client of other machines' stim-servers. */
 export function clientIdentityKeyFile(): string {
   return join(configDir(), 'client-identity.key');
 }
 
-/** The Unix socket stim-server serves this machine's own user on, without Noise or pairing. */
+/**
+ * The local Unix socket. sun_path permits 103 UTF-8 bytes on macOS and 107 on Linux. Longer paths use
+ * /tmp/stim-sockets-<uid>/<SHA-256 of the normalized absolute socket path>.sock.
+ */
 export function serverLocalSocket(): string {
-  return join(configDir(), 'server', 'local.sock');
+  const path = join(configDir(), 'server', 'local.sock');
+  const uid = process.getuid?.();
+  const maximumPathBytes = process.platform === 'linux' ? 107 : 103;
+  if (uid === undefined || Buffer.byteLength(path) <= maximumPathBytes) return path;
+  return join('/tmp', `stim-sockets-${uid}`, `${createHash('sha256').update(path).digest('hex')}.sock`);
 }
 
 export function serverSetupDir(): string {

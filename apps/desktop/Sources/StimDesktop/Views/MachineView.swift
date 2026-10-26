@@ -75,6 +75,7 @@ struct MachineView: View {
             EmptyView()
           }
           NowBand(status: status, metrics: metrics, gc: gc)
+          CapacitySection(status: status)
           if let plan = autopilot.pressure { pressureBanner(plan) }
           ThisMacPlacements(model: buildMachines)
           MachineHeading(icon: "internaldrive", title: "Disk Usage", subtitle: "Workspace, device and tool storage on this Mac.")
@@ -204,7 +205,7 @@ struct MachineView: View {
       }
     } trailing: {
       if !plan.isEmpty {
-        Button("Free Disk Space") { autopilot.runPressurePlan(trigger: .manual, present: true) }
+        Button("Free Disk Space") { autopilot.runPressurePlan() }
           .buttonStyle(.stim(.primary))
           .help("stim gc --delete")
       }

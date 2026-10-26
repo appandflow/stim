@@ -303,9 +303,33 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     }
   }
 
+  /// The first layer `stim doctor` found stopping this Mac from using the machine: Tailscale here, the peer, its
+  /// serve route, stim-server or compatibility. `code` is stable; `title` is the short pill text.
+  public struct Diagnosis: Decodable, Hashable, Sendable {
+    public var layer: String
+    public var code: String
+    public var title: String
+    public var message: String
+    public var remedy: String
+
+    /// What failed, then what to do about it.
+    public var detail: String { "\(message) \(remedy)" }
+
+    public init(layer: String, code: String, title: String, message: String, remedy: String) {
+      self.layer = layer
+      self.code = code
+      self.title = title
+      self.message = message
+      self.remedy = remedy
+    }
+  }
+
   public var host: Host?
   public var machine: String
   public var state: State
+  /// Present for the states that stop below approval (`tailscale-off`, `not-on-tailnet`, `unreachable`) and for a
+  /// state this Desktop does not know, such as `outdated`; absent from an older `stim`.
+  public var diagnosis: Diagnosis?
   public var dnsName: String?
   public var deviceId: String?
   public var requestedAt: String?
@@ -314,6 +338,8 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public var offloadable: Bool?
   public var reasons: [String]?
   public var problems: [Problem]?
+  /// What a build there does without stopping, such as downloading an SDK package on its first build.
+  public var notes: [Problem]?
   public var capacity: Capacity?
 
   public var id: String { machine }
@@ -331,6 +357,10 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public var readiness: MachineReadiness {
     let all = reasons.flatMap { $0.isEmpty ? nil : $0.joined(separator: "\n") }
     guard state == .approved, let offloadable else {
+      if let diagnosed {
+        return MachineReadiness(
+          title: diagnosed.title, remedy: nil, tone: state == .unknown ? .warning : state.readinessTone, reasons: all)
+      }
       return MachineReadiness(title: state.title, remedy: nil, tone: state.readinessTone, reasons: all)
     }
     if offloadable { return MachineReadiness(title: "Ready", remedy: nil, tone: .success, reasons: nil) }
@@ -358,35 +388,19 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       if code == "stim-build" { return MachineListStatus(title: "Needs update", tone: .warning) }
       return MachineListStatus(title: code.flatMap { MachineReadiness.problems[$0]?.0 } ?? "Not offloading", tone: .warning)
     case .pending: return MachineListStatus(title: "Waiting for approval", tone: .warning)
-    default: return MachineListStatus(title: state.title, tone: state.readinessTone)
-    }
-  }
-
-  /// A reason an approved machine takes no builds now, with what fixes it when that is known.
-  public struct ProblemLine: Equatable, Sendable {
-    public enum Fix: Equatable, Sendable {
-      /// A command to run on the remote Mac.
-      case command(String)
-      case advice(String)
-    }
-
-    public var code = ""
-    public var reason: String
-    public var fix: Fix?
-  }
-
-  /// Each reason of an approved machine that is not offloadable, in doctor's order, except Busy, which the pill
-  /// covers; empty otherwise.
-  public var problemLines: [ProblemLine] {
-    guard state == .approved, offloadable == false else { return [] }
-    return (problems ?? []).filter { $0.code != "busy" }.map { problem in
-      if problem.code == "cocoapods", let command = Self.cocoapodsFix(problem.reason) {
-        return ProblemLine(code: problem.code, reason: problem.reason, fix: .command(command))
+    default:
+      if let diagnosed {
+        return MachineListStatus(title: diagnosed.title, tone: state == .unknown ? .warning : state.readinessTone)
       }
-      let reason = problem.code == "stim-build" ? Self.shortStimBuild(problem.reason) : problem.reason
-      let advice = MachineReadiness.problems[problem.code]?.1
-      return ProblemLine(
-        code: problem.code, reason: reason, fix: advice.map { .advice($0.prefix(1).uppercased() + $0.dropFirst() + ".") })
+      return MachineListStatus(title: state.title, tone: state.readinessTone)
+    }
+  }
+
+  /// The diagnosis, for the states it explains.
+  var diagnosed: Diagnosis? {
+    switch state {
+    case .unreachable, .tailscaleOff, .notOnTailnet, .unknown: return diagnosis
+    default: return nil
     }
   }
 
@@ -396,21 +410,23 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     return "Stim build \(match.1.prefix(7)) there, \(match.2.prefix(7)) here"
   }
 
-  /// The command that gives the remote Mac this Mac's CocoaPods, from "CocoaPods 1.17.0 there, 1.16.2 here".
+  /// The command that gives the remote Mac this Mac's CocoaPods, from "CocoaPods 1.17.0 there, CocoaPods 1.16.2 here" or
+  /// "no CocoaPods there, CocoaPods 1.16.2 here", with or without the "; its pod install runs anyway" a note adds.
   static func cocoapodsFix(_ reason: String) -> String? {
-    let words = reason.split(separator: " ").map(String.init)
-    guard words.count == 5, words[0] == "CocoaPods", words[2] == "there,", words[4] == "here" else { return nil }
-    let here = words[3]
-    guard !here.isEmpty, here.allSatisfy({ $0.isNumber || $0 == "." }) else { return nil }
-    return words[1] == "null" ? "brew install cocoapods" : "gem install cocoapods -v \(here)"
+    let head = reason.split(separator: ";", maxSplits: 1).first.map(String.init) ?? reason
+    guard let match = head.wholeMatch(of: /(no CocoaPods|CocoaPods (\S+)) there, (?:CocoaPods )?([0-9.]+) here/) else {
+      return nil
+    }
+    return match.2 == nil || match.2 == "null" ? "brew install cocoapods" : "gem install cocoapods -v \(match.3)"
   }
 
-  /// The text line under the machine's name when it has no resources to show: `detail`, empty when the listed
-  /// problems already say why builds stay on this Mac.
+  /// The text line under the machine's name when it has no resources to show: `detail`, empty when the pill and the
+  /// machine's page already say why builds stay on this Mac.
   public var rowDetail: String {
     guard state == .approved else { return detail }
     if let capacity, !capacity.resources.isEmpty { return "" }
-    return problemLines.isEmpty ? detail : ""
+    let blocking = offloadable == false && (problems ?? []).contains { $0.code != "busy" }
+    return blocking ? "" : detail
   }
 
   /// Its MagicDNS name, cores and offloaded builds, which the resource summary leaves out; nil when none is known.
@@ -444,6 +460,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public var approvalPrompt: String { "Someone on \(machine) approves it by running the setup command there" }
 
   public var detail: String {
+    if let diagnosed { return diagnosed.detail }
     switch state {
     case .approved:
       if offloadable != false { return "Builds can run there." }
@@ -521,8 +538,18 @@ public struct MachineReadiness: Equatable, Sendable {
   }()
 }
 
-private func formatLoad(_ value: Double) -> String {
+func formatLoad(_ value: Double) -> String {
   value == value.rounded() ? String(Int(value)) : String(value)
+}
+
+/// A tailnet machine that is already in `remote.machines`, with the state `stim doctor` found for it.
+public struct AddedMachine: Equatable, Sendable {
+  /// The `remote.machines` entry that names it.
+  public var entry: String
+  /// The pill the Remote Machines list shows for it; nil until `stim doctor` has reported.
+  public var status: MachineListStatus?
+  /// What stops it and what to do about it; nil when it is healthy or not yet checked.
+  public var detail: String?
 }
 
 /// `remote.machines` edits, as the JSON text `stim settings set` takes.
@@ -538,6 +565,17 @@ public enum OffloadMachines {
     return name == mac.machine || name == mac.dnsName
   }
 
+  /// `mac` as the Remote Machines list knows it, or nil when no entry names it. Its state is the doctor status for that
+  /// entry, never Tailscale's `Online` flag, which can read false while the machine answers.
+  public static func added(_ mac: TailnetMac, entries: [String], statuses: [BuildMachineStatus]?) -> AddedMachine? {
+    guard let entry = entries.first(where: { names($0, mac) }) else { return nil }
+    guard let status = statuses?.first(where: { $0.machine == entry && ($0.dnsName ?? mac.dnsName) == mac.dnsName }) else {
+      return AddedMachine(entry: entry)
+    }
+    let listed = status.listStatus
+    return AddedMachine(entry: entry, status: listed, detail: listed.tone == .success ? nil : status.detail)
+  }
+
   /// The list with `entry` added, as JSON text.
   public static func adding(_ entry: String, to entries: [String]) -> String {
     encode(entries.contains(entry) ? entries : entries + [entry])
@@ -547,6 +585,16 @@ public enum OffloadMachines {
   public static func removing(_ entry: String, from entries: [String]) -> String? {
     let rest = entries.filter { $0 != entry }
     return rest.isEmpty ? nil : encode(rest)
+  }
+
+  public static func moving(_ entry: String, by offset: Int, in entries: [String]) -> String? {
+    guard let from = entries.firstIndex(of: entry) else { return nil }
+    let to = min(max(from + offset, 0), entries.count - 1)
+    guard to != from else { return nil }
+    var moved = entries
+    moved.remove(at: from)
+    moved.insert(entry, at: to)
+    return encode(moved)
   }
 
   private static func encode(_ entries: [String]) -> String {

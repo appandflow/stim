@@ -13,6 +13,8 @@ import { parseDeviceWait } from '../../engine/device-lease-run.ts';
 import { detectIsExpo } from '../../workspace/project.ts';
 import {
   DEFAULT_AVD_DEVICE_PROFILE,
+  androidSystemImageAbi,
+  hostSystemImageArch,
   listAvdDeviceProfilesAsync,
   listInstalledSystemImages,
   ownedAvdDeviceProfile,
@@ -25,7 +27,7 @@ import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import { getProject } from '../../workspace/config.ts';
 import { parkedMaxSetting } from '../../devices/sim-pool.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
-import type { SettingsObject } from '@stim-cli/core/state';
+import type { AutomaticPlacement, SettingsObject } from '@stim-cli/core/state';
 import {
   androidLayoutSetting,
   androidLayoutSettingError,
@@ -42,10 +44,13 @@ import {
   settingOriginScope,
   settingShapeErrors,
   settingsLayers,
+  inertSettingWarning,
   unknownSettingKeys,
 } from '../../workspace/settings.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
 import type { AndroidRuntimeKind } from './launch.ts';
+import type { AndroidProject } from '../../integrations/android-project.ts';
+import { buildPlacementCandidates } from '../../offload/client.ts';
 import {
   deviceProfileRefusal,
   foldableImageRefusal,
@@ -81,12 +86,14 @@ export interface AndroidPlanInputs extends AndroidBuildPlanInputs {
   readonly wait: string | boolean | undefined;
   readonly waitConflict: boolean;
   readonly remote: string | null;
+  readonly buildMachine?: string;
 }
 
 type AndroidTargetPlan =
   | {
       readonly kind: 'hosted';
       readonly machine: string;
+      readonly placement?: AutomaticPlacement;
       readonly systemImage: string | null;
       readonly deviceProfile: string | null;
     }
@@ -155,6 +162,8 @@ export interface AndroidPlanDependencies extends Omit<AndroidBuildPlanDependenci
   parkedLimit?: typeof parkedMaxSetting;
   supportsFold?: (pkg: string) => boolean;
   ownedAvd?: typeof slotOwnedAvd;
+  preflight?: AndroidProject['preflight'];
+  buildMachines?: (selected: string) => readonly unknown[];
 }
 
 interface SlotAvd {
@@ -170,6 +179,16 @@ function slotOwnedAvd(projectPath: string, slot: string): SlotAvd | null {
   return systemImage
     ? { avdName: android.avdName, systemImage, deviceProfile: ownedAvdDeviceProfile(android.avdName) }
     : null;
+}
+
+function localBuildPreflight(
+  preflight: AndroidProject['preflight'],
+  target: AndroidTargetPlan,
+  { release, targetAbiOnly, variant }: AndroidBuildPlan['build'],
+): ReturnType<NonNullable<AndroidProject['preflight']>> {
+  if (target.kind !== 'emulator' && target.kind !== 'remote') return null;
+  const abi = targetAbiOnly && !release ? (androidSystemImageAbi(target.systemImage) ?? hostSystemImageArch()) : null;
+  return preflight?.({ abi, variant }) ?? null;
 }
 
 function fail(
@@ -246,7 +265,7 @@ export function resolveAndroidBuildPlan(
   if (layoutError) return fail('STIM_BAD_ARG', layoutError, SETTING_SHAPE_REMEDY);
   const layout = resolveAndroidLayout(settings, root, bound);
   for (const key of unknownSettingKeys(settings)) {
-    warn('setting', `Warning: setting "${key}" is not read by Stim and will be ignored.`);
+    warn('setting', inertSettingWarning(settings, key));
   }
   let optimizations: Optimizations;
   try {
@@ -307,6 +326,7 @@ export async function resolveAndroidRunPlan(
     waitConflict,
     remote: commandRemoteBackend,
     buildCache: requestedBuildCache,
+    buildMachine,
   }: AndroidPlanInputs,
   {
     warn,
@@ -332,6 +352,8 @@ export async function resolveAndroidRunPlan(
     parkedLimit = parkedMaxSetting,
     supportsFold = systemImageSupportsFold,
     ownedAvd = slotOwnedAvd,
+    preflight,
+    buildMachines = (selected) => buildPlacementCandidates(selected).machines,
   }: AndroidPlanDependencies,
 ): Promise<AndroidPlanResult> {
   const root = settingsContext.projectPath;
@@ -427,10 +449,21 @@ export async function resolveAndroidRunPlan(
   const target: AndroidTargetPlan = physical
     ? { kind: 'physical', serial: typeof deviceFlag === 'string' ? deviceFlag : null, lease: { waitSeconds, noWait } }
     : machine
-      ? { kind: 'hosted', machine, systemImage, deviceProfile }
+      ? {
+          kind: 'hosted',
+          machine,
+          ...(remoteTarget?.kind === 'machine' && remoteTarget.placement ? { placement: remoteTarget.placement } : {}),
+          systemImage,
+          deviceProfile,
+        }
       : remoteBackend
         ? { kind: 'remote', backend: remoteBackend, systemImage, deviceProfile }
         : { kind: 'emulator', systemImage, deviceProfile };
+  const preflightRefusal =
+    preflight && easProfile === undefined && buildMachines(buildMachine ?? 'local').length === 0
+      ? localBuildPreflight(preflight, target, plannedBuild.plan.build)
+      : null;
+  if (preflightRefusal) return fail(preflightRefusal.code, preflightRefusal.reason, preflightRefusal.remedy);
   return {
     ok: true,
     plan: {

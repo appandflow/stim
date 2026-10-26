@@ -54,6 +54,8 @@ import {
 import { idleDeviceLines, type IdleDevice } from './idle.ts';
 import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from './recordings.ts';
 import { tempLeftoverLines, tempLeftoverSection, type TempLeftoverReport } from './temp-leftovers.ts';
+import { trashLines, type TrashReport } from './trash.ts';
+import type { WorktreeDependencies } from './dependencies.ts';
 import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, type WatchmanRoot } from './memory.ts';
 
 export interface GcReport {
@@ -86,9 +88,11 @@ export interface GcReport {
   swiftpmCacheUsage?: SwiftpmCacheUsage | null;
   machineCaches?: MachineCacheReport | null;
   tempLeftovers?: TempLeftoverReport | null;
+  trash?: TrashReport | null;
   gradleVersions?: GradleVersionSweep | null;
   caches: GcCache[];
   workspaceOutputs: WorkspaceOutputsReport | null;
+  worktreeDependencies?: WorktreeDependencies | null;
   workspaceLogs: WorkspaceLogs[];
   recordings: WorkspaceRecordings[];
   worktreeSweep?: WorktreeSweep | null;
@@ -247,9 +251,11 @@ export function formatGcReport(
     swiftpmCacheUsage,
     machineCaches,
     tempLeftovers,
+    trash,
     gradleVersions,
     caches = [],
     workspaceOutputs = null,
+    worktreeDependencies,
     workspaceLogs = [],
     recordings = [],
     worktreeSweep = null,
@@ -290,6 +296,7 @@ export function formatGcReport(
       expiredLeases,
       easSessionSweep.orphaned,
       workspaceOutputs?.workspaces.filter((entry) => entry.willClear) ?? [],
+      dependencyCandidates(worktreeDependencies),
       workspaceLogs.filter((entry) => entry.willTrim),
       worktreeSweep?.worktrees.filter((entry) => !entry.skipped) ?? [],
     ].every((found) => found.length === 0)
@@ -430,6 +437,7 @@ export function formatGcReport(
     for (const entry of skipped) lines.push(`  ${entry.dir}: ${entry.reason}`);
   }
 
+  lines.push(...worktreeDependencyLines(worktreeDependencies));
   lines.push(...workspaceLogLines(workspaceLogs));
   lines.push(...recordingLines(recordings));
   lines.push(...cacheLines(caches, workspaceOutputs));
@@ -437,10 +445,25 @@ export function formatGcReport(
   lines.push(...swiftpmCacheLines(swiftpmCacheUsage, now));
   lines.push(...machineCacheLines(machineCaches, now));
   lines.push(...tempLeftoverLines(tempLeftovers));
+  lines.push(...trashLines(trash));
   lines.push(...gradleVersionLines(gradleVersions));
   lines.push(...memoryLines(memory, memoryCacheKind(cacheScope), now));
   lines.push(...maintenanceReportLines(maintenance));
 
+  return lines;
+}
+
+function dependencyCandidates(found: WorktreeDependencies | null | undefined): string[] {
+  return found?.candidates.map(({ path }) => path) ?? [];
+}
+
+function worktreeDependencyLines(found: WorktreeDependencies | null | undefined): string[] {
+  if (!found || (!found.candidates.length && !found.skips.length)) return [];
+  const lines = [
+    `Worktree dependencies (${found.candidates.length} of ${found.candidates.length + found.skips.length} would be LIGHTENED; the next start, ios or android restores them with worktree warm):`,
+  ];
+  for (const { path } of found.candidates) lines.push(`  ${path}`, '              would be LIGHTENED');
+  for (const { target, reason } of found.skips) lines.push(`  ${target}`, `              kept: ${reason}`);
   return lines;
 }
 
@@ -510,13 +533,14 @@ function workspaceOutputLines(outputs: WorkspaceOutputsReport, bytes: number): s
   const lines = [
     `  ${formatBytes(bytes).padStart(10)}  Workspace build outputs (detected)`,
     `              ${outputs.root}`,
-    `              ${WORKSPACE_OUTPUT_DIRS.join(', ')}, macOS Swift scratch and staged app bundles of each workspace; workspace.json, state.json, logs and device records stay`,
+    `              ${WORKSPACE_OUTPUT_DIRS.join(', ')}, macOS Swift scratch and staged app bundles of each workspace, and the git-ignored in-tree build directories of its project; workspace.json, state.json, logs and device records stay`,
     `              ${REBUILD_COST}`,
   ];
   for (const w of outputs.workspaces) {
     const idle = w.idleDays === null ? 'last use unknown' : `idle ${w.idleDays}d`;
     lines.push(`    ${sizeText(w.bytes).padStart(8)}  ${w.projectRoot ?? w.dir} (${idle})`);
-    lines.push(w.willClear ? '                would be CLEARED' : `                kept: ${w.keptReason}`);
+    if (w.inTreeDirs.length) lines.push(`                with ${w.inTreeDirs.join(', ')}`);
+    lines.push(w.willClear ? '                would be LIGHTENED' : `                kept: ${w.keptReason}`);
   }
   return lines;
 }
@@ -554,7 +578,7 @@ function cacheLines(caches: readonly GcCache[], workspaceOutputs: WorkspaceOutpu
     if (clearing.length) {
       const clearBytes = clearing.reduce((n, w) => n + (w.bytes ?? 0), 0);
       lines.push(
-        `  would clear the build outputs of ${clearing.length} workspace${clearing.length === 1 ? '' : 's'} (${formatBytes(clearBytes)})`,
+        `  would lighten ${clearing.length} workspace${clearing.length === 1 ? '' : 's'}, freeing ${formatBytes(clearBytes)} of build outputs`,
       );
     }
   }
@@ -750,6 +774,7 @@ export interface GcJsonSections {
     reason: WorkspaceLogsKeptCode | null;
     detail: string | null;
   }[];
+  worktreeDependencies: { path: string; willDelete: boolean; detail: string | null }[];
   recordings: {
     dir: string;
     projectRoot: string | null;
@@ -763,6 +788,7 @@ export interface GcJsonSections {
   workspaceBuildOutputs: {
     dir: string;
     projectRoot: string | null;
+    inTreeDirs: string[];
     bytes: number | null;
     idleDays: number | null;
     willClear: boolean;
@@ -773,6 +799,7 @@ export interface GcJsonSections {
   swiftpmCache: SwiftpmCacheUsage | null;
   machineCaches: MachineCacheReport | null;
   tempLeftovers: ReturnType<typeof tempLeftoverSection>;
+  trash: TrashReport | null;
   gradleVersions: GradleVersionSweep | null;
   caches: {
     name: string;
@@ -817,11 +844,13 @@ export function gcReportSections({
   easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
   workspaceOutputs = null,
   workspaceLogs = [],
+  worktreeDependencies = null,
   recordings = [],
   agentDeviceUsage = null,
   swiftpmCacheUsage = null,
   machineCaches = null,
   tempLeftovers = null,
+  trash = null,
   gradleVersions = null,
   caches = [],
   memory = null,
@@ -954,6 +983,14 @@ export function gcReportSections({
       reason: w.keptCode,
       detail: w.keptReason,
     })),
+    worktreeDependencies: [
+      ...(worktreeDependencies?.candidates ?? []).map(({ path }) => ({ path, willDelete: true, detail: null })),
+      ...(worktreeDependencies?.skips ?? []).map(({ target, reason }) => ({
+        path: target,
+        willDelete: false,
+        detail: reason,
+      })),
+    ],
     recordings: recordings.map((r) => ({
       dir: r.dir,
       projectRoot: r.projectRoot,
@@ -967,6 +1004,7 @@ export function gcReportSections({
     workspaceBuildOutputs: (workspaceOutputs?.workspaces ?? []).map((w) => ({
       dir: w.dir,
       projectRoot: w.projectRoot,
+      inTreeDirs: w.inTreeDirs,
       bytes: w.bytes,
       idleDays: w.idleDays,
       willClear: w.willClear,
@@ -987,6 +1025,7 @@ export function gcReportSections({
     swiftpmCache: swiftpmCacheUsage,
     machineCaches,
     tempLeftovers: tempLeftoverSection(tempLeftovers),
+    trash,
     gradleVersions,
     memory: memory?.processes ?? [],
     watchmanRoots: memory?.watchmanRoots ?? [],

@@ -120,7 +120,8 @@ final class TutorialModel: ObservableObject {
     let nextWorkspace = workspaces.first { $0.path == (tracked ?? candidate?.path) }
     if workspace != nextWorkspace { workspace = nextWorkspace }
     let seen = defaults.stringArray(forKey: Self.seenKey) ?? []
-    if launchPending, let saved {
+    let offered = AppPreferences.offersTutorial(defaults)
+    if launchPending, let saved, offered {
       if let path = saved.tourPath, workspace != nil || archivedRoots.contains(path) {
         openPending = saved.step != "done"
         launchPending = false
@@ -128,7 +129,7 @@ final class TutorialModel: ObservableObject {
         openPending = true
         launchPending = false
       }
-    } else if let candidate, !seen.contains(candidate.path), saved == nil || saved?.step == "done" {
+    } else if offered, let candidate, !seen.contains(candidate.path), saved == nil || saved?.step == "done" {
       progress = TutorialProgress()
       snapshot = nil
       archiveEnabled = nil
@@ -139,7 +140,7 @@ final class TutorialModel: ObservableObject {
       openPending = true
       launchPending = false
     }
-    if openPending, !sheetOpen {
+    if openPending, offered, !sheetOpen {
       let opening = !isOpen
       isOpen = true
       openPending = false

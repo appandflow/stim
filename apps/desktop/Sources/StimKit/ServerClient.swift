@@ -100,6 +100,9 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   private var retry = ServerClient.minimumRetry
   private var cancelReconnect: (() -> Void)?
   private var stopped = true
+  private var reportReads: [String: ReportRead] = [:]
+  private var nextReportWaiter = 0
+  var busyRetryDelays: [Duration] = [.milliseconds(250), .milliseconds(500), .seconds(1), .seconds(2), .seconds(4)]
   /// Changes whenever the active transport is replaced or dropped, including reconnects to the same server.
   public private(set) var generation = 0
 
@@ -169,6 +172,91 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     guard isOpen, let transport else { throw ServerError(code: "not-connected", message: "Not connected to stim-server.") }
     return try await send(on: transport, method, params, cancellable: true)
   }
+
+  /// Sends a read the server can refuse with `limit-exceeded` while this connection runs its maximum number of
+  /// requests, and retries it with backoff. A refusal that outlasts the retries says the server is busy instead.
+  public func read(_ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
+    for delay in busyRetryDelays {
+      do {
+        return try await request(method, params)
+      } catch let error as ServerError where error.code == "limit-exceeded" {
+        try await Task.sleep(for: delay)
+      }
+    }
+    do {
+      return try await request(method, params)
+    } catch let error as ServerError where error.code == "limit-exceeded" {
+      throw ServerError(
+        code: error.code,
+        message:
+          "The local stim-server is still busy with earlier requests from Stim Desktop. Wait a minute and try again. If this keeps happening, quit and reopen Stim Desktop."
+      )
+    }
+  }
+
+  @MainActor private final class ReportRead {
+    var task: Task<Void, Never>?
+    var waiters: [Int: CheckedContinuation<JSONValue, Error>] = [:]
+  }
+
+  /// Reads a fresh Desktop report snapshot for `target`. A read of the same target already in flight on this connection
+  /// is joined instead of sent again; otherwise the target is invalidated first, only that target when the server
+  /// supports it. With `restart`, a new read is sent even while one is in flight, and later callers join it instead.
+  /// A cancelled caller stops waiting at once, and a read whose callers have all cancelled is not sent further.
+  public func report(_ target: [String: JSONValue], restart: Bool = false) async throws -> JSONValue {
+    try Task.checkCancellation()
+    let key = String(decoding: try Self.sortedEncoder.encode(JSONValue.object(target)), as: UTF8.self)
+    let shared: ReportRead
+    if !restart, let running = reportReads[key] {
+      shared = running
+    } else {
+      var scope: [String: JSONValue] = [:]
+      if case .open(let hello) = state, hello.features?.contains("desktop-report-invalidate-target") == true {
+        scope = target
+      }
+      let read = ReportRead()
+      reportReads[key] = read
+      read.task = Task { @MainActor [weak self, scope] in
+        let result: Result<JSONValue, Error>
+        if let self {
+          result = await Result.awaiting {
+            _ = try await self.read("desktop.reports.invalidate", scope)
+            return try await self.read("desktop.reports.get", target)
+          }
+          if self.reportReads[key] === read { self.reportReads[key] = nil }
+        } else {
+          result = .failure(CancellationError())
+        }
+        let waiters = read.waiters.values
+        read.waiters = [:]
+        for waiter in waiters { waiter.resume(with: result) }
+      }
+      shared = read
+    }
+    nextReportWaiter += 1
+    let waiter = nextReportWaiter
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        shared.waiters[waiter] = continuation
+      }
+    } onCancel: {
+      Task { @MainActor [weak self] in self?.stopWaiting(waiter, on: shared, key: key) }
+    }
+  }
+
+  private func stopWaiting(_ waiter: Int, on read: ReportRead, key: String) {
+    guard let continuation = read.waiters.removeValue(forKey: waiter) else { return }
+    continuation.resume(throwing: CancellationError())
+    guard read.waiters.isEmpty else { return }
+    read.task?.cancel()
+    if reportReads[key] === read { reportReads[key] = nil }
+  }
+
+  private static let sortedEncoder: JSONEncoder = {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    return encoder
+  }()
 
   /// `onSubscribed` runs each time the server accepts the subscription, before the events it then sends; `params`
   /// is read at each of those times, so a resubscription can carry newer values.
@@ -262,6 +350,18 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
             "The local socket path exceeds macOS's limit of \(maximumPathBytes) bytes. Use a shorter Stim home and restart Stim Desktop."
         ))
       return
+    }
+    let directory = endpoint.deletingLastPathComponent()
+    if directory.path == "/tmp/stim-sockets-\(getuid())" {
+      var directoryInfo = stat()
+      var socketInfo = stat()
+      guard lstat(directory.path, &directoryInfo) == 0,
+        lstat(endpoint.path, &socketInfo) == 0,
+        StimHome.isPrivateLocalSocket(directory: directoryInfo, socket: socketInfo)
+      else {
+        scheduleReconnect("The local socket and its directory must be private, user-owned and not symbolic links.")
+        return
+      }
     }
     let onEvent: @MainActor (ServerTransportEvent) -> Void = { [weak self] event in
       self?.receive(event, generation: current)

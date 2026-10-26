@@ -231,8 +231,8 @@ final class LogRowView: NSView {
 
 enum LogRowText {
   static let font =
-    NSFont(name: "JetBrainsMono-Regular", size: 11.5)
-    ?? .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+    NSFont(name: "JetBrainsMono-Regular", size: 12.5)
+    ?? .monospacedSystemFont(ofSize: 12.5, weight: .regular)
 
   private static let characterWidth = NSAttributedString(string: "0", attributes: [.font: font]).size().width
 

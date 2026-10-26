@@ -289,17 +289,19 @@ export function readDevicePlacement(
 function lastBuildReport(platform: BuildPlatform, value: unknown): LastBuildReport | null {
   if (!isJsonObject(value)) return null;
   const record = value;
-  if (record.platform !== platform || (record.status !== 'ok' && record.status !== 'failed')) return null;
+  if (record.platform !== platform) return null;
+  const status = record.status === 'success' ? 'ok' : record.status;
+  if (status !== 'ok' && status !== 'failed') return null;
   if (typeof record.startedAt !== 'string') return null;
   const durationMs = typeof record.durationMs === 'number' && record.durationMs >= 0 ? record.durationMs : null;
   const finished = new Date(Date.parse(record.startedAt) + (durationMs ?? Number.NaN));
   const reason =
     record.cacheHit === 'local' || record.cacheHit === 'remote' ? null : parseMissReason(record.missReason);
-  const diagnostics = record.status === 'failed' ? buildDiagnostics(record.diagnostics) : [];
+  const diagnostics = status === 'failed' ? buildDiagnostics(record.diagnostics) : [];
   const placed = devicePlacement(record.devicePlacement);
   return {
     platform,
-    status: record.status,
+    status,
     cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,
     cacheSkipped: record.cacheSkipped === true,
     durationMs,
@@ -347,11 +349,14 @@ function historyEntry(platform: BuildPlatform, value: unknown): BuildHistoryEntr
   const report = lastBuildReport(platform, value);
   if (!report) return null;
   const record = value as Record<string, unknown>;
-  const result = (BUILD_RESULTS as readonly unknown[]).includes(record.result)
-    ? (record.result as BuildResult)
-    : report.status === 'ok'
+  const result =
+    record.status === 'success'
       ? 'succeeded'
-      : 'failed';
+      : (BUILD_RESULTS as readonly unknown[]).includes(record.result)
+        ? (record.result as BuildResult)
+        : report.status === 'ok'
+          ? 'succeeded'
+          : 'failed';
   return {
     ...report,
     result,
@@ -395,6 +400,19 @@ export function lastUseFrom(state: WorkspaceState | null, logMtimes: readonly nu
     ...logMtimes,
   ].filter(Number.isFinite);
   return candidates.length ? Math.max(...candidates) : NaN;
+}
+
+/**
+ * When an ios, android or macos run last finished in the workspace, from its recorded builds (a cache hit counts),
+ * in epoch milliseconds; NaN when it records none. Dev server starts, reloads and logs do not count.
+ */
+export function lastNativeUseFrom(state: WorkspaceState | null): number {
+  const runs = [
+    ...Object.values(readLastBuilds(state)),
+    ...Object.values(readBuildHistory(state)).flatMap((entries) => entries.slice(0, 1)),
+  ];
+  const times = runs.map((run) => Date.parse(run.finishedAt ?? run.startedAt)).filter(Number.isFinite);
+  return times.length ? Math.max(...times) : NaN;
 }
 
 export const MAINTENANCE_LOG_NAME = 'maintenance.ndjson';

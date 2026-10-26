@@ -1,6 +1,6 @@
 import { mkdtempSync, realpathSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, parse } from 'node:path';
 import { readStatsReport } from '@stim-cli/core/state';
 import { workspaceId } from '@stim-cli/core';
 import {
@@ -8,12 +8,16 @@ import {
   withDeviceBootAdmission,
   deviceSlotWaitingLine,
   countLiveOwnedDevices,
+  countLiveOwnedDevicesFrom,
+  deviceSlotUsage,
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
+import { loadConfig, upsertProject } from '../workspace/config.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { createRunRecorder, readStats, recordRunStats } from '../engine/stats.ts';
-import { goneClaimOwner, plantClaim, makeIosSim, makeConfig, makeAdbDevices } from './_factories.ts';
+import { goneClaimOwner, plantClaim, makeIosSim, makeConfig, makeAdbDevices, makeExecutor } from './_factories.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
 
 vi.mock('../devices/queue-reclaim.ts', () => ({
   reclaimIdleDevice: vi.fn<typeof import('../devices/queue-reclaim.ts').reclaimIdleDevice>(async () => 0),
@@ -140,6 +144,56 @@ test('a dead waiter is reaped by process identity and cannot block an available 
     }),
   ).resolves.toBe('booted');
   expect(existsSync(path)).toBe(false);
+});
+
+test('admission lists simulators and emulators through the async executor', async () => {
+  const listed: string[] = [];
+  setExecutor(
+    makeExecutor({
+      runFile: () => {
+        throw new Error('a synchronous device listing blocks the event loop');
+      },
+      runFileAsync: async (file) => {
+        listed.push(parse(file).name);
+        return file === 'xcrun' ? '{"devices":{}}' : 'List of devices attached\nemulator-5554\tdevice\n';
+      },
+    }),
+  );
+  try {
+    await expect(
+      withDeviceBootAdmission({ platform: 'android', key: 'new' }, async () => 'booted', {
+        root,
+        max: 1,
+        noWait: true,
+        sources: {
+          config: makeConfig({
+            projects: {
+              '/work/holder': { platforms: { android: { owned: true, avdName: 'stim-holder', consolePort: 5554 } } },
+            },
+          }),
+          booting: [],
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+    expect(listed).toContain('adb');
+  } finally {
+    resetExecutor();
+  }
+});
+
+test('the async device count reads a missing simulator toolchain as no simulators and lists adb only for recorded emulators', async () => {
+  const missing = Object.assign(new Error('xcrun: not found'), { code: 'ENOENT' });
+  const adb = vi.fn<() => Promise<ReturnType<typeof makeAdbDevices>>>(async () => makeAdbDevices());
+  const sims = vi.fn<() => Promise<ReturnType<typeof makeIosSim>[]>>(async () => {
+    throw missing;
+  });
+  const sources = { sims, adb, config: makeConfig(), booting: [] };
+  await expect(countLiveOwnedDevicesFrom(sources)).resolves.toBe(0);
+  expect(adb).not.toHaveBeenCalled();
+  sims.mockRejectedValue(new Error('simctl timed out'));
+  await expect(countLiveOwnedDevicesFrom(sources)).resolves.toMatchObject({
+    unknown: expect.stringContaining('simctl'),
+  });
 });
 
 test.each([{ noWait: true }, { waitMs: 0 }])(
@@ -318,6 +372,33 @@ test('waiting progress names workspaces for live devices and boot claims', async
   expect(lines[0]).toContain(expected);
   expect(lines[0]).toContain(join(root, 'device-waits'));
   expect(deviceSlotWaitingLine({ count: 2, max: 2, holders: ['tree-one', 'tree-two'], elapsedMs: 0 })).toBe(expected);
+});
+
+test('waiting progress tells same-named worktree holders and the queue head apart', async () => {
+  const trees = ['one', 'two', 'three'];
+  const sims = trees.map((tree) => makeIosSim({ udid: tree, name: `stim-${tree}`, state: 'Booted' }));
+  for (const tree of trees) {
+    const path = join(root, 'trees', tree, 'apps', 'mobile');
+    mkdirSync(path, { recursive: true });
+    upsertProject(path, { platforms: { ios: { deviceUdid: tree, owned: true } } });
+  }
+  const lines: string[] = [];
+  let now = Date.now();
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+      root: join(root, 'trees', 'two', 'apps', 'mobile'),
+      max: 3,
+      waitMs: 1,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      out: (line) => lines.push(line),
+      sources: { ...empty, sims, config: loadConfig() },
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+  expect(lines[0]).toContain('(3/3 in use: mobile (one), mobile (three), mobile (two))');
+  expect(lines[0]).toContain('queue position 1, head mobile (two);');
 });
 
 test('cancelling a queued run promptly releases its ticket without booting', async () => {
@@ -636,6 +717,61 @@ test('the non-binding slot peek reports a live owned slot and FIFO waiters witho
   } finally {
     releaseClaim(ticket);
   }
+});
+
+test('a boot reports its start only once admitted, before it runs, and a refused boot never does', async () => {
+  const events: string[] = [];
+  const boot = async () => {
+    events.push('boot');
+  };
+  const onBootStart = () => events.push('start');
+  await withDeviceBootAdmission({ platform: 'ios', key: 'a' }, boot, { root, max: 0, onBootStart });
+  await withDeviceBootAdmission({ platform: 'ios', key: 'b' }, boot, { root, max: 2, sources: empty, onBootStart });
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'c' }, boot, {
+      root,
+      max: 1,
+      noWait: true,
+      sources: { ...empty, sims: occupied },
+      onBootStart,
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+  expect(events).toEqual(['start', 'boot', 'start', 'boot']);
+});
+
+test('status slot usage names the workspace and slot of each counted device and reports an uncountable inventory', async () => {
+  const sims = [
+    makeIosSim({ udid: 'held', name: 'stim-held', state: 'Booted' }),
+    makeIosSim({ udid: 'loose', name: 'stim-loose', state: 'Booted' }),
+    makeIosSim({ udid: 'mine', name: 'iPhone 17', state: 'Booted' }),
+  ];
+  const config = makeConfig({
+    projects: { '/work/app': { label: 'app', deviceSlots: { two: { ios: { deviceUdid: 'held', owned: true } } } } },
+  });
+  expect(
+    await deviceSlotUsage(3, {
+      ...empty,
+      sims,
+      config,
+      booting: [{ platform: 'android', key: 'stim-new', displayName: 'other' }],
+    }),
+  ).toEqual({
+    max: 3,
+    inUse: 3,
+    holders: [
+      { platform: 'ios', label: 'app', workspace: '/work/app', slot: 'two' },
+      { platform: 'android', label: 'other', workspace: null, slot: null, booting: true },
+      { platform: 'ios', label: 'stim-loose', workspace: null, slot: null },
+    ],
+  });
+  expect(
+    await deviceSlotUsage(3, {
+      ...empty,
+      sims: () => {
+        throw new Error('simctl timed out');
+      },
+    }),
+  ).toMatchObject({ max: 3, inUse: null, unknown: expect.stringContaining('simctl timed out'), holders: [] });
 });
 
 test('the non-binding peek preserves an unknown count for the binding boot admission', () => {

@@ -13,7 +13,7 @@ import { spawnDeclared } from './spawn-claims.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { killOnAbort } from '../workspace/git-read.ts';
 import { operationState } from './operation-state.ts';
-import { cleanLine } from '../supervisor/server-expo.ts';
+import { cleanLine, expoTelemetryEnv } from '../supervisor/server-expo.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
 
 export const JS_BUNDLE_NAME = 'main.jsbundle';
@@ -136,6 +136,7 @@ export function assetCatalogTarget(infoPlist: unknown): AssetCatalogTarget | nul
 }
 
 // plutil -convert json refuses a whole plist that holds <data> or <date>, so read single keys.
+// plutil on macOS 15 prints the missing-key error on stdout, not stderr.
 async function readPlistKey(
   context: StimContext | undefined,
   e: Executor,
@@ -148,7 +149,8 @@ async function readPlistKey(
       timeoutMs: 10_000,
     });
   } catch (err) {
-    if (/No value at that key path/.test(describe(err))) return null;
+    const stdout = typeof err === 'object' && err !== null && 'stdout' in err ? String(err.stdout) : '';
+    if (/No value at that key path/.test(`${describe(err)}\n${stdout}`)) return null;
     throw err;
   }
 }
@@ -369,7 +371,7 @@ export async function swapJsBundle({
       spawn(invocation.file, invocation.args, {
         cwd: root,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...(context?.env ?? process.env), FORCE_COLOR: '0' },
+        env: { ...(context?.env ?? process.env), ...expoTelemetryEnv(context?.env ?? process.env), FORCE_COLOR: '0' },
       }),
     );
     killOnAbort(context ? (operationState(context).runSignal ?? context.signal) : undefined)(child);

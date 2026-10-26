@@ -29,6 +29,16 @@
             }
           }
           .buttonStyle(.stim())
+          Button("Show Four Workspace Cards") {
+            for name in ["fp-rethink", "share-quest-opens-result-sheet", "fix-login", "add-dark-mode"] {
+              let path = "/workspace/\(name)"
+              notices.show(
+                Notice(
+                  icon: "plus.rectangle.on.folder", title: "New workspace \(name)", detail: path,
+                  actionTitle: "Show", perform: {}, key: WorkspaceArrivals.cardKey(path), workspacePath: path))
+            }
+          }
+          .buttonStyle(.stim())
           Toggle("Reduce Motion", isOn: $reduceMotion)
         }
         Spacer()
@@ -36,14 +46,9 @@
       .padding(Space.xl)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       .overlay(alignment: .topTrailing) {
-        ToastStack(center: center, reduceMotionOverride: reduceMotion, onDismissAll: dismissAll)
+        ToastStack(center: center, reduceMotionOverride: reduceMotion)
       }
-      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices, onDismissAll: dismissAll) }
-    }
-
-    private func dismissAll() {
-      center.dismissAll()
-      notices.dismissAll()
+      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
     }
   }
 #endif

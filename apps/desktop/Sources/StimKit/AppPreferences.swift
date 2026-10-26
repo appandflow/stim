@@ -27,14 +27,6 @@ public enum AppPreferences {
     public static let showsMenuBarExtra = "showsMenuBarExtra"
     public static let stimExecutable = "stimExecutable"
     public static let remoteSessionMinutes = "remoteSessionMinutes"
-    public static let autopilotIdleShutdown = "autopilot.idleShutdown"
-    public static let autopilotIdleMinutes = "autopilot.idleMinutes"
-    public static let autopilotNightly = "autopilot.nightly"
-    public static let autopilotNightlyHour = "autopilot.nightlyHour"
-    public static let autopilotNightlyOlderThanDays = "autopilot.nightlyOlderThanDays"
-    public static let autopilotPressure = "autopilot.pressure"
-    public static let autopilotLastNightly = "autopilot.lastNightly"
-    public static let autopilotLog = "autopilot.log"
     public static let notifiesDiskPressure = "notify.diskPressure"
     public static let servesPhones = "servesPhones"
     public static let updatesBuildMachines = "updatesBuildMachines"
@@ -48,8 +40,6 @@ public enum AppPreferences {
     /// `KEY=VALUE` lines Desktop adds to the environment of every Stim command and of stim-server.
     public static let environmentOverrides = "environmentOverrides"
     public static let showsInspector = "showsInspector"
-    public static let tutorialFloats = "tutorial.floats"
-    public static let tutorialFloatPinned = "tutorial.floatPinned"
     public static let showsLogs = "workspace.showsLogs"
     public static let logsDrawerHeight = "workspace.logsDrawerHeight"
     public static let viewerShowsActions = "viewer.showsActions"
@@ -59,6 +49,8 @@ public enum AppPreferences {
     public static let debugLogging = "debugLogging"
 
     public static let tipsEnabled = "tips.enabled"
+    public static let showsWorkspaceCards = "cards.showsNewWorkspace"
+    public static let offersTutorial = "tutorial.offered"
     public static let usageRecord = "tips.usageRecord"
 
     public static let discoveryLaunches = "discovery.launches"
@@ -83,19 +75,13 @@ public enum AppPreferences {
 
   public static let frameRates: [Double] = [60, 30, 15, 5]
 
-  /// Autopilot is on by default: idle devices shut down after an hour, a cleanup of what has gone unused for
-  /// 7 days runs at 3:00, and disk pressure is acted on.
   public static var defaults: [String: Any] {
     [
-      Key.autopilotIdleShutdown: true,
-      Key.autopilotIdleMinutes: 60,
-      Key.autopilotNightly: true,
-      Key.autopilotNightlyHour: 3,
-      Key.autopilotNightlyOlderThanDays: 7,
-      Key.autopilotPressure: true,
       Key.notifiesDiskPressure: true,
       Key.showsInspector: true,
       Key.tipsEnabled: true,
+      Key.showsWorkspaceCards: true,
+      Key.offersTutorial: true,
       Key.viewerShowsActions: true,
       Key.syncsClipboard: true,
     ].merging(NotificationSettings.defaults) { current, _ in current }
@@ -105,6 +91,12 @@ public enum AppPreferences {
   /// over to the sidebar status selection.
   public static func migrate(_ defaults: UserDefaults) {
     removeLegacyRunDestinations(defaults)
+    for key in [
+      "autopilot.log", "autopilot.idleShutdown", "autopilot.idleMinutes", "autopilot.nightly", "autopilot.nightlyHour",
+      "autopilot.nightlyOlderThanDays", "autopilot.pressure", "autopilot.lastNightly",
+    ] {
+      defaults.removeObject(forKey: key)
+    }
     if let home = defaults.string(forKey: Key.lastLoginStimHome) {
       if defaults.string(forKey: Key.stimHome) == nil, home.hasPrefix("/"), !StimHome.isDefault(home) {
         defaults.set(home, forKey: Key.stimHome)
@@ -135,17 +127,25 @@ public enum AppPreferences {
     if hides != nil { defaults.removeObject(forKey: Key.hidesUnprovisionedWorktrees) }
   }
 
-  public static func showArchived(_ defaults: UserDefaults) {
-    defaults.set(StatusFilter.encode([.archived]), forKey: Key.sidebarStatuses)
-  }
-
-  public static let idleMinuteChoices = [30, 60, 120, 240]
-  public static let nightlyOlderThanDayChoices = [1, 3, 7, 14, 30]
+  public static let olderThanDayChoices = [0, 1, 3, 7, 14, 30]
+  public static let idleShutdownMinuteChoices = [0, 15, 30, 60, 120, 240]
 
   /// The live-frame cap the simulator and emulator views read on every frame.
   public static var maxFramesPerSecond: Double {
     let value = UserDefaults.standard.double(forKey: Key.maxFramesPerSecond)
     return value > 0 ? value : 60
+  }
+
+  public static func showsWorkspaceCards(_ defaults: UserDefaults = .standard) -> Bool {
+    isOn(Key.showsWorkspaceCards, defaults)
+  }
+
+  public static func offersTutorial(_ defaults: UserDefaults = .standard) -> Bool {
+    isOn(Key.offersTutorial, defaults)
+  }
+
+  private static func isOn(_ key: String, _ defaults: UserDefaults) -> Bool {
+    defaults.object(forKey: key) == nil || defaults.bool(forKey: key)
   }
 
   public static var pausesHiddenFrames: Bool {

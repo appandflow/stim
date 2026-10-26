@@ -12,6 +12,7 @@ struct NavigationDestination: Equatable {
   var pageKind: String {
     switch selection {
     case .overview: "overview"
+    case .discover: "discover"
     case .wall: "wall"
     case .project: "project"
     case .environment: "workspace"
@@ -19,6 +20,7 @@ struct NavigationDestination: Equatable {
     case .worktree: "worktree"
     case .notifications: "notifications"
     case .machine: "machine"
+    case .builds: "builds"
     case nil: "none"
     }
   }

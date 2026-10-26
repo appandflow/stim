@@ -1,10 +1,12 @@
+import chalk from 'chalk';
 import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import type { PlatformBuildOptions } from '@stim-cli/core/protocol';
 import type { StimContext } from '@stim-cli/core';
 import { constants, promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { loadCacheProvider } from '@stim-cli/cache';
-import { providerUploadOutcome } from '../../cache/build-cache.ts';
+import { providerUploadOutcome, storedAppId } from '../../cache/build-cache.ts';
+import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { phaseLine } from '../../command-output.ts';
 import { hostSystemImageArch } from '../../devices/android.ts';
 import { workspaceShareURL } from '../../devices/stim-desktop.ts';
@@ -20,10 +22,10 @@ import { projectRegistry } from '../../integrations/projects.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { resolveBuildPlacement } from '../../offload/selection.ts';
 import { setRemoteLogSink } from '../../remote-log.ts';
-import { getConcurrencyLimits, getProject, upsertProject } from '../../workspace/config.ts';
+import { getConcurrencyLimits, getProject, upsertProject, withConfigLockAsync } from '../../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
 import { resolveProjectSettingsAsync } from '../../workspace/settings.ts';
-import { recordWorkspaceUse } from '../../workspace/workspace-state.ts';
+import { recordWorkspaceUseAsync } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './artifact.ts';
 import { resolveAndroidBuildPlan } from './plan.ts';
@@ -108,8 +110,10 @@ export async function buildAndroidOperation(
       root,
       { command: 'build', platform: 'android' },
       async (claim) => {
-        if (!getProject(root)) upsertProject(root, {});
-        recordWorkspaceUse(root, new Date(), context.env, context.cwd);
+        await withConfigLockAsync(() => {
+          if (!getProject(root)) upsertProject(root, {});
+        });
+        await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
         const started = Date.now();
         const startedAt = new Date(started).toISOString();
         const progress = startBuildProgress({ root, platform: 'android', slot: 'default', claim, note });
@@ -140,7 +144,7 @@ export async function buildAndroidOperation(
         let directory: string | undefined;
         let built: AndroidBuildFacts | null = null;
         let failureAfterCleanup: ReturnType<typeof cancelledError> | null = null;
-        const finishRecord = (status: string, errorCode?: string) =>
+        const finishRecord = (status: 'ok' | 'failed', errorCode?: string, message?: string) =>
           persistLastBuild({
             root,
             record,
@@ -148,6 +152,7 @@ export async function buildAndroidOperation(
             durationMs: Date.now() - started,
             status,
             errorCode,
+            message,
             out: note,
             recordBuild: (at, entry) => recordFinishedBuild(at, entry, { artifactOnly: true }),
           });
@@ -200,6 +205,7 @@ export async function buildAndroidOperation(
               resolveRemoteBuild: resolveRemote,
               uploadRemoteBuild: uploadRemote,
               loadCacheProviderModule: loadCacheProvider,
+              storedAppId,
               acquireSlot: acquireBuildSlot,
               releaseSlot: releaseBuildSlot,
               now: Date.now,
@@ -227,6 +233,12 @@ export async function buildAndroidOperation(
             context.env,
           );
           if (uploaded) phase('cache', uploaded.line);
+          await settleFingerprintCheck(
+            artifact.fingerprintCheck,
+            'android',
+            (line) => phase('fingerprint', chalk.yellow(line)),
+            (entry) => writer.write(entry),
+          );
           const links = {
             workspace: await workspaceShareURL(
               root,
@@ -254,7 +266,11 @@ export async function buildAndroidOperation(
           };
         } catch (error) {
           const failure = runCancellationSignal(context)?.aborted ? cancelledError('Android build', error) : error;
-          finishRecord('failed', (failure as { code?: string }).code);
+          finishRecord(
+            'failed',
+            (failure as { code?: string }).code,
+            failure instanceof Error ? failure.message : String(failure),
+          );
           stats.record({ failed: true, durationMs: Date.now() - started });
           throw failure;
         } finally {
@@ -262,7 +278,7 @@ export async function buildAndroidOperation(
           failureAfterCleanup =
             built && runCancellationSignal(context)?.aborted ? cancelledError('Android build') : null;
           if (failureAfterCleanup) {
-            finishRecord('failed', failureAfterCleanup.code);
+            finishRecord('failed', failureAfterCleanup.code, failureAfterCleanup.message);
             stats.record({ failed: true, durationMs: Date.now() - started });
           }
           if ((!built || failureAfterCleanup) && directory) await fs.rm(directory, { recursive: true, force: true });

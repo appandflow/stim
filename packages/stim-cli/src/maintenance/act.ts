@@ -30,6 +30,12 @@ import {
   findStaleProjectDevices,
 } from '../commands/gc/devices.ts';
 import { listAvdsAsync } from '../devices/android.ts';
+import {
+  dueIdleDevices,
+  shutDownIdleDevices,
+  writeIdleShutdownEvent,
+  type IdleShutdownEvent,
+} from '../devices/idle-shutdown.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSimsAsync } from '../devices/ios.ts';
@@ -40,9 +46,16 @@ import { loadConfig } from '../workspace/config.ts';
 import { cacheBlocked, measureDisk, measureDiskAsync } from './measure.ts';
 import { cacheEntryProtection, maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { artifactWorktrees, clearArtifact, type ArtifactWorktree } from './artifacts.ts';
-import { cachedDeviceActivityAsync, workspaceActiveReason, workspaceActiveReasonAsync } from './activity.ts';
+import {
+  cachedDeviceActivity,
+  cachedDeviceActivityAsync,
+  workspaceActiveReason,
+  workspaceActiveReasonAsync,
+} from './activity.ts';
 import { levelFloors, lowestFree, protectWindowMs } from './pressure.ts';
 import type { MaintenanceSettings } from './settings.ts';
+import { idleShutdownMinutes } from './devices.ts';
+import { stopIdleWorkspace } from './idle-stop.ts';
 
 export interface ActionOutcome {
   status: 'done' | 'kept' | 'failed';
@@ -55,6 +68,7 @@ export interface ActContext {
   settings: MaintenanceSettings;
   budget: Budget;
   protectedRoot: string;
+  background?: boolean;
   worktreeSweep?: WorktreeSweep;
   pressureSweep?: WorktreeSweep;
   protect?: (entry: string) => string | null;
@@ -167,17 +181,18 @@ async function clearOutputs(action: MaintenanceAction, context: ActContext): Pro
   if (!root) return kept('the action names no workspace');
   if (root === context.protectedRoot) return kept('the command that started this pass runs in it');
   if (maintenancePinned(root)) return kept('pinned by maintenance.keep');
-  const recent = recentUse(root, context.settings, protectWindowMs(action, context.settings));
+  const lighten = action.level === 2;
+  const recent = lighten ? null : recentUse(root, context.settings, protectWindowMs(action, context.settings));
   if (recent) return kept(recent);
   const olderThan = action.olderThanDays ?? null;
   const now = Date.now();
-  const report = collectWorkspaceOutputs({ olderThan, now, measure: false });
+  const report = collectWorkspaceOutputs({ olderThan, now, measure: false, lighten, only: root });
   const entry = report.workspaces.find(
     (candidate) => candidate.projectRoot && canonicalPath(candidate.projectRoot) === root,
   );
   if (!entry) return kept('it has no build outputs any more');
   const { results } = await quietly(() =>
-    clearWorkspaceOutputs({ ...report, workspaces: [entry] }, { olderThan, now }),
+    clearWorkspaceOutputs({ ...report, workspaces: [entry] }, { olderThan, now, lighten }),
   );
   return outcomeOf(results, action.bytes);
 }
@@ -192,7 +207,9 @@ async function removeWorktree(action: MaintenanceAction, context: ActContext): P
   if (worktree.keys.some(maintenancePinned)) return kept('pinned by maintenance.keep');
   const before = lowestFree(measureDisk());
   const { results } = await quietly(() => removeWorktrees({ ...sweep, worktrees: [worktree] }));
-  return outcomeOf(results, freedSince(before));
+  const outcome = outcomeOf(results, freedSince(before));
+  const removal = results.find((result) => result.status === 'done')?.detail;
+  return outcome.status === 'done' ? { ...outcome, detail: removal ?? action.reason } : outcome;
 }
 
 async function removeOrphan(action: MaintenanceAction): Promise<ActionOutcome> {
@@ -203,11 +220,42 @@ async function removeOrphan(action: MaintenanceAction): Promise<ActionOutcome> {
   return outcomeOf(results, orphan.bytes ?? 0);
 }
 
+async function shutDownIdleDevice(action: MaintenanceAction): Promise<ActionOutcome> {
+  if (deviceSweepIsScoped()) return kept('STIM_HOME scopes this config, and devices are machine-wide');
+  const root = action.workspace ?? action.target;
+  const minutes = idleShutdownMinutes(root);
+  if (minutes === 0) return kept('devices.idleShutdownMinutes is 0 for this workspace');
+  const idleMs = minutes * 60_000;
+  const due = dueIdleDevices(root, idleMs).find(({ device }) => device.id === action.target);
+  if (!due) return kept(`it is no longer idle for ${minutes} minutes`);
+  const failures: string[] = [];
+  const skips: string[] = [];
+  const log = (event: IdleShutdownEvent) => {
+    writeIdleShutdownEvent(root, event);
+    if (event.event === 'device_idle_shutdown_failed') (event.skipped ? skips : failures).push(event.msg);
+  };
+  const run = await withIdleWorkspace(
+    root,
+    () => shutDownIdleDevices(root, idleMs, log, Date.now(), { only: due.device }),
+    { purpose: 'automatic maintenance idle shutdown', supervisor: false, managedLocks: false },
+  );
+  if (!run.ran) return kept(`in use: ${run.reasons.join('; ')}`);
+  if (run.value) return { status: 'done', bytes: 0, detail: action.target };
+  if (failures.length) return { status: 'failed', bytes: 0, detail: failures.join('; ') };
+  return kept(skips.join('; ') || `it is no longer idle for ${minutes} minutes`);
+}
+
 async function deleteParkedDevice(action: MaintenanceAction): Promise<ActionOutcome> {
   if (deviceSweepIsScoped()) return kept('STIM_HOME scopes this config, and devices are machine-wide');
-  const sims = (await collectParkedSims({})).filter((sim) => sim.udid === action.target);
-  const avds = sims.length ? [] : (await collectParkedAvds({})).filter((avd) => avd.name === action.target);
-  if (!sims.length && !avds.length) return kept('it is no longer parked');
+  const age = { olderThanDays: action.olderThanDays ?? null, now: Date.now() };
+  const sims = (await collectParkedSims({}, age)).filter((sim) => sim.udid === action.target);
+  const avds = sims.length ? [] : (await collectParkedAvds({}, age)).filter((avd) => avd.name === action.target);
+  if (!sims.length && !avds.length)
+    return kept(
+      action.olderThanDays === undefined
+        ? 'it is no longer parked'
+        : `it is no longer parked, or was parked within ${action.olderThanDays} days`,
+    );
   const before = lowestFree(measureDisk());
   const { results } = await quietly(async () => (await deleteParkedSims(sims)) + (await deleteParkedAvds(avds)));
   return outcomeOf(results, freedSince(before));
@@ -430,10 +478,20 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
       return deleteParkedDevice(action);
     case 'would-delete-devices':
       return deleteDevices(action, context);
+    case 'would-shutdown-device':
+      return action.check === 'disk'
+        ? kept('automatic maintenance does not stop devices or dev servers for disk')
+        : shutDownIdleDevice(action);
     case 'would-stop-workspace':
-      return action.level === 3
-        ? stopWorkspace(action, context)
-        : kept('automatic maintenance stops dev servers only at disk pressure level 3');
+      if (action.level === 3) return stopWorkspace(action, context);
+      return action.check === 'idle'
+        ? stopIdleWorkspace(action, {
+            protectedRoot: context.background ? '' : context.protectedRoot,
+            devices: () => cachedDeviceActivity(Date.now()),
+          })
+        : kept(
+            'automatic maintenance stops dev servers only at disk pressure level 3 or after maintenance.idleStopHours',
+          );
     case 'would-clear-build-dirs':
     case 'would-delete-dependencies':
       return clearArtifacts(action, context);

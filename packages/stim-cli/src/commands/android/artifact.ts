@@ -16,7 +16,8 @@ import {
   type LoadCacheProviderResult,
   type ProviderCallResult,
 } from '@stim-cli/cache';
-import { prepareProviderDownloadDir, providerDownloadPath } from '../../cache/build-cache.ts';
+import { prepareProviderDownloadDir, providerDownloadPath, type storedAppId } from '../../cache/build-cache.ts';
+import type { FingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
@@ -39,7 +40,7 @@ import {
 } from '../../engine/remote-cache.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
 import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
-import { machineCapacity, type BuildMissReason, type MachineCapacity, type OffloadMode } from '@stim-cli/core/state';
+import { machineCapacity, type BuildMissReason, type MachineCapacity } from '@stim-cli/core/state';
 import { claimFailure } from '../../ownership-claim.ts';
 import type { pairedMachines } from '../../offload/build-machines.ts';
 import {
@@ -53,7 +54,14 @@ import {
   type OffloadChoice,
   type BuildHandoff,
 } from '../../offload/client.ts';
-import { namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../../offload/selection.ts';
+import {
+  fingerprintMismatchRemedy,
+  missingPackageManagerRemedy,
+  automaticBuild,
+  namedBuildMachine,
+  OffloadRefusal,
+  requireLocalBuild,
+} from '../../offload/selection.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
 import type { AndroidBuildPlan } from './plan.ts';
@@ -106,6 +114,7 @@ interface AndroidArtifactDeps {
   resolveRemoteBuild: typeof resolveRemote;
   uploadRemoteBuild: typeof uploadRemote;
   loadCacheProviderModule: typeof loadCacheProvider;
+  storedAppId: typeof storedAppId;
   acquireSlot: typeof acquireBuildSlot;
   releaseSlot: typeof releaseBuildSlot;
   now: () => number;
@@ -116,6 +125,10 @@ export interface PreparedAndroidArtifact {
   apkPath: string | null;
   handoff?: BuildHandoff | null;
   androidPackage: string | null;
+  /** The package read from the APK when its cache entry was stored, for an APK that entry provided. */
+  apkPackage: string | null;
+  /** The background check of a memoized fingerprint this artifact was looked up with. */
+  fingerprintCheck: FingerprintCheck | null;
   /** Waits for cache uploads that read temporary copies before removing them; repeated calls are safe. */
   release(): void | Promise<void>;
   waitedForBuild: WaitedForBuild | null;
@@ -165,6 +178,7 @@ export async function acquireAndroidArtifact(
     resolveRemoteBuild,
     uploadRemoteBuild,
     loadCacheProviderModule,
+    storedAppId: entryAppId,
     acquireSlot,
     releaseSlot,
     now,
@@ -178,7 +192,7 @@ export async function acquireAndroidArtifact(
   const fallBack = (
     reason: string,
     line: string = reason,
-    info: { code?: string; machine?: string; candidates?: PlacementCandidate[] } = {},
+    info: { code?: string; machine?: string; candidates?: PlacementCandidate[]; remedy?: string } = {},
   ) => {
     writer.write(
       buildPlacementRecord({
@@ -189,8 +203,8 @@ export async function acquireAndroidArtifact(
         fallback: { code: info.code ?? 'fallback', reason, machine: info.machine },
       }),
     );
-    if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
-    requireLocalBuild(buildMachine);
+    if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason, info.remedy);
+    requireLocalBuild(buildMachine, reason);
     record.offloadFallback = reason;
     phase('build', `${line} -> building here`);
   };
@@ -453,7 +467,7 @@ export async function acquireAndroidArtifact(
     try {
       const buildSlot = await run.takeBuildSlot({
         signal,
-        automatic: buildMachine === 'auto',
+        automatic: automaticBuild(buildMachine),
         max: maxBuilds,
         out,
         waitingFor: (info) => waitingFor?.(info, 'build-slot'),
@@ -474,7 +488,6 @@ export async function acquireAndroidArtifact(
 
   interface Candidate {
     cacheOnly: boolean;
-    mode: OffloadMode;
     here: MachineCapacity;
     code: string;
     reason: string;
@@ -488,7 +501,7 @@ export async function acquireAndroidArtifact(
       hereReason = cacheIneligible;
       return null;
     }
-    const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
+    const { machines, localEnabled } = buildPlacementCandidates(buildMachine);
     if (localEnabled && machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local')
       return null;
     const unsupported =
@@ -496,7 +509,6 @@ export async function acquireAndroidArtifact(
       (recipe.offload ? recipe.offload.unsupported : 'this project integration does not support offloaded builds');
     const here = machineCapacity();
     const placement = offloadPlacement({
-      mode,
       localEnabled,
       machines: machines.length,
       here,
@@ -511,7 +523,7 @@ export async function acquireAndroidArtifact(
         cachePolicy.remote &&
         (recipe.offload?.uncachedArtifacts || (recipe.offload && !recipe.offload.request.native))
       )
-        return { cacheOnly: true, mode, here, code: placement.code, reason: placement.reason, machines };
+        return { cacheOnly: true, here, code: placement.code, reason: placement.reason, machines };
       writer.write(
         buildPlacementRecord({
           platform: PLATFORM,
@@ -519,10 +531,10 @@ export async function acquireAndroidArtifact(
           stays: { code: placement.code, reason: placement.reason },
         }),
       );
-      if (mode !== 'off') phase('build', `placement: here (${placement.reason})`);
+      if (buildMachine !== 'local') phase('build', `placement: here (${placement.reason})`);
       return null;
     }
-    return { cacheOnly: false, mode, here, code: placement.code, reason: placement.reason, machines };
+    return { cacheOnly: false, here, code: placement.code, reason: placement.reason, machines };
   }
 
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
@@ -541,7 +553,6 @@ export async function acquireAndroidArtifact(
     const choice = await chooseBuildMachine({
       projectRoot: root,
       target,
-      mode: candidate.mode,
       here: candidate.here,
       note: (line) => phase('build', chalk.dim(`offload: ${line}`)),
       machines: candidate.machines,
@@ -606,6 +617,7 @@ export async function acquireAndroidArtifact(
       choice,
       expectedFingerprint: uncached ? null : storeHash,
       request: recipe.offload!.request,
+      fingerprintInputs: recipe.offload!.fingerprintInputs,
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
       onEnter: (name) => {
@@ -662,6 +674,9 @@ export async function acquireAndroidArtifact(
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
         code: 'offload-failed',
         machine: choice.machine,
+        remedy: outcome.ok
+          ? undefined
+          : (fingerprintMismatchRemedy(outcome.reason) ?? missingPackageManagerRemedy(choice.machine, outcome.reason)),
       });
       writer.write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;
@@ -944,7 +959,10 @@ export async function acquireAndroidArtifact(
       },
     },
   );
-  if (!acquired.ok) return { ok: false, failure: acquired.failure, ccache: ccacheActivity };
+  if (!acquired.ok) {
+    recipe.fingerprintCheck?.()?.cancel();
+    return { ok: false, failure: acquired.failure, ccache: ccacheActivity };
+  }
 
   return {
     ok: true,
@@ -952,7 +970,10 @@ export async function acquireAndroidArtifact(
       apkPath: acquired.artifact,
       handoff,
       androidPackage,
+      apkPackage: record.cacheHit && storeKey ? entryAppId(PLATFORM, storeKey) : null,
+      fingerprintCheck: recipe.fingerprintCheck?.() ?? null,
       release: async () => {
+        recipe.fingerprintCheck?.()?.cancel();
         await settleArtifactUploads(providerUpload, uploadPending);
         acquired.release();
       },

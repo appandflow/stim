@@ -250,8 +250,8 @@ test('bundle instances are the executables of app bundles directly in the worksp
 });
 
 describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned bundle', () => {
-  function bundleCopy(script: string): ChildProcess {
-    const executable = join(macosDir(root), 'Sample.app', 'Contents', 'MacOS', 'Sample');
+  function bundleCopy(script: string, directory = macosDir(root)): ChildProcess {
+    const executable = join(directory, 'Sample.app', 'Contents', 'MacOS', 'Sample');
     mkdirSync(join(executable, '..'), { recursive: true });
     if (!existsSync(executable)) copyFileSync(process.execPath, executable, constants.COPYFILE_FICLONE);
     const child = getExecutor().spawn(
@@ -309,6 +309,18 @@ describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned b
     expect(workspaceInUse(root)).toEqual([]);
   }, 20_000);
 
+  test('a hosted session stop ends a LaunchServices copy of an earlier attempt and spares other processes', async () => {
+    const attempts = join(dir, 'session', 'apps');
+    const earlier = await started(bundleCopy("process.on('SIGTERM', () => {})", join(attempts, 'earlier')));
+    const current = await started(bundleCopy('', join(attempts, 'current')));
+    mkdirSync(join(attempts, 'earlier.lock'));
+    const bystander = await ownedProcess();
+    await stopping.stopHostedBundleInstances(realpathSync(join(dir, 'session')));
+    expect(inspectProcessIdentity(earlier)).toBe('gone');
+    expect(inspectProcessIdentity(current)).toBe('gone');
+    expect(inspectProcessIdentity(bystander)).toBe('same');
+  }, 20_000);
+
   test('workspace removal stops an unrecorded copy before emptying the workspace', async () => {
     const copy = await started(bundleCopy(''));
     writeWorkspaceState(root, { macos: record() });
@@ -340,6 +352,7 @@ describe('macOS build placement and promotion', () => {
   let localBuilds: number;
   let previousDuringBuild: string[];
   let compilerCalls: Array<{ file: string; args: string[]; cwd: string | undefined }>;
+  let swiftTmpdirs: Array<string | undefined>;
   let plist: Record<string, unknown>;
   const bundleId = 'dev.sample.stim.test';
   const choice = { machine: 'mini', offer: { capacity: {} } } as offload.OffloadChoice;
@@ -358,9 +371,9 @@ describe('macOS build placement and promotion', () => {
     localBuilds = 0;
     previousDuringBuild = [];
     compilerCalls = [];
+    swiftTmpdirs = [];
     plist = { CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' };
     buildRecord = { state: 'running', startedAt: new Date().toISOString() };
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
     vi.spyOn(machines, 'pairedMachines').mockReturnValue([
       { machine: 'mini' } as ReturnType<typeof machines.pairedMachines>[number],
     ]);
@@ -386,6 +399,7 @@ describe('macOS build placement and promotion', () => {
       },
       spawn: (file, args, options) => {
         compilerCalls.push({ file, args, cwd: options?.cwd as string | undefined });
+        swiftTmpdirs.push(options?.env?.TMPDIR);
         const child = Object.assign(new EventEmitter(), {
           stdout: new PassThrough(),
           stderr: new PassThrough(),
@@ -418,6 +432,7 @@ describe('macOS build placement and promotion', () => {
       assetCatalog?: unknown;
       displayName?: string;
       cache?: MacosArtifactRecipe['cache'];
+      hostServerKey?: string;
     } = {},
   ) => {
     const selected = projectRegistry.selectMacos(root);
@@ -444,7 +459,8 @@ describe('macOS build placement and promotion', () => {
       writer,
       note: () => {},
       record: buildRecord,
-      buildMachine: extras.buildMachine ?? 'auto',
+      buildMachine: extras.buildMachine ?? 'remote',
+      hostServerKey: extras.hostServerKey,
       displayName: extras.displayName,
     });
   };
@@ -592,12 +608,13 @@ describe('macOS build placement and promotion', () => {
     token: 'a'.repeat(64),
     sha256: 'b'.repeat(64),
   };
-  function succeeds(path: string): void {
+  function succeeds(path: string, cacheHit?: true): void {
     vi.spyOn(offload, 'offloadBuild').mockResolvedValue({
       ok: true,
       machine: 'mini',
       artifactPath: path,
       handoff,
+      cacheHit,
     } as Extract<offload.OffloadOutcome, { ok: true }>);
   }
 
@@ -643,6 +660,76 @@ describe('macOS build placement and promotion', () => {
     expect(buildRecord.cacheKey).toBeUndefined();
     writeWorkspaceState(root, { macos: record({ build: { ...buildRecord, state: 'ok' } }) });
     expect(readMacosRecord(root)?.build.offloadedTo).toBe('mini');
+  });
+
+  describe('an app hosted on the Mac that builds it', () => {
+    const nodeKey = 'NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNA';
+    const clientCache = () => {
+      const identity = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['identity']>(async () => ({
+        hash: 'client-inputs',
+        key: 'client-key',
+      }));
+      const restore = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['restore']>(async () => null);
+      const store = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['store']>();
+      return { identity, restore, store, cache: { identity, has: async () => false, restore, store } };
+    };
+    const runsOnWorker = () => {
+      const target = vi.mocked(offload.chooseBuildMachine).mock.calls[0]?.[0].target;
+      return target?.platform === 'macos' ? target.runsOnWorker : 'not macos';
+    };
+
+    beforeEach(() => {
+      vi.spyOn(machines, 'pairedMachines').mockReturnValue(
+        machines.pairedMachines().map((each) => Object.assign({}, each, { serverKey: nodeKey })),
+      );
+      succeeds(remoteBundle());
+    });
+
+    it('asks for no Xcode, SDK or CPU match with this Mac and keeps the client toolchain out of the cache', async () => {
+      const client = clientCache();
+      await build({ buildMachine: 'mini', hostServerKey: nodeKey, cache: client.cache });
+      expect(runsOnWorker()).toBe(true);
+      expect(client.identity).not.toHaveBeenCalled();
+      expect(client.restore).not.toHaveBeenCalled();
+      expect(client.store).not.toHaveBeenCalled();
+      expect(buildRecord.fingerprint).toBeUndefined();
+      expect(buildRecord.cacheKey).toBeUndefined();
+      expect(localBuilds).toBe(0);
+    });
+
+    it.each([
+      ['another node hosts it', { buildMachine: 'mini', hostServerKey: 'OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOA' }],
+      ['it is hosted on no remote Mac', { buildMachine: 'mini' }],
+      ['the build machine is not named', { buildMachine: 'remote', hostServerKey: nodeKey }],
+    ])('keeps the full toolchain match with this Mac when %s', async (_name, extras) => {
+      const client = clientCache();
+      await build({ ...extras, cache: client.cache });
+      expect(runsOnWorker()).toBeUndefined();
+      expect(client.identity).toHaveBeenCalled();
+    });
+
+    it('checks a fetched peer artifact against the worker CPU instead of this Mac', async () => {
+      const workerArch = process.arch === 'arm64' ? 'x64' : 'arm64';
+      const architecture = workerArch === 'x64' ? 'x86_64' : 'arm64';
+      const base = getExecutor();
+      setExecutor({
+        ...base,
+        runFileAsync: async (file, args, options) => {
+          if (file === 'xcrun' && args[0] === 'lipo') return architecture;
+          if (file === 'xcrun' && args[0] === 'vtool') return 'platform MACOS';
+          return base.runFileAsync(file, args, options);
+        },
+      });
+      vi.mocked(offload.chooseBuildMachine).mockResolvedValue(
+        Object.assign({}, choice, { offer: { capacity: {}, toolchain: { arch: workerArch } } }),
+      );
+      succeeds(remoteBundle(), true);
+      await expect(build({ buildMachine: 'mini', hostServerKey: nodeKey })).resolves.toMatchObject({
+        offloadedTo: 'mini',
+      });
+      succeeds(remoteBundle(), true);
+      await expect(build({ buildMachine: 'mini' })).rejects.toThrow('does not match this platform and architecture');
+    });
   });
 
   it('cancellation during fetched signature verification preserves the bundle without compiling locally', async () => {
@@ -708,6 +795,7 @@ describe('macOS build placement and promotion', () => {
   });
 
   it('automatic placement never falls back to Swift when local is excluded', async () => {
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildPoolDisabled', []);
     const config = loadConfig()!;
     config.remote = { ...config.remote, buildPoolDisabled: ['local'] };
     saveConfig(config);
@@ -755,7 +843,6 @@ describe('macOS build placement and promotion', () => {
     async (reason) => {
       writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini', 'other']);
       vi.mocked(offload.chooseBuildMachine).mockResolvedValue(`mini: ${reason}`);
-      writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'off');
       await expect(build({ buildMachine: 'mini' })).rejects.toMatchObject({
         code: 'STIM_OFFLOAD_REFUSED',
         message: expect.stringContaining(reason),
@@ -811,6 +898,11 @@ describe('macOS build placement and promotion', () => {
         cwd: root,
       },
     ]);
+  });
+
+  it('leaves TMPDIR to the ambient value, because SwiftPM keeps its shared-cache locks there', async () => {
+    await build({ buildMachine: 'local' });
+    expect(swiftTmpdirs).toEqual([undefined, undefined]);
   });
 
   test.each(['invalid', 'not listed', 'not paired'])(
@@ -966,9 +1058,13 @@ describe('macOS build placement and promotion', () => {
     expect(buildRecord.offloadFallback).toBeUndefined();
   });
 
-  it('builds locally without asking a machine when offload is off', async () => {
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'off');
-    expect(await build()).toEqual({ bundleId, offloadedTo: null, offloadFallback: null, handoff: null });
+  it('builds locally without asking a machine when the build is local', async () => {
+    expect(await build({ buildMachine: 'local' })).toEqual({
+      bundleId,
+      offloadedTo: null,
+      offloadFallback: null,
+      handoff: null,
+    });
     expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
     expect(localBuilds).toBe(1);
   });
@@ -990,7 +1086,6 @@ describe('macOS build placement and promotion', () => {
   });
 
   it('refuses a plist changed by the local build before replacing the previous bundle', async () => {
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'off');
     const spawn = getExecutor().spawn;
     setExecutor({
       ...getExecutor(),
@@ -999,12 +1094,11 @@ describe('macOS build placement and promotion', () => {
         return spawn(...args);
       },
     });
-    await expect(build()).rejects.toThrow('development Info.plist');
+    await expect(build({ buildMachine: 'local' })).rejects.toThrow('development Info.plist');
     expect(readFileSync(join(bundle, 'previous'), 'utf8')).toBe('old');
   });
 
   it('drains a cancelled resource copy before cleanup and preserves the previous bundle', async () => {
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'off');
     mkdirSync(join(root, 'branding'));
     writeFileSync(join(root, 'branding', 'wordmark.svg'), 'wordmark bytes');
     const controller = new AbortController();
@@ -1025,7 +1119,9 @@ describe('macOS build placement and promotion', () => {
       }
     });
     let settled = false;
-    const operation = withAmbientContext(context, () => build({ context, resources: { branding: 'branding' } }));
+    const operation = withAmbientContext(context, () =>
+      build({ context, buildMachine: 'local', resources: { branding: 'branding' } }),
+    );
     const observed = operation.finally(() => {
       settled = true;
     });

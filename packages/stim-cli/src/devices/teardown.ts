@@ -5,7 +5,12 @@ import { cancellableSleep } from '../cancellation.ts';
 import { withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { closeOwnedDeviceSessions } from './agent-device-cleanup.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from './device-slots.ts';
-import { forgetCreatedDevice, readCreatedDevices, recordCreatedDevice } from './created-devices.ts';
+import {
+  forgetCreatedDevice,
+  forgetCreatedDeviceAsync,
+  readCreatedDevices,
+  recordCreatedDevice,
+} from './created-devices.ts';
 import { isStimOwnedAvd } from './device-ownership.ts';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -323,7 +328,9 @@ async function parkOwnedIosSim(
     ...(park.appId ? { bundleId: park.appId } : {}),
     ...(park.cacheKey ? { cacheKey: park.cacheKey } : {}),
   };
-  const evicted = parkSim({ platform: 'ios', projectPath: park.projectPath, slot: park.slot, record, max: park.max });
+  const evicted = await withConfigLockAsync(() =>
+    parkSim({ platform: 'ios', projectPath: park.projectPath, slot: park.slot, record, max: park.max }),
+  );
   return { record, evicted };
 }
 
@@ -346,6 +353,7 @@ export async function teardownOwnedIosSim(
   } = {},
 ): Promise<TeardownOutcome> {
   let parkFallback: string | undefined;
+  const reportedBusy = new Set<string>();
   try {
     const resolved = await resolveOwnedIosSimNow(udid, operation);
     if (resolved.notOwned) {
@@ -362,6 +370,7 @@ export async function teardownOwnedIosSim(
       workspace,
       undefined,
       operation,
+      reportedBusy,
     );
     const current = await resolveOwnedIosSimNow(udid, operation);
     if (current.missing) return { status: 'missing' };
@@ -416,6 +425,7 @@ export async function teardownOwnedIosSim(
         workspace,
         root,
         operation,
+        reportedBusy,
       );
     }
     return { status: 'torn-down', label: label ?? sim.name ?? udid };
@@ -514,7 +524,7 @@ async function removeOrphanedAvdDirectory(
       cause: error,
     });
   }
-  forgetCreatedDevice('android', basename(detached, '.avd'));
+  await forgetCreatedDeviceAsync('android', basename(detached, '.avd'));
 }
 
 async function teardownUnregisteredAvd(
@@ -552,7 +562,7 @@ interface AvdTeardownOptions {
   workspace?: string;
   orphanedDirectory?: OrphanedAvdDirectory;
   onlyIfMissing?: boolean;
-  onRemoved?: () => void;
+  onRemoved?: () => unknown;
   onWipeStart?: () => void;
   waitForShutdown?: (
     avdName: string,
@@ -582,7 +592,7 @@ export async function teardownOwnedAvd(avdName: string, options: AvdTeardownOpti
     if (operation) declareSpawnsOn(operation, claim);
     const result = await teardownClaimedAvd(avdName, claim, options);
     operation?.signal.throwIfAborted();
-    if (result.status === 'torn-down' || result.status === 'missing') options.onRemoved?.();
+    if (result.status === 'torn-down' || result.status === 'missing') await options.onRemoved?.();
     return result;
   } catch (error) {
     if (
@@ -638,6 +648,7 @@ async function teardownClaimedAvd(
   }: AvdTeardownOptions,
 ): Promise<TeardownOutcome> {
   let parkFallback: string | undefined;
+  const reportedBusy = new Set<string>();
   const resolveAvd = async (name: string) => {
     operation?.signal.throwIfAborted();
     const result = await resolve(name);
@@ -682,6 +693,7 @@ async function teardownClaimedAvd(
         workspace,
         undefined,
         operation,
+        reportedBusy,
       );
       if (!(await stillOwned())) throw new Error(`Owned AVD ${avdName} changed before shutdown; it was kept.`);
       await waitForShutdown(
@@ -708,6 +720,7 @@ async function teardownClaimedAvd(
           workspace,
           root,
           operation,
+          reportedBusy,
         );
       }
     } else {
@@ -752,21 +765,18 @@ async function teardownClaimedAvd(
           if (!systemImage || !park.configuration || !ownedAvdMatchesConfiguration(avdName, park.configuration)) {
             throw new Error('the AVD has no verified creation configuration');
           }
-          const evicted = parkSim({
-            platform: 'android',
-            projectPath: park.projectPath,
-            slot: park.slot,
-            max: park.max,
-            record: {
-              udid: avdName,
-              name: avdName,
-              systemImage,
-              configuration: park.configuration,
-              parkedAt: new Date().toISOString(),
-              ...(park.appId ? { packageName: park.appId } : {}),
-              ...(park.cacheKey ? { cacheKey: park.cacheKey } : {}),
-            },
-          });
+          const record = {
+            udid: avdName,
+            name: avdName,
+            systemImage,
+            configuration: park.configuration,
+            parkedAt: new Date().toISOString(),
+            ...(park.appId ? { packageName: park.appId } : {}),
+            ...(park.cacheKey ? { cacheKey: park.cacheKey } : {}),
+          };
+          const evicted = await withConfigLockAsync(() =>
+            parkSim({ platform: 'android', projectPath: park.projectPath, slot: park.slot, max: park.max, record }),
+          );
           const removed: ParkedDevice[] = [];
           const failures: string[] = [];
           for (const entry of evicted) {
@@ -937,7 +947,7 @@ export async function teardownBrowserHeld(
       }
       await rm(profile, { recursive: true, force: true });
       signal?.throwIfAborted();
-      forgetCreatedDevice('web', profile);
+      await forgetCreatedDeviceAsync('web', profile);
     }
     return record ? { status: 'torn-down', label: `Chrome (${profile})` } : { status: 'missing' };
   } catch (error) {

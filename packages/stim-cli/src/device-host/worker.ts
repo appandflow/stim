@@ -21,7 +21,7 @@ import {
   listUserApps,
   uninstallIosApp,
 } from '../devices/ios.ts';
-import { forgetCreatedDevice } from '../devices/created-devices.ts';
+import { forgetCreatedDeviceAsync } from '../devices/created-devices.ts';
 import { teardownOwnedIosSim } from '../devices/teardown.ts';
 import { installHostedApp, removeHostedAppData } from './app.ts';
 
@@ -152,7 +152,7 @@ export async function runHostedDevice(
       throw new Error(
         `Hosted simulator ${device.udid} is still listed (${after.state}); deletion could not be verified. If its runtime is unavailable, delete it with xcrun simctl delete and stop the session again.`,
       );
-    forgetCreatedDevice('ios', device.udid);
+    await forgetCreatedDeviceAsync('ios', device.udid);
     removeHostedAppData(home);
     return { state: 'stopped', device };
   } catch (error) {

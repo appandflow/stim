@@ -14,7 +14,7 @@ export function levelFromMessageType(messageType: unknown): string {
   return MESSAGE_TYPE_LEVEL[messageType as string] ?? 'info';
 }
 
-export const NOISE_RULES: NoiseRule[] = [
+const NOISE_RULES: NoiseRule[] = [
   { id: 'network', subsystem: 'com.apple.network' },
   {
     id: 'network-default-subsystem',
@@ -60,6 +60,12 @@ export const NOISE_RULES: NoiseRule[] = [
     category: 'CFNetwork Performance Diagnostic',
     level: 'warn',
   },
+  {
+    id: 'swiftui-invalid-configuration',
+    exactSubsystem: 'com.apple.SwiftUI',
+    category: 'Invalid Configuration',
+    level: 'warn',
+  },
 ];
 
 interface NoiseRule {
@@ -94,11 +100,6 @@ function matchingNoiseRule(event: LogStreamEvent): NoiseRule | undefined {
   const category = typeof event?.category === 'string' ? event.category : '';
   const message = typeof event?.eventMessage === 'string' ? event.eventMessage : '';
   return NOISE_RULES.find((rule) => ruleMatches(rule, { subsystem, category, message }));
-}
-
-/** @internal Test-only, https://github.com/appandflow/stim/issues/3463 */
-export function noiseRuleId(event: LogStreamEvent): string | null {
-  return matchingNoiseRule(event)?.id ?? null;
 }
 
 export function levelForEvent(event: LogStreamEvent): string {

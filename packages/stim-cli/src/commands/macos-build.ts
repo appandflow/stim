@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { MacosBuild } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
 import { workspaceShareURL } from '../devices/stim-desktop.ts';
+import { errorRemedy } from '../engine/build-ledger.ts';
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../engine/build-progress.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { cancelledError, throwIfCancelled } from '../cancellation.ts';
@@ -13,10 +14,10 @@ import { buildMacosBundle } from '../macos/build.ts';
 import { macosDir } from '../macos/state.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement } from '../offload/selection.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { ensureWorkspaceStorageAsync, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
-import { getProject, upsertProject } from '../workspace/config.ts';
-import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
+import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 
 export type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'macos' }>, 'platform'>;
 
@@ -54,14 +55,16 @@ export async function buildMacosOperation(
   const placement = resolveBuildPlacement(options.remoteBuild);
   if (placement.failure) throw Object.assign(new Error(placement.failure.message), placement.failure);
   const recipe = await (await selected.load()).prepare(context, settings);
-  ensureWorkspaceStorage(root);
+  await ensureWorkspaceStorageAsync(root, context.signal);
   return withNativeBuildRun(
     context,
     root,
     { command: 'build', platform: 'macos' },
     async (claim) => {
-      if (!getProject(root)) upsertProject(root, {});
-      recordWorkspaceUse(root, new Date(), context.env, context.cwd);
+      await withConfigLockAsync(() => {
+        if (!getProject(root)) upsertProject(root, {});
+      });
+      await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
       const started = Date.now();
       const progress = startBuildProgress({ root, platform: 'macos', slot: 'default', claim, note });
       const logs = workspaceLogsDir(root);
@@ -76,6 +79,7 @@ export async function buildMacosOperation(
       };
       let directory: string | undefined;
       let succeeded = false;
+      let remedy: string | undefined;
       try {
         const artifacts = join(workspaceDir(root), 'artifacts');
         mkdirSync(artifacts, { recursive: true });
@@ -120,6 +124,7 @@ export async function buildMacosOperation(
         build.state = 'failed';
         build.error = failure instanceof Error ? failure.message : String(failure);
         build.errorCode = (failure as { code?: string }).code;
+        remedy = errorRemedy(failure);
         throw failure;
       } finally {
         build.finishedAt = new Date().toISOString();
@@ -143,6 +148,7 @@ export async function buildMacosOperation(
               offloadedTo: build.offloadedTo,
               offloadFallback: build.offloadFallback,
               compileSteps: progress.steps(),
+              ...(build.error ? { ledger: { message: build.error, remedy } } : {}),
             },
             { artifactOnly: true },
           );

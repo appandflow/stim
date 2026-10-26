@@ -6,7 +6,7 @@ import type {
 } from '@stim-cli/core/state';
 import { prepareHostedNative, placeHostedNative, stopHostedNative, type HostedNativeTarget } from './hosted-native.ts';
 import { connectHost, call } from './hosted-client.ts';
-import { requestHostedMetro } from './metro-gateway.ts';
+import { requestHostedMetro } from './metro-request.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 export interface HostedAndroidTarget extends HostedNativeTarget {
   choice: HostedAndroidChoice;
@@ -22,7 +22,7 @@ export async function prepareHostedAndroid(
 export async function placeHostedAndroid(
   target: HostedAndroidTarget,
   options: Omit<Parameters<typeof placeHostedNative>[1], 'platform' | 'reserved'> & {
-    reserved: (placement: HostedAndroidPlacement) => void;
+    reserved: (placement: HostedAndroidPlacement) => unknown;
   },
 ): Promise<{ placement: HostedAndroidPlacement; launched: true | 'unverified' }> {
   return (await placeHostedNative(target, {
@@ -42,9 +42,9 @@ export async function reopenHostedAndroidMetro(
 ): Promise<void> {
   const host = await connectHost(placement.machine, undefined, true, signal);
   try {
-    const gateway = await requestHostedMetro(root, placement.session, host.credential, signal);
+    await requestHostedMetro(root, placement.session, host.credential, signal);
     throwIfCancelled(signal, 'reload');
-    await call(host, 'device-host.metro.open', { session: placement.session, clientMetroPort, ...gateway });
+    await call(host, 'device-host.metro.open', { session: placement.session, clientMetroPort });
   } finally {
     host.connection.close();
   }

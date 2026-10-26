@@ -96,7 +96,7 @@ import StimKit
     self.state = .idle
     guard let health, health.protocolVersion >= Self.protocolVersion else { return }
     let home = health.stimHome
-    let socket = URL(fileURLWithPath: home).appendingPathComponent("server/local.sock")
+    let socket = StimHome.localSocket(home: home)
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
     let client = ServerClient(
       endpoint: socket, clientName: Self.clientName, clientVersion: version, serverPort: controller.port,

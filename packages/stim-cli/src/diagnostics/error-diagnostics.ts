@@ -5,7 +5,9 @@ import type { NdjsonRecord } from '../ndjson.ts';
 import { bundleLocations, symbolicateErrors } from './error-symbolication.ts';
 import { resolveProjectMetro } from '../metro.ts';
 import { attachExpoErrorContext, readLogRecords } from '@stim-cli/core/state';
-import { writeDiagnosticOnce } from './diagnostic-store.ts';
+import { writeDiagnosticOnceAsync } from './diagnostic-store.ts';
+
+const SOURCE_LOCATION = /(?<![^\s()"\\])[^\s()"\\]+:\d+:\d+/g;
 
 function key(record: NdjsonRecord): string {
   return createHash('sha256').update(JSON.stringify(record)).digest('hex');
@@ -73,7 +75,7 @@ export function mergeErrorCopies(records: readonly NdjsonRecord[], root?: string
       [
         ...JSON.stringify([record.msg, record.stack, record.componentStack])
           .replaceAll(root ? `${root}/` : '\u0000', '')
-          .matchAll(/[^\s()"\\]+:\d+:\d+/g),
+          .matchAll(SOURCE_LOCATION),
       ].map(([location]) => location),
     );
     const existing =
@@ -89,7 +91,7 @@ export function mergeErrorCopies(records: readonly NdjsonRecord[], root?: string
               [
                 ...JSON.stringify([other.msg, other.stack, other.componentStack])
                   .replaceAll(root ? `${root}/` : '\u0000', '')
-                  .matchAll(/[^\s()"\\]+:\d+:\d+/g),
+                  .matchAll(SOURCE_LOCATION),
               ].some(([location]) => locations.has(location)),
           )
         : -1;
@@ -224,7 +226,7 @@ export async function errorDiagnostics(
       rendered[entry.index] = value;
       if (bundleLocations(value).length === bundleLocations(entry.record).length) continue;
       try {
-        writeDiagnosticOnce(
+        await writeDiagnosticOnceAsync(
           join(directory, `${key(entry.record)}.json`),
           JSON.stringify({ original: key(entry.record), rendered: value }),
         );

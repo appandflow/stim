@@ -52,7 +52,7 @@ import {
   type PhaseStep,
   type RemoteBuild,
 } from '@/lib/workspace-view';
-import { buildEntries, worktreeApps, worktreePage } from '@/lib/worktree-page';
+import { buildEntries, hasBuildTabs, worktreeApps, worktreePage } from '@/lib/worktree-page';
 import { workspaceTitleAt } from '@/lib/workspace-names';
 import { devicesOf, platformName, runningBuild } from '@/lib/workspaces';
 import type {
@@ -173,7 +173,8 @@ function BuildSubtitle({ parts, host }: { parts: (string | null)[]; host: string
 function LiveBuildDetails({ path, platform }: { path: string; platform: Platform | 'macos' }) {
   const status = useStatus();
   const apps = worktreeApps(path, status?.environments ?? []);
-  if (apps.length < 2) return <NativeBuildDetails path={path} platform={platform === 'android' ? 'android' : 'ios'} />;
+  if (!hasBuildTabs(apps))
+    return <NativeBuildDetails path={path} platform={platform === 'android' ? 'android' : 'ios'} />;
   return <WorktreeBuildDetails key={`${path}:${platform}`} path={path} platform={platform} />;
 }
 

@@ -12,18 +12,28 @@ tags are separate from the npm packages' `v*` tags, which follow
 
 1. Pick the version. Stable versions look like `1.2.0`; release candidates look
    like `1.2.0-rc.1`.
-2. Wait for the Desktop workflow to pass on the `main` commit you are
-   releasing. It builds the same ad-hoc release package on every change to
-   `apps/desktop`.
+2. Cut the Desktop release right after an npm release publishes, at the same
+   commit. Find that commit with `git rev-list -n 1 v<npm-version>`. An npm
+   release commit changes no path the Desktop workflow watches, so no Desktop
+   run exists for it; the `Desktop release` run builds the app before it loads
+   any secret.
 3. Tag that commit and push the tag:
 
    ```bash
-   git tag -a desktop-v1.2.0 -m "Stim Desktop 1.2.0"
+   git tag -a desktop-v1.2.0 -m "Stim Desktop 1.2.0" "$(git rev-list -n 1 v1.25.0)"
    git push origin desktop-v1.2.0
    ```
 
 4. Approve the `Desktop release` run in the `release` environment, as for the
    npm release.
+
+The app bundles the `stim` and `stim-server` packages packed from the tagged
+commit, and `scripts/server-runtime.mjs` only checks that the bundled
+`stim-server --version` equals `packages/server/package.json`. Tagging the
+npm release's commit makes the bundled CLI and server exactly the published npm
+version. A Desktop release is never tagged on a later `main` commit: a Desktop
+change that cannot wait for the next npm release needs a patch npm release
+first, then a Desktop release at that release's commit.
 
 The workflow, `.github/workflows/desktop-release.yml`:
 

@@ -1,7 +1,7 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildSlotsDir, tryAcquireBuildSlotClaim, requireAutomaticMachine } from '@stim-cli/core/state';
-import type { BuildWaitingFor } from '@stim-cli/core/state';
+import type { BuildWaitingFor, StatusBuildSlotHolder, StatusBuildSlots } from '@stim-cli/core/state';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { formatElapsed } from '../command-output.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle, type ClaimHolder } from '../ownership-claim.ts';
@@ -16,6 +16,7 @@ export interface BuildSlotRecord {
   projectRoot: string | null;
   startedAt: string | null;
   logFile: string | null;
+  client: string | null;
 }
 
 interface TryAcquireBuildSlotOptions {
@@ -54,6 +55,7 @@ export interface BuildSlotInfo {
   projectRoot: string | null;
   startedAt: string | null;
   logFile: string | null;
+  client: string | null;
   alive: boolean;
   unresolved: boolean;
 }
@@ -63,13 +65,20 @@ export const SLOT_PROGRESS_MS = 30000;
 export const SLOT_CEILING_MS: number = 90 * 60 * 1000;
 
 function toRecord(holder: ClaimHolder): BuildSlotRecord {
-  const details = holder.details as { index?: unknown; projectRoot?: unknown; logFile?: unknown };
+  const details = holder.details as {
+    index?: unknown;
+    projectRoot?: unknown;
+    logFile?: unknown;
+    offloaded?: unknown;
+    client?: unknown;
+  };
   return {
     pid: holder.owner.pid,
     index: typeof details.index === 'number' ? details.index : null,
     projectRoot: typeof details.projectRoot === 'string' ? details.projectRoot : null,
     startedAt: holder.startedAt || null,
     logFile: typeof details.logFile === 'string' ? details.logFile : null,
+    client: details.offloaded === true && typeof details.client === 'string' ? details.client : null,
   };
 }
 
@@ -92,6 +101,7 @@ export function tryAcquireBuildSlot({
       projectRoot: root,
       startedAt: got.claim.startedAt,
       logFile,
+      client: null,
     },
     claim: got.claim,
   };
@@ -188,9 +198,22 @@ export function listBuildSlots(): BuildSlotInfo[] {
       projectRoot: info?.projectRoot ?? null,
       startedAt: info?.startedAt ?? null,
       logFile: info?.logFile ?? null,
+      client: info?.client ?? null,
       alive: survey.live.length > 0,
       unresolved: survey.unresolved.length > 0,
     });
   }
   return slots;
+}
+
+/** The `concurrency.maxBuilds` slots a new build could take, `0` to `max - 1`, and who holds each busy one. */
+export function buildSlotUsage(max: number, slots: BuildSlotInfo[] = listBuildSlots()): StatusBuildSlots {
+  const holders = slots
+    .flatMap(({ index, alive, unresolved, projectRoot, client, startedAt }): StatusBuildSlotHolder[] => {
+      if (index === null || index >= max) return [];
+      if (alive) return [{ slot: index, workspace: projectRoot, client, since: startedAt }];
+      return unresolved ? [{ slot: index, workspace: null, client: null, since: null, unresolved: true }] : [];
+    })
+    .toSorted((a, b) => a.slot - b.slot);
+  return { max, inUse: holders.length, holders };
 }

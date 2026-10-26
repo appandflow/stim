@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import {
+  claimFailure,
   claimLiveness,
   claimRemoveCommand,
   clearClaimChild,
@@ -599,5 +600,14 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('claimFailure', () => {
+  test('an unavailable claim without a remedy still gives a retry instruction', () => {
+    const error = Object.assign(new Error('Cannot verify the child.'), { code: 'STIM_CLAIM_UNAVAILABLE' });
+    const failure = claimFailure(error, 'stim gc');
+    expect(failure?.remedy).not.toContain('undefined');
+    expect(failure?.remedy).toContain('`stim gc`');
   });
 });

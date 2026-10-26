@@ -21,13 +21,13 @@ struct TutorialTrack: View {
           node(step, state: state)
         }
         if index < steps.count - 1 || finished {
-          segment(filled: state == .done || state == .skipped)
+          segment(filled: state == .done)
         }
       }
       if finished {
-        selectable(TutorialSlides.completion, label: "Tutorial complete") {
+        selectable(TutorialSlides.completion, label: "Tutorial summary") {
           ZStack {
-            Circle().fill(Palette.success)
+            Circle().fill(requiredStepsDone ? Palette.success : Palette.tertiary)
             Image(systemName: "flag.checkered").font(.system(size: 8, weight: .bold)).foregroundStyle(Palette.onBrand)
           }
           .frame(width: 16, height: 16)
@@ -54,11 +54,12 @@ struct TutorialTrack: View {
         node.contentShape(Circle().inset(by: -4))
       }
       .buttonStyle(.plain)
+      .help(label)
       .accessibilityLabel(label)
       .accessibilityAddTraits(viewed == id ? .isSelected : [])
       .accessibilityHint("Shows this step")
     } else {
-      node.accessibilityLabel(label)
+      node.accessibilityLabel(label).help(label)
     }
   }
 
@@ -73,6 +74,7 @@ struct TutorialTrack: View {
   }
 
   private var doneIDs: Set<String> { Set(progress.filter { $0.state == .done }.map(\.id)) }
+  private var requiredStepsDone: Bool { steps.filter { !$0.optional }.allSatisfy { doneIDs.contains($0.id) } }
 
   private func celebrate(_ done: Set<String>) {
     defer { seenDone = done }
@@ -98,8 +100,7 @@ struct TutorialTrack: View {
         Circle().strokeBorder(Palette.tertiary, lineWidth: 1.5)
         Image(systemName: "minus").font(.system(size: size * 0.5, weight: .bold)).foregroundStyle(Palette.tertiary)
       case .pending:
-        Circle().strokeBorder(
-          Palette.tertiary, style: StrokeStyle(lineWidth: 1.5, dash: step.optional ? [2, 2] : []))
+        Circle().strokeBorder(Palette.tertiary, lineWidth: 1.5)
       }
     }
     .frame(width: size, height: size)
@@ -113,7 +114,6 @@ struct TutorialTrack: View {
           .allowsHitTesting(false)
       }
     }
-    .help(step.title)
   }
 
   private func segment(filled: Bool) -> some View {

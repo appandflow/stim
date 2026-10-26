@@ -22,8 +22,19 @@ const STIM_PREFIXES = ['stim-claim-', 'stim-host-', 'stim-fakehome-', 'stim-host
 const STAGING_PREFIX = '.stim-delete-';
 const TRACE_PATTERN = /^instruments.*\.ktrace$/;
 const TRACE_PROCESSES = new Set(['xctrace', 'Instruments']);
+const SWIFTPM_PATTERN = /^TemporaryDirectory\.[A-Za-z0-9]{6}$/;
+const SWIFTPM_PROCESSES = new Set([
+  'swift',
+  'swift-build',
+  'swift-frontend',
+  'swift-package',
+  'swift-run',
+  'swift-test',
+  'xcodebuild',
+]);
 
-type TempLeftoverKind = 'stim' | 'xctrace' | 'jest';
+type TempLeftoverKind = 'stim' | 'xctrace' | 'swiftpm' | 'jest';
+type DeletableKind = Exclude<TempLeftoverKind, 'jest'>;
 
 interface TempLeftover {
   kind: TempLeftoverKind;
@@ -37,19 +48,21 @@ export interface TempLeftoverReport {
   root: string;
   entries: TempLeftover[];
   /** Judges an entry again right before deletion (a Stim directory after its rename to `staged`), so a claim or recording use since the scan keeps it. */
-  recheck?: (staged: string, original: string, kind: 'stim' | 'xctrace') => Promise<string | null>;
+  recheck?: (staged: string, original: string, kind: DeletableKind) => Promise<string | null>;
 }
 
 const REMEDIES: Record<TempLeftoverKind, string> = {
   stim: 'stim gc --delete removes them once they are idle for 24 hours',
   xctrace:
     'stim gc --delete removes them once they are idle for 24 hours and no xctrace or Instruments process runs; export a recording you need first',
+  swiftpm: 'stim gc --delete removes them once they are idle for 24 hours and no swift or xcodebuild process runs',
   jest: 'Jest owns this cache; clear it with `npx jest --clearCache`',
 };
 
 const LABELS: Record<TempLeftoverKind, string> = {
   stim: 'Stim temp directories',
   xctrace: 'xctrace recordings (instruments*.ktrace)',
+  swiftpm: 'SwiftPM temp directories (TemporaryDirectory.*)',
   jest: 'Jest cache',
 };
 
@@ -57,6 +70,7 @@ function kindOf(name: string, stat: Stats, jestName: string | null): TempLeftove
   const unstaged = name.startsWith(STAGING_PREFIX) ? name.slice(STAGING_PREFIX.length) : name;
   if (stat.isDirectory() && STIM_PREFIXES.some((prefix) => unstaged.startsWith(prefix))) return 'stim';
   if ((stat.isFile() || stat.isDirectory()) && TRACE_PATTERN.test(name)) return 'xctrace';
+  if (stat.isDirectory() && SWIFTPM_PATTERN.test(name)) return 'swiftpm';
   if (stat.isDirectory() && name === jestName) return 'jest';
   return null;
 }
@@ -176,8 +190,8 @@ function temporaryRoot(env: NodeJS.ProcessEnv): string {
 
 /**
  * Recognized leftovers directly inside the user's TMPDIR, never following a symlink: Stim's own temp directories,
- * xctrace recordings and Jest's cache. Only the first two are ever deleted, and only once nothing in them changed for
- * 24 hours. Null with STIM_HOME set, because TMPDIR is shared by every Stim home, and for the real TMPDIR a test
+ * xctrace recordings, SwiftPM's `TemporaryDirectory.*` and Jest's cache. All but Jest's are deleted, and only once
+ * nothing in them changed for 24 hours. Null with STIM_HOME set, because TMPDIR is shared by every Stim home, and for the real TMPDIR a test
  * process recorded in STIM_TEST_GUARD_REAL_TMPDIR.
  */
 export async function collectTempLeftovers({
@@ -207,27 +221,27 @@ export async function collectTempLeftovers({
   const registeredProjects = () => Object.keys(loadConfig()?.projects ?? {}).flatMap((key) => [key, canonicalKey(key)]);
   let projects = registeredProjects();
   let executables: Set<string> | null | undefined;
-  const traceBusy = async (): Promise<string | null> => {
+  const busy = async (processes: ReadonlySet<string>): Promise<string | null> => {
     if (executables === undefined) executables = await runningExecutables(operation, signal);
     const listed = executables;
     if (listed === null) return 'the running processes could not be listed';
-    const running = [...TRACE_PROCESSES].filter((name) => listed.has(name));
+    const running = [...processes].filter((name) => listed.has(name));
     return running.length ? `${running.join(' and ')} is running` : null;
   };
-  const judge = async (path: string, stat: Stats, kind: 'stim' | 'xctrace', identity = path) => {
+  const judge = async (path: string, stat: Stats, kind: DeletableKind, identity = path) => {
     const scan = await walk(path, stat, signal);
     const kept =
       now - scan.newest < MIN_AGE_MS
         ? `modified within the last ${TEMP_LEFTOVER_MIN_AGE_HOURS}h`
         : kind === 'stim'
           ? stimKept(identity, scan, projects)
-          : (scan.unreadable ?? (await traceBusy()));
+          : (scan.unreadable ?? (await busy(kind === 'xctrace' ? TRACE_PROCESSES : SWIFTPM_PROCESSES)));
     return { bytes: scan.bytes, kept };
   };
-  const recheck = async (staged: string, original: string, kind: 'stim' | 'xctrace') => {
+  const recheck = async (staged: string, original: string, kind: DeletableKind) => {
     const stat = await lstatOrError(staged);
     if (!stat || 'error' in stat || stat.isSymbolicLink()) return 'it changed while it was being deleted';
-    if (kind === 'xctrace') executables = undefined;
+    if (kind !== 'stim') executables = undefined;
     else projects = registeredProjects();
     return (await judge(staged, stat, kind, original)).kept;
   };
@@ -262,7 +276,7 @@ export interface TempLeftoverGroup {
 }
 
 function summarize(report: TempLeftoverReport): TempLeftoverGroup[] {
-  return (['stim', 'xctrace', 'jest'] as const).flatMap((kind) => {
+  return (['stim', 'xctrace', 'swiftpm', 'jest'] as const).flatMap((kind) => {
     const entries = report.entries.filter((entry) => entry.kind === kind);
     if (!entries.length) return [];
     const deleting = entries.filter((entry) => entry.willDelete);
@@ -317,7 +331,7 @@ export async function deleteTempLeftovers(
       if (entry.kind === 'jest') continue;
       const name = basename(entry.path);
       const staged =
-        entry.kind === 'xctrace' || name.startsWith(STAGING_PREFIX)
+        entry.kind !== 'stim' || name.startsWith(STAGING_PREFIX)
           ? entry.path
           : join(report.root, `${STAGING_PREFIX}${name}`);
       const before =

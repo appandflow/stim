@@ -31,6 +31,7 @@ const PACKAGES = [
   'stim-cli',
   'transport',
   'transport-tailscale',
+  'transport-local',
   'server',
 ];
 

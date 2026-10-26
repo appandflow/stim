@@ -15,7 +15,13 @@ import {
   type LoadCacheProviderResult,
   type ProviderCallResult,
 } from '@stim-cli/cache';
-import { prepareProviderDownloadDir, providerDownloadPath, providerUploadOutcome } from '../../cache/build-cache.ts';
+import {
+  prepareProviderDownloadDir,
+  providerDownloadPath,
+  providerUploadOutcome,
+  storedAppId,
+} from '../../cache/build-cache.ts';
+import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../../cache/compilation-cache-corruption.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
@@ -41,16 +47,25 @@ import {
   offloadBuild,
   buildPlacementCandidates,
   offloadPlacement,
+  offloadCheck,
   placementLoad,
   remotePhaseText,
   type OffloadChoice,
   type BuildHandoff,
 } from '../../offload/client.ts';
-import type { pairedMachines } from '../../offload/build-machines.ts';
-import { namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../../offload/selection.ts';
+import { predictedRefusal, type pairedMachines } from '../../offload/build-machines.ts';
+import {
+  fingerprintMismatchRemedy,
+  missingPackageManagerRemedy,
+  automaticBuild,
+  podsFailedRemedy,
+  namedBuildMachine,
+  OffloadRefusal,
+  requireLocalBuild,
+} from '../../offload/selection.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
-import { machineCapacity, type BuildMissReason, type MachineCapacity, type OffloadMode } from '@stim-cli/core/state';
+import { machineCapacity, type BuildMissReason, type MachineCapacity } from '@stim-cli/core/state';
 import type { IosDeps } from './dependencies.ts';
 import { finishIosUpload } from './result.ts';
 import { PLATFORM, printDiagnostics, xcodeFailureReport } from './support.ts';
@@ -134,6 +149,8 @@ export interface PreparedIosArtifact {
   completeUploads(): Promise<boolean>;
   /** Waits for cache uploads that read temporary copies before removing them; repeated calls are safe. */
   release(): void | Promise<void>;
+  /** Stops a background fingerprint check that completeUploads() has not settled. */
+  cancelFingerprintCheck(): void;
 }
 
 type IosArtifactResult =
@@ -187,7 +204,7 @@ export async function acquireIosArtifact(
   const fallBack = (
     reason: string,
     line: string = reason,
-    info: { code?: string; machine?: string; candidates?: PlacementCandidate[] } = {},
+    info: { code?: string; machine?: string; candidates?: PlacementCandidate[]; remedy?: string } = {},
   ) => {
     logWriter().write(
       buildPlacementRecord({
@@ -198,8 +215,8 @@ export async function acquireIosArtifact(
         fallback: { code: info.code ?? 'fallback', reason, machine: info.machine },
       }),
     );
-    if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
-    requireLocalBuild(buildMachine);
+    if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason, info.remedy);
+    requireLocalBuild(buildMachine, reason);
     offloadFallback = reason;
     buildFailure = { ...buildFailure, offloadFallback: reason };
     phase('build', `${line} -> building here`);
@@ -442,7 +459,7 @@ export async function acquireIosArtifact(
     try {
       const buildSlot = await run.takeBuildSlot({
         signal,
-        automatic: buildMachine === 'auto',
+        automatic: automaticBuild(buildMachine),
         max: maxBuilds,
         out: note,
         waitingFor: (info) => waitingFor?.(info, 'build-slot'),
@@ -463,7 +480,6 @@ export async function acquireIosArtifact(
 
   interface Candidate {
     cacheOnly: boolean;
-    mode: OffloadMode;
     here: MachineCapacity;
     code: string;
     reason: string;
@@ -478,11 +494,11 @@ export async function acquireIosArtifact(
       hereReason = cacheIneligible;
       return null;
     }
-    const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
+    const { machines, localEnabled } = buildPlacementCandidates(buildMachine);
     if (localEnabled && machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local')
       return null;
     const { runtime, unsupported } =
-      mode === 'off' && !namedBuildMachine(buildMachine)
+      buildMachine === 'local'
         ? { runtime: null, unsupported: null }
         : ((await recipe.offload?.context()) ?? {
             runtime: null,
@@ -490,7 +506,6 @@ export async function acquireIosArtifact(
           });
     const here = machineCapacity();
     const placement = offloadPlacement({
-      mode,
       localEnabled,
       machines: machines.length,
       here,
@@ -506,7 +521,7 @@ export async function acquireIosArtifact(
         cachePolicy.remote &&
         recipe.offload !== undefined
       ) {
-        return { cacheOnly: true, mode, here, code: placement.code, reason: placement.reason, runtime, machines };
+        return { cacheOnly: true, here, code: placement.code, reason: placement.reason, runtime, machines };
       }
       logWriter().write(
         buildPlacementRecord({
@@ -515,12 +530,18 @@ export async function acquireIosArtifact(
           stays: { code: placement.code, reason: placement.reason },
         }),
       );
-      if (mode !== 'off') phase('build', `placement: here (${placement.reason})`);
+      if (buildMachine !== 'local') phase('build', `placement: here (${placement.reason})`);
       return null;
+    }
+    const named = machines.find((each) => each.machine === buildMachine);
+    const offload = recipe.offload;
+    if (placement.code === 'named' && named && offload && runtime) {
+      const { problems } = await offloadCheck(root, async () => [await offload.target(runtime)])(named);
+      const predicted = predictedRefusal(buildMachine, problems);
+      if (predicted) throw new OffloadRefusal(buildMachine, predicted.reason, predicted.remedy);
     }
     return {
       cacheOnly: false,
-      mode,
       here,
       code: placement.code,
       reason: placement.reason,
@@ -529,15 +550,18 @@ export async function acquireIosArtifact(
     };
   }
 
+  let localCocoapods: string | null = null;
+
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
   async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
     const offload = recipe.offload;
     if (!offload) return null;
     let asked: PlacementCandidate[] = [];
+    const target = await offload.target(candidate.runtime);
+    localCocoapods = target.platform === 'ios' ? target.local.cocoapods : null;
     const choice = await chooseBuildMachine({
       projectRoot: root,
-      target: await offload.target(candidate.runtime),
-      mode: candidate.mode,
+      target,
       here: candidate.here,
       note: (line) => note(chalk.dim(phaseLine('build', `offload: ${line}`))),
       machines: candidate.machines,
@@ -593,6 +617,7 @@ export async function acquireIosArtifact(
       choice,
       expectedFingerprint: storeHash,
       request: recipe.offload!.request(runtime),
+      fingerprintInputs: recipe.offload!.fingerprintInputs,
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
       onEnter: (name) => {
@@ -645,6 +670,11 @@ export async function acquireIosArtifact(
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
         code: corrupt === undefined ? 'offload-failed' : COMPILATION_CACHE_CORRUPT,
         machine: choice.machine,
+        remedy: outcome.ok
+          ? undefined
+          : (fingerprintMismatchRemedy(outcome.reason) ??
+            missingPackageManagerRemedy(choice.machine, outcome.reason) ??
+            podsFailedRemedy(choice.machine, outcome.reason, localCocoapods)),
       });
       logWriter().write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;
@@ -914,12 +944,15 @@ export async function acquireIosArtifact(
     },
     { root, logFile, deps: d },
   );
-  if (!acquired.ok) return { ok: false, failure: acquired.failure, compilationCache };
+  if (!acquired.ok) {
+    recipe.fingerprintCheck?.()?.cancel();
+    return { ok: false, failure: acquired.failure, compilationCache };
+  }
   appPath = acquired.artifact;
   const artifact: PreparedIosArtifact = {
     handoff,
     path: appPath,
-    bundleId,
+    bundleId: bundleId ?? (cacheHit && storeKey ? storedAppId(PLATFORM, storeKey) : null),
     cache: {
       identity: storeHash && storeKey ? { fingerprint: storeHash, key: storeKey } : null,
       hit: cacheHit,
@@ -949,8 +982,15 @@ export async function acquireIosArtifact(
         if (outcome.warn) note(chalk.yellow(phaseLine('cache', outcome.line)));
         else phase('cache', outcome.line);
       }
+      await settleFingerprintCheck(
+        recipe.fingerprintCheck?.() ?? null,
+        PLATFORM,
+        (line) => note(chalk.yellow(phaseLine('fingerprint', line))),
+        (record) => logWriter().write(record),
+      );
       return abandonedRemote || uploadWasAbandoned;
     },
+    cancelFingerprintCheck: () => recipe.fingerprintCheck?.()?.cancel(),
     release: async () => {
       await settleArtifactUploads(providerUpload, uploadPending);
       acquired.release();

@@ -452,16 +452,19 @@ test('a daemon that appears on the last check before the rename keeps the versio
 
 test.skipIf(!posixModes)('a version is renamed to a .stim-delete sibling before its contents are removed', async () => {
   const version = join(gradle, 'caches', '9.3.1');
-  chmodSync(version, 0o555);
+  const locked = join(version, 'locked');
+  file(join(locked, 'inner'));
+  chmodSync(locked, 0o555);
   const report = await gc('--delete');
   const staged = readdirSync(join(gradle, 'caches')).filter((name) => name.startsWith('.stim-delete-9.3.1-'));
   try {
     expect(existsSync(version)).toBe(false);
     expect(staged).toHaveLength(1);
-    expect(existsSync(join(gradle, 'caches', staged[0] ?? '', 'keep'))).toBe(true);
+    expect(existsSync(join(gradle, 'caches', staged[0] ?? '', 'locked', 'inner'))).toBe(true);
     expect(report.results).toContainEqual(expect.objectContaining({ kind: 'gradleVersion', status: 'failed' }));
   } finally {
-    for (const name of staged) chmodSync(join(gradle, 'caches', name), 0o755);
+    for (const dir of [locked, ...staged.map((name) => join(gradle, 'caches', name, 'locked'))])
+      if (existsSync(dir)) chmodSync(dir, 0o755);
   }
 });
 

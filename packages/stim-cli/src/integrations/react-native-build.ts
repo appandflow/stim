@@ -11,7 +11,7 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { resolvePackageJson } from '../workspace/project.ts';
 import { sharedCompilationCache } from '../workspace/paths.ts';
-import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '../engine/android-path-limit.ts';
+import { androidPathRoomRefusal } from '../engine/android-path-limit.ts';
 import {
   ASSEMBLE_TASK,
   BUILD_ERROR,
@@ -135,7 +135,6 @@ export async function buildAndroid(
     };
   // https://github.com/appandflow/stim/issues/893: Gradle has not configured a custom
   // buildStagingDirectory yet, so this default-layout check may refuse a shorter custom path.
-  const room = androidPathRoom(root, { abi, variant, platform: options.platform ?? process.platform });
   return buildGradle(
     {
       root,
@@ -149,9 +148,7 @@ export async function buildAndroid(
       },
       task: layout.custom ? `${layout.module}:${assembleTaskFor(variant)}` : assembleTaskFor(variant),
       projectArgs: abi ? [`-PreactNativeArchitectures=${abi}`] : [],
-      preflightFailure: room
-        ? { code: 'STIM_PATH_TOO_LONG', reason: androidPathRoomMessage(room), remedy: androidPathRoomRemedy(room) }
-        : null,
+      preflightFailure: androidPathRoomRefusal(root, { abi, variant, platform: options.platform ?? process.platform }),
     },
     options,
   );

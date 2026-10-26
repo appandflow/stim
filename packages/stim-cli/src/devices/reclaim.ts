@@ -4,7 +4,13 @@ import { stopHostedIos } from '../device-host/hosted-ios.ts';
 import { archiveWorkspace } from '../archive.ts';
 import { clearNamedPorts } from '../named-ports.ts';
 import { projectDeviceSlots } from './device-slots.ts';
-import { type ProjectRecord, clearDevice, getProject, removeProject } from '../workspace/config.ts';
+import {
+  type ProjectRecord,
+  clearDevice,
+  getProject,
+  removeProject,
+  withConfigLockAsync,
+} from '../workspace/config.ts';
 import { existsSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../supervisor/stop-cause.ts';
@@ -27,13 +33,14 @@ import {
   readRemoteSessionId,
   type ManagedTunnelRecord,
 } from '../supervisor/state.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { isJsonObject, LAST_BUILD_KEYS, readMacosRecord } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
 import { macosAppPresent } from '../macos/state.ts';
 import { readWebRecord } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
+import { removePhoneReverses } from './phone-reverses.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from '../engine/tunnel.ts';
 import { getExecutor } from '../exec.ts';
@@ -132,7 +139,7 @@ async function reclaimRemoteSession(
         },
       };
     }
-    clearRemoteSession(root, sessionId);
+    await withWorkspaceStateLockAsync(root, () => clearRemoteSession(root, sessionId));
     return { stopped: sessionId, failed: null };
   }
   return {
@@ -192,7 +199,7 @@ async function reclaimMetroTunnel(
       },
     };
   }
-  if (!clearManagedMetroTunnel(root, record)) {
+  if (!(await withWorkspaceStateLockAsync(root, () => clearManagedMetroTunnel(root, record)))) {
     return {
       stopped: null,
       failed: {
@@ -287,7 +294,7 @@ async function reclaimOwnedDevices(
         evictedDevices.push(...(r.evicted ?? []));
       } else if (r.status === 'torn-down') deletedDevices.push(r.label as string);
       if (!r.parked && (r.status === 'torn-down' || r.status === 'missing')) {
-        clearDevice(projectPath, 'ios', slot, udid);
+        await withConfigLockAsync(() => clearDevice(projectPath, 'ios', slot, udid));
       }
       if (r.status === 'skipped') {
         skippedDevices.push({ platform: 'ios', name: label, udid, reason: `${r.reason} -- not touched` });
@@ -322,7 +329,8 @@ async function reclaimOwnedDevices(
       if (r.parkFallback) poolNotes.push(`could not park ${android.avdName}: ${r.parkFallback} -- deleted it instead`);
       for (const failure of r.evictionFailures ?? []) poolNotes.push(failure);
       if (!r.parked && (r.status === 'torn-down' || r.status === 'missing')) {
-        clearDevice(projectPath, 'android', slot, android.avdName);
+        const avdName = android.avdName;
+        await withConfigLockAsync(() => clearDevice(projectPath, 'android', slot, avdName));
       }
       if (r.parked) {
         parkedDevices.push(r.parked);
@@ -479,6 +487,7 @@ async function reclaimIdleProject(
   verifyAvdClaims(project, operation);
   const dereferenced = describeDereferenced(project);
   const initialState = readWorkspaceState(path);
+  await removePhoneReverses(path, { operation });
 
   let killedPid: number | null = null;
   let skippedMetro: string | null = null;
@@ -497,9 +506,13 @@ async function reclaimIdleProject(
       ? inspectProcessIdentity(orphanServer)
       : null;
   if (supervisor.status === 'ours') {
-    requestDevServerStop(path, supervisor.processToken, stopRequester);
+    const processToken = supervisor.processToken;
+    await withWorkspaceStateLockAsync(path, () => requestDevServerStop(path, processToken, stopRequester)).catch(
+      () => {},
+    );
     const signalled = await killMetroTreeAsync(supervisor.pid, supervisor.processToken, operation);
-    if (!signalled) withdrawDevServerStopRequest(path, supervisor.processToken);
+    if (!signalled)
+      await withWorkspaceStateLockAsync(path, () => withdrawDevServerStopRequest(path, processToken)).catch(() => {});
     if (signalled && (await waitForProcessExit(supervisor, 10_000, signal))) {
       killedPid = supervisor.pid!;
     } else {
@@ -657,7 +670,7 @@ async function reclaimIdleProject(
 
   const keptEntry = supervisorHeld || failedDevices.length > 0 || failedWorkspaceDirs.length > 0;
   signal?.throwIfAborted();
-  if (project && !keptEntry && !preserveProjectRecord) removeProject(path);
+  if (project && !keptEntry && !preserveProjectRecord) await withConfigLockAsync(() => removeProject(path));
 
   return {
     path,

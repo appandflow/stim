@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { workspaceStateDir } from '../index.ts';
 import {
   BUILD_HISTORY_LIMIT,
+  lastNativeUseFrom,
   lastUseFrom,
   readBuildHistory,
   readLastBuilds,
@@ -63,6 +64,21 @@ describe('last use of a workspace', () => {
   });
 });
 
+describe('last native run of a workspace', () => {
+  test('is when the newest ios, android or macos run finished, ignoring dev server use', () => {
+    const state = {
+      lastUsedAt: '2026-09-10T00:00:00Z',
+      supervisor: { startedAt: '2026-09-10T00:00:00Z' },
+      lastIosBuild: { platform: 'ios', status: 'success', startedAt: '2026-09-01T00:00:00Z', durationMs: 0 },
+      buildHistory: {
+        macos: [{ platform: 'macos', status: 'success', startedAt: '2026-09-05T00:00:00Z', durationMs: 60_000 }],
+      },
+    };
+    expect(lastNativeUseFrom(state)).toBe(Date.parse('2026-09-05T00:01:00Z'));
+    expect(lastNativeUseFrom({ lastUsedAt: '2026-09-10T00:00:00Z' })).toBeNaN();
+  });
+});
+
 describe('last build per platform', () => {
   const ios = {
     platform: 'ios',
@@ -94,6 +110,14 @@ describe('last build per platform', () => {
   test('a state written before the per-platform keys reports its single lastBuild under its platform', () => {
     expect(readLastBuilds({ lastBuild: ios })).toEqual({ ios: expect.objectContaining({ cacheHit: 'remote' }) });
     expect(readLastBuilds({ lastBuild: { ...ios, status: 'running' } })).toEqual({});
+  });
+
+  test('a hosted Android run written with status success reads as ok and succeeded', () => {
+    const written = { ...ios, platform: 'android', status: 'success' };
+    expect(readLastBuilds({ lastAndroidBuild: written, lastBuild: written }).android).toMatchObject({ status: 'ok' });
+    expect(
+      readBuildHistory({ buildHistory: { android: [{ ...written, result: 'failed', slot: 'default' }] } }).android?.[0],
+    ).toMatchObject({ status: 'ok', result: 'succeeded' });
   });
 
   test('a newer lastBuild wins over an older per-platform record, as after an older Stim ran', () => {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { BuildArtifactIdentity, BuildReactNativeArtifactQuery } from './protocol.ts';
+import type { BuildArtifactIdentity, BuildReactNativeArtifactQuery, BuildStimIdentity } from './protocol.ts';
 import { isJsonObject } from './state/json-file.ts';
 
 const text = (value: unknown): value is string =>
@@ -8,6 +8,14 @@ const path = (value: unknown): value is string =>
   text(value) &&
   !/[\\:]/.test(value) &&
   value.split('/').every((part) => part !== '' && part !== '..' && part !== '.git');
+
+/** `compat` when `value` has a valid one, else its `stimBuild`; null without either. */
+export function stimIdentity(value: Record<string, unknown>): BuildStimIdentity | null {
+  const { compat } = value;
+  if (compat !== undefined)
+    return typeof compat === 'number' && Number.isSafeInteger(compat) && compat > 0 ? { compat } : null;
+  return text(value.stimBuild) ? { stimBuild: value.stimBuild } : null;
+}
 
 /** Validates and canonicalizes the choices used by completed React Native peer artifacts. */
 export function reactNativeArtifactQuery(value: unknown): BuildReactNativeArtifactQuery | null {
@@ -23,7 +31,8 @@ export function reactNativeArtifactQuery(value: unknown): BuildReactNativeArtifa
   )
     return null;
   const tools = value.toolchain;
-  if (!isJsonObject(tools) || !text(tools.stimBuild)) return null;
+  const stim = isJsonObject(tools) ? stimIdentity(tools) : null;
+  if (!isJsonObject(tools) || !stim) return null;
   const common = { project: value.project, fingerprint: value.fingerprint, isExpo: value.isExpo };
   if (value.platform === 'ios' && value.android === undefined && isJsonObject(value.ios)) {
     const { runtime, configuration, scheme, projectPath, optimizations } = value.ios;
@@ -53,7 +62,7 @@ export function reactNativeArtifactQuery(value: unknown): BuildReactNativeArtifa
       ...common,
       platform: 'ios',
       toolchain: {
-        stimBuild: tools.stimBuild,
+        ...stim,
         arch: tools.arch,
         xcode: tools.xcode,
         simulatorSdk: tools.simulatorSdk,
@@ -91,7 +100,7 @@ export function reactNativeArtifactQuery(value: unknown): BuildReactNativeArtifa
     return {
       ...common,
       platform: 'android',
-      toolchain: { stimBuild: tools.stimBuild, jdk: tools.jdk },
+      toolchain: { ...stim, jdk: tools.jdk },
       android: {
         variant: variant ?? 'debug',
         abi: abi === 'all' ? null : abi,

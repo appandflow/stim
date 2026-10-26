@@ -96,7 +96,7 @@ An invalid pin still refuses with `STIM_BAD_ARG`. Release builds skip Metro.
 A dev server holds about 450 MB. The supervisor stops it after
 [`metro.idleStopMinutes`](./settings.md#committed-settings) minutes, 60 by
 default, with no bundle request, no client log record and no Stim command
-(`start`, `ios`, `android`, `reload` or `worktree warm`) in the workspace. For
+(`start`, `ios`, `android`, `reload`, `logs` or `worktree warm`) in the workspace. For
 Expo, every line the Expo CLI prints on stdout counts as a client log. The
 supervisor never stops the server while a bundle is still being served, while
 a build or another `stim ios`, `stim android` or `stim stop` runs in the
@@ -126,6 +126,72 @@ read when the supervisor is launched.
 
 <StimTabs code={`stim settings set metro.idleStopMinutes 120 --scope workspace`} />
 
+## Idle workspace stop
+
+Automatic maintenance, in its idle check every `maintenance.idleCheckMinutes`
+(5), and `stim gc --delete` while `maintenance.mode` is not `off`, stop a workspace whose dev server runs or whose
+owned simulator or emulator is booted once it has had no real activity for
+`maintenance.idleStopHours`: 6 hours by default, `0` never. Six hours outlasts
+a lunch break, a meeting or an agent's pause between tasks, and still frees the
+memory overnight. The setting takes machine and project layers, accepts
+fractions, and `STIM_MAINTENANCE_IDLE_STOP_HOURS` overrides it.
+
+Real activity is the newest of:
+
+- a Stim command in the workspace: `start`, `ios`, `android`, `macos`, `web`,
+  `reload`, `logs` or `worktree warm`;
+- the end of the workspace's last native build;
+- the start, progress or end of a Metro bundle or Expo manifest request, or an
+  HMR update;
+- an agent-device command in the workspace's agent-device sessions;
+- an open live view of the device through stim-server, from Stim Desktop or
+  the phone app.
+
+Device and system log lines, in-app console logs, dev server output and
+maintenance's own records never count, and an app that only stays connected to
+Metro does not either. A simulator that logs network chatter every few seconds
+for days is idle.
+
+The stop is the one `stim stop` makes: the dev server stops, owned devices shut
+down (never deleted), the port is released, and device leases stay. A build, a
+running `stim ios`, `android`, `stop` or `start`, a running macOS app, a hosted
+or remote session, an unexpired device lease, a managed tunnel, a running owned
+Chrome, a device driver other than agent-device, a live agent-device claim whose
+session activity Stim cannot find, or device activity, an emulator list or an
+emulator's AVD name that Stim cannot read keeps the workspace. A stale offline
+emulator in `adb devices` has no readable AVD name; `adb kill-server` clears it. Maintenance logs each stop with the idle time and
+each workspace kept past the window with its reason (`stim logs --source maintenance`).
+The port is released, so `stim status` shows the workspace idle as after
+`stim stop`, and the timeline's `supervisor_stopped` line names automatic
+maintenance and the idle time as the requester. The next
+`stim start`, `stim ios` or `stim android` starts it again. A stop never
+targets the workspace of the command that started the pass, `stim gc --delete`
+included; a pass that a dev server supervisor or `stim status --watch` starts on
+its timer can stop its own workspace.
+
+A dev server started through `metro.command` is always kept, because Stim sees
+none of its bundle or HMR requests. A dev server that may still run after its
+supervisor exited is kept until `stim stop` ends it. So is an Expo project before SDK 54, which
+cannot load Stim's Metro config adapter, and a dev server an older Stim started,
+until `stim stop` and `stim start` restart it. A Metro log that cannot be read, or that
+rotated within the window, and agent-device sessions, a `state.json` or a
+stim-server viewer record that cannot be read or verified keep the workspace too. A home redirected with
+`STIM_HOME` never stops idle workspaces, because simulators and emulators are
+machine-wide. `maintenance.keep` does not keep a
+workspace from this stop, which deletes nothing; set `maintenance.idleStopHours`
+to `0` at workspace scope to keep one running.
+
+<StimTabs code={`stim settings set maintenance.idleStopHours 1 --scope machine`} />
+
+Try it with an agent:
+
+```text
+Run `stim settings get maintenance.idleStopHours` and tell me after how many
+hours without activity Stim stops this workspace's dev server and simulator.
+If I am about to step away for longer, set it for this workspace only with
+`stim settings set maintenance.idleStopHours <hours> --scope workspace`.
+```
+
 ## Why the dev server stopped
 
 When the supervisor stops its dev server, it records the cause in the
@@ -135,13 +201,13 @@ the workspace keeps its port. `stim stop` releases the port, so its own stops
 show only in the timeline. In `--json`, the environment's `metro.lastStop`
 carries it:
 
-| `reason`        | Meaning                                                                                                                                                                                   |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `requested`     | A Stim command stopped it. `by` names the command: `stim stop`, `stim worktree remove`, `stim gc --delete`, `stim start --reset-cache`, or `budget reclaim` from another workspace's run. |
-| `signal`        | A SIGTERM or SIGINT with no Stim stop request recorded, so it likely came from outside Stim.                                                                                              |
-| `server-exited` | The dev server exited on its own. Expo CLI also exits with code 0 on SIGTERM, so exit code 0 with no request usually means something outside Stim signalled the Expo process.             |
-| `idle`          | [Idle stop](#idle-stop).                                                                                                                                                                  |
-| `vanished`      | The supervisor is gone and recorded no cause, usually because of SIGKILL, a crash or a machine restart. The next supervisor logs `supervisor_vanished`.                                   |
+| `reason`        | Meaning                                                                                                                                                                                                                                                         |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `requested`     | A Stim command stopped it. `by` names the command: `stim stop`, `stim worktree remove`, `stim gc --delete`, `stim start --reset-cache`, `budget reclaim` from another workspace's run, or `automatic maintenance` with its [idle reason](#idle-workspace-stop). |
+| `signal`        | A SIGTERM or SIGINT with no Stim stop request recorded, so it likely came from outside Stim.                                                                                                                                                                    |
+| `server-exited` | The dev server exited on its own. Expo CLI also exits with code 0 on SIGTERM, so exit code 0 with no request usually means something outside Stim signalled the Expo process.                                                                                   |
+| `idle`          | [Idle stop](#idle-stop).                                                                                                                                                                                                                                        |
+| `vanished`      | The supervisor is gone and recorded no cause, usually because of SIGKILL, a crash or a machine restart. The next supervisor logs `supervisor_vanished`.                                                                                                         |
 
 Budget reclaim stops idle dev servers of other workspaces when a
 `stim ios`, `stim android` or `stim start` run finds the machine over its
@@ -173,16 +239,32 @@ client's watches.
 
 `stim ios` and `stim android` open the installed app, then check launch
 evidence. Debug runs observe Metro; when bundling finishes within the wait
-window, Stim also observes three seconds of launch logs. The summary can report
+window, Stim also observes up to three seconds of launch logs, fewer once the
+app's JavaScript reports `Running "<name>"`. The summary can report
 that bundling is still in progress or that launch is unverified. If the wait
 window closes and the app process is gone, the run fails with `the app process
 exited` and the device log's errors instead. Release runs check process
 liveness without Metro.
 
+The wait for the app's bundle request is 20 seconds. An Expo development
+client asks the dev server for its manifest before it asks for the bundle, and
+Expo recomputes the project fingerprint for every manifest request when the
+app uses the fingerprint runtime version policy, so a loaded machine can spend
+most of the window there. Stim records each manifest request
+from the launched platform in the metro log, as `manifest_request_started`,
+`manifest_request_finished` or `manifest_request_failed` at `debug` level, and
+counts it as progress: the wait stays open while a manifest request is in
+flight and for 15 seconds after one was served, up to 60 seconds after the
+launch, whatever the target; a new or adopted emulator already waits 60 seconds. A manifest is not launch evidence. `launched` is `true` or `"bundling"`
+only after the app's bundle request, and a launch that never makes one still
+ends `unverified`. Bare React Native has no manifest request and keeps the
+20-second window.
+
 When the app is already running, from an earlier run or because the install
-was skipped, Stim restarts it the way Xcode's Run does: `simctl terminate` on
-a simulator, `am force-stop` on an emulator or an Android phone, then a fresh
-launch. The launch line reads `restarted running app (was pid <n>)`, and state
+was skipped, Stim restarts it the way Xcode's Run does: `simctl launch
+--terminate-running-process` on a simulator (a separate `simctl terminate` when a
+dev client opens through a URL), `am force-stop` then a fresh launch on an
+emulator or an Android phone. The launch line reads `restarted running app (was pid <n>)`, and state
 held in the running app is lost. An iPhone run already restarts the app through
 devicectl, and remote targets relaunch it through Agent Device. If the running
 app cannot be stopped, the run fails instead of reusing the old process.
@@ -206,6 +288,10 @@ tree. They are labeled separately. Every `stim logs` command, including
 limits. The separate default limit of 20 error records never shortens a stack.
 Use `--source all` for all log sources, or `--json` for raw records. Text
 truncated by the runtime before capture cannot be restored.
+
+A run that builds or reuses an app and then fails before the app is running adds one
+`build` error record with event `run_failed`, the error code and the phase it failed
+in, so `stim logs --errors` lists the failure that `stim status` shows.
 
 Symbolication is best effort. In development, Stim asks the verified workspace's
 Metro `/symbolicate` endpoint to resolve captured JavaScript coordinates, with a
@@ -266,7 +352,7 @@ Stim does not resymbolicate an older error after a recorded Metro rebuild.
 Historical unsymbolicated JS coordinates require
 the matching bundle/source maps, not an unrelated rebuilt Metro bundle.
 
-### Optional app-declared readiness
+### Recommended app-declared readiness
 
 No package or monitoring SDK is required. In a debug app, emit this once at
 startup, before initialization that can block the first screen:
@@ -314,17 +400,22 @@ imported modules, emit `pending` from an earlier app entry module before loading
 that work. An error before `pending` still uses the default check.
 
 Without an observed `pending`, Stim keeps its default three-second stability
-window after bundle delivery. Managed Metro servers report when the native
-bundle response finishes; build-complete output alone does not close an observed
+window after bundle delivery. The window ends early, half a second after the
+app's React Native runtime logs `Running "<name>"` for this launch on either
+platform. A fatal record or an exited process before the window ends still
+fails the launch. An error after it, such as a first render that takes longer
+than that half second to throw, appears in `stim logs --errors`. Managed Metro
+servers report when the native bundle response finishes; build-complete output alone does not close an observed
 request. Without response capture, Stim falls back to the build-complete marker.
 When Android reports queued JavaScript loading, Stim waits for device JavaScript
 activity before starting stability, bounded by the bundle timeout.
 Debug Android launches on an owned emulator that the run creates, or whose
 adoption from the pool it finishes, get a 60-second bundle timeout, reported in
 the verify phase. Existing emulators,
-remote targets, and physical devices keep the 20-second budget. Fatal errors
+remote targets, and physical devices get 20 seconds, extended up to 60 while an
+Expo development client's manifest request is pending or was just served. Fatal errors
 still end verification immediately.
-A `pending` observed before that window closes opts into waiting for `ready`, up
+A `pending` observed before that window closes, early end included, opts into waiting for `ready`, up
 to 30 seconds after the same completion signal.
 Repeated `pending` logs do not extend the deadline. A matching `ready` can end
 the wait early; an app error or process exit interrupts it. A missing `ready`
@@ -334,8 +425,11 @@ Stim reads exact standalone messages from this app's platform-specific device
 log, after the current launch. Stale, other-platform, error-level, and embedded
 example messages are ignored. Unlabelled shared Metro output cannot identify
 which platform is ready. If device-log capture is unavailable or `pending` is
-not captured in time, the default check applies. Release runs and
-`--no-metro-check` do not use this debug-only integration.
+not captured in time, the default check applies. On a simulator or emulator
+hosted on another Mac (`--remote <machine>`), the device log is the copy Stim
+pulls from that Mac during the launch check, so each window waits up to 10
+seconds for the copy to cover it. Release runs and `--no-metro-check` do not use
+this debug-only integration.
 
 This is the app declaring readiness, not visual verification. It does not alter
 the `launched` JSON field: bundle/process evidence remains separate. Continue
@@ -347,7 +441,7 @@ instructions, run `stim guide lifecycle readiness`.
 Copy this prompt into your coding agent:
 
 ```text
-Add optional Stim app-readiness logs to this app. Read `stim guide agent`,
+Add the recommended Stim app-readiness logs to this app. Read `stim guide agent`,
 then follow `stim guide lifecycle readiness` from the installed CLI. If Stim
 is not installed globally, use `npx stim` instead of `stim`.
 
@@ -407,8 +501,8 @@ code={`stim logs --source placement
 stim logs --source placement --json`}
 />
 
-A record has the settings that applied (`remote.build`, `remote.buildMode`,
-`ios.remote` or `android.remote`) with the layer each came from (`flag`, `env`,
+A record has the settings that applied (`remote.build` for a build,
+`ios.remote` or `android.remote` for a device) with the layer each came from (`flag`, `env`,
 `setting` or `default`), each remote machine that was checked with a reason code
 (`accepted`, `unreachable`, `busy`, `disk`, `load`, `version-mismatch`,
 `no-matching-device`, `declined`, `memory`, `no-capacity`) and the human
@@ -546,15 +640,17 @@ finished, stop its named port with stim ports stop web.
 ## Metro for hosted iOS
 
 `stim ios --remote <machine>` keeps Metro here and needs no `stim start --remote`.
-Hosted Debug runs require a supervisor with private gateway support before
-reserving the simulator. `--no-metro-check` refuses; restart a missing or older
-supervisor with `stim stop; stim start`.
-The supervisor binds a private gateway only to this machine's own Tailscale address,
-pins the hosting peer and requires a per-session secret. The host's bridge listens
-only on loopback. Gateway data stays in private workspace state; status and logs
-do not print it. `metro.tunnel` and `metro.publicUrl` are ignored. Non-Debug runs
+Hosted Debug runs require a supervisor and a host stim-server that support
+client-opened Metro links before reserving the simulator. `--no-metro-check`
+refuses; restart a missing or older supervisor with `stim stop; stim start`.
+The supervisor keeps a few authenticated connections open to the host for each
+session. The host's bridge listens only on loopback and pairs each connection
+the simulator makes with one of them, which the supervisor forwards to this
+Metro. The host never connects back to this machine, so a host shared into your
+tailnet, or one your ACLs only let you reach on its stim-server port, works.
+`metro.tunnel` and `metro.publicUrl` are ignored. Non-Debug runs
 skip Metro. A recorded hosted session prevents idle stop; stop or a stopped host
-session closes its gateway. Native device records are pulled by `stim logs` and
+session closes its links. Native device records are pulled by `stim logs` and
 `stim logs --errors` from adaptive, bounded host queries. Followers share a
 throttled collection without blocking app delivery, view or control. Stop limits each log drain
 to 30 seconds with progress on stderr and a no-progress guard. The host

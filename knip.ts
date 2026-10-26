@@ -13,16 +13,9 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
     'scripts/agent-benchmark/watch-app.mjs',
     ...(production ? ['**/__tests__/**', 'scripts/**', 'test/**', 'vitest.*.ts', 'apps/mobile/mock-server/**'] : []),
   ],
-  // Test-only exports in apps/mobile, https://github.com/appandflow/stim/issues/3463
   ignoreIssues: {
     // nitrogen reads the view's type from the spec; nothing imports it.
     'apps/mobile/modules/stim-session/src/specs/StimSession.nitro.ts': ['types'],
-    ...(production
-      ? {
-          'apps/mobile/src/lib/needs-attention.ts': ['exports', 'types'],
-          'apps/mobile/src/lib/workspaces.ts': ['exports'],
-        }
-      : {}),
   },
   workspaces: {
     '.': {
@@ -31,6 +24,8 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
         'apps/desktop/scripts/*.mjs!',
         'packaging/store/assemble.mjs',
         'scripts/ci/app-smoke.mjs',
+        'scripts/perf/bench.mjs',
+        'scripts/perf/compare.mjs',
         'scripts/build-android-audio.mjs',
         'scripts/agent-benchmark/native-driver.mjs',
         'scripts/agent-benchmark/native-fixtures.mjs',
