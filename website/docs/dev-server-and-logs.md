@@ -160,7 +160,10 @@ session activity Stim cannot find, or device activity Stim cannot read keeps the
 workspace. Maintenance logs each stop with the idle time and
 each workspace kept past the window with its reason (`stim logs --source maintenance`), and
 `stim status` shows the dev server stopped by automatic maintenance. The next
-`stim start`, `stim ios` or `stim android` starts it again.
+`stim start`, `stim ios` or `stim android` starts it again. A stop never
+targets the workspace of the command that started the pass, `stim gc --delete`
+included; a pass that a dev server supervisor or `stim status --watch` starts on
+its timer can stop its own workspace.
 
 A dev server started through `metro.command` is always kept, because Stim sees
 none of its bundle or HMR requests. A Metro log that cannot be read, or that

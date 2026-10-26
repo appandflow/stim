@@ -76,7 +76,8 @@ as the requester), each workspace kept past the window a maintenance_skip line
 with the reason, and status shows the dev server as stopped by automatic
 maintenance. The next start, ios or android starts it
 again. Unlike the other actions, it can stop the workspace whose dev server
-supervisor or status --watch started the pass, since no command runs there.
+supervisor or status --watch timer started the pass; a pass a command starts,
+gc --delete included, never stops the command's own workspace.
 A dev server run through metro.command is kept: Stim sees none of its
 bundle or HMR requests. A Metro log that cannot be read, or that rotated
 within the window, and agent-device sessions, a state.json or a stim-server

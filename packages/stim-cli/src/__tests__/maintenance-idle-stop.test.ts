@@ -386,6 +386,21 @@ test('a maintenance pass routes a planned idle stop to the stim stop path', asyn
   expect(shutdown.mock.calls).toEqual([[udid, expect.not.objectContaining({ del: true })]]);
 });
 
+test('a timer-started pass may stop the workspace it started in, a command-started one may not', async () => {
+  const { root } = bootedWorkspace('timer', 7 * HOUR_MS);
+  vi.spyOn(teardown, 'teardownOwnedIosSim').mockResolvedValue({ status: 'torn-down' });
+  vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
+  const { actions } = await plan();
+  const context = { settings: resolveMaintenanceSettings(), budget: resolveBudget().budget, protectedRoot: root };
+
+  expect(await Promise.all(actions.map((action) => executeAction(action, context)))).toEqual([
+    expect.objectContaining({ status: 'kept', detail: expect.stringMatching(/command that started this pass/) }),
+  ]);
+  expect(await Promise.all(actions.map((action) => executeAction(action, { ...context, background: true })))).toEqual([
+    expect.objectContaining({ status: 'done' }),
+  ]);
+});
+
 test('gc --delete stops idle workspaces only while maintenance is not off, and counts a failed stop', async () => {
   const { root } = bootedWorkspace('failing', 7 * HOUR_MS);
   vi.spyOn(teardown, 'teardownOwnedIosSim').mockRejectedValue(new Error('simctl refused'));
