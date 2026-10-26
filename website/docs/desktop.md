@@ -1,6 +1,6 @@
 ---
-title: "Stim Desktop"
-description: "A macOS app that shows every workspace, device and build Stim runs"
+title: 'Stim Desktop'
+description: 'A macOS app that shows every workspace, device and build Stim runs'
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
