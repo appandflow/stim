@@ -64,7 +64,10 @@ owned app, including copies opened through LaunchServices (open, agent-device
 open). stim macos, stim stop, stim worktree remove and stim gc --delete stop all
 of them: SIGTERM, up to 5 s, then SIGKILL, and success only once each has
 exited. When an app cannot be verified or does not exit, stop reports
-STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace.
+STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace. For
+a hosted session the same rule covers every app bundle the session received, so
+stop and a replacement launch also end a copy that LaunchServices started from
+an earlier attempt.
 Local stim macos starts the app in the background without activating it or
 changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
 Stim Desktop honors, including for reopen events from open -g. An app that
