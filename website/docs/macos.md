@@ -502,6 +502,12 @@ is refused with an agent-device `UNAUTHORIZED` error whose `details.reason` is
 `STIM_AGENT_REQUEST_REFUSED` and whose message names the refused command or
 method; do not retry it.
 
+`longpress`, `swipe`, `back` and the other gestures are not allowed; the `longpress`
+and `swipe` that `stim guide lifecycle` lists belong to hosted Android and iOS
+sessions. `click <ref> --button secondary` reaches agent-device, but its native
+macOS backend, which the lease requires, answers `UNSUPPORTED_OPERATION`, so a
+hosted macOS app has no right click or context menu yet.
+
 Copy this prompt:
 
 > Run my Swift Package app on janics-mac-mini with `stim macos --remote`. Confirm
