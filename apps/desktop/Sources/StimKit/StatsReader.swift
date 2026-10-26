@@ -20,7 +20,7 @@ import Foundation
     guard let client = readCapableServer(server(), stimHome: cli.stimHome) else {
       throw ServerError(code: "not-connected", message: "The local stim-server is not ready to read stats for this Stim home.")
     }
-    let result = try await client.request("stats.get", ["workspace": .string(workspace)])
+    let result = try await client.read("stats.get", ["workspace": .string(workspace)])
     return try decodeReporting(ProjectStats.self, from: result, source: .server)
   }
 
@@ -30,7 +30,7 @@ import Foundation
     guard let client = readCapableServer(server(), stimHome: cli.stimHome) else {
       throw ServerError(code: "not-connected", message: "The local stim-server is not ready to read stats for this Stim home.")
     }
-    let result = try await client.request("stats.get", [:])
+    let result = try await client.read("stats.get", [:])
     return try decodeReporting(MachineStats.self, from: result, source: .server)
   }
 }

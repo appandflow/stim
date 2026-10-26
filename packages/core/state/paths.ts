@@ -61,6 +61,11 @@ export function workspaceStateFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'state.json');
 }
 
+/** The dependency directories `gc --delete` deleted from the workspace's worktree, apart from state.json so writing it is not workspace activity. */
+export function workspaceLightenedFile(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'lightened.json');
+}
+
 export function workspaceStateLock(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'state.lock');
 }
@@ -158,6 +163,14 @@ export function deviceViewersDir(): string {
   return join(configDir(), 'viewers');
 }
 
+export function budgetSweepFile(): string {
+  return join(configDir(), 'budget-sweep.json');
+}
+
+export function budgetSweepLock(): string {
+  return join(configDir(), 'budget-sweep.lock');
+}
+
 export function statsFile(): string {
   return join(configDir(), 'stats.json');
 }
@@ -186,6 +199,18 @@ export function gcLogFile(): string {
   return join(gcLogDir(), 'gc.ndjson');
 }
 
+export function buildLedgerDir(): string {
+  return join(configDir(), 'builds');
+}
+
+export function buildLedgerFile(): string {
+  return join(buildLedgerDir(), 'builds.ndjson');
+}
+
+export function buildLedgerLock(): string {
+  return join(buildLedgerDir(), 'builds.lock');
+}
+
 export function maintenanceChildLogFile(): string {
   return join(maintenanceDir(), 'child.log');
 }
@@ -209,6 +234,11 @@ export function archiveDir(id: string): string {
 
 export function archiveLock(): string {
   return join(archiveRoot(), '.lock');
+}
+
+/** Uncommitted changes of removed worktrees: `<repository>/<branch-or-dir>-<timestamp>/` holding `manifest.json`. */
+export function worktreeArchiveRoot(): string {
+  return join(archiveRoot(), 'worktrees');
 }
 
 /** This machine's own long-term X25519 key as a client of other machines' stim-servers. */

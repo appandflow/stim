@@ -17,7 +17,9 @@ import type { NdjsonRecord } from '../ndjson.ts';
 import {
   runId,
   buildCriteria,
+  buildLedgerDir,
   gcLogDir,
+  readBuildLedger,
   readGcLog,
   compileGrep,
   fileSizes,
@@ -31,7 +33,9 @@ import {
 import { errorDiagnostics } from '../diagnostics/error-diagnostics.ts';
 import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
 import { followHostedLogs } from '../device-host/hosted-logs-sync.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
+
+const MACHINE_SOURCES = ['gc', 'builds'];
 
 const LEVEL_WIDTH = 5;
 const SRC_WIDTH = 6;
@@ -101,7 +105,9 @@ export function validateSources(sources: string | string[] | undefined | null): 
   const list = Array.isArray(sources) ? sources : [sources];
   if (list.includes('gc') && list.length > 1)
     return { error: '--source gc reads the machine-wide gc log and cannot be combined with other sources.' };
-  if (list.includes('all')) return { sources: SOURCES.filter((source) => source !== 'gc') };
+  if (list.includes('builds') && list.length > 1)
+    return { error: '--source builds reads the machine-wide build ledger and cannot be combined with other sources.' };
+  if (list.includes('all')) return { sources: SOURCES.filter((source) => !MACHINE_SOURCES.includes(source)) };
   const unknown = list.filter((s) => !SOURCES.includes(s));
   if (unknown.length > 0) {
     return {
@@ -188,7 +194,7 @@ export default function logsCommand(program: Command): void {
     )
     .option(
       '--source <s...>',
-      'Only these sources: metro, client, device, build, agent, maintenance, placement, or all; gc alone reads the machine-wide gc log of what gc and maintenance cleared',
+      'Only these sources: metro, client, device, build, agent, maintenance, placement, or all; gc alone reads the machine-wide gc log of what gc and maintenance cleared, and builds alone reads the machine-wide ledger of native builds',
     )
     .option('--level <l>', `Minimum level: ${LEVELS.join(', ')}`)
     .option('--since <d>', 'Only records newer than this, e.g. 30s, 5m, 2h')
@@ -202,9 +208,10 @@ export default function logsCommand(program: Command): void {
     .option('--json', 'Emit the raw records, one per line (valid NDJSON; zero matches is zero bytes, exit 0)')
     .action(async (opts: LogsOptions) => {
       const requested = [opts.source ?? []].flat();
-      if (requested.length === 1 && requested[0] === 'gc') {
+      const [only] = requested;
+      if (requested.length === 1 && only !== undefined && MACHINE_SOURCES.includes(only)) {
         const { minLevel, tail } = validateOptions(opts);
-        printGcLog(opts, opts.errors ? 'error' : minLevel, tail);
+        printMachineLog(only === 'gc' ? GC_LOG : BUILD_LEDGER, opts, opts.errors ? 'error' : minLevel, tail);
         return;
       }
       const root = findCommandWorkspace(process.cwd());
@@ -217,6 +224,7 @@ export default function logsCommand(program: Command): void {
       const { sources, minLevel, tail } = validateOptions(opts);
 
       requireLogsWorkspace(root, dir);
+      recordWorkspaceUse(root);
 
       const query = {
         slot: opts.slot,
@@ -375,22 +383,54 @@ function validateOptions(opts: LogsOptions): { sources?: string[]; minLevel?: st
   return { sources, minLevel, tail };
 }
 
-function printGcLog(opts: LogsOptions, minLevel: string | undefined, tail: number | undefined): void {
-  const emit = (record: NdjsonRecord) =>
+interface MachineLog {
+  source: string;
+  dir: () => string;
+  read: () => NdjsonRecord[];
+  /** Identifies a record when the file is rewritten while following, so it is not printed twice. */
+  key?: (record: NdjsonRecord) => string;
+}
+
+const GC_LOG: MachineLog = { source: 'gc', dir: gcLogDir, read: readGcLog };
+
+const BUILD_LEDGER: MachineLog = {
+  source: 'builds',
+  dir: buildLedgerDir,
+  read: readBuildLedger,
+  key: (record) => `${record.id}:${record.ts}`,
+};
+
+function printMachineLog(
+  log: MachineLog,
+  opts: LogsOptions,
+  minLevel: string | undefined,
+  tail: number | undefined,
+): void {
+  const printed = new Set<string>();
+  const emit = (record: NdjsonRecord) => {
+    if (opts.follow && log.key) {
+      const key = log.key(record);
+      if (printed.has(key)) return;
+      printed.add(key);
+    }
     console.log(
       opts.json
         ? JSON.stringify(record)
         : formatRecord(record, { paint: record.level ? LEVEL_COLOURS[record.level] : undefined }),
     );
-  const query = { sources: ['gc'], minLevel, since: opts.since, grep: opts.grep };
-  const offsets = opts.follow ? fileSizes(gcLogDir()) : null;
-  const records = queryLogs({ ...query, records: readGcLog(), tail });
+  };
+  const query = { sources: [log.source], minLevel, since: opts.since, grep: opts.grep };
+  const dir = log.dir();
+  const offsets = opts.follow ? fileSizes(dir) : null;
+  const all = log.read();
+  const records = queryLogs({ ...query, records: all, tail });
   for (const record of records) emit(record);
+  if (opts.follow && log.key) for (const record of all) printed.add(log.key(record));
   if (!opts.follow) {
-    if (records.length === 0 && !opts.json) console.error(chalk.dim(`No matching log records in ${gcLogDir()}`));
+    if (records.length === 0 && !opts.json) console.error(chalk.dim(`No matching log records in ${dir}`));
     return;
   }
-  const stop = followLogs({ dir: gcLogDir(), offsets, criteria: buildCriteria(query), onRecord: emit });
+  const stop = followLogs({ dir, offsets, criteria: buildCriteria(query), onRecord: emit });
   const finish = () => {
     stop();
     stopReader();

@@ -46,10 +46,16 @@ import { loadConfig } from '../workspace/config.ts';
 import { cacheBlocked, measureDisk, measureDiskAsync } from './measure.ts';
 import { cacheEntryProtection, maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { artifactWorktrees, clearArtifact, type ArtifactWorktree } from './artifacts.ts';
-import { cachedDeviceActivityAsync, workspaceActiveReason, workspaceActiveReasonAsync } from './activity.ts';
+import {
+  cachedDeviceActivity,
+  cachedDeviceActivityAsync,
+  workspaceActiveReason,
+  workspaceActiveReasonAsync,
+} from './activity.ts';
 import { levelFloors, lowestFree, protectWindowMs } from './pressure.ts';
 import type { MaintenanceSettings } from './settings.ts';
 import { idleShutdownMinutes } from './devices.ts';
+import { stopIdleWorkspace } from './idle-stop.ts';
 
 export interface ActionOutcome {
   status: 'done' | 'kept' | 'failed';
@@ -62,6 +68,7 @@ export interface ActContext {
   settings: MaintenanceSettings;
   budget: Budget;
   protectedRoot: string;
+  background?: boolean;
   worktreeSweep?: WorktreeSweep;
   pressureSweep?: WorktreeSweep;
   protect?: (entry: string) => string | null;
@@ -174,17 +181,18 @@ async function clearOutputs(action: MaintenanceAction, context: ActContext): Pro
   if (!root) return kept('the action names no workspace');
   if (root === context.protectedRoot) return kept('the command that started this pass runs in it');
   if (maintenancePinned(root)) return kept('pinned by maintenance.keep');
-  const recent = recentUse(root, context.settings, protectWindowMs(action, context.settings));
+  const lighten = action.level === 2;
+  const recent = lighten ? null : recentUse(root, context.settings, protectWindowMs(action, context.settings));
   if (recent) return kept(recent);
   const olderThan = action.olderThanDays ?? null;
   const now = Date.now();
-  const report = collectWorkspaceOutputs({ olderThan, now, measure: false });
+  const report = collectWorkspaceOutputs({ olderThan, now, measure: false, lighten, only: root });
   const entry = report.workspaces.find(
     (candidate) => candidate.projectRoot && canonicalPath(candidate.projectRoot) === root,
   );
   if (!entry) return kept('it has no build outputs any more');
   const { results } = await quietly(() =>
-    clearWorkspaceOutputs({ ...report, workspaces: [entry] }, { olderThan, now }),
+    clearWorkspaceOutputs({ ...report, workspaces: [entry] }, { olderThan, now, lighten }),
   );
   return outcomeOf(results, action.bytes);
 }
@@ -199,7 +207,9 @@ async function removeWorktree(action: MaintenanceAction, context: ActContext): P
   if (worktree.keys.some(maintenancePinned)) return kept('pinned by maintenance.keep');
   const before = lowestFree(measureDisk());
   const { results } = await quietly(() => removeWorktrees({ ...sweep, worktrees: [worktree] }));
-  return outcomeOf(results, freedSince(before));
+  const outcome = outcomeOf(results, freedSince(before));
+  const removal = results.find((result) => result.status === 'done')?.detail;
+  return outcome.status === 'done' ? { ...outcome, detail: removal ?? action.reason } : outcome;
 }
 
 async function removeOrphan(action: MaintenanceAction): Promise<ActionOutcome> {
@@ -473,9 +483,15 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
         ? kept('automatic maintenance does not stop devices or dev servers for disk')
         : shutDownIdleDevice(action);
     case 'would-stop-workspace':
-      return action.level === 3
-        ? stopWorkspace(action, context)
-        : kept('automatic maintenance stops dev servers only at disk pressure level 3');
+      if (action.level === 3) return stopWorkspace(action, context);
+      return action.check === 'idle'
+        ? stopIdleWorkspace(action, {
+            protectedRoot: context.background ? '' : context.protectedRoot,
+            devices: () => cachedDeviceActivity(Date.now()),
+          })
+        : kept(
+            'automatic maintenance stops dev servers only at disk pressure level 3 or after maintenance.idleStopHours',
+          );
     case 'would-clear-build-dirs':
     case 'would-delete-dependencies':
       return clearArtifacts(action, context);

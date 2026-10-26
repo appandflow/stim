@@ -49,7 +49,7 @@ jobs:
     outputs:
       dist_tag: ${{ steps.dist-tag.outputs.dist_tag }}
     env:
-      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale server
+      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -226,6 +226,14 @@ jobs:
           else
             npm publish "$RUNNER_TEMP/tarballs/transport-tailscale.tgz" --provenance --access public --tag "$DIST_TAG"
           fi
+      - name: Publish @stim-cli/transport-local
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/transport-local.package.json').version")
+          if npm view "@stim-cli/transport-local@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/transport-local@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/transport-local.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
       - name: Publish @stim-cli/server
         run: |
           version=$(node -p "require('$RUNNER_TEMP/tarballs/server.package.json').version")
@@ -247,7 +255,7 @@ jobs:
     permissions:
       contents: read
     env:
-      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale server
+      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
       DIST_TAG: ${{ needs.publish.outputs.dist_tag }}
       npm_config_prefer_online: 'true'
     steps:

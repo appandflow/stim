@@ -23,6 +23,7 @@ export interface OwnedDeviceRecord {
   setupIncomplete?: boolean;
   bootPending?: boolean;
   simslimManaged?: boolean;
+  simslimApplied?: { profile: string; springBoardPid: number };
   deviceType?: string | null;
   runtime?: string | null;
   systemImage?: string | null;
@@ -198,6 +199,7 @@ export async function ensureBooted({
     return ensureIosBooted({
       device,
       projectPath,
+      slot,
       deviceSlotWait,
       simulatorApp,
       timeoutMs: timeoutMs ?? IOS_BOOT_TIMEOUT_MS,

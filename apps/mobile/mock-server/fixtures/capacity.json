@@ -1,0 +1,55 @@
+{
+  "capacity": {
+    "load": { "cpus": 12, "loadPerCore": 2.4, "busyAt": 2, "limit": null, "state": "busy" },
+    "devices": {
+      "max": 6,
+      "inUse": 6,
+      "holders": [
+        {
+          "platform": "ios",
+          "label": "a4-building",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "platform": "android",
+          "label": "a4-building",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "platform": "ios",
+          "label": "wide-insets",
+          "workspace": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets/apps/tlon-mobile",
+          "slot": "duo"
+        },
+        {
+          "platform": "ios",
+          "label": "chat-perf-demo",
+          "workspace": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf-demo/apps/tlon-mobile",
+          "slot": "ios18"
+        },
+        {
+          "platform": "android",
+          "label": "a4-offloaded",
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-offloaded/apps/mobile",
+          "slot": "default"
+        },
+        { "platform": "ios", "label": "stim-old-checkout (iPhone 17 27.0)", "workspace": null, "slot": null }
+      ]
+    },
+    "builds": {
+      "max": 2,
+      "inUse": 2,
+      "holders": [
+        {
+          "slot": 0,
+          "workspace": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
+          "client": null,
+          "since": "2026-09-25T04:22:27.012Z"
+        },
+        { "slot": 1, "workspace": null, "client": "janics-macbook-pro", "since": "2026-09-25T04:23:01.000Z" }
+      ]
+    }
+  }
+}

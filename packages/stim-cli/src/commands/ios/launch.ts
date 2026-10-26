@@ -1,6 +1,7 @@
 import type { PreparedIosArtifact } from './artifact.ts';
 import type { StimContext, StimOutput } from '@stim-cli/core';
 import { launchSlotScope, nativeRunCommand, siblingPlatformSlots } from '../../engine/slot-launch.ts';
+import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import { basename } from 'node:path';
 import chalk from 'chalk';
 import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
@@ -35,7 +36,7 @@ import { workspaceDevServerMode } from '../../supervisor/state.ts';
 import type { VerifyLaunchResultLike, DeviceLike, IosBootLike, FailArgs } from './types.ts';
 import { PLATFORM, deviceLabel, deviceShortName, appNameFromPath } from './support.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
-import type { IosFacts } from '../../engine/build-facts.ts';
+import type { CacheHitLevel, IosFacts } from '../../engine/build-facts.ts';
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { type ReportIosResultArgs, reportIosResult } from './result.ts';
 import { workspaceLinks } from '../../devices/stim-desktop.ts';
@@ -43,12 +44,14 @@ import { launchOutcomeRecord, type MobileRuntimePreparation, type RuntimeReadine
 import type { RuntimePlan } from '../../engine/runtime-plan.ts';
 import { COLLECTOR_EXIT_WAIT_MS } from './collector.ts';
 import {
+  bundleBindFailure,
   captureNativeCrashes,
   IOS_CRASH_REPORT_RETRY,
   printNativeCrashReport,
   simulatorConsolePaths,
 } from '../../diagnostics/native-crash.ts';
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
+import type { HostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
 
 interface VerifyIosRunArgs {
   operation?: StimContext;
@@ -75,6 +78,7 @@ interface VerifyIosRunArgs {
   remoteDevice: boolean;
   metroOrigin: string | null;
   enterActivity?: BuildProgress['activity'];
+  hostedLogs?: Omit<HostedLaunchLogs, 'stop'>;
 }
 
 interface IosRuntimeRoute {
@@ -230,7 +234,7 @@ async function verifyIosProcessRun({
   return { state: crashes.length || processCheck?.reason === 'exited' ? LAUNCH_FATAL : LAUNCH_UNVERIFIED };
 }
 
-async function verifyIosMetroRun({
+export async function verifyIosMetroRun({
   operation,
   root,
   slot,
@@ -254,17 +258,20 @@ async function verifyIosMetroRun({
   remoteDevice,
   metroOrigin,
   enterActivity,
+  hostedLogs,
 }: VerifyIosRunArgs): Promise<{ state: boolean | string; warning?: string; unattributed?: boolean }> {
   const runCommand = nativeRunCommand('ios', slot, { physical, deviceId: udid });
   const readNativeCrashes = () =>
-    remoteDevice
-      ? []
-      : captureNativeCrashes(
-          { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
-          logsDir,
-          operation?.signal,
-          operation?.env,
-        );
+    hostedLogs
+      ? hostedLogs.readNativeCrashes()
+      : remoteDevice
+        ? []
+        : captureNativeCrashes(
+            { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
+            logsDir,
+            operation?.signal,
+            operation?.env,
+          );
   const deviceProcess = async (): Promise<boolean | null> => {
     const running = await d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
     return running.state === 'unknown' ? null : running.state === 'running';
@@ -272,29 +279,34 @@ async function verifyIosMetroRun({
 
   const siblings = metroCheck ? await siblingPlatformSlots(root, 'ios', slot) : [];
   const verification: VerifyLaunchResultLike = metroCheck
-    ? await d.verifyLaunch({
-        requireBundleResponse: true,
-        slot: launchSlotScope(root, slot),
-        appPid: physical || remoteDevice ? null : launched?.pid,
-        platformShared: siblings.length > 0,
-        onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
-        onActivity: enterActivity,
-        logsDir,
-        since: launchedAt,
-        metroPort,
-        platform: 'ios',
-        mode: workspaceDevServerMode(root, isExpo),
-        readNativeCrashes,
-        processAlive: remoteDevice
-          ? null
-          : physical
-            ? deviceProcess
-            : async () => {
-                if (launched?.pid) return d.pidExists(launched.pid);
-                const running = await iosAppProcess(udid, bundleId);
-                return running.state === 'unknown' ? null : running.state === 'running';
-              },
-      })
+    ? await withDrainingCancellation(operation, operation?.signal, () =>
+        d.verifyLaunch({
+          signal: operation?.signal,
+          requireBundleResponse: true,
+          slot: launchSlotScope(root, slot),
+          appPid: physical || remoteDevice ? null : launched?.pid,
+          platformShared: siblings.length > 0,
+          onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
+          onActivity: enterActivity,
+          logsDir,
+          since: launchedAt,
+          metroPort,
+          platform: 'ios',
+          mode: workspaceDevServerMode(root, isExpo),
+          readNativeCrashes,
+          readDeviceRecords: hostedLogs?.readDeviceRecords,
+          deviceLogsThrough: hostedLogs?.deviceLogsThrough,
+          processAlive: remoteDevice
+            ? null
+            : physical
+              ? deviceProcess
+              : async () => {
+                  if (launched?.pid) return d.pidExists(launched.pid);
+                  const running = await iosAppProcess(udid, bundleId);
+                  return running.state === 'unknown' ? null : running.state === 'running';
+                },
+        }),
+      )
     : { verified: false, skipped: true };
   const nativeCrashes = verification.errors?.some((record) => record.event === 'native_crash')
     ? []
@@ -619,6 +631,61 @@ async function cleanAdoptedIosApps({
   return `Could not remove ${swept.failed.join(', ')}, left by the previous workspace.`;
 }
 
+async function evictUnbindableCacheHit({
+  d,
+  root,
+  slot,
+  udid,
+  bundleId,
+  appPath,
+  launchedAt,
+  logsDir,
+  cacheHit,
+  providerName,
+  storeKey,
+  runCommand,
+  local,
+  logFields,
+  operation,
+}: {
+  d: IosDeps;
+  root: string;
+  slot: string | undefined;
+  udid: string;
+  bundleId: string | null;
+  appPath: string;
+  launchedAt: number;
+  logsDir: string;
+  cacheHit: CacheHitLevel;
+  providerName: string | null;
+  storeKey: string | null;
+  runCommand: string;
+  local: boolean;
+  logFields: FailArgs['build'];
+  operation: VerifyIosRunArgs['operation'];
+}): Promise<FailArgs | null> {
+  if (!cacheHit || !storeKey || !bundleId || !local) return null;
+  const crashes = await captureNativeCrashes(
+    { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath },
+    logsDir,
+    operation?.signal,
+    operation?.env,
+  );
+  const symbol = crashes.map(bundleBindFailure).find(Boolean);
+  if (!symbol || !(await d.evictBuild('ios', storeKey))) return null;
+  const provider = cacheHit === 'remote' || Boolean(providerName);
+  return {
+    code: 'STIM_LAUNCH_FAILED',
+    message: `The cached app cannot start: dyld could not bind ${symbol} between two parts of the app itself.`,
+    remedy:
+      `Stim removed the cache entry ${storeKey}${provider ? ', but the cache provider may still hold its copy' : ''}. ` +
+      `Run \`${runCommand}\`${provider ? ' with `--no-build-cache`' : ''} again to build the app fresh. ` +
+      "If the fresh app crashes the same way, the project's own native code is the cause.",
+    logPath: logsDir,
+    build: logFields,
+  };
+}
+
 function installMayBeProven(adopting: boolean, parkedCacheKey: string | undefined, storeKey: string | null): boolean {
   return !adopting || !parkedCacheKey || parkedCacheKey === storeKey;
 }
@@ -702,8 +769,12 @@ function launchFailureRemedy(
   udid: string,
   bundleId: string,
   logFile: string,
+  reason: string | undefined,
 ): string {
   if (remoteDevice) return remoteDevice.failureRemedy();
+  if (reason && /system shell .*probably crashed/.test(reason)) {
+    return `SpringBoard, the simulator's system shell, is not running, and only a reboot brings it back. Run \`stim stop\`, then \`stim ios\` again. Repeated crashes leave SpringBoard reports in ~/Library/Logs/DiagnosticReports.`;
+  }
   return `If the simulator timed out, run \`stim doctor --platform ios\` and resolve any reported host memory pressure before retrying. Otherwise run \`xcrun simctl launch --terminate-running-process --console ${udid} ${bundleId}\` to see what the app reports, and check ${logFile}.`;
 }
 
@@ -818,6 +889,24 @@ export async function finishIosRun({
   let installSkipped = false;
   let launched: IosRuntimeLaunchResult;
   let launchedAt = d.now();
+  const evictUnbound = () =>
+    evictUnbindableCacheHit({
+      d,
+      root,
+      slot,
+      udid,
+      bundleId,
+      appPath,
+      launchedAt,
+      logsDir,
+      cacheHit,
+      providerName,
+      storeKey,
+      runCommand,
+      local: !physical && !remoteDevice,
+      logFields: { ...buildFailure, appPath, bundleId },
+      operation,
+    });
 
   if (physical) {
     const overWifi = await installsOverWifi(d, udid, wireless, note);
@@ -1031,10 +1120,12 @@ export async function finishIosRun({
         operation?.signal,
         operation?.env,
       );
+      const evicted = await evictUnbound();
+      if (evicted) return fail(evicted);
       return fail({
         code: launched.code || 'STIM_LAUNCH_FAILED',
         message: launched.reason,
-        remedy: launchFailureRemedy(remoteDevice, udid, bundleId!, logFile),
+        remedy: launchFailureRemedy(remoteDevice, udid, bundleId!, logFile, launched.reason),
         build: { ...buildFailure, appPath, bundleId },
       });
     }
@@ -1111,6 +1202,8 @@ export async function finishIosRun({
     enterActivity,
   });
   if (launchState === LAUNCH_FATAL) {
+    const evicted = await evictUnbound();
+    if (evicted) return fail(evicted);
     return fail({
       code: 'STIM_LAUNCH_FAILED',
       message: 'The app failed its launch readiness check.',
@@ -1120,24 +1213,15 @@ export async function finishIosRun({
     });
   }
   logWriter().write(
-    runtime.kind === 'process'
-      ? {
-          src: 'build',
-          level: launchState === LAUNCH_UNVERIFIED ? 'warn' : 'info',
-          event: launchState === LAUNCH_UNVERIFIED ? 'launch_unverified' : 'launch_verified',
-          msg:
-            launchState === LAUNCH_UNVERIFIED
-              ? `${bundleId} could not be verified as running`
-              : `${bundleId} is running its native process`,
-        }
-      : launchOutcomeRecord({
-          launchState,
-          release: runtime.kind === 'embedded-js',
-          bundleId,
-          configuration,
-          metroPort,
-          unattributed,
-        }),
+    launchOutcomeRecord({
+      launchState,
+      release: runtime.kind === 'embedded-js',
+      process: runtime.kind === 'process',
+      bundleId,
+      configuration,
+      metroPort,
+      unattributed,
+    }),
   );
 
   const leaseFacts = lease?.facts() ?? null;

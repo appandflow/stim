@@ -44,7 +44,7 @@ import {
   deviceReclaimIdleMinutesSetting,
   unknownSettingKeys,
 } from '../workspace/settings.ts';
-import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
+import { hostedMetroSettings } from '../device-host/metro-request.ts';
 import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
 import { saveConfig, upsertProject, writeConfigSetting, type Config } from '../workspace/config.ts';
 import { findProjectRoot } from '../workspace/project.ts';
@@ -371,20 +371,39 @@ describe('remote device settings', () => {
     expect(remoteIosSetting({ ios: { remote: 'proxy' } })).toEqual({ kind: 'backend', backend: 'proxy' });
     expect(remoteIosSetting({ ios: { remote: 'eas' } })).toEqual({ kind: 'backend', backend: 'eas' });
     expect(remoteIosSetting({ ios: { remote: 'mini' } })).toEqual({ kind: 'machine', machine: 'mini' });
-    expect(remoteIosSetting({ ios: { remote: 'auto' } })).toEqual({ kind: 'machine', machine: 'auto' });
+    expect(remoteIosSetting({ ios: { remote: 'auto' } })).toEqual({
+      kind: 'machine',
+      machine: 'auto',
+      placement: 'auto',
+    });
+    expect(remoteIosSetting({ ios: { remote: 'Remote' } })).toEqual({
+      kind: 'machine',
+      machine: 'auto',
+      placement: 'remote',
+    });
+    expect(remoteIosSetting({ ios: { remote: ' remote-only ' } })).toEqual({
+      kind: 'machine',
+      machine: 'auto',
+      placement: 'remote-only',
+    });
+    expect(remoteIosSetting({ ios: { remote: 'local' } })).toBeNull();
     expect(remoteAndroidSetting({ android: { remote: 'proxy' } })).toEqual({ kind: 'backend', backend: 'proxy' });
     expect(remoteAndroidSetting({ android: { remote: 'eas' } })).toEqual({ kind: 'backend', backend: 'eas' });
     expect(remoteAndroidSetting({ android: { remote: 'mini:7443' } })).toEqual({
       kind: 'machine',
       machine: 'mini:7443',
     });
-    expect(remoteAndroidSetting({ android: { remote: 'AUTO' } })).toEqual({ kind: 'machine', machine: 'auto' });
+    expect(remoteAndroidSetting({ android: { remote: 'AUTO' } })).toEqual({
+      kind: 'machine',
+      machine: 'auto',
+      placement: 'auto',
+    });
   });
 
   test('reports invalid platform values instead of silently disabling remote mode', () => {
     expect(settingShapeErrors({ ios: { remote: true }, android: { remote: 'bad name' } })).toEqual([
       'Invalid ios.remote setting true. Expected a string.',
-      'Invalid android.remote setting "bad name". Expected eas, proxy, auto, local, or a tailnet machine name.',
+      'Invalid android.remote setting "bad name". Expected eas, proxy, local, auto, remote, remote-only, or a tailnet machine name.',
     ]);
   });
 
@@ -456,6 +475,11 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'ios.configuration': { valid: 'Release', invalid: { name: 'Release' }, expected: 'a string' },
   'ios.scheme': { valid: 'RNTester', invalid: ['RNTester'], expected: 'a string' },
   'ios.remote': { valid: 'mini', invalid: true, expected: 'a string' },
+  'macos.remote': {
+    valid: 'remote-only',
+    invalid: 'bad name',
+    expected: 'local, auto, remote, remote-only, or a tailnet machine name (macOS has no eas or proxy backend)',
+  },
   'ios.projectPath': { valid: '.', invalid: {}, expected: 'a string path' },
   'ios.simslim': { valid: 'on', invalid: true, expected: 'one of: on, off' },
   'ios.simslimProfile': { valid: '.simslim/dev.json', invalid: {}, expected: 'a string path' },
@@ -495,7 +519,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'android.remote': {
     valid: 'mini:7443',
     invalid: 'bad name',
-    expected: 'eas, proxy, auto, local, or a tailnet machine name',
+    expected: 'eas, proxy, local, auto, remote, remote-only, or a tailnet machine name',
   },
   'metro.tunnel': {
     valid: 'tailscale',
@@ -503,6 +527,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
     expected: 'one of: auto, off, expo, cloudflared, ngrok, tailscale',
   },
   'maintenance.keep': { valid: true, invalid: 'yes', expected: 'true or false' },
+  'maintenance.idleStopHours': { valid: 0.5, invalid: -1, expected: 'a number, 0 or more' },
   'metro.idleStopMinutes': { valid: 30, invalid: '30', expected: 'a whole number, 0 or more' },
   'devices.reclaimIdleMinutes': { valid: 10, invalid: 1.5, expected: 'a whole number, 0 or more' },
   'devices.idleShutdownMinutes': { valid: 30, invalid: 1.5, expected: 'a whole number, 0 or more' },
@@ -1082,7 +1107,7 @@ test('a machine android.deviceProfile and android.systemImage apply under every 
 
 test('a machine ios.remote and android.remote are the default under every project layer', () => {
   saveConfig({ version: 2, projects: {}, repos: {}, ios: { remote: 'auto' }, android: { remote: 'mini' } });
-  expect(remoteIosSetting(resolveSettings({}))).toEqual({ kind: 'machine', machine: 'auto' });
+  expect(remoteIosSetting(resolveSettings({}))).toEqual({ kind: 'machine', machine: 'auto', placement: 'auto' });
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { remote: 'eas' } }));
   const resolved = resolveSettings({ repoRoot: tmpHome });
   expect(remoteIosSetting(resolved)).toEqual({ kind: 'backend', backend: 'eas' });

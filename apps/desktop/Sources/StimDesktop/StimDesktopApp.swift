@@ -25,6 +25,8 @@ final class OpenRequests: ObservableObject {
   @Published var pairsPhone = false
   @Published var addMachine: AddMachineRequest?
   @Published var tutorialRequest: TutorialEntry?
+  @Published var showsDiscover = false
+  @Published var showsViewOptions = false
   @Published var showsSetupGuide = false
   @Published var target: OversightTarget?
   var openMainWindow: (() -> Void)?
@@ -32,6 +34,11 @@ final class OpenRequests: ObservableObject {
   func showTutorial(_ entry: TutorialEntry = .resume) {
     MainWindow.show()
     tutorialRequest = entry
+  }
+
+  func showDiscover() {
+    MainWindow.show()
+    showsDiscover = true
   }
 
   /// Brings the main window forward, opening one when none is left, and shows the setup guide over it.
@@ -299,6 +306,7 @@ struct StimDesktopApp: App {
         .keyboardShortcut("b", modifiers: [.command, .shift])
       }
       CommandGroup(replacing: .help) {
+        Button("Discover Stim") { OpenRequests.shared.showDiscover() }
         Button("Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }
         Button("Stim Tutorial\u{2026}") { OpenRequests.shared.showTutorial() }
         Divider()
@@ -392,6 +400,9 @@ struct NavigationCommands: Commands {
         .disabled(navigation == nil)
       Button("Machines") { navigation?.go(.machine) }
         .keyboardShortcut("4", modifiers: .command)
+        .disabled(navigation == nil)
+      Button("Builds") { navigation?.go(.builds) }
+        .keyboardShortcut("5", modifiers: .command)
         .disabled(navigation == nil)
     }
   }

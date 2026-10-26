@@ -149,6 +149,9 @@ struct AppPreferencesView: View {
         LabeledContent("Setup guide") {
           Button("Open Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }.buttonStyle(.stim())
         }
+        LabeledContent("Features") {
+          Button("Discover Stim") { OpenRequests.shared.showDiscover() }.buttonStyle(.stim())
+        }
         Toggle("Show in the menu bar", isOn: $showsMenuBarExtra)
         Toggle("Launch at login", isOn: $launchesAtLogin)
           .onChange(of: launchesAtLogin) { _, enabled in setLaunchAtLogin(enabled) }

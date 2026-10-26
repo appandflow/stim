@@ -92,10 +92,17 @@ struct CLIFailureTests {
       in: dir, name: "stim",
       """
       #!/bin/sh
-      trap 'echo terminated > "\(dir.path)/terminated"' TERM
+      reply() {
+        echo terminated > "\(dir.path)/terminated"
+        kill "$sleeper"
+        echo '{"environments":[]}'
+        exit 0
+      }
+      trap reply TERM
+      sleep 30 &
+      sleeper=$!
       echo $$ > "\(pidFile)"
-      sleep 1
-      echo '{"environments":[]}'
+      wait "$sleeper"
       """)
     let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
 

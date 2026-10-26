@@ -148,11 +148,12 @@ export async function buildIosOperation(
         let directory: string | undefined;
         let built: IosBuildFacts | null = null;
         let failureAfterCleanup: ReturnType<typeof cancelledError> | null = null;
-        const finish = (status: string, appPath?: string, errorCode?: string) => {
+        const finish = (status: string, appPath?: string, errorCode?: string, message?: string) => {
           try {
             recordFinishedBuild(
               root,
               lastBuildRecord({
+                ledger: { scheme: buildScheme, message },
                 startedAt,
                 status,
                 appPath,
@@ -293,14 +294,20 @@ export async function buildIosOperation(
           };
         } catch (error) {
           const failure = runCancellationSignal(context)?.aborted ? cancelledError('iOS build', error) : error;
-          finish('failed', undefined, (failure as { code?: string }).code);
+          finish(
+            'failed',
+            undefined,
+            (failure as { code?: string }).code,
+            failure instanceof Error ? failure.message : String(failure),
+          );
           stats.record({ failed: true, durationMs: Date.now() - started });
           throw failure;
         } finally {
+          artifact?.cancelFingerprintCheck();
           await artifact?.release();
           failureAfterCleanup = built && runCancellationSignal(context)?.aborted ? cancelledError('iOS build') : null;
           if (failureAfterCleanup) {
-            finish('failed', undefined, failureAfterCleanup.code);
+            finish('failed', undefined, failureAfterCleanup.code, failureAfterCleanup.message);
             stats.record({ failed: true, durationMs: Date.now() - started });
           }
           if ((!built || failureAfterCleanup) && directory) await fs.rm(directory, { recursive: true, force: true });

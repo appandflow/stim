@@ -5,7 +5,7 @@ import * as hostedClient from '../device-host/hosted-client.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { tmpdir } from 'os';
+import { availableParallelism, loadavg, tmpdir } from 'os';
 import { join } from 'path';
 import { createServer } from 'http';
 import { Command } from 'commander';
@@ -37,6 +37,8 @@ const writeHostedAndroid = (root: string, slot: string, host: HostedAndroidPlace
 
 let tmpHome: string;
 const realExecutor = getExecutor();
+
+const initialCwd = process.cwd();
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
@@ -84,6 +86,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  process.chdir(initialCwd);
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
@@ -201,6 +204,47 @@ test('status reports simctl as unreadable instead of warning that every sim is g
   expect(simctlLine).toMatch(/simctl not found/);
   expect(logs.some((l) => /ios:.*unknown/.test(l))).toBeTruthy();
 });
+
+test('plain status shows the load and a set cap even with no projects registered', async () => {
+  saveConfig(makeConfig({ concurrency: { maxBuilds: 2 } }));
+  const logs = await runStatus();
+  expect(logs.some((l) => /No projects registered/.test(l))).toBe(true);
+  expect(logs.some((l) => /load [\d.]+\/core \(busy at 2\)/.test(l))).toBe(true);
+  expect(logs.some((l) => /builds 0\/2 \(concurrency\.maxBuilds\)/.test(l))).toBe(true);
+});
+
+test.skipIf(process.platform !== 'darwin')(
+  'device slot usage is unknown when simctl fails, and counts no simulators when simctl is absent, as admission does',
+  async () => {
+    const usageWhen = async (failure: Error) => {
+      setExecutor({
+        runFile: () => '',
+        async runFileAsync(_file, args = []) {
+          if (args.join(' ').includes('simctl list devices --json')) throw failure;
+          return '';
+        },
+        runQuiet: () => null,
+        runFileQuiet: () => null,
+        spawn() {
+          throw new Error('spawn should not be called from status');
+        },
+      });
+      return (await runStatusJson()).capacity.devices;
+    };
+    saveConfig(makeConfig({ concurrency: { maxDevices: 2 } }));
+
+    expect(await usageWhen(new Error('simctl timed out'))).toMatchObject({
+      max: 2,
+      inUse: null,
+      unknown: expect.stringContaining('simctl timed out'),
+    });
+    expect(await usageWhen(Object.assign(new Error('spawn xcrun ENOENT'), { code: 'ENOENT' }))).toEqual({
+      max: 2,
+      inUse: 0,
+      holders: [],
+    });
+  },
+);
 
 test('status still warns about a recorded sim missing from a readable listing', async () => {
   saveConfig(
@@ -351,6 +395,21 @@ test('status --json sets memoryMb from the footprint helper, compiling it once i
   await runStatusJson();
   expect(calls.filter((call) => call === 'swiftc')).toHaveLength(1);
   expect(calls.filter((call) => call === 'stim-footprint')).toHaveLength(2);
+});
+
+test('status --json reports the machine load against server.maxLoadPerCore, and slot usage only for a set cap', async () => {
+  saveConfig(makeConfig({ concurrency: { maxBuilds: 2 }, server: { maxLoadPerCore: 1.5 } }));
+  const cpus = availableParallelism();
+  const before = (loadavg()[1] ?? 0) / cpus;
+  const { capacity } = await runStatusJson();
+  const after = (loadavg()[1] ?? 0) / cpus;
+
+  expect(capacity.load).toMatchObject({ cpus, busyAt: 1.5, limit: null });
+  expect(capacity.load.loadPerCore).toBeGreaterThanOrEqual(Math.floor(Math.min(before, after) * 10) / 10);
+  expect(capacity.load.loadPerCore).toBeLessThanOrEqual(Math.ceil(Math.max(before, after) * 10) / 10);
+  expect(capacity.load.state).toBe(capacity.load.loadPerCore >= 1.5 ? 'busy' : 'free');
+  expect(capacity.builds).toEqual({ max: 2, inUse: 0, holders: [] });
+  expect(capacity).not.toHaveProperty('devices');
 });
 
 test('without the helper, owners carry RSS and environments keep the estimate', async () => {

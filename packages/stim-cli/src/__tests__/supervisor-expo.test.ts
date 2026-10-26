@@ -638,11 +638,11 @@ describe('the Metro store injected into an Expo child', () => {
     delete process.env.EXPO_OVERRIDE_METRO_CONFIG;
   });
 
-  test('Expo SDK 53 runs normally without Stim Metro cache env', async () => {
+  test('Expo SDK 53 runs normally without Stim Metro cache env or request records', async () => {
     fakeBin(root, 53);
     const logsDir = join(root, '.stim', 'logs');
     const calls: { opts: SpawnOptions }[] = [];
-    await startExpoServer({
+    const handle = await startExpoServer({
       root,
       port: 8119,
       logsDir,
@@ -657,6 +657,7 @@ describe('the Metro store injected into an Expo child', () => {
     expect(env.STIM_METRO_STORE).toBe(undefined);
     const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
     expect(String(records.find((record) => record.event === 'cache_store_skipped')?.msg)).toContain('predates');
+    expect(handle.observesRequests).toBe(false);
   });
 
   test.each(['machine', 'project', 'native-invalid'])(
@@ -686,7 +687,7 @@ describe('the Metro store injected into an Expo child', () => {
       process.env.NODE_OPTIONS = '--enable-source-maps';
       const logsDir = join(root, '.stim', 'logs');
       const calls: { opts: SpawnOptions }[] = [];
-      await startExpoServer({
+      const handle = await startExpoServer({
         root,
         port: 8121,
         logsDir,
@@ -699,6 +700,7 @@ describe('the Metro store injected into an Expo child', () => {
       expect(env.NODE_OPTIONS).toBe('--enable-source-maps');
       expect(env.STIM_METRO_STORE).toBe('');
       expect(env.EXPO_OVERRIDE_METRO_CONFIG).toBe(expoMetroConfigPath());
+      expect(handle.observesRequests).toBe(true);
       const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
       expect(records.some((r) => r.event === 'cache_store_skipped')).toBe(true);
     },

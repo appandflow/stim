@@ -80,6 +80,7 @@ export type HostedNativeOffer = {
     cpus: number;
     /** Five-minute system load divided by available CPU count. */
     loadPerCore: number;
+    maxLoadPerCore?: number;
     memoryFreeBytes: number;
     memoryPressure: 'normal' | 'warning' | 'critical' | null;
     /** Available bytes on the Stim home volume, not necessarily the Android AVD volume. */
@@ -315,6 +316,11 @@ export function parseHostedNativeOffer(value: unknown): HostedNativeOffer | null
     resources: {
       cpus: resources.cpus,
       loadPerCore: resources.loadPerCore,
+      ...(typeof resources.maxLoadPerCore === 'number' &&
+      Number.isFinite(resources.maxLoadPerCore) &&
+      resources.maxLoadPerCore > 0
+        ? { maxLoadPerCore: resources.maxLoadPerCore }
+        : {}),
       memoryFreeBytes: resources.memoryFreeBytes,
       memoryPressure: resources.memoryPressure,
       workerDiskFreeBytes: resources.workerDiskFreeBytes,

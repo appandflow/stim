@@ -17,22 +17,21 @@ struct TutorialPanel: View {
   var next: () -> Void = {}
   var restart: () -> Void = {}
   var close: () -> Void = {}
-  var openArchived: () -> Void = {}
+  var isDocked = false
+  var isFullScreen = false
+  var togglePin: () -> Void = {}
+  var openArchived: (() -> Void)? = nil
+  var archiveUnavailableReason = "No saved archive is available for this tutorial run."
   var openBuild: (() -> Void)? = nil
   var openAgentActions: (() -> Void)? = nil
   var openLogs: (() -> Void)? = nil
   var pairPhone: () -> Void = {}
   var updateCLI: () -> Void = {}
-  var floating: Floating? = nil
-
-  struct Floating {
-    var isOn: Bool
-    var pinned: Bool
-    var toggle: () -> Void
-    var togglePin: () -> Void
-  }
   @State private var viewed: String?
+  @State private var displayedStep: String?
+  @State private var movingForward = true
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.isEnabled) private var isEnabled
   @ObservedObject private var updater = AppUpdater.shared
   @ObservedObject private var flags = FeatureFlagStore.shared
   private var steps: [TutorialStep] { TutorialSteps.steps(phoneApp: flags.phoneApp) }
@@ -44,6 +43,13 @@ struct TutorialPanel: View {
         Spacer()
         Text("\(position) of \(steps.count)")
           .font(.stim(.caption)).foregroundStyle(Palette.secondary).monospacedDigit()
+        Button(action: close) {
+          Image(systemName: "xmark")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Palette.secondary)
+        .help("Close Tutorial")
+        .accessibilityLabel("Close Tutorial")
       }
       .padding([.horizontal, .top], Space.xl)
       HStack(spacing: Space.sm) {
@@ -57,8 +63,14 @@ struct TutorialPanel: View {
       illustration
         .padding(.horizontal, Space.lg)
         .padding(.bottom, Space.md)
+        .fixedSize(horizontal: false, vertical: true)
       Divider()
-      panelContent
+      ZStack {
+        panelContent
+          .id(shown)
+          .transition(reduceMotion ? .opacity : .push(from: movingForward ? .trailing : .leading))
+      }
+      .clipped()
       Divider()
       footer.padding(Space.lg)
     }
@@ -71,19 +83,21 @@ struct TutorialPanel: View {
     .focusable()
     .focusEffectDisabled()
     .onKeyPress(.leftArrow) {
+      guard isEnabled else { return .ignored }
       guard let id = slides.previous(shown) else { return .ignored }
       view(id)
       return .handled
     }
     .onKeyPress(.rightArrow) {
+      guard isEnabled else { return .ignored }
       guard let id = slides.next(shown) else { return .ignored }
       view(id)
       return .handled
     }
-    .onChange(of: slides.current) { old, _ in
-      withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
-        viewed = slides.viewed(viewed, afterProgressFrom: old)
-      }
+    .onAppear { displayedStep = slides.shown(viewed) }
+    .onChange(of: slides) { old, _ in
+      viewed = slides.viewed(viewed, afterProgressFrom: old.current)
+      display(slides.shown(viewed))
     }
   }
 
@@ -91,11 +105,19 @@ struct TutorialPanel: View {
     TutorialSlides(steps: steps.map(\.id), currentStep: snapshot.currentStep, finished: snapshot.isFinished)
   }
 
-  private var shown: String { slides.shown(viewed) }
+  private var shown: String { displayedStep ?? slides.shown(viewed) }
 
   private func view(_ id: String) {
+    viewed = id == slides.current ? nil : id
+    display(slides.shown(viewed))
+  }
+
+  private func display(_ id: String) {
+    guard id != shown else { return }
+    let order = steps.map(\.id) + [TutorialSlides.completion]
+    movingForward = (order.firstIndex(of: id) ?? 0) > (order.firstIndex(of: shown) ?? 0)
     withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
-      viewed = id == slides.current ? nil : id
+      displayedStep = id
     }
   }
 
@@ -113,7 +135,7 @@ struct TutorialPanel: View {
   }
 
   private func title(of id: String) -> String {
-    id == TutorialSlides.completion ? "Tutorial complete" : steps.first { $0.id == id }?.title ?? id
+    id == TutorialSlides.completion ? "Tutorial summary" : steps.first { $0.id == id }?.title ?? id
   }
 
   @ViewBuilder private var illustration: some View {
@@ -157,8 +179,7 @@ struct TutorialPanel: View {
       if shown == TutorialSlides.completion {
         TutorialCompletionCard(
           snapshot: snapshot, steps: steps,
-          archiveOff: snapshot.steps.first(where: { $0.id == "finish" })?.detail == "Archived is off",
-          openArchived: openArchived, restart: restart)
+          archiveUnavailableReason: archiveUnavailableReason, openArchived: openArchived)
       } else if let step = steps.first(where: { $0.id == shown }),
         let state = snapshot.steps.first(where: { $0.id == shown })
       {
@@ -169,14 +190,12 @@ struct TutorialPanel: View {
           .accessibilityHint(ahead ? "A later step, read-only until you reach it" : "")
       }
     }
-    .id(shown)
-    .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .trailing), removal: .opacity))
     .padding(Space.xl)
+    .fixedSize(horizontal: false, vertical: true)
   }
 
   private var position: Int {
-    snapshot.currentStep.flatMap { id in steps.firstIndex { $0.id == id }.map { $0 + 1 } }
-      ?? steps.count
+    steps.firstIndex { $0.id == shown }.map { $0 + 1 } ?? steps.count
   }
 
   private func stepRow(_ step: TutorialStep, state: TutorialStepProgress) -> some View {
@@ -192,7 +211,23 @@ struct TutorialPanel: View {
       .accessibilityLabel("\(step.title), \(current ? message?.text ?? stateLabel(state.state) : stateLabel(state.state))")
       .accessibilityAddTraits(.isHeader)
       VStack(alignment: .leading, spacing: Space.md) {
-        Text(explanation(step.id)).foregroundStyle(Palette.secondary)
+        Text(instruction(step.id)).foregroundStyle(Palette.secondary)
+        if instruction(step.id) != explanation(step.id) {
+          DisclosureGroup("Why this step?") {
+            Text(explanation(step.id))
+              .foregroundStyle(Palette.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+          .disclosureGroupStyle(TutorialExplanationStyle())
+          .font(.stim(.footnote))
+        }
+        if step.id == "begin" {
+          Text(
+            "Steps advance automatically. Use Skip step to move on without completing a step."
+          )
+          .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        }
         if current, let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
         if ["build", "parallel"].contains(step.id), current, let openBuild {
           HStack(spacing: Space.sm) {
@@ -219,7 +254,25 @@ struct TutorialPanel: View {
         }
         let notice = (current ? message : nil) ?? TutorialNotice(state.detail, action: state.action)
         let detail = notice.text
-        if !detail.isEmpty, detail != explanation(step.id), current || ["build", "parallel", "phone"].contains(step.id) {
+        if current, state.state == .current, notice.action == nil, message == nil {
+          let waitingText = waitingInstruction(detail)
+          HStack(alignment: .top, spacing: Space.sm) {
+            switch state.activity {
+            case .waiting:
+              if reduceMotion {
+                Image(systemName: "hourglass").foregroundStyle(Palette.accent)
+              } else {
+                ProgressView().controlSize(.small).tint(Palette.accent)
+              }
+            case .needsAction, .blocked:
+              Image(systemName: "info.circle").foregroundStyle(Palette.accent)
+            }
+            Text(waitingText)
+              .font(.stim(.callout, weight: .medium))
+              .fixedSize(horizontal: false, vertical: true)
+              .textSelection(.enabled)
+          }
+        } else if !detail.isEmpty, detail != explanation(step.id), current || ["build", "parallel", "phone"].contains(step.id) {
           Text(detail).foregroundStyle(color(state.state)).textSelection(.enabled)
         }
         switch notice.action {
@@ -236,11 +289,15 @@ struct TutorialPanel: View {
         case nil: EmptyView()
         }
         ForEach(state.ticks, id: \.id) { tick in
-          Label(
-            Self.tickTitle(tick.id) + (tick.optional ? " (optional)" : ""),
-            systemImage: tick.done ? "checkmark.circle.fill" : "circle"
-          )
-          .font(.stim(.footnote)).foregroundStyle(tick.done ? Palette.success : Palette.secondary)
+          let active = current && tick.id == state.ticks.first(where: { !$0.done })?.id
+          Label {
+            Text(Self.tickTitle(tick.id) + (tick.optional ? " (optional)" : ""))
+              .foregroundStyle(tick.done ? Palette.secondary : active ? Palette.text : Palette.tertiary)
+          } icon: {
+            Image(systemName: tick.done ? "checkmark.circle.fill" : "circle")
+              .foregroundStyle(tick.done ? Palette.success : active ? Palette.accent : Palette.tertiary)
+          }
+          .font(.stim(.footnote))
           .accessibilityLabel("\(Self.tickTitle(tick.id)), \(tick.done ? "done" : "waiting")")
         }
         if let pull = state.link, let url = URL(string: pull.url) {
@@ -254,42 +311,33 @@ struct TutorialPanel: View {
           if step.id == "phone", phoneState != .paired {
             Button(phoneState.buttonTitle, action: pairPhone).buttonStyle(.stim(.primary))
           }
-          Button("Next", action: next).buttonStyle(.stim(.secondary))
-            .accessibilityLabel("Next: leave \(step.title)")
+          HStack {
+            Spacer()
+            Button("Skip step", action: next)
+              .buttonStyle(.plain)
+              .foregroundStyle(Palette.primary)
+              .accessibilityLabel("Skip \(step.title)")
+          }
         }
       }
-      .padding(.leading, Space.xl)
+      .padding(.leading, 16 + Space.sm)
     }
   }
 
   private var footer: some View {
     HStack {
-      if let floating, floating.isOn {
-        Button(action: floating.togglePin) {
-          Image(systemName: floating.pinned ? "pin.fill" : "pin")
-        }
+      Button("Restart Tutorial", action: restart)
         .buttonStyle(.plain)
-        .foregroundStyle(floating.pinned ? Palette.primary : Palette.secondary)
-        .help(floating.pinned ? "Unpin: let other windows cover the tutorial" : "Pin above all apps")
-        .accessibilityLabel(floating.pinned ? "Unpin the tutorial window" : "Pin the tutorial window above all apps")
-      }
+        .foregroundStyle(Palette.primary)
       Spacer()
-      if rendersStatic {
-        Image(systemName: "ellipsis").accessibilityLabel("Tutorial options: Restart, Close")
-      } else {
-        Menu {
-          Button("Restart Tutorial", action: restart)
-          if let floating {
-            Button(floating.isOn ? "Dock in Sidebar" : "Float (Experimental)", action: floating.toggle)
-          }
-          Button("Close Tutorial", action: close)
-        } label: {
-          Image(systemName: "ellipsis")
-        }
-        .menuStyle(.borderlessButton).fixedSize()
-        .help("Tutorial options: Restart, Close")
-        .accessibilityLabel("Tutorial options: Restart, Close")
+      Button(action: togglePin) {
+        Image(systemName: isDocked ? "pin.fill" : "pin")
       }
+      .buttonStyle(.plain)
+      .foregroundStyle(isFullScreen ? Palette.secondary : Palette.primary)
+      .disabled(isFullScreen)
+      .help(isFullScreen ? "Tutorial stays docked in full screen" : isDocked ? "Float Tutorial" : "Pin Tutorial to Sidebar")
+      .accessibilityLabel(isDocked ? "Float Tutorial" : "Pin Tutorial to Sidebar")
     }
   }
 
@@ -322,11 +370,35 @@ struct TutorialPanel: View {
     }
   }
 
+  private func waitingInstruction(_ detail: String) -> String {
+    switch detail {
+    case "Waiting for the tutorial workspace...":
+      return "Waiting for the tutorial workspace. Paste the prompt into your agent to get started."
+    case "Waiting for the iOS build":
+      return "Waiting for the iOS build. Send the prompt to your agent; Stim will continue when the build starts."
+    case "Waiting for the second workspace":
+      return "Waiting for the second workspace. Send the prompt to your second agent."
+    case "": return "Complete the action above. Stim will advance automatically."
+    default: return detail
+    }
+  }
+
+  private func instruction(_ id: String) -> String {
+    switch id {
+    case "begin": return "Copy this prompt into your agent to clone the test app."
+    case "build": return "Ask your agent to change the title in a new worktree and check it on a simulator."
+    case "parallel": return "Ask a second agent to change the button in a separate worktree."
+    case "share": return "Ask your agent to open a public pull request with screenshots. You need GitHub access."
+    case "finish": return "Stop both apps and discard the experimental worktrees. Keep the test app's clone."
+    default: return explanation(id)
+    }
+  }
+
   private func explanation(_ id: String) -> String {
     switch id {
     case "begin":
       return
-        "Watch two agents make two changes at once, each in its own worktree with its own simulator and dev server, checking its own work on the device. First, clone the test app."
+        "Run two agents side by side with Stim. Have each agent change the test app and test its work on a separate simulator. Clone the test app to get started."
     case "build":
       return
         "Ask your agent for a visual change. It builds in its own worktree and simulator, and checks the result on the device. The first build can take a few minutes."
@@ -343,8 +415,8 @@ struct TutorialPanel: View {
         "Your agent opens a public PR on appandflow/stim-tutorial with before/after screenshots. Needs gh access. Do it before Finish."
     case "finish":
       return
-        "Your agent stops the apps and removes the two worktrees and drops their changes. Their builds, logs and agent actions stay under Archived."
-    case "delete": return "Delete the test app's clone, or press Next to keep it."
+        "Ask your agent to stop both apps and remove their worktrees, discarding the experimental changes. Keep the test app's clone for later. If archiving is enabled, you can review the saved builds, logs, and agent actions in Archived."
+    case "delete": return "Delete the test app's clone, or skip this step to keep it."
     default: return ""
     }
   }
@@ -369,22 +441,59 @@ struct TutorialPanel: View {
   }
 }
 
-private struct TutorialPromptBox: View {
+private struct TutorialExplanationStyle: DisclosureGroupStyle {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  func makeBody(configuration: Configuration) -> some View {
+    VStack(alignment: .leading, spacing: Space.sm) {
+      Button {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+          configuration.isExpanded.toggle()
+        }
+      } label: {
+        HStack(spacing: Space.sm) {
+          Image(systemName: configuration.isExpanded ? "chevron.down" : "chevron.right")
+            .foregroundStyle(Palette.tertiary)
+            .accessibilityHidden(true)
+          configuration.label
+          Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityValue(configuration.isExpanded ? "Expanded" : "Collapsed")
+      if configuration.isExpanded {
+        configuration.content
+      }
+    }
+  }
+}
+
+struct TutorialPromptBox: View {
   var prompt: String
   var onCopy: () -> Void
+  var fill: Color = Palette.surface
+  var contentPadding: CGFloat = Space.lg
+  var contentSpacing: CGFloat = Space.md
+  var textLineSpacing: CGFloat = 0
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.sm) {
       Text("Tell your agent:").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-      Card {
-        VStack(alignment: .leading, spacing: Space.md) {
-          Text(prompt).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+      Card(fill: fill) {
+        VStack(alignment: .leading, spacing: contentSpacing) {
+          Text(prompt)
+            .lineSpacing(textLineSpacing)
+            .textSelection(.enabled)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
           HStack {
             Spacer()
             CopyButton(prompt, accessibilityLabel: "Copy prompt: \(prompt)", onCopy: onCopy)
           }
         }
-        .padding(Space.lg)
+        .padding(contentPadding)
       }
     }
   }

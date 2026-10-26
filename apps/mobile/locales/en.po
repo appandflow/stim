@@ -293,6 +293,10 @@ msgstr "{live} · Stim holds {held} of {total} GB{over}"
 msgid "{live} active"
 msgstr "{live} active"
 
+#: src/lib/capacity.ts
+msgid "{loadPerCore} per core"
+msgstr "{loadPerCore} per core"
+
 #: src/intl/format.ts
 msgid "{mb} MB"
 msgstr "{mb} MB"
@@ -971,6 +975,10 @@ msgstr "billable"
 msgid "Binary file: preview unavailable."
 msgstr "Binary file: preview unavailable."
 
+#: src/lib/capacity.ts
+msgid "Booting"
+msgstr "Booting"
+
 #: src/lib/workspace-view.ts
 msgid "Booting emulator"
 msgstr "Booting emulator"
@@ -1065,6 +1073,7 @@ msgstr "Building now"
 msgid "Building on {host}"
 msgstr "Building on {host}"
 
+#: src/lib/capacity.ts
 #: src/screens/workspace-resources.tsx
 msgid "Builds"
 msgstr "Builds"
@@ -1136,6 +1145,7 @@ msgid "Bundling JS"
 msgstr "Bundling JS"
 
 #: src/lib/build-machines.ts
+#: src/lib/capacity.ts
 msgid "Busy"
 msgstr "Busy"
 
@@ -1578,6 +1588,7 @@ msgstr "Device Frame"
 msgid "Device View"
 msgstr "Device View"
 
+#: src/lib/capacity.ts
 #: src/lib/settings-options.ts
 #: src/screens/home.tsx
 #: src/screens/menu.tsx
@@ -1889,6 +1900,10 @@ msgstr "Frames are only served for devices Stim owns."
 msgid "free"
 msgstr "free"
 
+#: src/lib/capacity.ts
+msgid "Free"
+msgstr "Free"
+
 #: src/screens/mac-status.tsx
 msgid "free on {mount} of {totalSize}"
 msgstr "free on {mount} of {totalSize}"
@@ -1963,6 +1978,10 @@ msgstr "High"
 #: src/screens/build-details.tsx
 msgid "hit"
 msgstr "hit"
+
+#: src/lib/capacity.ts
+msgid "Holding new builds"
+msgstr "Holding new builds"
 
 #: src/screens/device-view.tsx
 #: src/screens/device-view.tsx
@@ -2214,6 +2233,10 @@ msgstr "Live screen of {label}"
 #: src/components/replay-bar.tsx
 msgid "Live, device stopped"
 msgstr "Live, device stopped"
+
+#: src/screens/mac-status.tsx
+msgid "Load"
+msgstr "Load"
 
 #: src/screens/logs.tsx
 msgid "Load Older Logs"
@@ -2713,6 +2736,10 @@ msgstr "Not on the tailnet"
 #: src/components/mac-chip.tsx
 msgid "Not paired"
 msgstr "Not paired"
+
+#: src/lib/capacity.ts
+msgid "Not recorded by a workspace"
+msgstr "Not recorded by a workspace"
 
 #: src/lib/device-tile.ts
 #: src/lib/workspaces.ts

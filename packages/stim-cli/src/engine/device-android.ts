@@ -21,10 +21,10 @@ import {
   type HostMemoryPressure,
 } from '../host-memory.ts';
 import { memoryCulpritAdvice } from '../memory-culprits.ts';
-import { listAllIosSims } from '../devices/ios.ts';
+import { listAllIosSimsAsync } from '../devices/ios.ts';
 import { adoptParked, isLegacyDeletionClaim, parkedMaxSetting, readParked } from '../devices/sim-pool.ts';
 import {
-  assertOwnedAvdStopped,
+  assertOwnedAvdStoppedAsync,
   avdPoolConfiguration,
   DEFAULT_AVD_DEVICE_PROFILE,
   OWNED_AVD_CONFIG_DEFAULTS,
@@ -35,7 +35,6 @@ import {
   bootAndroidEmulator,
   configureNewOwnedAvd,
   getAvdNameForSerialAsync,
-  listAdbDevices,
   listAdbDevicesAsync,
   listAvdsAsync,
   nextConsolePort,
@@ -49,7 +48,7 @@ import { AvdBootError, AvdRecoveryError, prepareOwnedAvd } from './android-avd-s
 import { claimFailure } from '../ownership-claim.ts';
 import {
   DeviceAdmissionRefusal,
-  countLiveOwnedDevices,
+  countLiveOwnedDevicesFrom,
   withDeviceBootAdmission,
   type DeviceSlotWaitPolicy,
 } from './device-capacity.ts';
@@ -262,7 +261,7 @@ export async function ensureOwnedAndroidDevice({
       }
       if (resolved.notOwned || resolved.serial) continue;
       try {
-        assertOwnedAvdStopped(parked.name);
+        await assertOwnedAvdStoppedAsync(parked.name);
       } catch (error) {
         out(phaseLine('device', `kept parked ${parked.name}: ${String((error as Error)?.message || error)}`));
         continue;
@@ -401,8 +400,8 @@ export function claimAndroidConsolePort(
   });
 }
 
-function liveAndroidConsolePorts(): number[] {
-  const adbLive = listAdbDevices();
+async function liveAndroidConsolePorts(): Promise<number[]> {
+  const adbLive = await listAdbDevicesAsync();
   return [
     ...adbLive.emulators.map((e) => e.consolePort),
     ...adbLive.unhealthy.map((u) => u.consolePort).filter((p): p is number => p != null),
@@ -431,7 +430,7 @@ async function bootOwnedAvdOnFreshPort({
   return withDeviceBootAdmission(
     { platform: 'android', key: avdName },
     async () => {
-      const livePorts = liveAndroidConsolePorts();
+      const livePorts = await liveAndroidConsolePorts();
       const claim = await withConfigLockAsync(() =>
         claimAndroidConsolePort({ projectPath, slot, avdName, deviceName, livePorts, metadata }),
       );
@@ -517,9 +516,9 @@ function reportAndroidMemoryPressure(out: Notify): void {
 async function androidBootRemedy(pressure: HostMemoryPressure | null): Promise<string> {
   let count: number | null = null;
   try {
-    const live = countLiveOwnedDevices({
-      sims: () => (process.platform === 'darwin' ? listAllIosSims({ timeoutMs: 2000 }) : []),
-      adb: () => ({ ...listAdbDevices({ timeoutMs: 2000 }), unhealthy: [] }),
+    const live = await countLiveOwnedDevicesFrom({
+      sims: () => (process.platform === 'darwin' ? listAllIosSimsAsync({ timeoutMs: 2000 }) : []),
+      adb: async () => ({ ...(await listAdbDevicesAsync({ timeoutMs: 2000 })), unhealthy: [] }),
       booting: [],
     });
     count = typeof live === 'number' ? live : null;
@@ -636,7 +635,7 @@ export async function ensureAndroidBooted({
   }
 
   const boot = async (): Promise<BootResult> => {
-    const livePorts = liveAndroidConsolePorts();
+    const livePorts = await liveAndroidConsolePorts();
     const claim = await withConfigLockAsync(() =>
       claimAndroidConsolePort({
         projectPath,

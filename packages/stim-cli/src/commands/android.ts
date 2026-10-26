@@ -3,8 +3,9 @@ import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { selectAndroidPlacement } from './android/remote.ts';
 import { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-android.ts';
 import { readHostedAndroid, writeDevicePlacementAsync, writeHostedAndroidAsync } from '../device-host/ios-state.ts';
-import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
+import { hostedMetroSettings } from '../device-host/metro-request.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
+import { followHostedLaunchLogs } from '../device-host/hosted-logs-sync.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
 import { parseMachine } from '@stim-cli/core/state';
@@ -23,7 +24,7 @@ import {
   type BuildProgress,
   type recordFinishedBuild,
 } from '../engine/build-progress.ts';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
@@ -75,6 +76,7 @@ import {
 } from '../engine/stats.ts';
 import { writeWorkspaceLaunchAsync } from '../supervisor/state.ts';
 import { readWorkspaceState, recordWorkspaceUseAsync, writeWorkspaceStateAsync } from '../workspace/workspace-state.ts';
+import { printLightenedFailure, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import {
   installAndroidApp,
   launchAndroidApp,
@@ -192,7 +194,7 @@ export function registerAndroid(program: Command): void {
     .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
     .option(
       '--remote-build <value>',
-      'Build on auto, local, or one named machine; a name refuses without fallback',
+      'Build on local, auto, remote (remote machines first), remote-only (never here), or one named machine; a name refuses without fallback',
       parseBuildMachineOption,
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
@@ -232,10 +234,12 @@ export function registerAndroid(program: Command): void {
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this machine is full or busy; local runs here, whatever android.remote says',
+      'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this machine is full or busy; remote tries remote.machines in order first and runs here only when none takes it; remote-only never runs here; local runs here, whatever android.remote says',
       (value) => {
         if (!parseMachine(value))
-          throw new InvalidArgumentError('expected eas, proxy, auto, local, or a tailnet machine name');
+          throw new InvalidArgumentError(
+            'expected eas, proxy, local, auto, remote, remote-only, or a tailnet machine name',
+          );
         return value;
       },
     )
@@ -272,6 +276,11 @@ export function runAndroidOperation(
     root,
     { command: 'android', platform: PLATFORM, slot: opts.slot ?? 'default' },
     async (claim) => {
+      const lightened = await restoreLightenedDependencies(root, context);
+      if (lightened) {
+        printLightenedFailure(context, lightened, Boolean(opts.json));
+        return { ok: false, error: lightened };
+      }
       await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
       const progress = startBuildProgress({
         root,
@@ -317,6 +326,7 @@ interface RunAndroidOptions {
   placeHostedAndroid?: typeof placeHostedAndroid;
   readHostedAndroid?: typeof readHostedAndroid;
   writeHostedAndroid?: typeof writeHostedAndroidAsync;
+  followHostedLaunchLogs?: typeof followHostedLaunchLogs;
   buildMachine?: string;
   progress?: BuildProgress;
   easProfile?: string;
@@ -773,6 +783,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         status: 'failed',
         errorCode: code,
         diagnostics: rawDiagnostics,
+        message,
+        remedy,
         out,
       });
     }
@@ -879,9 +891,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     automatic: plan.target.kind === 'hosted' && plan.target.machine === 'auto',
     signal: runCancellationSignal(context),
     waitMs: plan.deviceSlotWaitMs,
-    displayName: basename(root),
     reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     waitingFor: (info: Parameters<typeof progress.waitingFor>[0]) => progress.waitingFor(info, 'device-slot'),
+    onBootStart: () => progress.bootStarted(),
     onWait: (ms: number) => {
       stats.addDeviceSlotWaitMs(ms);
       if (record.devicePlacement?.decision === 'local' && ms > 0) record.devicePlacement.decision = 'waited-locally';
@@ -901,6 +913,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     appMode,
     metroCheck,
     noWait: plan.deviceSlotWaitMs === 0,
+    waitMs: plan.deviceSlotWaitMs,
+    signal: settingsSignal,
     buildMachine: options.buildMachine,
     read: options.readHostedAndroid,
     resolveSerial: resolveAvdSerial,
@@ -959,7 +973,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     if (appMode === 'development' && (publicUrlSetting(settings) || tunnelModeSetting(settings)))
       phase(
         'metro',
-        'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses the private tailnet bridge.',
+        'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses links this machine opens to the host.',
       );
   }
   reclaimed = budget.reclaimed;
@@ -1242,6 +1256,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
   record.avdName = device.avdName ?? null;
   record.deviceName = device.deviceName ?? device.avdName ?? null;
+  record.deviceSerial = device.serial;
   record.systemImage = device.systemImage;
   record.deviceProfile = device.deviceProfile;
 
@@ -1338,6 +1353,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     if (hostedTarget)
       return finishHostedAndroidRun({
+        operation: context,
         target: hostedTarget,
         artifact,
         root,
@@ -1351,6 +1367,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         place: options.placeHostedAndroid ?? placeHostedAndroid,
         writePlacement: options.writeHostedAndroid ?? writeHostedAndroidAsync,
         verifyLaunch: verifyLaunched,
+        followLogs: options.followHostedLaunchLogs ?? followHostedLaunchLogs,
         writeLaunch,
         readApkPackage,
         resolveDevClientScheme,
@@ -1361,6 +1378,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         fail,
         phase,
         enterPhase: progress.step,
+        enterActivity: progress.activity,
         out,
         json,
         useBuildCache,
@@ -1481,6 +1499,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         waitedForBuild: artifact.waitedForBuild,
         ccache: ccacheActivity,
         uploadPending: artifact.uploadPending,
+        fingerprintCheck: artifact.fingerprintCheck,
         providerUpload: artifact.providerUpload,
         providerName: artifact.providerName,
         remote: artifact.remote,

@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -26,7 +27,8 @@ import logsCommand, {
 } from '../commands/logs.ts';
 import { getConfigPath, upsertProject } from '../workspace/config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { captureProcessIdentity, inspectProcessIdentity } from '../process-identity.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
 
@@ -184,6 +186,13 @@ describe('option validation', () => {
     expect(validateSources(['gc', 'all']).error).toMatch(/cannot be combined/);
   });
 
+  test('validateSources takes builds alone, keeps it out of all, and refuses it beside other sources', async () => {
+    expect(validateSources(['builds'])).toEqual({ sources: ['builds'] });
+    expect(validateSources(['all']).sources).not.toContain('builds');
+    expect(validateSources(['builds', 'metro']).error).toMatch(/cannot be combined/);
+    expect(validateSources(['builds', 'gc']).error).toMatch(/cannot be combined/);
+  });
+
   test('validateLevel accepts the Contract-1 levels and names the valid set otherwise', async () => {
     expect(validateLevel('warn')).toEqual({ level: 'warn' });
     const r = validateLevel('loud');
@@ -261,6 +270,13 @@ describe('logs command', () => {
     expect(out[1]).toMatch(/ warn  client deprecated$/);
   });
 
+  test('reading workspace logs records workspace use, so idle stop counts it as a Stim command', async () => {
+    writeLog('metro.ndjson', [{ ts: 1, src: 'metro', level: 'info', msg: 'bundling' }]);
+    const before = Date.now();
+    await run({});
+    expect(Date.parse(String(readWorkspaceState(project)?.lastUsedAt))).toBeGreaterThanOrEqual(before);
+  });
+
   test.each([false, true])('logs remain readable with an unreadable hosted slot in JSON mode %s', async (json) => {
     writeWorkspaceState(project, { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } });
     const record = { ts: 1, src: 'metro', level: 'info', msg: 'bundling' };
@@ -324,6 +340,76 @@ describe('logs command', () => {
       await run({ source: ['gc', 'metro'] });
       expect(exitCode).toBe(1);
       expect(errOut.join('\n')).toMatch(/cannot be combined/);
+    });
+  });
+
+  describe('--source builds', () => {
+    const buildRecord = (ts: number, id: string, outcome: string, level: string) => ({
+      ts,
+      src: 'builds',
+      level,
+      msg: `${outcome} ${id}`,
+      event: 'build',
+      id,
+      platform: 'ios',
+      outcome,
+      placement: { where: 'local' },
+      cache: { result: 'miss', key: null, fingerprint: null },
+    });
+
+    beforeEach(() => {
+      mkdirSync(join(tmpHome, 'builds'), { recursive: true });
+      writeFileSync(
+        join(tmpHome, 'builds', 'builds.ndjson'),
+        [buildRecord(1, 'a', 'succeeded', 'info'), buildRecord(2, 'b', 'failed', 'error')]
+          .map((r) => `${JSON.stringify(r)}\n`)
+          .join(''),
+      );
+    });
+
+    test('prints the machine build ledger from a directory that is no workspace', async () => {
+      process.chdir(tmpHome);
+      await run({ source: ['builds'], json: true });
+      expect(exitCode).toBe(null);
+      expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['a', 'b']);
+    });
+
+    test('filters by level and tail like any other source', async () => {
+      await run({ source: ['builds'], json: true, errors: true });
+      expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['b']);
+      out.length = 0;
+      await run({ source: ['builds'], json: true, tail: '1' });
+      expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['b']);
+    });
+
+    test('--follow with --tail prints a build that finished or was re-recorded after it started, and no older one, when the ledger is rewritten', async () => {
+      const file = join(tmpHome, 'builds', 'builds.ndjson');
+      const before = new Set([...process.listeners('SIGINT'), ...process.listeners('SIGTERM')]);
+      try {
+        await run({ source: ['builds'], json: true, tail: '1', follow: true });
+        expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['b']);
+        const next = [
+          buildRecord(1, 'a', 'succeeded', 'info'),
+          buildRecord(2, 'b', 'failed', 'error'),
+          buildRecord(3, 'c', 'succeeded', 'info'),
+          buildRecord(4, 'a', 'failed', 'error'),
+        ];
+        writeFileSync(`${file}.tmp`, next.map((r) => `${JSON.stringify(r)}\n`).join(''));
+        renameSync(`${file}.tmp`, file);
+        await vi.waitFor(() => expect(out.length).toBeGreaterThan(1), { timeout: 4000 });
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(out.map((line) => parseNdjsonLine(line)?.id)).toEqual(['b', 'c', 'a']);
+      } finally {
+        for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+          for (const listener of process.listeners(signal)) {
+            if (before.has(listener)) continue;
+            process.removeListener(signal, listener);
+            try {
+              Reflect.apply(listener, undefined, []);
+            } catch {}
+          }
+        }
+      }
     });
   });
 
@@ -955,15 +1041,6 @@ describe.skipIf(process.platform === 'win32')(
       }
     }
 
-    function alive(pid: number): boolean {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    }
-
     test('exits when stdout closes and no record arrives', async () => {
       const proc = spawn(process.execPath, args, { cwd: project, env: env(), stdio: ['ignore', 'pipe', 'ignore'] });
       child = proc;
@@ -993,12 +1070,15 @@ describe.skipIf(process.platform === 'win32')(
       middleman.stdout!.on('data', (chunk: Buffer) => (out += chunk.toString()));
       await until(() => out.includes('\n'), 20_000);
       const follower = Number(out.trim());
+      const captured = captureProcessIdentity(follower);
+      assert(captured.ok);
+      const identity = { pid: follower, processToken: captured.token };
       middleman.kill('SIGKILL');
       try {
-        await until(() => !alive(follower), 6000);
-        expect(alive(follower)).toBe(false);
+        await until(() => inspectProcessIdentity(identity) !== 'same', 6000);
+        expect(inspectProcessIdentity(identity)).not.toBe('same');
       } finally {
-        if (alive(follower)) process.kill(follower, 'SIGKILL');
+        if (inspectProcessIdentity(identity) === 'same') process.kill(follower, 'SIGKILL');
       }
     }, 30_000);
   },

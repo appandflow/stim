@@ -14,17 +14,23 @@ viewing connected. The server job can continue until it finishes or reaches its 
 up to 16 MiB, including the JSON envelope; an oversized stats response fails the read without a CLI retry.
 
 Storage previews also require the matching local server, with `desktop-reports` support. A refresh
-invalidates the server report before reading it so the preview measures current storage. The shared
+invalidates the server report before reading it so the preview measures current storage. Every report
+read shares one request per report target on the connection: a second read of a target joins the one in
+flight instead of sending another, and invalidates only that target when the server offers
+`desktop-report-invalidate-target` (every report otherwise). Report, settings and stats reads that the
+server refuses with `limit-exceeded` retry after 0.25, 0.5, 1, 2 and 4 seconds, then fail with a message
+that the local stim-server is busy. The shared
 GC report store keeps its existing demand-driven refreshes, coalesces callers, and retains its last
 good report and measurement age when a read fails. An older server shows an update error. Reads
-never retry through the CLI. Cancelling stops waiting without disconnecting the shared session;
+never retry through the CLI. Cancelling stops waiting without disconnecting the shared session, and
+a shared report read whose callers have all cancelled sends nothing further;
 the server report can continue within its execution and cleanup limits (up to 150 seconds at the
 request boundary). The same 16 MiB response limit applies.
 
 Sidebar setup findings also use the matching local server's doctor report. Desktop checks setup-file
 changes and the server's Stim version at its existing 60-second cadence; a successful report stays
 current for seven days unless those inputs change or a Desktop action invalidates it. Reads invalidate
-the server report before measuring, retain the last good findings on failure, and retry a failed report
+the server report before measuring and send a new read even while one for that project is in flight, retain the last good findings on failure, and retry a failed report
 at the next check. They do not subscribe to periodic report refreshes or retry through the CLI.
 
 The setup guide's explicit project check runs through `desktop.doctor.run` on the
@@ -796,6 +802,19 @@ kept or failed item was left. A **Do it** from the bundled app appears as Cleanu
 Desktop, and from an unbundled development build as Cleanup from stim gc. With a `stim` that has
 no gc log (1.25.0 or older), the section says to update `stim`.
 
+## Builds
+
+The **Builds** item in the sidebar (Command-5) lists the native builds Stim recorded on this Mac, newest
+first and grouped by day. It runs `stim logs --source builds --json` from the home directory every 30
+seconds while the page is showing and never reads `$STIM_HOME`. A row shows the project and platform, the
+branch and target, where the build ran (this Mac, a build machine, or this Mac after an offload fell
+back), the cache result, the duration and the outcome. The filters choose a project, a platform, a
+machine (**This Mac** or a build machine) and an outcome. Clicking a row opens its phases as bars, the
+failure code, message and remedy of a failed build, and the device, cache key and fingerprint. The model
+is `BuildLedger` in `StimKit` (parsing, filters, day groups and the phase timeline), which the tests in
+`BuildLedgerTests` cover. With a `stim` that has no build ledger (1.25.0 or older), the page says to
+update `stim`.
+
 ## Logs
 
 A workspace's page shows its logs beside the devices, or on a **Logs** tab when
@@ -1252,6 +1271,13 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
      **Windows · Android builds only**. Other peers are left out. It does not show stim-server state, which setup
      installs later. With no such peer, the step links to the Tailscale
      downloads for a Mac, for Linux and for Windows.
+     A peer already in `remote.machines` (`OffloadMachines.added`) is marked
+     **Added** and shows the pill the Remote Machines list shows for it
+     (`BuildMachineStatus.listStatus`, with the doctor diagnosis text when it is
+     not healthy), not Tailscale's `Online` flag, which can read false while the
+     machine answers. It is not a setup target: choosing it only says it is
+     already added and offers **Show in Remote Machines**. Next and the
+     offline-only hint consider the other peers.
 2. **What it does.** Builds and Hosted simulators checkboxes and the animated
    preview of what setup will do. Both can be off. Then Next is disabled and
    the preview holds only `$ stim-server setup` and a cursor. A Linux or Windows machine
@@ -1273,11 +1299,23 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
      needs no administrator rights and installs a scheduled task.
    - A live mirror in the preview's wording: no node or request ids, and no
      tool details or JSON. It shows skipped and failed steps as recorded.
+   - Needs no Next press. Once the remote machine's journal shows the command
+     started, Desktop sends this Mac's build and hosted-simulator requests with
+     the ticket and keeps reading `stim doctor` every 5 seconds, one read at a
+     time. When the journal says the remote machine
+     approved and waits for this Mac, Desktop sends the request at once and the
+     status line reads "<machine> approved this Mac. Stim is connecting to it". The
+     reads only deliver the ticket; approval stays the Y/n on the remote
+     machine. After the ticket expires Desktop stops asking, says so, and
+     offers New Command; the read continues for 30 more seconds so an
+     approval recorded just before expiry still shows.
    - When setup finishes with no failed step and every chosen capability is
-     approved, a success view replaces the mirror; a failed step keeps the
-     mirror and its fix. It lists the approvals and the current
-     Screen recording and Device control permissions (with the fix for a
-     skipped one); it has no log. The expiry line shows only until the
+     approved, the wizard moves to Tools by itself ("Approved. Waiting for
+     <machine> to finish setup..." shows until the journal is done). A skipped
+     permission or a failed step keeps this step and its Next button, so the
+     warning and its fix are read first. The success view lists the approvals
+     and the current Screen recording and Device control permissions (with the
+     fix for a skipped one); it has no log. The expiry line shows only until the
      command starts.
 4. **Tools.** The remote machine's tools compared with this Mac, from doctor and
    the setup journal. Read-only checks use fresh, platform-filtered reports from
@@ -1285,12 +1323,15 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    unavailable server is reported without a CLI fallback. Cancelling a check leaves
    the shared connection open; reports retain the server's execution and cleanup
    budget of up to 150 seconds. When Builds is chosen, Android tools are always compared
-   and never block Next. Only a problem that stops the chosen capability blocks
-   Next (red): a Stim build mismatch, no Xcode, a different CPU or an
+   and are amber. Next is never disabled by a tool row: approval is finished, a
+   failed offload falls back to a local build, and the machine stays added.
+   A machine's page in Settings > Remote Machines shows every problem and note,
+   including the Android ones, grouped by platform.
+   A problem that stops the chosen capability is red: a Stim build mismatch, no Xcode, a different CPU or an
    unreachable or unapproved Mac for Builds, and no iOS simulator runtime for
    Hosted simulators when doctor reports it. With only Hosted simulators, setup
    records no tool checks, so rows without data read "Checked when a hosted
-   simulator starts" and never block. **Install This Mac's Build** updates a mismatched Stim build
+   simulator starts". **Install This Mac's Build** updates a mismatched Stim build
    through the existing machine update action. Every other problem is an amber
    warning that names its cost, such as a different Xcode or runtime, missing
    Android tools or a different global CocoaPods. Doctor compares the global
@@ -1300,15 +1341,18 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    machine. Shell commands have Copy buttons; prose fixes appear as text. Desktop
    never runs these fixes. A Linux or Windows machine is compared with
    `stim doctor --platform android` only: it shows the Stim build and Android
-   rows, and a missing Android SDK or any JDK difference blocks Next, since no
+   rows, and a missing Android SDK or any JDK difference is red, since no
    build could offload there.
 5. **Done.**
    - The approvals.
    - A **Try it** card with a copyable agent prompt and
      `stim ios --remote-build <machine>`, or `stim android` for a Linux or Windows machine.
-   - **Builds**: Auto / Always / Never for `remote.buildMode`. It defaults to
-     Auto when the wizard added the first remote Mac, and otherwise keeps the
-     current mode.
+   - **Builds**: Auto / Remote first / This Mac for `remote.build` (`auto`,
+     `remote` or `local`). It defaults to Auto when the wizard added the first
+     remote Mac, and otherwise keeps the current choice. A current value the
+     wizard does not offer, such as `remote-only` or one Mac's name, selects
+     nothing and Done keeps it unless you choose. The caption under the choice
+     says where builds run.
    - **Simulators**, shown when Hosted simulators was chosen: This Mac / Auto /
      Always on the Mac. Done writes `ios.remote` and `android.remote` at machine
      scope (unset, `auto`, or the `remote.machines` entry with its port), and
@@ -1325,14 +1369,15 @@ requests when no workspace is listed. In that case preparation starts when a Mac
 is picked, and Next waits for the sample and checks existing approvals before
 generating the setup command. Failed preparation shows **Retry Sample** without
 a setup command. The test requires a build on the selected machine and a verified
-launch, then forces a local build to prove the fallback path. It builds for iOS,
-or for Android on a Linux or Windows machine. Both runs bypass
-the build cache. When the wizard closes, it stops the sample, removes its Stim
-workspace and sample folder, and releases its owned simulator or emulator (parked for reuse
-within the parked-simulator limit, deleted otherwise), quietly and on a best-effort
-basis.
+launch. It builds for iOS, or for Android on a Linux or Windows machine, bypasses
+the build cache and runs no local build. It shows the phase times (Upload / sync,
+Build, Download / fetch, Total) and notes that the first build on a new machine
+is cold, so later builds are faster. When the wizard closes, it stops the sample,
+removes its Stim workspace and sample folder, and releases its owned simulator or
+emulator (parked for reuse within the parked-simulator limit, deleted otherwise),
+quietly and on a best-effort basis.
 
-Cancel removes entries added by the wizard, restores `remote.buildMode` only if the
+Cancel removes entries added by the wizard, restores `remote.build` only if the
 wizard changed it, and runs doctor to forget the pairing. A failed undo shows
 **Retry Undo**; it does not repeat on its own, because each run asks doctor to
 forget the pairing. It shows revoke commands for grants created during this run,
@@ -1349,14 +1394,24 @@ Another Mac on the tailnet can build for this one once a person on it approves
 this Mac (see [Build access](../../packages/server/README.md#build-access)).
 
 On the Mac that wants to build elsewhere, **Stim > Settings > Remote Machines**
-is a list of the entries of the `remote.machines` machine setting. Each row
-shows the Mac's name, one status pill, its MagicDNS name with its cores and
+is a list of the entries of the `remote.machines` machine setting, in that order.
+The order is the placement priority for builds, simulators, emulators and macOS apps:
+each goes to the first Mac that has room and a load under its own
+`server.maxLoadPerCore`, and to the next only when it has none. With two or more Macs
+each row shows its place, and the up and down buttons write the new order to
+`remote.machines` at machine scope. The list's footer says the same. Each row
+shows its place in the list, the Mac's name, one status pill, its MagicDNS name with its cores and
 offloaded builds, a detail line, what it does (**Builds**, plus **Simulators**
-when its device-host access is approved), and **Remove...**. The pill reads **Approved**, **Waiting for
+when its device-host access is approved), up and down buttons that move the Mac, **Details** and **Remove...**. The pill
+shows only a state that stops this Mac using the machine; the machine's page holds
+the rest. It reads **Approved**, **Waiting for
 approval** (someone on that machine approves it by running the setup command
 there; the row says when the request lapses, such as "Waiting for approval
 until 21:05", in local time),
-**Unreachable**,
+the title of the layer doctor's `diagnosis` names when the machine cannot be used
+(**Tailscale is off**, **Mac is offline**, **No serve route**, **Server not running**,
+**Server not ready** and so on; **Unreachable** when an older `stim` reports none), with its
+message and remedy as the detail line,
 **Needs update** (it runs an incompatible Stim build; **Updating** while an update runs),
 the short title of doctor's first reason the approved machine is not offloadable,
 such as **CocoaPods differs** or **Low on disk** (**Not offloading** for a reason
@@ -1376,13 +1431,50 @@ For an approved machine the detail line gives the builds it runs and how many
 it takes (`builds` and `maxBuilds`, such as "0/2 builds"; the offloaded
 `running` and `max` for a stim-server that reports no `builds`) and its free
 disk. Doctor reports no Xcode or Stim version per machine, so the line has
-neither. When the machine is not offloadable, each of doctor's `problems`
-appears under the line in amber, in doctor's order, with its fix: a command to
-copy for CocoaPods (`gem install cocoapods -v <this Mac's version>`, or `brew
-install cocoapods` when there is none), the remedy sentence for the other known
-reasons. While a check runs, the row keeps the last state and shows a small
-spinner next to the pill; **Checking...** appears only for a row with no state
-yet.
+neither. A row prints no per-problem lines: the pill carries the first problem's short
+title, and **Details** opens the machine's page. While a check runs, the row keeps
+the last state and shows a small spinner next to the pill; **Checking...** appears
+only for a row with no state yet.
+
+**Details** (or **Remote Machines** at the top of the page, to go back) swaps the
+list for the page of one machine. It shows, from the list's doctor report and one
+`--platform android` report:
+
+- the state that stops the machine, with doctor's diagnosis title, message and remedy,
+  and a Copy button for each command the remedy names in backticks;
+- **Stim version**: **Install This Mac's Build** and the update's progress, as on the
+  row;
+- one section for each of **Machine** (Stim build, free disk, load, an unreachable
+  offer), **iOS**, **Android** and **macOS** that has anything to say, listing every
+  `problems` entry (amber **Problem**) and every `notes` entry (**Note**: a build there
+  does something without stopping, such as Gradle downloading an SDK package on its
+  first build). Each shows doctor's reason and its fix: the command lines of doctor's
+  finding, each with a Copy button that copies only the command, or the remedy sentence
+  for a reason with no command. A note's command installs the package ahead of the first
+  build. The **Update this Mac** pill replaces the pill text only; every other problem
+  stays listed here. A newer remote Stim drops the "update the remote machine" advice
+  from the Stim build problem, since only updating Stim Desktop fixes it;
+- **Capacity**: load per core, RAM and free disk as on the row, cores, the builds it
+  runs and takes, and its offloaded builds;
+- **Versions**: this Mac's Stim, the machine's stim-server version (its `/health`),
+  and whether its Stim build matches this Mac's;
+- **Approvals**: the build approval and, for a machine that can host simulators, the
+  device-host approval;
+- **Builds on This Machine**: the ten newest recorded builds that ran there (from
+  `stim logs --source builds --json`, read while the page is open), each opening to its
+  phases and failure as on the **Builds** page, with a note when none ran, the stim is
+  too old to record builds, or the read has not finished;
+- **Use This Machine For**: the **Builds enabled** and **Simulators enabled**
+  switches, as on the row; and **Remove...**, **Ask** and **Ask Again**.
+
+The Android report is read when the page opens and every 60 seconds while it stays
+open, never on the list's poll: it is a second doctor run through the matching local
+server (`desktop-report-platform`, no CLI fallback), reused for 30 seconds. Until it
+answers the Android section says "Checking the Android tools...", and when it fails, why,
+while the Android problems of the list's own report stay listed. When it answers, its
+Android problems and notes replace the list's, since a checkout without an Android
+project has none in the list's report. The **Machines** page lists the same problems and
+notes under a selected machine.
 
 **Add Remote Machine...** opens the wizard, which owns tailnet discovery and the
 setup; the tab has no separate list of tailnet Macs. With no machines, the tab
@@ -1404,8 +1496,31 @@ While a `--fix` run goes, the row shows "Asking <machine>…" or "Removing
 plain check after 30 seconds, and the tab shows that stim did not answer.
 
 A remote Mac whose Stim build is incompatible with this Mac's (doctor's
-`stim-build` reason) offers **Install This Mac's Build**, here and on its
-**Machines** page. Desktop asks the local stim-server, over its local control connection,
+`stim-build` reason, raised when the build compatibility versions differ, or the build digests
+differ for a Mac that reports no version) offers
+**Install This Mac's Build**, here and on its **Machines** page. For each such
+Mac Desktop first reads `machines.update.status`, a read that never installs, and
+compares the Stim release it reports with this Mac's stim-server. An install only
+moves a remote Mac forward, so the button is disabled, with the reason beside it, while
+the read or this Mac's stim-server connection is pending and when the Mac would refuse:
+
+- this Mac runs an npm release and the Mac runs a newer Stim: the button gives way to "<machine> runs
+  Stim 1.25.0, newer than this Mac (1.24.0). Update Stim Desktop to match.", the pill reads
+  **Update this Mac**, and **Check for Updates...** starts Sparkle (builds without
+  an update key, such as Stim Dev, show only the message). A build from a checkout is
+  not blocked by version, since stim-server checks versions only for releases;
+- this Mac runs a build from a checkout and the Mac has `server.acceptClientBuilds`
+  off: the row shows `stim settings set server.acceptClientBuilds true`, with a
+  copy button labeled for running it on that Mac;
+- its stim-server does not run as a service, so it cannot update itself;
+- it did not answer the read (not approved for builds or device hosting, no update
+  capability, unreachable): the row shows the reason its stim-server gave.
+
+Desktop takes the connected stim-server for an npm release unless Desktop started
+it from a path outside `node_modules`. Keeping remote machines on this Mac's
+version never installs on a Mac that is disabled this way.
+
+An install asks the local stim-server, over its local control connection,
 to update that machine with `machines.update.start`. The local server connects
 to the machine with the credential `stim doctor --fix` stored and goes ahead only
 with the stim-server that proves it holds the key pinned at approval. It asks for the same npm release when this Mac runs one, or, when it
@@ -1422,7 +1537,7 @@ follows `machines.update.status` every 2 seconds:
 - the outcome, or the refusal (for example, the setting the machine needs, or
   another update already running there).
 
-A failure shows its full text, selectable, with a **Copy** button.
+A failure shows its full text, selectable.
 
 While the update waits for hosted simulators that this Mac's workspaces run on
 that machine, the row offers **Stop and Update...**. After a confirmation that
@@ -1437,8 +1552,7 @@ Then the row checks the machine again. **Keep remote machines on this Mac's Stim
 version** (off by default; "When this Mac's Stim changes, update stim-server on
 approved remote Macs so builds can keep offloading.") does the same the next time Desktop
 checks a machine that reports an incompatible Stim build. It runs once per machine and
-reason each time Desktop launches. Either way, the machine gets this Mac's build,
-whether it is newer or older than the one it runs.
+reason each time Desktop launches. Either way, the machine gets this Mac's build.
 
 The **Machines** page shows where builds ran. While `remote.machines` names a
 machine, **Where Builds Ran** under **This Mac** counts today's compiling builds that built here, on a remote Mac, or
@@ -1446,6 +1560,7 @@ here after trying one, and lists the latest placements with the reason Stim
 gave, such as `load 0.6/core, 1 of 3 build slots busy here`. Selecting an
 `remote.machines` entry shows its state and first reason from
 doctor (the same check as Settings, each minute while the page is open), its
+problems and notes by platform (as on the machine's page in Settings), its
 load per core, cores, offloaded builds running and free disk from its offer,
 and the builds it ran for this Mac today and in total, their average time, the
 time they saved against this project's last build here (an estimate), and the
@@ -1757,38 +1872,32 @@ the device limit suggests one at most once, ever, across both. The X snoozes a s
 wait for completed setup and the second launch, never appear during a running
 build, and appear at most once per day.
 
-The **Tip** card at the bottom of the sidebar appears after setup is complete and
-Desktop has been used on at least **3 calendar days**, with either **3 distinct
-workspaces seen running** or **5 builds observed**. It stays hidden while a build
-runs, the setup guide or tutorial is open, the main window is closed, or any
-notice is showing. Only builds that start after Desktop first sees status count.
-Usage is stored locally in Desktop preferences: the latest 30 active days and,
-until the thresholds are met, the workspace paths and build IDs counted.
+**Explore Stim's features** at the bottom of the sidebar opens **Discover Stim**.
+You can also open it from **Help > Discover Stim** or **Settings > App > Features**.
+The page starts with a tutorial banner, followed by Everyday workflows,
+Use more devices, and Other workflows. Each card explains the benefit
+and opens an existing action or offers a copyable agent prompt. The full prompt appears
+in a container with a Copy button. Phone access appears only when the Phone app feature
+flag is enabled.
 
-Tips cover remote Macs, phone pairing, the tutorial, hiding workspaces when
-there are more than 10 workspace rows and none are hidden, status filters, replay, and hosted
-simulators. The replay tip appears when an archived workspace still has recordings and opens it.
-Three tips offer **Copy Prompt** for your coding agent instead of a button that opens a page: EAS
-development builds when a project has an `eas.json`, `stim macos` when a project has a Swift
-package app that has not run as a macOS app yet, and `stim logs --errors` when a workspace has
-errors. Only applicable tips appear. One tip stays for the calendar day;
-the next day picks the least recently shown applicable tip, with unseen tips
-first. **Next Tip** cycles through the remaining choices. The X hides the card
-until tomorrow. Turn off **Settings > App > Show tips** to disable tips and the lightbulb suggestion
-banners in the bottom-left stack; the Machine page card stays, and suggestions that go to system
-notifications are unchanged. Turn off **Offer the tutorial** to remove the tutorial tip and the setup
-guide's **Take the Tutorial** button and to stop the panel from opening on its own at launch or when a
-tutorial workspace appears. **Help > Stim Tutorial…** still opens it.
+Discover is always available, without waiting for usage milestones. Replay opens
+the newest eligible archived workspace with recordings. When recordings are not
+available, the card explains why and disables its action. View Options opens the
+sidebar's existing controls for hiding and filtering workspaces. Discover replaces
+the rotating sidebar tips; opening it does not mark tips as seen or suppress
+contextual suggestions.
 
-Tips and suggestions share state for remote Macs, phone pairing, and
-hosted simulators. A shown, permanently dismissed, or currently snoozed
-suggestion suppresses the matching tip. Once that tip has been shown, the
-matching suggestions (new Mac, build slot waits, away
-builds, device limit) no longer appear. Disk-pressure suggestions are
-unaffected. Suggestions keep their own once-per-day limit.
+The Machine page's remote-machine suggestion still requires completed setup and
+at least **3 calendar days** of usage, with either **3 distinct workspaces seen
+running** or **5 builds observed**. Only builds that start after Desktop first
+sees status count. This usage stays in local Desktop preferences.
+
+Turn off **Settings > App > Offer the tutorial** to hide the setup guide's
+**Take the Tutorial** button and stop the tutorial from opening automatically.
+**Help > Stim Tutorial** and Discover Stim still let you open it manually.
 
 **File > Add Remote Machine…** (**Cmd+Shift+B**) always opens the existing build
-machine wizard. After the same usage threshold, **Machines > This Mac** shows a
+machine wizard. After this usage threshold, **Machines > This Mac** shows a
 card when no remote machine is configured. With another Mac, Linux or Windows machine
 online on the tailnet it offers **Add Remote Machine…**; otherwise it explains
 how to connect both machines with Tailscale. The remote machines tip also
@@ -2032,9 +2141,25 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 
 ## Tutorial panel
 
+Longer steps show a short instruction with an expandable **Why this step?**
+explanation. Waiting messages name the next action. Completed stepper segments
+are green; skipped segments stay gray. Prompt buttons briefly show **Copied**.
+The summary includes a copyable prompt to try Stim with your own app.
+
 **Help > Stim Tutorial…** and the setup guide's **Take the Tutorial** button open
-an inspector-width trailing column. It replaces the inspector until closed;
-Cmd-Opt-I returns to the inspector. A new tutorial path opens it once, after open
+a floating window beside the main app window, kept within the screen and on the
+same desktop Space as that window. It stays
+freely draggable while open; reopening positions it beside the app again.
+Until you drag it, resizing Stim keeps the tutorial beside the app with a 12-point
+gap where screen space permits. The pin at the bottom right docks it in the sidebar;
+click it again to float the tutorial. In full-screen mode, the tutorial docks inside
+the right side of the main window and the pin is disabled. Leaving full screen
+restores the floating tutorial with the same progress. The tutorial hides during
+the transition and fades back in when it finishes, respecting Reduce Motion.
+It uses the same window level as Stim, so other apps can cover both windows.
+While a popup is open in the Stim window, the tutorial stays visible but its controls
+and arrow-key navigation are disabled until the popup closes.
+A new tutorial path opens it once, after open
 sheets close. UserDefaults stores progress and skipped steps.
 Unfinished tours resume at launch when status lists the tracked path; archived
 ones show Done. Closing preserves progress. Restart shows the agent prompt and
@@ -2057,10 +2182,11 @@ tutorial version is 2, from the repository's `expo.extra.stimTutorial`. A stored
 version 1 record is dropped and starts over on a version 2 workspace. Restart and
 "take the tutorial" start a fresh record at the current time that forgets the old tour paths even
 while the old worktrees are still registered; only linked worktrees whose creation time is after
-that start count, and the oldest one becomes the tour. Every step has one Next
+that start count, and the oldest one becomes the tour. Every step has one Skip step
 button: it records the step as done when its non-optional ticks are all done or
 its checkpoint completed, and as skipped otherwise. Detected steps advance on
-their own.
+their own, including Agent Actions after viewing and replaying. The first step explains automatic advancement. Waiting states show a spinner; blocked or interactive steps show an information icon and guidance.
+The summary distinguishes completed required steps from an ended tour with skipped steps, shows completed/skipped counts and time in the tutorial, and keeps Restart only in the footer. Open Archived selects the newest archive from either tracked worktree removed after this run began; when unavailable, the summary explains why. Stepper tooltips include the number, title and status, with the viewing ring separate from the current-step dot.
 Pair a Phone opens the Pair a Phone wizard, which
 turns on serving itself when the server is off. A pairing that exists when the step starts shows Done Already,
 followed by "Open Stim on your phone: the tutorial workspaces are there".

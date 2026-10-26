@@ -21,9 +21,9 @@ import { syncBuiltinESMExports } from 'node:module';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createHttpServer, get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
-import { createHash, createHmac } from 'node:crypto';
-import { createServer as createNetServer } from 'node:net';
-import { homedir, tmpdir, totalmem } from 'node:os';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { connect as connectNet, createServer as createNetServer, type Socket } from 'node:net';
+import { homedir, networkInterfaces, tmpdir, totalmem } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -94,12 +94,15 @@ import {
   type ConnectOptions,
 } from './noise-client.ts';
 import { watchTailscale, type TailscaleState } from '@stim-cli/transport-tailscale';
+import { localTransport } from '@stim-cli/transport-local';
+import type { Transport } from '@stim-cli/transport';
 import { createRequestLog } from '../src/request-log.ts';
 import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceName, workspaceStateDir } from '@stim-cli/core';
 import { captureProcessToken, inspectProcessIdentity, processStartMicros } from '@stim-cli/core/process-identity';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { serviceRoot } from '../src/service-manager.ts';
+import { readPid } from './pid-file.ts';
 
 const registryWatch = vi.hoisted(() => ({ dropEvents: false }));
 
@@ -435,10 +438,14 @@ async function start(
     whoisDelayMs?: number;
     authTimeoutMs?: number;
     maxAuthFailures?: number;
+    pendingConnections?: ServerOptions['pendingConnections'];
+    maxUnknownSecrets?: number;
+    headersTimeoutMs?: number;
     env?: Record<string, string>;
     logLimits?: ServerOptions['logLimits'];
     commandLimits?: ServerOptions['commandLimits'];
     actionLimits?: ServerOptions['actionLimits'];
+    requestLimits?: ServerOptions['requestLimits'];
     tailscaleState?: ServerOptions['tailscaleState'];
     tailscaleMonitor?: ServerOptions['tailscaleMonitor'];
     transports?: ServerOptions['transports'];
@@ -499,9 +506,13 @@ async function start(
     listenRetryMs: overrides.listenRetryMs,
     authTimeoutMs: overrides.authTimeoutMs,
     maxAuthFailures: overrides.maxAuthFailures,
+    pendingConnections: overrides.pendingConnections,
+    maxUnknownSecrets: overrides.maxUnknownSecrets,
+    headersTimeoutMs: overrides.headersTimeoutMs,
     logLimits: overrides.logLimits,
     commandLimits: overrides.commandLimits,
     actionLimits: overrides.actionLimits,
+    requestLimits: overrides.requestLimits,
     frameLimits: { lingerMs: 50, ...overrides.frameLimits },
     frameHelper: overrides.frameHelper ?? null,
     foldHelper: overrides.foldHelper,
@@ -752,10 +763,20 @@ syncBuiltinESMExports();
         expect(settled).toEqual({
           state: 'degraded',
           reason: expect.stringContaining('did not finish within 0.4 s'),
+          cause: 'home-unreadable',
         });
         const degraded = await fetch(`http://127.0.0.1:${port}/health`);
         expect(degraded.status).toBe(503);
         expect(await degraded.json()).toMatchObject({ startup: settled });
+
+        const forwarded = await fetch(`http://127.0.0.1:${port}/health`, {
+          headers: { 'x-forwarded-for': '100.64.0.2' },
+        });
+        expect(forwarded.status).toBe(503);
+        expect(await forwarded.json()).toEqual({
+          version: expect.any(String),
+          startup: { state: 'degraded', cause: 'home-unreadable' },
+        });
 
         await expect(
           new Promise((resolve, reject) => {
@@ -768,7 +789,7 @@ syncBuiltinESMExports();
         expect(existsSync(calls)).toBe(false);
         expect(existsSync(join(process.env.STIM_HOME!, 'server'))).toBe(false);
         expect(error).toHaveBeenCalledWith(expect.stringContaining('not serving clients'));
-        const pid = Number(readFileSync(blocked.pidFile, 'utf8'));
+        const pid = await readPid(blocked.pidFile);
         expect(() => process.kill(pid, 0)).toThrow('ESRCH');
       } finally {
         error.mockRestore();
@@ -1224,8 +1245,10 @@ describe('pairing', () => {
           'hosted-android-data',
           'hosted-android-process',
           'hosted-metro-ports',
+          'hosted-metro-link',
           'server-update',
           'build-compat',
+          'build-jdk',
           'status-views',
         ],
         actions: [],
@@ -1321,12 +1344,17 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it('shares cached reports and pushes refreshes only to the proved Desktop connection', async () => {
-    const port = await start({ env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } });
+    const port = await start({
+      env: { HOME: root, USERPROFILE: root, PATH: dirname(process.execPath), STIM_MAINTENANCE: 'off' },
+    });
     const { token } = createPairingToken(Date.now(), capabilitiesFor(true));
     const remote = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
     const hello = await remote.request('hello', { client: CLIENT });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
+    expect(hello).toMatchObject({
+      result: { features: expect.not.arrayContaining(['desktop-report-invalidate-target']) },
+    });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-full-logs']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-doctor-run']) } });
@@ -1334,7 +1362,13 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.arrayContaining(['desktop-reports', 'desktop-report-platform']) },
+      result: {
+        features: expect.arrayContaining([
+          'desktop-reports',
+          'desktop-report-platform',
+          'desktop-report-invalidate-target',
+        ]),
+      },
     });
     for (const client of [remote, plain]) {
       for (const method of [
@@ -1365,7 +1399,14 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     const subscribed = await client.request('desktop.reports.subscribe', { report: 'gc' });
     expect(subscribed).toHaveProperty('result.subscription');
     expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: first.result });
-    expect(await client.request('desktop.reports.invalidate')).toHaveProperty('result');
+    expect(await client.request('desktop.reports.invalidate', { report: 'doctor', cwd: root })).toHaveProperty(
+      'result',
+    );
+    expect(await client.request('desktop.reports.invalidate', { report: 'doctor' })).toHaveProperty(
+      'error.code',
+      'bad-request',
+    );
+    expect(await client.request('desktop.reports.invalidate', { report: 'gc' })).toHaveProperty('result');
     expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
     expect(await client.next()).toMatchObject({
       event: 'desktop-report',
@@ -1469,7 +1510,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
   it('applies the report byte quota to both get and pushed errors', async () => {
     await start({
       commandLimits: { maxOutputBytes: 1 },
-      env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' },
+      env: { HOME: root, USERPROFILE: root, PATH: dirname(process.execPath), STIM_MAINTENANCE: 'off' },
     });
     const client = await desktop();
     expect(await client.request('desktop.reports.get', { report: 'gc' })).toMatchObject({
@@ -1482,7 +1523,51 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     });
   });
 
-  it('caps waiting requests, retains shared probes after disconnect, and drains them at shutdown', async () => {
+  it('serves five identical waiting reports from one load', async () => {
+    const bin = join(root, 'bin');
+    const jobs = join(root, 'report-git-jobs');
+    const release = join(root, 'release');
+    mkdirSync(bin);
+    mkdirSync(jobs);
+    writeFileSync(join(workspace, 'package.json'), '{}');
+    writeFileSync(
+      join(bin, 'git'),
+      `#!${process.execPath}
+const { existsSync, writeFileSync } = require('node:fs');
+writeFileSync(require('node:path').join(process.env.REPORT_GIT_JOBS, String(process.pid)), '');
+const timer = setInterval(() => {
+  if (existsSync(process.env.REPORT_RELEASE)) {
+    clearInterval(timer);
+    process.exit(1);
+  }
+}, 20);
+`,
+    );
+    chmodSync(join(bin, 'git'), 0o755);
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: bin + ':' + process.env.PATH,
+        REPORT_GIT_JOBS: jobs,
+        REPORT_RELEASE: release,
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const client = await desktop();
+    const target = { report: 'doctor', cwd: workspace };
+    const replies = Promise.all(Array.from({ length: 5 }, () => client.request('desktop.reports.get', target)));
+    await until(() => readdirSync(jobs).length === 2);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(readdirSync(jobs)).toHaveLength(2);
+    writeFileSync(release, '');
+    const results = await replies;
+    expect(results.every((reply) => 'result' in reply)).toBe(true);
+    expect(new Set(results.map((reply) => ('result' in reply ? JSON.stringify(reply.result) : null))).size).toBe(1);
+    expect(results[0]).toMatchObject({ result: { pending: false, value: { project: workspace } } });
+  });
+
+  it('answers interactive requests while reports wait, caps report waiters, and drains shared probes at shutdown', async () => {
     const bin = join(root, 'bin');
     const jobs = join(root, 'report-git-jobs');
     mkdirSync(bin);
@@ -1508,15 +1593,16 @@ require('node:net').createServer().listen(0, '127.0.0.1');
     });
     const first = await desktop();
     const second = await desktop();
-    for (let id = 10; id < 14; id++)
+    for (let id = 100; id < 117; id++)
       first.socket.send(
         JSON.stringify({ id, method: 'desktop.reports.get', params: { report: 'doctor', cwd: workspace } }),
       );
-    await until(() => processes().length === 2);
-    expect(await first.request('settings.get')).toMatchObject({ error: { code: 'limit-exceeded' } });
-    expect(await first.request('desktop.settings.get', { cwd: workspace })).toMatchObject({
-      error: { code: 'limit-exceeded' },
+    expect(await first.next()).toMatchObject({
+      id: 116,
+      error: { code: 'limit-exceeded', message: 'A connection can wait for 16 reports at a time.' },
     });
+    await until(() => processes().length === 2);
+    expect(await first.request('stats.get')).toHaveProperty('result');
     await second.request('desktop.reports.subscribe', { report: 'doctor', cwd: workspace });
     expect(await second.next()).toMatchObject({ event: 'desktop-report', snapshot: { pending: true } });
     first.socket.close();
@@ -1755,14 +1841,41 @@ describe('hosted device sessions', () => {
         'ready',
       );
       expect(await next.request('stats.get')).toHaveProperty('error.code', 'forbidden');
-      expect(
-        await next.request('device-host.metro.open', { session: id, gatewayPort: 0, secret: 'bad' }),
-      ).toHaveProperty('error.code', 'bad-request');
-      const metro = { session: id, gatewayPort: 65530, secret: 'a'.repeat(64) };
+      expect(await next.request('device-host.metro.open', { session: id, clientMetroPort: 0 })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      const metro = { session: id };
       const opened = await next.request('device-host.metro.open', metro);
       const metroPort = (opened as { result: { port: number } }).result.port;
       expect(metroPort).toBeGreaterThan(0);
       expect(readHostedSessions()[0]?.metroPort).toBe(metroPort);
+
+      const carrier = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
+      expect(await carrier.request('device-host.metro.link', { session: 'other' })).toHaveProperty(
+        'error.code',
+        'unknown-session',
+      );
+      expect(await carrier.request('device-host.metro.link', { session: id })).toHaveProperty('result', {});
+      expect(await carrier.request('device-host.metro.link', { session: id })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      const device = connectNet(metroPort, '127.0.0.1');
+      const answered = new Promise<string>((resolve) => device.once('data', (data) => resolve(data.toString())));
+      device.write('GET /index.bundle HTTP/1.1\r\n\r\n');
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
+      expect(((await carrier.next()) as unknown as { binary: Buffer }).binary.toString()).toBe(
+        'GET /index.bundle HTTP/1.1\r\n\r\n',
+      );
+      expect(await carrier.request('device-host.metro.link', { session: id })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      carrier.socket.send(Buffer.from('HTTP/1.1 200 OK\r\n\r\nbundle'));
+      expect(await answered).toBe('HTTP/1.1 200 OK\r\n\r\nbundle');
+      device.destroy();
+      expect(await carrier.closed).toBe(1000);
 
       const content = Buffer.alloc(40000, 65);
       const digest = createHash('sha256').update(content).digest('hex');
@@ -1824,6 +1937,135 @@ describe('hosted device sessions', () => {
       expect(await reattached.closed).toBe(4401);
       await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('stopped'));
       await expect(fetch(`http://127.0.0.1:${metroPort}/status`)).rejects.toThrow('fetch failed');
+    },
+  );
+
+  /** A client with an approved device-host key, its ready iOS session, and that session's Metro bridge port. */
+  async function linkedSession(port: number) {
+    writeFileSync(
+      join(root, 'device-host-worker.mjs'),
+      `
+      import { writeFileSync } from 'node:fs';
+      import { join } from 'node:path';
+      const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);
+      const input=JSON.parse(Buffer.concat(chunks));
+      const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
+      writeFileSync(join(process.env.STIM_HOME,'hosted-device.json'),JSON.stringify(device));
+      writeFileSync(join(process.env.STIM_HOME,'created-devices.json'),JSON.stringify({version:1,ios:input.mode==='prepare'?[device.udid]:[],android:[],web:[]}));
+      process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
+    `,
+    );
+    const pending = setupClient(['device-host'], 'Client');
+    const client = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
+    const params = { workspace: '/client/app', slot: 'default', platform: 'ios', attempt: 'metro-links' };
+    const reserved = await client.request('device-host.reserve', params);
+    if (!('result' in reserved)) throw new Error(JSON.stringify(reserved));
+    const id = (reserved.result as { id: string }).id;
+    await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('ready'));
+    const opened = await client.request('device-host.metro.open', { session: id });
+    if (!('result' in opened)) throw new Error(JSON.stringify(opened));
+    const link = async () => {
+      const carrier = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
+      expect(await carrier.request('device-host.metro.link', { session: id })).toHaveProperty('result', {});
+      return carrier;
+    };
+    return { client, id, metroPort: (opened.result as { port: number }).port, link };
+  }
+
+  test.skipIf(!fakeTailscale)(
+    'Metro links refuse an older client and another client, hold back a device that stops reading, and report a reset',
+    async () => {
+      const port = await start();
+      const { client, id, metroPort, link } = await linkedSession(port);
+      expect(
+        await client.request('device-host.metro.open', { session: id, gatewayPort: 65530, secret: 'a'.repeat(64) }),
+      ).toMatchObject({
+        error: { code: 'protocol-unsupported', message: expect.stringContaining('Update stim on this machine') },
+      });
+      const other = setupClient(['device-host'], 'Other client');
+      const foreign = await returning(port, other.keyPair, '100.64.0.3', 'device-host');
+      expect(await foreign.request('device-host.metro.link', { session: id })).toHaveProperty(
+        'error.code',
+        'unknown-session',
+      );
+
+      const carrier = await link();
+      const device = connectNet(metroPort, '127.0.0.1');
+      device.pause();
+      let received = 0;
+      device.on('data', (chunk: Buffer) => (received += chunk.length));
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
+      const frame = Buffer.alloc(32 * 1024, 5);
+      const total = 48 * 1024 * 1024;
+      for (let sent = 0; sent < total; sent += frame.length) carrier.socket.send(frame);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(carrier.socket.bufferedAmount).toBeGreaterThan(16 * 1024 * 1024);
+      device.resume();
+      await vi.waitFor(() => expect(received).toBe(total), { timeout: 20_000 });
+      expect(carrier.socket.bufferedAmount).toBe(0);
+      device.resetAndDestroy();
+      expect(await carrier.closed).toBe(4410);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'a clean link close still delivers what a slow device has not read, and a link that stops reading holds the device back',
+    async () => {
+      const port = await start();
+      const { metroPort, link } = await linkedSession(port);
+      const carrier = await link();
+      const device = connectNet(metroPort, '127.0.0.1');
+      let received = 0;
+      device.on('data', (chunk: Buffer) => {
+        received += chunk.length;
+        device.pause();
+        setTimeout(() => device.resume(), 2);
+      });
+      const ended = new Promise<void>((resolve) => device.once('end', () => resolve()));
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
+      const frame = Buffer.alloc(32 * 1024, 6);
+      const total = 4 * 1024 * 1024;
+      for (let sent = 0; sent < total; sent += frame.length) carrier.socket.send(frame);
+      carrier.socket.close(1000);
+      await ended;
+      expect(received).toBe(total);
+
+      const reader = await link();
+      let read = 0;
+      reader.socket.on('message', (data, isBinary) => {
+        if (isBinary) read += data.length;
+      });
+      const uploader = connectNet(metroPort, '127.0.0.1');
+      uploader.on('error', () => {});
+      expect(await reader.next()).toEqual({ event: 'device-host.metro.link.open' });
+      reader.socket.pause?.();
+      const upload = 48 * 1024 * 1024;
+      for (let sent = 0; sent < upload; sent += frame.length) uploader.write(frame);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(uploader.writableLength).toBeGreaterThan(16 * 1024 * 1024);
+      reader.socket.resume?.();
+      await vi.waitFor(() => expect(read).toBe(upload), { timeout: 20_000 });
+      uploader.destroy();
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'stopping a hosted session closes its idle Metro links and the streams they carry',
+    async () => {
+      const port = await start();
+      const { client, id, metroPort, link } = await linkedSession(port);
+      const idle = await link();
+      const carrier = await link();
+      const device = connectNet(metroPort, '127.0.0.1');
+      const deviceClosed = new Promise<void>((resolve) => device.once('close', () => resolve()));
+      device.on('error', () => {});
+      device.write('GET /index.bundle HTTP/1.1\r\n\r\n');
+      expect(await carrier.next()).toEqual({ event: 'device-host.metro.link.open' });
+      expect(await carrier.next()).toEqual({ binary: Buffer.from('GET /index.bundle HTTP/1.1\r\n\r\n') });
+      expect(await client.request('device-host.stop', { session: id })).toHaveProperty('result.state', 'stopping');
+      expect(await idle.closed).toBe(1000);
+      expect(await carrier.closed).toBe(1000);
+      await deviceClosed;
     },
   );
 
@@ -1951,6 +2193,9 @@ test('build.start rejects escaping or oversized macOS resources before probing t
       },
     };
     expect(validate({ id: 'request', method: 'build.start', params: valid })).toBe(true);
+    expect(validate({ id: 'request', method: 'build.start', params: { ...valid, jdk: '17' } })).toBe(true);
+    for (const jdk of ['17.0.1', '', '17; id', 17])
+      expect(validate({ id: 'request', method: 'build.start', params: { ...valid, jdk } })).toBe(false);
     expect(await session.start(valid)).toMatchObject({
       error: { code: 'build-refused', message: 'This machine runs Stim build unknown.' },
     });
@@ -2007,9 +2252,12 @@ test('build.start compares the build compatibility version when both machines re
     );
     expect(await message({ stimBuild: 'b2' })).toBe('This machine runs Stim build b1.');
     expect(await message({ stimBuild: 'b1' })).toBe('launched');
+    expect(launch.mock.calls.at(-1)?.[0].job).not.toHaveProperty('jdk');
+    expect(await message({ stimBuild: 'b2', compat: 3, jdk: '17' })).toBe('launched');
+    expect(launch.mock.calls.at(-1)?.[0].job).toMatchObject({ jdk: '17' });
     toolchain.mockResolvedValue({ ...worker, compat: undefined });
     expect(await message({ stimBuild: 'b2', compat: 3 })).toBe('This machine runs Stim build b1.');
-    expect(launch).toHaveBeenCalledTimes(2);
+    expect(launch).toHaveBeenCalledTimes(3);
   } finally {
     toolchain.mockRestore();
     await host.close();
@@ -3368,6 +3616,18 @@ describe('unauthenticated connections', () => {
     ]);
   });
 
+  it('turns away an address that names unknown setup tickets far faster than any requester polls', async () => {
+    const port = await start({ maxUnknownSecrets: 3 });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await expect(connect(port, '100.64.0.2', { secret: newSecret() })).rejects.toMatchObject({
+        code: 'unknown-secret',
+      });
+    }
+    await expect(openPlain(port, '100.64.0.2')).rejects.toThrow('HTTP 429');
+    const otherPeer = await openPlain(port, '100.64.0.3');
+    expect(otherPeer.socket.readyState).toBe(WebSocket.OPEN);
+  });
+
   it('refuses a web page before it can spend the failed-attempt budget of this machine', async () => {
     const port = await start({ authTimeoutMs: 100, maxAuthFailures: 2 });
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -3377,41 +3637,191 @@ describe('unauthenticated connections', () => {
   });
 });
 
+const lanIp = Object.values(networkInterfaces())
+  .flat()
+  .find(
+    (info) =>
+      info?.family === 'IPv4' && !info.internal && /^(10|192\.168|172\.(1[6-9]|2\d|3[01]))\./.test(info.address),
+  )?.address;
+
+describe.skipIf(!lanIp)('the local network listener', () => {
+  const host = lanIp ?? '';
+  const lan = () => [localTransport({ entries: () => [host] })];
+  const sockets: Socket[] = [];
+  afterEach(() => {
+    for (const socket of sockets.splice(0)) socket.destroy();
+  });
+  const raw = (port: number) =>
+    new Promise<{ socket: Socket; closed: Promise<void> }>((resolve, reject) => {
+      const socket = connectNet(port, host);
+      sockets.push(socket);
+      const closed = once(socket, 'close').then(() => undefined);
+      socket.once('connect', () => resolve({ socket, closed }));
+      socket.once('error', reject);
+    });
+  const stillOpen = (closed: Promise<void>) =>
+    Promise.race([closed.then(() => false), new Promise((resolve) => setTimeout(() => resolve(true), 300))]);
+
+  it('holds a bounded number of unauthenticated connections per address, and an authenticated one stops counting', async () => {
+    const port = await start({ transports: lan(), pendingConnections: { max: 8, perPeer: 2 } });
+    expect(server?.addresses.map((address) => address.host)).toContain(host);
+    const first = await raw(port);
+    const second = await raw(port);
+    const refused = await raw(port);
+    await refused.closed;
+    expect(await stillOpen(second.closed)).toBe(true);
+
+    first.socket.destroy();
+    await first.closed;
+    const { token } = createPairingToken(Date.now(), capabilitiesFor(false));
+    const phone = await noiseConnect(`ws://${host}:${port}`, { secret: token });
+    expect(await phone.request('hello', { client: CLIENT })).toHaveProperty('result.device');
+    const third = await raw(port);
+    expect(await stillOpen(third.closed)).toBe(true);
+    const over = await raw(port);
+    await over.closed;
+    phone.socket.close();
+  });
+
+  const second = Object.values(networkInterfaces())
+    .flat()
+    .find((info) => info?.family === 'IPv4' && !info.internal && info.address !== lanIp)?.address;
+
+  it('keeps a flood on one network address from starving connections to another', async ({ skip }) => {
+    if (!second) return skip('this machine has one private network address');
+    const other = second;
+    const both: Transport = {
+      id: 'both',
+      traits: { privateNetwork: false, tls: 'none', peerIdentity: false },
+      bindAddresses: () => [host, other],
+    };
+    const port = await start({ transports: [both], pendingConnections: { max: 2, perPeer: 2 } });
+    await raw(port);
+    await raw(port);
+    const refused = await raw(port);
+    await refused.closed;
+    const elsewhere = await new Promise<{ socket: Socket; closed: Promise<void> }>((resolve, reject) => {
+      const socket = connectNet(port, other);
+      sockets.push(socket);
+      const closed = once(socket, 'close').then(() => undefined);
+      socket.once('connect', () => resolve({ socket, closed }));
+      socket.once('error', reject);
+    });
+    expect(await stillOpen(elsewhere.closed)).toBe(true);
+  });
+
+  it('closes a connection that sends no request in time', async () => {
+    const port = await start({ transports: lan(), headersTimeoutMs: 200 });
+    const silent = await raw(port);
+    await expect(silent.closed).resolves.toBeUndefined();
+  });
+
+  it('turns agent control requests away before any transport identifies the peer', async () => {
+    let identified = 0;
+    const counting: Transport = {
+      id: 'counting',
+      traits: { privateNetwork: true, tls: 'end-to-end', peerIdentity: true },
+      identify: async () => {
+        identified++;
+        return null;
+      },
+    };
+    const port = await start({ transports: [...lan(), counting] });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const response = await fetch(`http://${host}:${port}/device-host/agent/${randomUUID()}/status`);
+      expect(response.status).toBe(404);
+    }
+    expect(identified).toBe(0);
+  });
+
+  it('refuses a key it has no record for, and tells a peer only its version', async () => {
+    const port = await start({ transports: lan() });
+    const stranger = await noiseConnect(`ws://${host}:${port}`);
+    expect(await stranger.closedWith).toEqual({ code: 4401, reason: 'unauthorized' });
+    const peer = await fetch(`http://${host}:${port}/health`);
+    expect(await peer.json()).toEqual({ version: '1.2.3' });
+    expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toMatchObject({
+      lan: { addresses: [host], port },
+    });
+  });
+});
+
 describe('upgradeFromWebPage', () => {
-  it.each([
-    ['Desktop or the CLI on loopback', true, { host: '127.0.0.1:7787' }, false],
-    ['a simulator app on loopback', true, { host: '127.0.0.1:7787', origin: 'http://127.0.0.1:7787' }, false],
-    ['an app on localhost', true, { host: 'localhost:7787', origin: 'http://localhost:7787' }, false],
-    ['an app on IPv6 loopback', true, { host: '[::1]:7787', origin: 'http://[::1]:7787' }, false],
-    ['a cross-site page on loopback', true, { host: '127.0.0.1:7787', origin: 'https://attacker.example' }, true],
-    ['a page on another local port', true, { host: '127.0.0.1:7787', origin: 'http://127.0.0.1:8081' }, true],
-    ['a DNS-rebound page', true, { host: 'attacker.example:7787', origin: 'http://attacker.example:7787' }, true],
-    ['an https origin on loopback', true, { host: '127.0.0.1:7787', origin: 'https://127.0.0.1:7787' }, true],
-    ['an opaque origin', true, { host: '127.0.0.1:7787', origin: 'null' }, true],
-    ['an origin without a host', true, { origin: 'http://127.0.0.1:7787' }, true],
-    ['a loopback browser fetch', true, { host: '127.0.0.1:7787', 'sec-fetch-site': 'same-origin' }, true],
-    ['the CLI over the tailnet', false, { host: 'mac.tail.ts.net:7443' }, false],
+  it.each<[string, 'local' | 'proxied' | 'direct', Record<string, string>, boolean]>([
+    ['Desktop or the CLI on loopback', 'local', { host: '127.0.0.1:7787' }, false],
+    ['a simulator app on loopback', 'local', { host: '127.0.0.1:7787', origin: 'http://127.0.0.1:7787' }, false],
+    ['an app on localhost', 'local', { host: 'localhost:7787', origin: 'http://localhost:7787' }, false],
+    ['an app on IPv6 loopback', 'local', { host: '[::1]:7787', origin: 'http://[::1]:7787' }, false],
+    ['a cross-site page on loopback', 'local', { host: '127.0.0.1:7787', origin: 'https://attacker.example' }, true],
+    ['a page on another local port', 'local', { host: '127.0.0.1:7787', origin: 'http://127.0.0.1:8081' }, true],
+    ['a DNS-rebound page', 'local', { host: 'attacker.example:7787', origin: 'http://attacker.example:7787' }, true],
+    ['an https origin on loopback', 'local', { host: '127.0.0.1:7787', origin: 'https://127.0.0.1:7787' }, true],
+    ['an opaque origin', 'local', { host: '127.0.0.1:7787', origin: 'null' }, true],
+    ['an origin without a host', 'local', { origin: 'http://127.0.0.1:7787' }, true],
+    ['a loopback browser fetch', 'local', { host: '127.0.0.1:7787', 'sec-fetch-site': 'same-origin' }, true],
+    ['the CLI over the tailnet', 'proxied', { host: 'mac.tail.ts.net:7443' }, false],
     [
       'a phone over the tailnet',
-      false,
+      'proxied',
       { host: 'mac.tail.ts.net:7443', origin: 'https://mac.tail.ts.net:7443' },
       false,
     ],
-    ['an iOS phone on port 443', false, { host: 'mac.tail.ts.net:443', origin: 'https://mac.tail.ts.net' }, false],
-    ['an Android phone on port 443', false, { host: 'mac.tail.ts.net', origin: 'https://mac.tail.ts.net:443' }, false],
-    ['a phone on an IPv6 address', false, { host: '[fd7a::1]:7443', origin: 'https://[fd7a::1]:7443' }, false],
-    ['a page on another tailnet host', false, { host: 'mac.tail.ts.net:7443', origin: 'https://evil.example' }, true],
-    ['a page on another IPv6 host', false, { host: '[fd7a::1]:7443', origin: 'https://[fd7a::2]:7443' }, true],
-    ['a page on another port', false, { host: 'mac.tail.ts.net:7443', origin: 'https://mac.tail.ts.net' }, true],
-    ['an http origin over the tailnet', false, { host: '100.64.0.1:7787', origin: 'http://100.64.0.1:7787' }, true],
+    ['an iOS phone on port 443', 'proxied', { host: 'mac.tail.ts.net:443', origin: 'https://mac.tail.ts.net' }, false],
+    [
+      'an Android phone on port 443',
+      'proxied',
+      { host: 'mac.tail.ts.net', origin: 'https://mac.tail.ts.net:443' },
+      false,
+    ],
+    ['a phone on an IPv6 address', 'proxied', { host: '[fd7a::1]:7443', origin: 'https://[fd7a::1]:7443' }, false],
+    [
+      'a page on another tailnet host',
+      'proxied',
+      { host: 'mac.tail.ts.net:7443', origin: 'https://evil.example' },
+      true,
+    ],
+    ['a page on another IPv6 host', 'proxied', { host: '[fd7a::1]:7443', origin: 'https://[fd7a::2]:7443' }, true],
+    ['a page on another port', 'proxied', { host: 'mac.tail.ts.net:7443', origin: 'https://mac.tail.ts.net' }, true],
+    ['an http origin over the tailnet', 'proxied', { host: '100.64.0.1:7787', origin: 'http://100.64.0.1:7787' }, true],
     [
       'a same-origin browser fetch over the tailnet',
-      false,
+      'proxied',
       { host: 'mac.tail.ts.net:7443', origin: 'https://mac.tail.ts.net:7443', 'sec-fetch-site': 'same-origin' },
       true,
     ],
-  ])('%s', (_name, local, headers, refused) => {
-    expect(upgradeFromWebPage(headers, local)).toBe(refused);
+    ['the CLI on a local network address', 'direct', { host: '10.0.0.92:7787' }, false],
+    [
+      'a phone straight to a tailnet address',
+      'direct',
+      { host: '100.64.0.1:7787', origin: 'http://100.64.0.1:7787' },
+      false,
+    ],
+    [
+      'a phone on a local network address',
+      'direct',
+      { host: '10.0.0.92:7787', origin: 'http://10.0.0.92:7787' },
+      false,
+    ],
+    [
+      'a DNS-rebound page on a local network address',
+      'direct',
+      { host: 'attacker.example:7787', origin: 'http://attacker.example:7787' },
+      true,
+    ],
+    [
+      'a page on another local network host',
+      'direct',
+      { host: '10.0.0.92:7787', origin: 'http://10.0.0.5:7787' },
+      true,
+    ],
+    [
+      'an https origin on a local network address',
+      'direct',
+      { host: '10.0.0.92:7787', origin: 'https://10.0.0.92:7787' },
+      true,
+    ],
+  ])('%s', (_name, via, headers, refused) => {
+    expect(upgradeFromWebPage(headers, via)).toBe(refused);
   });
 });
 
@@ -4132,7 +4542,7 @@ describe('archived reads', () => {
       'frames.subscribe',
     ];
     const replies = await Promise.all(
-      Array.from({ length: 40 }, (_, index) => client.request(methods[index % methods.length]!, params)),
+      Array.from({ length: 120 }, (_, index) => client.request(methods[index % methods.length]!, params)),
     );
     const refused = replies.filter((reply) => 'error' in reply);
     expect(refused.length).toBeGreaterThan(0);
@@ -4140,7 +4550,7 @@ describe('archived reads', () => {
       all.every(
         (reply) =>
           (reply as { error: { code: string } }).error.code === 'limit-exceeded' &&
-          (reply as { error: { message: string } }).error.message === 'A connection can run 4 requests at a time.',
+          (reply as { error: { message: string } }).error.message === 'A connection can run 32 requests at a time.',
       ),
     );
     expect(await client.request('frames.subscribe', params)).toMatchObject({ result: { video: 'h264' } });
@@ -4937,7 +5347,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
     'keeps another socket responsive, shares the command cap, and cancels stats plus its Git child on disconnect',
     async () => {
       const slow = slowGit();
-      const port = await start({ env: slow.env });
+      const port = await start({ env: slow.env, requestLimits: { connection: 4 } });
       const first = await authed(port);
       const second = await authed(port);
       for (let id = 10; id < 14; id++)
@@ -4949,6 +5359,29 @@ require('node:net').createServer().listen(0, '127.0.0.1');
       first.socket.terminate();
       await until(() => owned.every((pid) => !alive(pid)));
       expect(await second.request('stats.get')).toMatchObject({ result: { version: 1 } });
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'bounds a tailnet device across its connections until its cancelled reads drain',
+    async () => {
+      const slow = slowGit();
+      const port = await start({ env: slow.env, requestLimits: { device: 2 } });
+      const peer = '100.64.0.2';
+      const { keyPair } = await pair(port, peer);
+      const first = await returning(port, keyPair, peer);
+      const second = await returning(port, keyPair, peer);
+      for (let id = 10; id < 12; id++)
+        first.socket.send(JSON.stringify({ id, method: 'stats.get', params: { workspace } }));
+      await until(() => slow.processes().length >= 2);
+      expect(await second.request('stats.get', { workspace })).toMatchObject({
+        error: { code: 'limit-exceeded', message: 'A remote device can run 2 requests at a time.' },
+      });
+      const owned = slow.processes();
+      first.socket.terminate();
+      await until(() => owned.every((pid) => !alive(pid)));
+      second.socket.send(JSON.stringify({ id: 20, method: 'stats.get', params: { workspace } }));
+      await until(() => slow.processes().length > owned.length);
     },
   );
 
@@ -5088,122 +5521,144 @@ describe('build.plan', () => {
     };
   }
 
-  it.each([false, true])('cancels only its own plan and waits for cleanup with retained=%s', async (retained) => {
-    const refusal = { code: 'STIM_CLAIM_UNAVAILABLE', message: 'Retained /scratch/plan.', remedy: 'Check ownership.' };
-    let finishCleanup = () => {};
-    let releaseCleanup = () => {};
-    const cleanup = new Promise<void>((resolve, reject) => {
-      releaseCleanup = resolve;
-      finishCleanup = () => (retained ? reject(new stim.StimError(refusal)) : resolve());
-    });
-    const fixture = gatedPlans(cleanup);
-    try {
-      await start();
-      const client = await desktop(),
-        other = await desktop();
-      void client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'own' }).catch(() => {});
-      await until(() => fixture.calls.length === 1);
-      expect(await other.request('desktop.plan.cancel', { request: 'own' })).toMatchObject({
-        result: { cancelled: false },
-      });
-      const queued = other.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'own' });
-      let ended = false;
-      const cancellation = client.request('desktop.plan.cancel', { request: 'own' }).then((result) => {
-        ended = true;
-        return result;
-      });
-      await until(() => fixture.cancelled === 1);
-      expect(ended).toBe(false);
-      expect(await client.request('machine.history')).toMatchObject({ result: expect.anything() });
-      expect(ended).toBe(false);
-      expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
-      finishCleanup();
-      expect(await cancellation).toMatchObject({ result: { cancelled: true, ...(retained ? { refusal } : {}) } });
-      await until(() => fixture.calls.length === 2);
-      fixture.calls[1]?.finish();
-      expect(await queued).toHaveProperty('result.platform', 'android');
-      expect(await client.request('desktop.plan.cancel', { request: 'own' })).toMatchObject({
-        result: { cancelled: false },
-      });
-      expect(stimCalls()).toEqual([]);
-    } finally {
-      releaseCleanup();
-      fixture.close();
-    }
-  });
-
-  it('retains completed cleanup refusals until connection-scoped acknowledgement without evicting them', async () => {
-    const fixture = gatedPlans();
-    const refusal = { code: 'STIM_CLAIM_UNAVAILABLE', message: 'Retained /scratch/plan.', remedy: 'Check ownership.' };
-    try {
-      await start();
-      const client = await desktop(),
-        other = await desktop();
-      for (let index = 0; index < 4; index += 1) {
-        const response = client.request('desktop.plan.get', {
-          cwd: workspace,
-          platform: 'ios',
-          request: `plan-${index}`,
+  for (const retained of [false, true])
+    test.skipIf(process.platform === 'win32')(
+      `cancels only its own plan and waits for cleanup with retained=${retained}`,
+      async () => {
+        const refusal = {
+          code: 'STIM_CLAIM_UNAVAILABLE',
+          message: 'Retained /scratch/plan.',
+          remedy: 'Check ownership.',
+        };
+        let finishCleanup = () => {};
+        let releaseCleanup = () => {};
+        const cleanup = new Promise<void>((resolve, reject) => {
+          releaseCleanup = resolve;
+          finishCleanup = () => (retained ? reject(new stim.StimError(refusal)) : resolve());
         });
-        await until(() => fixture.calls.length === index + 1);
-        fixture.calls[index]?.fail(new stim.StimError(refusal));
-        expect(await response).toMatchObject({ result: refusal });
-      }
-      expect(await other.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
-        result: { cancelled: false },
-      });
-      expect(
-        await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'next' }),
-      ).toHaveProperty('error.code', 'limit-exceeded');
-      expect(await client.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
-        result: { cancelled: true, refusal },
-      });
-      expect(await client.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
-        result: { cancelled: false },
-      });
-      const next = client.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'next' });
-      await until(() => fixture.calls.length === 5);
-      fixture.calls[4]?.finish();
-      expect(await next).toHaveProperty('result.platform', 'android');
-      expect(await client.request('desktop.plan.cancel', { request: 'plan-3' })).toMatchObject({
-        result: { cancelled: true, refusal },
-      });
-    } finally {
-      fixture.close();
-    }
-  });
+        const fixture = gatedPlans(cleanup);
+        try {
+          await start();
+          const client = await desktop(),
+            other = await desktop();
+          void client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'own' }).catch(() => {});
+          await until(() => fixture.calls.length === 1);
+          expect(await other.request('desktop.plan.cancel', { request: 'own' })).toMatchObject({
+            result: { cancelled: false },
+          });
+          const queued = other.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'own' });
+          let ended = false;
+          const cancellation = client.request('desktop.plan.cancel', { request: 'own' }).then((result) => {
+            ended = true;
+            return result;
+          });
+          await until(() => fixture.cancelled === 1);
+          expect(ended).toBe(false);
+          expect(await client.request('machine.history')).toMatchObject({ result: expect.anything() });
+          expect(ended).toBe(false);
+          expect(fixture.calls.map((call) => call.platform)).toEqual(['ios']);
+          finishCleanup();
+          expect(await cancellation).toMatchObject({ result: { cancelled: true, ...(retained ? { refusal } : {}) } });
+          await until(() => fixture.calls.length === 2);
+          fixture.calls[1]?.finish();
+          expect(await queued).toHaveProperty('result.platform', 'android');
+          expect(await client.request('desktop.plan.cancel', { request: 'own' })).toMatchObject({
+            result: { cancelled: false },
+          });
+          expect(stimCalls()).toEqual([]);
+        } finally {
+          releaseCleanup();
+          fixture.close();
+        }
+      },
+    );
 
-  it('preserves cleanup refusal after a server deadline and releases admission after acknowledgement', async () => {
-    const refusal = { code: 'STIM_CLAIM_UNAVAILABLE', message: 'Retained /scratch/plan.', remedy: 'Check ownership.' };
-    let failCleanup = () => {};
-    let releaseCleanup = () => {};
-    const cleanup = new Promise<void>((resolve, reject) => {
-      releaseCleanup = resolve;
-      failCleanup = () => reject(new stim.StimError(refusal));
-    });
-    const fixture = gatedPlans(cleanup);
-    try {
-      await start({ commandLimits: { timeoutMs: 100, maxOutputBytes: 1024 * 1024 } });
-      const client = await desktop();
-      const response = client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'timeout' });
-      await until(() => fixture.calls.length === 1);
-      expect(await response).toHaveProperty('error.code', 'stim-failed');
-      const cancellation = client.request('desktop.plan.cancel', { request: 'timeout' });
-      expect(await client.request('machine.history')).toMatchObject({ result: expect.anything() });
-      failCleanup();
-      expect(await cancellation).toMatchObject({ result: { cancelled: true, refusal } });
-      expect(await client.request('desktop.plan.cancel', { request: 'timeout' })).toMatchObject({
-        result: { cancelled: false },
+  test.skipIf(process.platform === 'win32')(
+    'retains completed cleanup refusals until connection-scoped acknowledgement without evicting them',
+    async () => {
+      const fixture = gatedPlans();
+      const refusal = {
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        message: 'Retained /scratch/plan.',
+        remedy: 'Check ownership.',
+      };
+      try {
+        await start();
+        const client = await desktop(),
+          other = await desktop();
+        for (let index = 0; index < 4; index += 1) {
+          const response = client.request('desktop.plan.get', {
+            cwd: workspace,
+            platform: 'ios',
+            request: `plan-${index}`,
+          });
+          await until(() => fixture.calls.length === index + 1);
+          fixture.calls[index]?.fail(new stim.StimError(refusal));
+          expect(await response).toMatchObject({ result: refusal });
+        }
+        expect(await other.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
+          result: { cancelled: false },
+        });
+        expect(
+          await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'next' }),
+        ).toHaveProperty('error.code', 'limit-exceeded');
+        expect(await client.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
+          result: { cancelled: true, refusal },
+        });
+        expect(await client.request('desktop.plan.cancel', { request: 'plan-0' })).toMatchObject({
+          result: { cancelled: false },
+        });
+        const next = client.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'next' });
+        await until(() => fixture.calls.length === 5);
+        fixture.calls[4]?.finish();
+        expect(await next).toHaveProperty('result.platform', 'android');
+        expect(await client.request('desktop.plan.cancel', { request: 'plan-3' })).toMatchObject({
+          result: { cancelled: true, refusal },
+        });
+      } finally {
+        fixture.close();
+      }
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'preserves cleanup refusal after a server deadline and releases admission after acknowledgement',
+    async () => {
+      const refusal = {
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        message: 'Retained /scratch/plan.',
+        remedy: 'Check ownership.',
+      };
+      let failCleanup = () => {};
+      let releaseCleanup = () => {};
+      const cleanup = new Promise<void>((resolve, reject) => {
+        releaseCleanup = resolve;
+        failCleanup = () => reject(new stim.StimError(refusal));
       });
-      const next = client.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'next' });
-      await until(() => fixture.calls.length === 2);
-      fixture.calls[1]?.finish();
-      expect(await next).toHaveProperty('result.platform', 'android');
-    } finally {
-      releaseCleanup();
-      fixture.close();
-    }
-  });
+      const fixture = gatedPlans(cleanup);
+      try {
+        await start({ commandLimits: { timeoutMs: 100, maxOutputBytes: 1024 * 1024 } });
+        const client = await desktop();
+        const response = client.request('desktop.plan.get', { cwd: workspace, platform: 'ios', request: 'timeout' });
+        await until(() => fixture.calls.length === 1);
+        expect(await response).toHaveProperty('error.code', 'stim-failed');
+        const cancellation = client.request('desktop.plan.cancel', { request: 'timeout' });
+        expect(await client.request('machine.history')).toMatchObject({ result: expect.anything() });
+        failCleanup();
+        expect(await cancellation).toMatchObject({ result: { cancelled: true, refusal } });
+        expect(await client.request('desktop.plan.cancel', { request: 'timeout' })).toMatchObject({
+          result: { cancelled: false },
+        });
+        const next = client.request('desktop.plan.get', { cwd: workspace, platform: 'android', request: 'next' });
+        await until(() => fixture.calls.length === 2);
+        fixture.calls[1]?.finish();
+        expect(await next).toHaveProperty('result.platform', 'android');
+      } finally {
+        releaseCleanup();
+        fixture.close();
+      }
+    },
+  );
 
   it('plans the registered workspace in-process and preserves the slot', async () => {
     const fixture = gatedPlans();
@@ -5337,40 +5792,43 @@ describe('build.plan', () => {
     }
   });
 
-  it('limits selected-folder plans to the proved Desktop and validates its native selectors', async () => {
-    const port = await start();
-    const phone = await authed(port);
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
-    const hello = await plain.request('hello', { client: CLIENT });
-    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-plan']) } });
-    for (const client of [phone, plain])
-      expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
-        'error.code',
-        'forbidden',
-      );
-    const client = await desktop();
-    for (const params of [
-      {},
-      { cwd: '.', platform: 'ios' },
-      { cwd: workspace, platform: 'web' },
-      { cwd: workspace, platform: 'macos', slot: 'preview' },
-      { cwd: workspace, platform: 'ios', slot: '--device' },
-      { cwd: workspace, platform: 'ios', extra: true },
-      { cwd: join(root, 'missing'), platform: 'android' },
-    ])
-      expect(await client.request('desktop.plan.get', params)).toHaveProperty('error.code', 'bad-request');
-    writeFileSync(join(workspace, 'package.json'), '{}');
-    rmSync(join(root, 'fake-stim.mjs'));
-    expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toMatchObject({
-      result: {
-        code: 'STIM_NO_PROJECT',
-        message: expect.stringContaining(join(workspace, 'package.json')),
-        remedy: expect.stringContaining('package.json'),
-      },
-    });
-    expect(stimCalls()).toEqual([]);
-  });
+  test.skipIf(process.platform === 'win32')(
+    'limits selected-folder plans to the proved Desktop and validates its native selectors',
+    async () => {
+      const port = await start();
+      const phone = await authed(port);
+      assert(server?.localSocket);
+      const plain = await localConnect(server.localSocket);
+      const hello = await plain.request('hello', { client: CLIENT });
+      expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-plan']) } });
+      for (const client of [phone, plain])
+        expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
+          'error.code',
+          'forbidden',
+        );
+      const client = await desktop();
+      for (const params of [
+        {},
+        { cwd: '.', platform: 'ios' },
+        { cwd: workspace, platform: 'web' },
+        { cwd: workspace, platform: 'macos', slot: 'preview' },
+        { cwd: workspace, platform: 'ios', slot: '--device' },
+        { cwd: workspace, platform: 'ios', extra: true },
+        { cwd: join(root, 'missing'), platform: 'android' },
+      ])
+        expect(await client.request('desktop.plan.get', params)).toHaveProperty('error.code', 'bad-request');
+      writeFileSync(join(workspace, 'package.json'), '{}');
+      rmSync(join(root, 'fake-stim.mjs'));
+      expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toMatchObject({
+        result: {
+          code: 'STIM_NO_PROJECT',
+          message: expect.stringContaining(join(workspace, 'package.json')),
+          remedy: expect.stringContaining('package.json'),
+        },
+      });
+      expect(stimCalls()).toEqual([]);
+    },
+  );
 
   describe.skipIf(process.platform !== 'darwin')('macOS planning', () => {
     it('plans an unregistered macOS app through the real API without compiling or launching', async () => {
@@ -5402,19 +5860,22 @@ describe('build.plan', () => {
     });
   });
 
-  it('does not advertise or grant private selected-folder plans on an adopted server', async () => {
-    await start({ desktopBootstrap: null });
-    assert(server?.localSocket);
-    const client = await localConnect(server.localSocket);
-    const hello = await client.request('hello', { client: CLIENT });
-    const result: unknown = 'result' in hello ? hello.result : null;
-    assert(isJsonObject(result));
-    expect(result.features).not.toContain('desktop-plan');
-    expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
-      'error.code',
-      'forbidden',
-    );
-  });
+  test.skipIf(process.platform === 'win32')(
+    'does not advertise or grant private selected-folder plans on an adopted server',
+    async () => {
+      await start({ desktopBootstrap: null });
+      assert(server?.localSocket);
+      const client = await localConnect(server.localSocket);
+      const hello = await client.request('hello', { client: CLIENT });
+      const result: unknown = 'result' in hello ? hello.result : null;
+      assert(isJsonObject(result));
+      expect(result.features).not.toContain('desktop-plan');
+      expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
+    },
+  );
 
   it('reports a real planner refusal with its code, message and remedy without a CLI', async () => {
     writeFileSync(join(workspace, 'package.json'), '{}');
@@ -6082,7 +6543,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     const secondClaim = second.acquired;
     const firstClaim = claims[0];
     assert(firstClaim);
-    await start();
+    await start({ requestLimits: { connection: 4 } });
     const original = stim.createStim;
     const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => ({
       ...original(options),
@@ -6362,7 +6823,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
       mkdirSync(folder, { recursive: true });
       writeFileSync(join(folder, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.88.0' } }));
     }
-    await start();
+    await start({ requestLimits: { connection: 4 } });
     const client = await desktop();
     const attempt = tryAcquireClaim({
       root: join(root, 'home', 'config.lock.claims'),
@@ -6566,7 +7027,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
       JSON.stringify({ projects: Object.fromEntries(roots.map((cwd) => [cwd, {}])) }),
     );
     const browsers = await Promise.all(roots.map((cwd, i) => reloadBrowser(cwd, i < 4)));
-    await start();
+    await start({ requestLimits: { connection: 4 } });
     const client = await desktop();
     const subscriptions: string[] = [];
     for (const cwd of roots.slice(0, 4)) {
@@ -6760,8 +7221,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
       const stopping = client.request('action', { action: 'stop', workspace });
       let owned: { pid: number; processToken: string } | undefined;
       try {
-        await until(() => existsSync(entered));
-        const pid = Number(readFileSync(entered, 'utf8'));
+        const pid = await readPid(entered);
         const processToken = captureProcessToken(pid);
         assert(processToken);
         owned = { pid, processToken };
@@ -6771,7 +7231,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
         await server.close();
         server = null;
         expect(existsSync(escaped)).toBe(false);
-        expect(alive(Number(readFileSync(entered, 'utf8')))).toBe(false);
+        expect(alive(await readPid(entered))).toBe(false);
       } finally {
         if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
         await stopping;
@@ -7015,7 +7475,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
 
   it('runs one action per workspace at a time and ends one that runs past its timeout', async () => {
     const browser = await reloadBrowser(workspace, true);
-    const port = await start({ actionLimits: { timeoutMs: 500 } });
+    const port = await start({ actionLimits: { timeoutMs: process.platform === 'win32' ? 5000 : 500 } });
     const client = await authed(port, true);
     const other = await authed(port, true);
     client.socket.send(JSON.stringify({ id: 10, method: 'action', params: { action: 'reload', workspace } }));
@@ -8729,7 +9189,7 @@ describe('frames.subscribe', () => {
         { input: 'touch', phase: 'down', x: 0.25, y: 0.75, duoRevision: revision },
         { input: 'duo-release' },
       ]);
-      expect(alive(Number(readFileSync(`${toolCalls}.started`, 'utf8')))).toBe(true);
+      expect(alive(await readPid(`${toolCalls}.started`))).toBe(true);
       expect(await viewer.next()).toMatchObject({ event: 'frame' });
       viewer.socket.close();
     },
@@ -9211,9 +9671,10 @@ describe('frames.subscribe', () => {
           error: { code: 'action-failed', message: 'sim-fold did not finish within 0.5 s.' },
         });
         await until(() => existsSync(grandchild));
-        expect(() => process.kill(Number(readFileSync(grandchild, 'utf8')), 0)).not.toThrow();
+        const grandchildPid = await readPid(grandchild);
+        expect(() => process.kill(grandchildPid, 0)).not.toThrow();
       } finally {
-        if (existsSync(grandchild)) process.kill(Number(readFileSync(grandchild, 'utf8')), 'SIGKILL');
+        if (existsSync(grandchild)) process.kill(await readPid(grandchild), 'SIGKILL');
       }
     },
     10_000,
@@ -10486,7 +10947,7 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
 
   it.each(
     kind === 'run'
-      ? [{ platform: 'ios' }, { platform: 'macos', remote: 'auto' }]
+      ? [{ platform: 'ios' }, { platform: 'macos', remote: 'eas' }]
       : [{ platform: 'ios' }, { platform: 'android' }],
   )('streams the real API refusal for %j without a CLI and releases the workspace', async (options) => {
     await start();
@@ -11242,7 +11703,7 @@ setInterval(() => {}, 1000);
             typeof reply.result.subscription === 'string',
         );
         await until(() => existsSync(witness));
-        const pid = Number(readFileSync(witness, 'utf8'));
+        const pid = await readPid(witness);
         const processToken = captureProcessToken(pid);
         assert(processToken);
         record = { pid, processToken };

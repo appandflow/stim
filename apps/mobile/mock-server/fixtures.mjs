@@ -4,7 +4,7 @@ import { shiftTimestamps } from './payloads.mjs';
 
 const fixture = (name) => new URL(`./fixtures/${name}`, import.meta.url);
 
-export function loadFixtures({ slotWaits = false } = {}) {
+export function loadFixtures({ slotWaits = false, capacity = false } = {}) {
   const status = JSON.parse(readFileSync(fixture('status.json'), 'utf8'));
   for (const platform of ['ios', 'android'])
     status.payload.environments.push(...JSON.parse(readFileSync(fixture(`hosted-${platform}.json`), 'utf8')));
@@ -13,6 +13,10 @@ export function loadFixtures({ slotWaits = false } = {}) {
     status.payload.environments = status.payload.environments.map((env) =>
       changes[env.path] ? { ...env, build: { ...env.build, ...changes[env.path] } } : env,
     );
+  }
+  if (capacity) {
+    const added = JSON.parse(readFileSync(fixture('capacity.json'), 'utf8')).capacity;
+    status.payload.capacity = { ...status.payload.capacity, ...added };
   }
   const realArchive = JSON.parse(readFileSync(fixture('real-archive/archive.json'), 'utf8'));
   const realShift = Date.parse(status.capturedAt) - 2 * 60 * 60 * 1000 - Date.parse(realArchive.removedAt);

@@ -326,9 +326,12 @@ Execution is bounded to 120 seconds, with up to 35 seconds for owned cleanup.
 Desktop uses the private `desktop-machine-access` subscription on its own bundled
 server; phone, network and other local connections cannot request access through it.
 
-`gc({ cache?, olderThan?, worktrees? })` returns the GC JSON dry-run report.
+`gc({ cache?, olderThan?, worktrees?, measureBuildState? })` returns the GC JSON dry-run report.
 It never deletes resources or shuts down idle devices. `olderThan` is a whole
 number of days, and `cache` and `worktrees` have the CLI's scope semantics.
+`measureBuildState: false` reports each worktree's `buildState` sizes only from
+the disk-usage cache: a size measured over an hour ago, or before its directory
+changed, is `null`, and no `du` runs.
 Invalid scopes reject with `StimError` and their remedy. Reports can refresh
 their own measured-usage caches. An explicit `home` or `STIM_HOME` preserves
 the CLI's scoped-home restrictions on machine-global resources.

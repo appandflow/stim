@@ -6,19 +6,19 @@ import { diskUsageCacheFile, readDiskUsage } from '@stim-cli/core/state';
 import { getExecutor } from '../../exec.ts';
 import { writeCacheFile } from '../../status-measures.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
-import { ARTIFACT_DIRS, appRoots } from '../../maintenance/artifacts.ts';
-import { listWorktreesAsync, resolveSourceCheckoutAsync } from '../../workspace/worktree.ts';
-import { matchWorktreeEntry } from '../worktree.ts';
+import { appRoots } from '../../maintenance/artifacts.ts';
+import { ARTIFACT_DIRS } from '../../workspace/regenerable-dirs.ts';
+import { listWorktreesAsync, matchWorktreeEntry, resolveSourceCheckoutAsync } from '../../workspace/worktree.ts';
 import { canonicalPath } from './paths.ts';
 import { phase } from './progress.ts';
 import { candidateRootsAsync, type UnlistedWorktreeDir, type WorktreeSweep } from './worktrees.ts';
 import { runOperationFile } from '../../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
+import { eachLimited, mapLimited, readConcurrency, sizeConcurrency } from './limited.ts';
 
 const SIZE_TIMEOUT_MS = 30_000;
 const BUILD_STATE_MAX_AGE_MS = 60 * 60_000;
 const BUILD_STATE_TIMEOUT_MS = 10_000;
-const BUILD_STATE_CONCURRENCY = 4;
 const PNPM_STORE = '.pnpm-store';
 const WORKTREES_DIR = '.worktrees';
 
@@ -43,7 +43,7 @@ async function buildStateDirs(path: string, keys: readonly string[], operation?:
   });
   const own = keys.filter((key) => matchWorktreeEntry(entries, key)?.path === path);
   const root = canonicalPath(path);
-  const worktree = { path, linked: true, keys: own };
+  const worktree = { path, linked: true, locked: Boolean(matchWorktreeEntry(entries, path)?.locked), keys: own };
   const dirs = new Map<string, string>();
   const add = (dir: string) => {
     if (!isDirectory(dir)) return;
@@ -88,14 +88,6 @@ async function duSize(dir: string, operation?: StimContext): Promise<number | nu
   return kb ? Number(kb) * 1024 : null;
 }
 
-async function eachLimited<T>(items: readonly T[], limit: number, run: (item: T) => Promise<void>): Promise<void> {
-  const queue = items[Symbol.iterator]();
-  const worker = async (): Promise<void> => {
-    for (const item of queue) await run(item);
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-}
-
 interface PendingWorktree {
   candidate: WorktreeSweep['worktrees'][number];
   root: string;
@@ -106,32 +98,37 @@ interface PendingWorktree {
 /**
  * Sizes the regenerable directories maintenance clears and a project-local `.pnpm-store` in each worktree of the
  * sweep, from the disk-usage cache while an entry is under an hour old and no entry was added to or removed from the
- * directory since. Stale directories are measured with one `du` each, sequentially with an operation and at most
- * 4 at once otherwise, with 10 seconds each, so a
- * slow tree delays only itself; a directory du could not measure in time is reported unmeasured (null). Also lists
+ * directory since. Stale directories are measured with one `du` each, at most 4 at once, one at a time while the
+ * operation declares its children on a claim, with 10 seconds each, so a
+ * slow tree delays only itself; a directory du could not measure in time is reported unmeasured (null). Without
+ * `measure`, stale directories are reported unmeasured without a `du`. Also lists
  * the directories directly under a repository's `.worktrees/` that are no git worktree at all.
  */
-export async function measureWorktreeSweep(sweep: WorktreeSweep, operation?: StimContext): Promise<WorktreeSweep> {
+export async function measureWorktreeSweep(
+  sweep: WorktreeSweep,
+  operation?: StimContext,
+  measure = true,
+): Promise<WorktreeSweep> {
   operation?.signal.throwIfAborted();
   const now = Date.now();
+  const measured = sweep.worktrees.filter((candidate) => candidate.skipCode !== 'not-a-worktree');
   const pending: PendingWorktree[] = [];
-  for (const candidate of sweep.worktrees) {
+  await eachLimited([...measured.entries()], readConcurrency(operation), async ([index, candidate]) => {
     operation?.signal.throwIfAborted();
-    if (candidate.skipCode === 'not-a-worktree') continue;
     const dirs = await buildStateDirs(candidate.path, candidate.keys, operation);
-    pending.push({
+    pending[index] = {
       candidate,
       root: canonicalPath(candidate.path),
       dirs,
       sizes: new Map(dirs.map((dir) => [dir, cachedSize(dir, now)])),
-    });
-  }
-  const due = pending.flatMap(({ sizes }) =>
-    [...sizes].flatMap(([dir, bytes]) => (bytes === null ? [{ dir, sizes }] : [])),
-  );
+    };
+  });
+  const due = measure
+    ? pending.flatMap(({ sizes }) => [...sizes].flatMap(([dir, bytes]) => (bytes === null ? [{ dir, sizes }] : [])))
+    : [];
   const worktrees = new Set(due.map(({ sizes }) => sizes)).size;
   if (due.length) phase('worktrees', `measuring the build state of ${plural(worktrees, 'worktree')}`, operation);
-  await eachLimited(due, operation ? 1 : BUILD_STATE_CONCURRENCY, async ({ dir, sizes }) => {
+  await eachLimited(due, sizeConcurrency(operation), async ({ dir, sizes }) => {
     operation?.signal.throwIfAborted();
     const measuredAt = new Date().toISOString();
     const bytes = await duSize(dir, operation);
@@ -173,16 +170,20 @@ function hasLiveGitDir(path: string): boolean {
 async function unlistedWorktreeDirs(operation?: StimContext): Promise<UnlistedWorktreeDir[]> {
   const repositories = new Map<string, string[]>();
   const options = { env: operation?.env, signal: operation?.signal, declareFor: operation };
-  for (const root of await candidateRootsAsync(operation)) {
+  const roots = await candidateRootsAsync(operation);
+  const resolved: Awaited<ReturnType<typeof resolveSourceCheckoutAsync>>[] = [];
+  await eachLimited([...roots.entries()], readConcurrency(operation), async ([index, root]) => {
     operation?.signal.throwIfAborted();
-    const { entries, ...source } = await resolveSourceCheckoutAsync(root, options);
+    resolved[index] = await resolveSourceCheckoutAsync(root, options);
+  });
+  for (const { entries, ...source } of resolved) {
     if ('refusal' in source || repositories.has(source.path)) continue;
     repositories.set(
       source.path,
       entries.map((entry) => canonicalPath(entry.path)),
     );
   }
-  const found: UnlistedWorktreeDir[] = [];
+  const unlisted: { path: string; repository: string }[] = [];
   for (const [repository, listed] of repositories) {
     operation?.signal.throwIfAborted();
     const parent = join(repository, WORKTREES_DIR);
@@ -198,16 +199,17 @@ async function unlistedWorktreeDirs(operation?: StimContext): Promise<UnlistedWo
       if (!isDirectory(path) || hasLiveGitDir(path)) continue;
       const real = canonicalPath(path);
       if (listed.some((entry) => entry === real || entry.startsWith(`${real}${sep}`))) continue;
-      found.push({
-        path,
-        repository,
-        bytes: await measuredDirectorySizeAsync(path, {
-          timeoutMs: SIZE_TIMEOUT_MS,
-          operation,
-          signal: operation?.signal,
-        }),
-      });
+      unlisted.push({ path, repository });
     }
   }
+  const found = await mapLimited(unlisted, sizeConcurrency(operation), async ({ path, repository }) => ({
+    path,
+    repository,
+    bytes: await measuredDirectorySizeAsync(path, {
+      timeoutMs: SIZE_TIMEOUT_MS,
+      operation,
+      signal: operation?.signal,
+    }),
+  }));
   return found;
 }

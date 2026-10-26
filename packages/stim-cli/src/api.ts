@@ -17,6 +17,7 @@ import {
 } from './workspace/project.ts';
 import { repoRootAsync } from './workspace/worktree.ts';
 import { recordWorkspaceUseAsync } from './workspace/workspace-state.ts';
+import { restoreLightenedDependencies } from './workspace/lightened.ts';
 import { readDoctorReport } from './commands/doctor.ts';
 import { recordDoctorCheck } from './guide-status.ts';
 import { executeGc, readGcReport, withGcMaintenanceClaim } from './commands/gc.ts';
@@ -49,6 +50,7 @@ import {
   resolveProjectSettingsAsync,
   settingShapeErrors,
   SETTING_SHAPE_REMEDY,
+  inertSettingWarning,
   unknownSettingKeys,
 } from './workspace/settings.ts';
 import type {
@@ -300,14 +302,14 @@ export function createStim(options: StimOptions): StimClient {
         );
         return task;
       }),
-    gc: ({ signal, olderThan, cache, worktrees }: StimGcOptions = {}) => {
+    gc: ({ signal, olderThan, cache, worktrees, measureBuildState }: StimGcOptions = {}) => {
       if (olderThan !== undefined && !Number.isSafeInteger(olderThan))
         return Promise.reject(
           new StimError({ code: 'STIM_BAD_ARG', message: 'olderThan must be a whole number of days.' }),
         );
       return report(signal, async (context) => {
         const result = await readGcReport(
-          { olderThan, cache, worktrees },
+          { olderThan, cache, worktrees, measureBuildState },
           {
             operation: context,
             easLedgerRoot: join(context.env.HOME || context.env.USERPROFILE || homedir(), '.stim', 'machine', 'eas'),
@@ -670,6 +672,8 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
   }
   const root = findStartRoot(context.projectRoot);
   if (!root) throw new StimError(NO_PROJECT_REFUSAL);
+  const lightened = await restoreLightenedDependencies(root, context);
+  if (lightened) throw new StimError(lightened);
   const problem = projectProblem(root, 'dev-server');
   if (problem) throw new StimError({ code: 'STIM_NO_PROJECT', ...problem });
   options.beforeStart?.(root);
@@ -683,8 +687,7 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
     if (shapeErrors.length) {
       throw new StimError({ code: 'STIM_BAD_ARG', message: shapeErrors.join('\n'), remedy: SETTING_SHAPE_REMEDY });
     }
-    for (const key of unknownSettingKeys(settings))
-      note(context)(`Warning: setting "${key}" is not read by Stim and will be ignored.`);
+    for (const key of unknownSettingKeys(settings)) note(context)(inertSettingWarning(settings, key));
     const cacheError = cacheProviderSettingError(settings);
     if (cacheError) note(context)(`Warning: ${cacheError} No cache provider is used.`);
     await ensureWorkspaceStorageAsync(root, context.signal);

@@ -43,6 +43,7 @@ import {
 import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValidAsync } from '../dependency-state.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import { type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from '../workspace/config.ts';
+import { ccacheInstallCommand } from '../engine/ccache.ts';
 import { ccacheEnabled } from '../integrations/react-native-build.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { countLiveOwnedDevices, countLiveOwnedDevicesAsync } from '../engine/device-capacity.ts';
@@ -549,13 +550,13 @@ function checkChrome({
   );
 }
 
-export function checkCcacheInstalled(onPath: boolean): Finding | null {
+export function checkCcacheInstalled(onPath: boolean, platform: NodeJS.Platform = process.platform): Finding | null {
   if (onPath) return null;
   return finding(
     'cost',
     'ccache is not on PATH, so Android C++ recompiles in every worktree',
     'Stim resolves the launcher with a PATH lookup for `ccache` -- the same lookup the build itself uses -- and found nothing, so it passes no CMAKE_C_COMPILER_LAUNCHER / CMAKE_CXX_COMPILER_LAUNCHER to Gradle and every AGP CMake task compiles without one. Those tasks are uncacheable by Gradle, so not one C++ object crosses a worktree. Measured on trailhead (arm64, fresh worktree): 49.6s without the launcher against 34.2s with it.',
-    'brew install ccache, then delete android/app/.cxx and node_modules/**/android/.cxx once so CMake reconfigures with the launcher. The shell that runs Stim must have the install location on PATH -- agent shells often lack /opt/homebrew/bin.',
+    `${ccacheInstallCommand(platform)}, then delete android/app/.cxx and node_modules/**/android/.cxx once so CMake reconfigures with the launcher. The shell that runs Stim must have the install location on PATH${platform === 'darwin' ? ' -- agent shells often lack /opt/homebrew/bin' : ''}.`,
   );
 }
 
@@ -1176,9 +1177,11 @@ export async function runDoctor(
     ...checkMachineSettings({
       settings: projectSettings,
       layers: machineSettings.layers,
+      repositoryLayer: machineSettings.repositoryLayer,
       projectRoot,
       optimizations,
       env: options.operation?.env ?? options.remoteEnv ?? process.env,
+      remoteBuild: loadConfig()?.remote?.build,
       reportedElsewhere: simslimProfileError ? ['ios.simslimProfile'] : [],
     }),
   ].filter((f): f is Finding => Boolean(f));
@@ -1697,7 +1700,7 @@ export async function detectFingerprintParity(
         : undefined);
   const unsafe = coldFingerprintRunsProjectCode(projectRoot, platform);
   if (unsafe) return unsafe;
-  // @expo/fingerprint 0.20 spawns `npx react-native config` unless this is true or expo-modules-autolinking >= 1.12 resolves.
+  // @expo/fingerprint spawns `npx react-native config` unless this is true or expo-modules-autolinking >= 1.12 resolves.
   const coldFingerprint: typeof createFingerprint = (root, options) =>
     createFingerprint(root, { ...options, useRNCoreAutolinkingFromExpo: true });
 

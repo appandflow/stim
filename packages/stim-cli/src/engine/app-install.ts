@@ -344,9 +344,27 @@ export async function launchIosApp(
   { exec = null }: ExecOpt = {},
 ): Promise<IosLaunchResult> {
   const e = exec || getExecutor();
-  const running = await iosAppProcess(udid, bundleId, { exec: e });
-  const stateUnknown = running.state === 'unknown';
   const launchRestarts = metroPort === null || !devClientScheme || Boolean(consolePaths);
+  const writeJsLocation = async (port: number | string): Promise<IosLaunchResult | null> => {
+    try {
+      await e.runFileAsync(
+        'xcrun',
+        ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, 'RCT_jsLocation', jsLocationValue(port)],
+        { timeoutMs: 60000 },
+      );
+      return null;
+    } catch (err) {
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `Could not point ${bundleId} at Metro port ${port} (defaults write RCT_jsLocation): ${await describeIosSimulatorFailure(err, e)}`,
+      };
+    }
+  };
+  const runningProbe = iosAppProcess(udid, bundleId, { exec: e });
+  const earlyWrite = metroPort !== null && launchRestarts ? writeJsLocation(metroPort) : null;
+  const running = await runningProbe;
+  const stateUnknown = running.state === 'unknown';
   const launchArgs = [
     'simctl',
     'launch',
@@ -371,19 +389,8 @@ export async function launchIosApp(
     restart.restartedPid = running.pid;
   }
   if (metroPort !== null) {
-    try {
-      await e.runFileAsync(
-        'xcrun',
-        ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, 'RCT_jsLocation', jsLocationValue(metroPort)],
-        { timeoutMs: 60000 },
-      );
-    } catch (err) {
-      return {
-        failed: true,
-        code: LAUNCH_ERROR,
-        reason: `Could not point ${bundleId} at Metro port ${metroPort} (defaults write RCT_jsLocation): ${await describeIosSimulatorFailure(err, e)}`,
-      };
-    }
+    const writeFailure = await (earlyWrite ?? writeJsLocation(metroPort));
+    if (writeFailure) return writeFailure;
 
     if (devClientScheme) {
       const url = devClientUrl(devClientScheme, metroPort, 'localhost', { devMenuParams });

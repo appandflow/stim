@@ -18,6 +18,7 @@ import * as expoFingerprint from '@expo/fingerprint';
 import type { FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
 import { resolveTieredBuild, runCacheProviderContract, storeTieredBuild } from '@stim-cli/cache';
 import { readManifest } from '../cache/cache-manifest.ts';
+import { androidBuildToolName } from '../devices/android.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import {
   androidProjectFingerprintOptions,
@@ -28,6 +29,7 @@ import {
   compareSourceLists,
   diffFingerprintSources,
   entryDir,
+  evictBuild,
   fingerprintDiffRecord,
   DEFAULT_FINGERPRINT_IGNORES,
   fingerprintProject,
@@ -50,6 +52,13 @@ import { writeSignedApk } from './_signed-apk.ts';
 import { recordedSignedTail } from '../engine/apk-signed-tail.ts';
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
 import { buildCacheKey as providerKey } from '../../../expo-build-cache/index.js';
+
+// @expo/fingerprint 0.21 runs `npx react-native config` in a project without expo-modules-autolinking, which downloads
+// react-native from the npm registry on a cold runner; this option reads the autolinking sources from Expo instead.
+const offlineFingerprint: typeof expoFingerprint.createFingerprintAsync = (dir, options) =>
+  expoFingerprint.createFingerprintAsync(dir, { ...options, useRNCoreAutolinkingFromExpo: true });
+const fingerprintOffline = (dir: string, target: NonNullable<Parameters<typeof fingerprintProject>[1]>) =>
+  fingerprintProject(dir, { ...target, createFingerprint: offlineFingerprint });
 
 let root: string;
 let tmpHome: string;
@@ -174,6 +183,17 @@ test('storeBuild with { overwrite } REPLACES an existing entry, so a poisoned on
   const stored = await storeBuild('ios', 'fp-overwrite', fresh, { root, overwrite: true });
   assert(stored);
   expect(readFileSync(stored, 'utf-8')).toBe('rebuilt');
+});
+
+test('evictBuild removes one entry and leaves its neighbours and the cache directory', async () => {
+  seedEntry('ios', 'fp-bad', 'MyApp.app');
+  const neighbour = seedEntry('ios', 'fp-good', 'MyApp.app');
+
+  expect(await evictBuild('ios', 'fp-bad', root)).toBe(true);
+  expect(resolveBuild('ios', 'fp-bad', root)).toBeNull();
+  expect(readdirSync(join(root, 'ios'))).toEqual(['fp-good']);
+  expect(resolveBuild('ios', 'fp-good', root)).toBe(neighbour);
+  expect(await evictBuild('ios', 'fp-bad', root)).toBe(false);
 });
 
 test('storeBuild accepts the cache root as a string or as { root }', async () => {
@@ -374,6 +394,34 @@ test('a custom iOS project directory keeps the sources fingerprint.config.js dec
     { type: 'dir', filePath: 'apple', reasons: ['ios.projectPath'] },
   ]);
 });
+
+test('a patch at the monorepo install root moves the key of an app below it', async () => {
+  const app = join(root, 'apps/app');
+  mkdirSync(join(root, 'patches'), { recursive: true });
+  mkdirSync(app, { recursive: true });
+  writeFileSync(join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n");
+  writeFileSync(join(root, 'patches/react-native-mmkv.patch'), '--- a/ios/MMKV.mm\n+++ b/ios/MMKV.mm\n');
+  writeFileSync(join(app, 'package.json'), '{"name":"app"}');
+  getExecutor().runFile('git', ['init', '--quiet', root], { timeoutMs: 10_000 });
+  const hashOf = async () => (await fingerprintOffline(app, { platform: 'ios' }))?.hash;
+  const before = await hashOf();
+  writeFileSync(join(root, 'patches/react-native-mmkv.patch'), '--- a/ios/MMKV.mm\n+++ b/ios/MMKV.mm\n@@ -1 +1 @@\n');
+  expect(await hashOf()).not.toBe(before);
+}, 30_000);
+
+test('a pnpm patch outside patches/ moves the key through the hash pnpm records for it', async () => {
+  const lockfile = (hash: string) =>
+    `lockfileVersion: '9.0'\n\npatchedDependencies:\n  react-native-mmkv@4.3.2: ${hash}\n\nimporters:\n  .: {}\n`;
+  writeFileSync(join(root, 'pnpm-lock.yaml'), lockfile('aaa'));
+  writeFileSync(join(root, 'package.json'), '{"name":"app"}');
+  getExecutor().runFile('git', ['init', '--quiet', root], { timeoutMs: 10_000 });
+  const hashOf = async () => (await fingerprintOffline(root, { platform: 'ios' }))?.hash;
+  const before = await hashOf();
+  writeFileSync(join(root, 'pnpm-lock.yaml'), `# reformatted\n${lockfile('aaa')}`);
+  expect(await hashOf()).toBe(before);
+  writeFileSync(join(root, 'pnpm-lock.yaml'), lockfile('bbb'));
+  expect(await hashOf()).not.toBe(before);
+}, 30_000);
 
 test('an iOS project in the app directory hashes every tracked top-level entry except dependencies and build output', () => {
   const directories = new Set(['node_modules', 'js', 'Pods', 'android', 'build', 'RNTesterPods.xcodeproj', 'shared']);
@@ -594,7 +642,8 @@ test('storing an Android APK verifies its signature once and records the signed 
   resetExecutor();
   const sdk = join(root, 'sdk');
   mkdirSync(join(sdk, 'build-tools', '36.0.0'), { recursive: true });
-  writeFileSync(join(sdk, 'build-tools', '36.0.0', 'apksigner'), '');
+  const apksigner = join(sdk, 'build-tools', '36.0.0', androidBuildToolName('apksigner'));
+  writeFileSync(apksigner, '');
   const build = join(root, 'build7', 'app-debug.apk');
   const apk = writeSignedApk(build, {}, false);
   const real = getExecutor();
@@ -602,7 +651,7 @@ test('storing an Android APK verifies its signature once and records the signed 
   setExecutor({
     ...real,
     runFileAsync: async (file, args, options) => {
-      if (!file.endsWith('apksigner')) return real.runFileAsync(file, args, options);
+      if (file !== apksigner) return real.runFileAsync(file, args, options);
       signerCalls.push([file, ...(args ?? [])]);
       return 'Verified using v2 scheme (APK Signature Scheme v2): true\n';
     },
@@ -612,9 +661,7 @@ test('storing an Android APK verifies its signature once and records the signed 
   try {
     const stored = await storeBuild('android', 'ak7', build, { root });
     assert(stored);
-    expect(signerCalls.map((call) => call.slice(0, 3))).toEqual([
-      [join(sdk, 'build-tools', '36.0.0', 'apksigner'), 'verify', '--verbose'],
-    ]);
+    expect(signerCalls.map((call) => call.slice(0, 3))).toEqual([[apksigner, 'verify', '--verbose']]);
     expect(recordedSignedTail(stored)).toEqual({
       file: 'app-debug.apk',
       size: apk.size,
@@ -710,6 +757,32 @@ test('the real @expo/fingerprint differ reports additions and removals with thei
   expect(changes).toHaveLength(2);
 });
 
+test.each([
+  ['a hoisted install', 'node_modules/bar/package.json', 'node_modules/bar/package.json'],
+  [
+    'a pnpm store',
+    'node_modules/.pnpm/bar@1.0.0/node_modules/bar/package.json',
+    'node_modules/.pnpm/bar@1.1.0/node_modules/bar/package.json',
+  ],
+])('the real differ reports a native dependency version bump in %s as one change', (_layout, before, after) => {
+  const source = (filePath: string, version: string): FingerprintSource => ({
+    type: 'package',
+    name: 'bar',
+    version,
+    filePath,
+    reasons: ['expoAutolinkingIos'],
+    hash: version,
+  });
+  expect(
+    diffFingerprintSources({
+      previous: [source(before, '1.0.0')],
+      previousHash: 'h1',
+      current: { hash: 'h2', sources: [source(after, '1.1.0')] },
+      differ: expoFingerprint.diffFingerprints,
+    }),
+  ).toEqual([{ name: after, change: 'changed', reasons: ['expoAutolinkingIos'] }]);
+});
+
 describe('gitignored fingerprint inputs', () => {
   const write = (path: string, content = path) => {
     mkdirSync(join(root, path, '..'), { recursive: true });
@@ -754,13 +827,18 @@ describe('gitignored fingerprint inputs', () => {
     expect(
       await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: { EXPO_NO_DOTENV: '1' } }),
     ).toEqual([join(real, 'creds/google-services.json'), join(real, 'ios/GoogleService-Info.plist')]);
+    write('.env.development');
+    expect(
+      await gitignoredFingerprintInputs(real, sources, { platform: 'ios' }, { env: { NODE_ENV: 'production' } }),
+    ).toEqual(expect.arrayContaining([join(real, '.env.development'), join(real, '.env.local')]));
+    rmSync(join(root, '.env.development'));
     expect(await gitignoredFingerprintInputs(real, sources.slice(0, 2), { platform: 'ios' }, { env: {} })).toEqual([
       join(real, 'ios/GoogleService-Info.plist'),
     ]);
   });
 
   test('gitignored build leftovers in ios/ leave the real fingerprint unchanged; native inputs move it', async () => {
-    const hashOf = async () => (await fingerprintProject(root, { platform: 'ios' }))?.hash;
+    const hashOf = async () => (await fingerprintOffline(root, { platform: 'ios' }))?.hash;
     rmSync(join(root, 'ios/GoogleService-Info.plist'));
     getExecutor().runFile('git', ['-C', root, 'add', '-f', 'ios/main.jsbundle'], { timeoutMs: 10_000 });
     const withLeftovers = await hashOf();
@@ -819,9 +897,9 @@ describe('fingerprints that depend on a local git exclude', () => {
       const target = { platform: 'ios' };
       const ignoredPaths = ignoredFingerprintPaths(root, target);
       expect(ignoredPaths).toEqual(['ios/main.jsbundle']);
-      const client = (await fingerprintProject(root, target))?.hash;
-      expect((await fingerprintProject(worker, target))?.hash).not.toBe(client);
-      expect((await fingerprintProject(worker, { ...target, ignoredPaths }))?.hash).toBe(client);
+      const client = (await fingerprintOffline(root, target))?.hash;
+      expect((await fingerprintOffline(worker, target))?.hash).not.toBe(client);
+      expect((await fingerprintOffline(worker, { ...target, ignoredPaths }))?.hash).toBe(client);
     },
     30_000,
   );
@@ -833,9 +911,9 @@ describe('fingerprints that depend on a local git exclude', () => {
       const target = { platform: 'ios', iosProjectPath: '.' };
       const ignoredPaths = ignoredFingerprintPaths(root, target);
       expect(ignoredPaths).toEqual(['.env.local']);
-      const client = (await fingerprintProject(root, target))?.hash;
-      expect((await fingerprintProject(worker, target))?.hash).not.toBe(client);
-      expect((await fingerprintProject(worker, { ...target, ignoredPaths }))?.hash).toBe(client);
+      const client = (await fingerprintOffline(root, target))?.hash;
+      expect((await fingerprintOffline(worker, target))?.hash).not.toBe(client);
+      expect((await fingerprintOffline(worker, { ...target, ignoredPaths }))?.hash).toBe(client);
     },
     30_000,
   );
@@ -859,9 +937,9 @@ describe('fingerprints that depend on a local git exclude', () => {
     const trackedPaths = trackedFingerprintPaths(root, target);
     expect(trackedPaths).toEqual(['GoogleService-Info.plist', 'config']);
     expect(ignoredFingerprintPaths(root, target)).toEqual(['Other.plist']);
-    const client = (await fingerprintProject(root, target))?.hash;
-    expect((await fingerprintProject(worker, target))?.hash).not.toBe(client);
-    expect((await fingerprintProject(worker, { ...target, trackedPaths }))?.hash).toBe(client);
+    const client = (await fingerprintOffline(root, target))?.hash;
+    expect((await fingerprintOffline(worker, target))?.hash).not.toBe(client);
+    expect((await fingerprintOffline(worker, { ...target, trackedPaths }))?.hash).toBe(client);
   }, 30_000);
 
   test('names no tracked entries for Android, the default iOS layout, or when no pattern matches a tracked file', () => {

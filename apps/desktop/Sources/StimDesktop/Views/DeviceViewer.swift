@@ -16,6 +16,7 @@ struct DeviceViewer: View {
   var revealInLogs: (_ slot: String, _ at: Double?) -> Void
   var close: () -> Void
   @State private var takenOver = false
+  @State private var agentGlowDismissed = false
   @State private var recordedInput = false
   @State private var openedAt = Date()
   @State private var escapeMonitor: Any?
@@ -181,10 +182,14 @@ struct DeviceViewer: View {
           }
           .frame(width: Self.actionsWidth)
           .background(Palette.sidebar)
+          .contentShape(Rectangle())
+          .simultaneousGesture(
+            TapGesture().onEnded { agentGlowDismissed = true }
+          )
         }
       }
     }
-    .tutorialHighlights(showFallback: false)
+    .tutorialHighlights(showFallback: false, agentGlowDismissed: agentGlowDismissed, includesViewerTargets: true)
   }
 
   private func canvas(_ device: DeviceRef, replay: ReplayController?, replaying: Bool) -> some View {

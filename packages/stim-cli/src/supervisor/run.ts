@@ -371,12 +371,17 @@ export async function runSupervisor({
   }
 
   const serverPid = server.serverPid;
-  if (serverPid) {
-    const serverProcessToken = captureProcessToken(serverPid);
+  const hmrUpdates = server.observesRequests === true;
+  if (serverPid || hmrUpdates) {
+    const serverProcessToken = serverPid ? captureProcessToken(serverPid) : null;
     withWorkspaceStateLock(root, () => {
       if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
         writeWorkspaceState(root, {
-          supervisor: { ...record, serverPid, ...(serverProcessToken ? { serverProcessToken } : {}) },
+          supervisor: {
+            ...record,
+            ...(serverPid ? { serverPid, ...(serverProcessToken ? { serverProcessToken } : {}) } : {}),
+            ...(hmrUpdates ? { hmrUpdates } : {}),
+          },
         });
       }
     });

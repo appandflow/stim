@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceStateDir } from '../index.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { machineCapacity, saturation, type MachineCapacity } from '../state/build-capacity.ts';
+import { loadState, machineCapacity, saturation, type MachineCapacity } from '../state/build-capacity.ts';
 
 const IDLE: MachineCapacity = { cpus: 10, loadPerCore: 0.4, builds: 1, maxBuilds: 2, maxLoadPerCore: 2 };
 
@@ -15,6 +15,19 @@ describe('saturation', () => {
     ['no build limit and many builds', { ...IDLE, maxBuilds: 0, builds: 9 }, null],
   ])('%s', (_, capacity, reason) => {
     expect(saturation(capacity)).toBe(reason);
+  });
+});
+
+describe('loadState', () => {
+  it.each([
+    ['under the busy threshold', 1.9, null, 'free'],
+    ['at the busy threshold', 2, null, 'busy'],
+    ['far over the busy threshold with no limit', 60, null, 'busy'],
+    ['under a limit', 19.9, 20, 'busy'],
+    ['at a limit', 20, 20, 'holding'],
+    ['with a limit of 0, which is off', 60, 0, 'busy'],
+  ] as const)('%s', (_, load, limit, state) => {
+    expect(loadState(load, 2, limit)).toBe(state);
   });
 });
 

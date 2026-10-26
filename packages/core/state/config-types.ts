@@ -16,6 +16,7 @@ interface IosDeviceRecord {
   owned?: boolean;
   serial?: string;
   simslimManaged?: boolean;
+  simslimApplied?: { profile: string; springBoardPid: number };
   schemeApprovals?: string[];
   [key: string]: unknown;
 }
@@ -96,6 +97,7 @@ export interface StimConfig {
     buildsPaused?: unknown;
     devicesPaused?: unknown;
     acceptClientBuilds?: unknown;
+    lanAddresses?: unknown;
     maxLoadPerCore?: unknown;
     workerRoot?: unknown;
     gradleDaemonIdleMinutes?: unknown;
@@ -104,7 +106,6 @@ export interface StimConfig {
     machines?: unknown;
     easMaxDurationMinutes?: unknown;
     build?: unknown;
-    buildMode?: unknown;
     buildPoolDisabled?: unknown;
     devicePoolDisabled?: unknown;
   };

@@ -15,6 +15,7 @@ import type { CompilationCacheActivity, DevServerStart, IosFacts, CacheHitLevel 
 import type { WaitedForBuild, RemoteUploadLike, DeviceLike } from './types.ts';
 import type { StimOutput } from '@stim-cli/core';
 import { recordFinishedBuild } from '../../engine/build-progress.ts';
+import type { BuildLedgerExtras } from '../../engine/build-ledger.ts';
 import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
 import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
@@ -40,7 +41,9 @@ export function lastBuildRecord({
   builtOn,
   offloadedTo = null,
   offloadFallback = null,
+  ledger,
 }: {
+  ledger?: BuildLedgerExtras;
   devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
   buildMachine?: string;
   builtOn?: string;
@@ -82,6 +85,7 @@ export function lastBuildRecord({
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
   const recorded = status === 'failed' ? buildDiagnostics(diagnostics) : [];
   if (recorded.length) record.diagnostics = recorded;
+  if (ledger) record.ledger = ledger;
   return record;
 }
 
@@ -175,6 +179,16 @@ export function iosFacts({
     ...(lease === undefined ? {} : { lease }),
     ...(devServer ? { devServer } : {}),
   };
+}
+
+export function iosLedgerDevice(
+  device:
+    | { deviceName?: string | null; deviceUdid?: string | null; name?: string | null; runtime?: string | null }
+    | null
+    | undefined,
+): BuildLedgerExtras['device'] {
+  const name = device?.deviceName ?? device?.name;
+  return name && name !== device?.deviceUdid ? { name, runtime: device?.runtime ?? null } : null;
 }
 
 export function writeLastBuild(
@@ -328,6 +342,10 @@ export function reportIosResult({
       builtOn,
       offloadedTo,
       offloadFallback,
+      ledger: {
+        scheme: buildScheme,
+        device: iosLedgerDevice(device),
+      },
     }),
   );
   closeWriter();

@@ -162,6 +162,18 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
 
   public var trackedPaths: [String] { [tourPath, secondPath].compactMap { $0 } }
 
+  public func latestArchive(in archives: [ArchivedWorkspace]) -> ArchivedWorkspace? {
+    ArchivedWorkspace.newestFirst(
+      archives.filter {
+        trackedPaths.contains($0.projectRoot) && parseTimestamp($0.removedAt).map { $0 > startedAt } == true
+      }
+    ).first
+  }
+
+  public func hasCompletedRequiredSteps(in steps: [TutorialStep]) -> Bool {
+    steps.filter { !$0.optional }.allSatisfy { done.contains($0.id) }
+  }
+
   public func archivedProjectRoots(in archives: [ArchivedWorkspace]) -> [String] {
     archives.filter {
       trackedPaths.contains($0.projectRoot) && parseTimestamp($0.removedAt).map { $0 > startedAt } == true
@@ -280,6 +292,11 @@ public struct TutorialStepProgress: Equatable, Sendable {
   public var link: PullRequestFacts?
   /// Why a build of a step that advanced at build start failed afterwards.
   public var warning: String?
+  public var activity: TutorialStepActivity = .waiting
+}
+
+public enum TutorialStepActivity: Equatable, Sendable {
+  case waiting, needsAction, blocked
 }
 
 public struct TutorialSnapshot: Equatable, Sendable {
@@ -430,7 +447,8 @@ public struct TutorialProgress: Sendable {
       if advancedAtStart, !checkpoint.detail.isEmpty { details[step.id] = shown }
       return TutorialStepProgress(
         id: step.id, state: state, detail: shown.text, action: shown.action,
-        ticks: checkpoint.ticks, link: checkpoint.link, warning: advancedAtStart ? checkpoint.failure : nil)
+        ticks: checkpoint.ticks, link: checkpoint.link, warning: advancedAtStart ? checkpoint.failure : nil,
+        activity: checkpoint.activity)
     }
     return TutorialSnapshot(
       steps: steps, currentStep: current, record: record!,
@@ -529,6 +547,7 @@ public struct TutorialProgress: Sendable {
     var action: TutorialAction?
     var ticks: [TutorialTick] = []
     var link: PullRequestFacts?
+    var activity: TutorialStepActivity = .waiting
   }
 
   private mutating func checkpoint(
@@ -598,7 +617,8 @@ public struct TutorialProgress: Sendable {
         }
       return Checkpoint(
         detail: inClone
-          ? "Ask your agent to make the change in a new worktree, not in the clone" : "Waiting for the iOS build")
+          ? "Ask your agent to make the change in a new worktree, not in the clone" : "Waiting for the iOS build",
+        activity: inClone ? .blocked : .waiting)
     case "parallel":
       guard let second else { return Checkpoint(detail: "Waiting for the second workspace") }
       if let date = started(second, since: record?.stepTimes?["build"] ?? record?.startedAt ?? .distantPast) {
@@ -619,31 +639,38 @@ public struct TutorialProgress: Sendable {
       guard [environment, second].contains(where: { $0?.ios?.app?.state == "running" }) else {
         let building = [environment, second].contains { $0?.build?.isRunning == true }
         return Checkpoint(
-          detail: building ? "Waiting for the build to launch the app" : "Run the app first, then open its live view")
+          detail: building ? "Waiting for the build to launch the app" : "Run the app first, then open its live view",
+          activity: building ? .waiting : .needsAction)
       }
       return Checkpoint(
         completed: viewerOpened && viewerInput ? now : nil,
-        ticks: [tick("opened", viewerOpened), tick("input", viewerInput)])
+        detail: viewerOpened ? "Tap a control in the app's live view." : "Open the app's live view to continue.",
+        ticks: [tick("opened", viewerOpened), tick("input", viewerInput)], activity: .needsAction)
     case "logs":
       return Checkpoint(
-        completed: logsOpened ? now : nil, detail: "Find the app output in Logs", ticks: [tick("logs", logsOpened)])
+        completed: logsOpened ? now : nil, detail: "Open Logs to see the app's output.",
+        ticks: [tick("logs", logsOpened)], activity: .needsAction)
     case "agent":
       let recorded = logs.contains {
         udid != nil && $0.src == "agent" && $0.event == "agent_action" && $0.deviceId == udid
       }
       let off = input.replayOff || environment?.recording?.enabled == false
       return Checkpoint(
+        completed: actionsViewed && replayPlayed ? now : nil,
         detail: !recorded
-          ? "No agent actions were recorded on the first change's simulator."
-          : off ? "Replay is off: Settings > Advanced" : "",
-        ticks: [tick("viewed", actionsViewed), tick("replayed", replayPlayed)])
+          ? "No agent actions recorded yet. Ask your agent to interact with the app, or skip this step."
+          : off
+            ? "Replay is off. Enable it in Settings > Advanced, or skip this step."
+            : actionsViewed ? "Press Play in the live view to replay your agent's actions." : "Open Agent Actions to continue.",
+        ticks: [tick("viewed", actionsViewed), tick("replayed", replayPlayed)],
+        activity: !recorded || off ? .blocked : .needsAction)
     case "phone":
       let paired = (input.pairedPhoneCount ?? 0) > 0
       return Checkpoint(
         completed: paired ? now : nil,
         detail: paired
           ? "Open Stim on your phone: the tour workspace is there"
-          : "Pair your phone")
+          : "Pair your phone to continue, or skip this step.", activity: .needsAction)
     case "share":
       let pull = environment?.pullRequest
       return Checkpoint(
@@ -660,7 +687,8 @@ public struct TutorialProgress: Sendable {
           ? "Archived is off"
           : gone ? "Tutorial workspace gone: Restart" : "Stop the tutorial, then remove its worktrees",
         action: gone ? .restart : nil,
-        ticks: [tick("stopped", record?.stopped == true), tick("archived", absent && archived)])
+        ticks: [tick("stopped", record?.stopped == true), tick("archived", absent && archived)],
+        activity: gone ? .blocked : .waiting)
     case "delete":
       let worktreesGone = environment == nil && second == nil
       let registered = input.siblings.contains { $0.path == record?.clonePath }

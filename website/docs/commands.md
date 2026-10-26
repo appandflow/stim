@@ -327,16 +327,16 @@ stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-ty
 Builds or restores the iOS app. Stim then boots an owned simulator, installs the
 app, opens it, and checks launch logs. Native builds run locally by default;
 `--eas-profile` downloads an existing EAS development build. A simulator Debug
-build can compile on a paired remote machine instead: see `remote.buildMode` in
+build can compile on a paired remote machine instead: see `remote.build` in
 [machine settings](./settings.md#machine-settings).
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
-- `--remote-build <auto|local|name>` overrides `STIM_REMOTE_BUILD` and
-  `remote.build`. A name requires that configured, paired worker and fails
+- `--remote-build <local|auto|remote|remote-only|name>` overrides `STIM_REMOTE_BUILD` and
+  `remote.build`. `remote` tries the remote machines first, in `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
   with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
   a build record or failed-run stats. A listed paired name with a cache hit
-  contacts no worker. Prebuild and pod install still run on this machine before
-  a named offload. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
+  contacts no worker. Prebuild and pod install run on this machine before
+  a named offload, after a check of the worker's toolchain. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
   Run `stim doctor --fix` to ask for build access if not paired; a person on
   the worker approves it by running the `stim-server setup` command doctor
   printed, with its ticket and expiry.
@@ -385,7 +385,8 @@ build can compile on a paired remote machine instead: see `remote.buildMode` in
   immediately. It cannot be combined with `--wait`.
 - `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no local fallback.
   `auto` places on an approved Mac when this machine is full or busy, falling back
-  to the local device queue when no host admits. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
+  to the local device queue when no host admits. `remote` tries the approved Macs first, in
+  `remote.machines` order, and runs here only when none admits; `remote-only` never runs here and waits for a host with room. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
   With `hosting.agentDriver=agent-device` on the host and agent-device 0.21.20 or later on both machines,
   `ios.host.agent` returns a per-slot 0600 remote config. Use `agent-device <command> --remote-config <file>`
   from status, starting with `open <bundleId>`. It reaches only that hosted simulator; inventory, installs,
@@ -398,7 +399,7 @@ build can compile on a paired remote machine instead: see `remote.buildMode` in
   be combined with `--scheme`, `--configuration`, or `--no-build-cache`.
 - `--no-metro-check` skips the Debug dev-server check and does not start the
   dev server. Hosted Debug iOS refuses this flag with `STIM_BAD_ARG`; it requires
-  the local supervisor's private gateway support.
+  the local supervisor, which carries Metro to the host.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--plan` predicts the next build instead of running it. See
   [Predict the next build](#predict-the-next-build).
@@ -536,7 +537,7 @@ inspect stim logs --errors, then stop only this workspace with stim stop.
 ```text
 stim android [--slot <name>] [--variant <name>] [--system-image <id>] [--device-profile <id>]
              [--device [serial]]
-             [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
+             [--wait <seconds> | --no-wait] [--remote <proxy|eas|local|auto|remote|remote-only|machine>]
              [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--plan] [--json]
 ```
 
@@ -607,11 +608,11 @@ scoped device cleanup and physical-device lease behavior.
 
 Builds or restores the Android app. Stim then boots an owned emulator, installs
 the app, opens it, and checks launch logs. A React Native emulator debug build
-can compile on a paired remote machine instead: see `remote.buildMode` in
+can compile on a paired remote machine instead: see `remote.build` in
 [machine settings](./settings.md#machine-settings).
 
-- `--remote-build <auto|local|name>` overrides `STIM_REMOTE_BUILD` and
-  `remote.build`. A name requires that configured, paired worker and fails
+- `--remote-build <local|auto|remote|remote-only|name>` overrides `STIM_REMOTE_BUILD` and
+  `remote.build`. `remote` tries the remote machines first, in `remote.machines` order, and builds here only when none takes the build; `remote-only` refuses instead. A name requires that configured, paired worker and fails
   with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install still run on this machine before
@@ -668,7 +669,7 @@ can compile on a paired remote machine instead: see `remote.buildMode` in
   the same app terminates that workspace's running app. Without `--device`, it
   refuses a full device cap or existing slot queue immediately. It cannot be
   combined with `--wait`.
-- `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no fallback. `--remote auto` places on an approved host when this machine is full or busy, or joins the local device queue when no host admits. `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
+- `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no fallback. `--remote auto` places on an approved host when this machine is full or busy, or joins the local device queue when no host admits. `--remote remote` tries the approved hosts first, in `remote.machines` order, and runs here only when none admits; `--remote remote-only` never runs here and waits for a host with room (`--no-wait`, `--wait 0` or the end of `--wait` refuse with `STIM_AT_CAPACITY`). `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
@@ -765,7 +766,7 @@ miss, which native change causes it.
 ## `macos`
 
 ```text
-stim macos [--remote-build <auto|local|name>] [--remote <machine>] [--json]
+stim macos [--remote-build <local|auto|remote|remote-only|name>] [--remote <placement>] [--json]
 ```
 
 Builds the explicitly configured Swift Package executable in Debug and launches
@@ -775,17 +776,21 @@ with no Metro or custom build scripts. Workspace logs include compiler output
 and runtime stdout/stderr. `status` reports the app and build, and `stop` signals
 only their verified owners. Stim Desktop can preview one owned window and open
 the verified app for native input on the same Mac using existing permissions.
-`--remote-build <auto|local|name>` selects build placement as described in
+`--remote-build <local|auto|remote|remote-only|name>` selects build placement as described in
 [machine settings](./settings.md#machine-settings). A name refuses with
 `STIM_OFFLOAD_REFUSED` without fallback; `local` compiles here.
 
-`--remote <machine>` takes a remote machine name from
-[`remote.machines`](./settings.md#machine-settings) and runs the built app on
-that approved Mac over the tailnet. It never falls back to a local launch, and
-`stop` or `worktree remove` stop it there. macOS refuses `eas` and `proxy` because
-it has neither backend, and refuses `auto` until automatic placement ships.
-These reserved names are case-insensitive and trimmed; they refuse with
-`STIM_BAD_ARG` before state access or a connection. See the
+`--remote <placement>` and the `macos.remote` setting say where the built app
+runs; the flag wins. A remote machine name from
+[`remote.machines`](./settings.md#machine-settings) runs it on that approved Mac
+over the tailnet and never falls back to a local launch. `auto` launches here
+unless this machine is busy, `remote` on the first approved Mac in order that has
+room and runs here only when none does, `remote-only` never launches here
+(macOS apps take focus) and waits for a Mac with room, and `local` launches
+here. `stop` or `worktree remove` stop a hosted app there. macOS refuses `eas` and
+`proxy` because it has neither backend. These reserved names are case-insensitive
+and trimmed; `eas` and `proxy` refuse with `STIM_BAD_ARG` before state access or a
+connection. See the
 [native macOS prototype](./macos.md) for metadata, arguments, hosting and current
 limitations.
 
@@ -904,7 +909,7 @@ device and inspect `stim logs --errors` before claiming recovery.
 ## `logs`
 
 ```text
-stim logs [--slot <name>] [--source <metro|client|device|build|agent|maintenance|gc|all...>]
+stim logs [--slot <name>] [--source <metro|client|device|build|agent|maintenance|gc|builds|all...>]
           [--level <debug|info|warn|error|fatal>] [--since <duration>]
           [--grep <expression>] [--tail <count>] [--errors]
           [--follow] [--json]
@@ -934,6 +939,19 @@ result.
   clear, with the trigger, size and reason. It works from any directory, stands
   alone (`--source all` leaves it out), and takes `--json`, `--since`, `--tail`
   and `--follow`; `--errors` shows only failed items.
+- `--source builds` shows the machine-wide build ledger: one record per native
+  `ios`, `android` or `macos` build run, newest 500, whether it compiled here, was
+  offloaded to a build machine or came from a cache, and whether it succeeded,
+  failed or was cancelled. A record has the project, workspace and branch, the
+  scheme or variant, where it ran (and why an offload fell back to this Mac), the cache
+  result and key, the time in each phase, the failure code, message and remedy,
+  the simulator or emulator it targeted, this Mac's load per core when the run
+  started, when the run's owned simulator or emulator boot started and the load
+  per core then (`loadPerCore` and `boot`, absent from older records), and the
+  Stim version. It outlives the
+  workspace, works from any directory, stands alone (`--source all` leaves it
+  out), and takes the same options as `--source gc`; `--errors` shows only failed
+  builds. `stim gc` never removes it.
 - `--source agent` shows what agent-device did on this workspace's owned
   simulators and emulators: taps, typing, app opens, screenshots, and failed
   commands. A plain `logs` includes it; `--errors` includes it only when
@@ -1287,7 +1305,7 @@ its git worktree root. The watcher finds running Claude Code sessions in
 `~/.claude/sessions` and Codex threads updated in the last 30 minutes in
 `~/.codex`, at most every 15 seconds, and one-shot `stim status` reads what it
 found for 2 minutes. These are the tools' own internal files, so Stim reads them
-best-effort. `start`, `ios`, `android`, `web`, `reload` and `worktree warm` also
+best-effort. `start`, `ios`, `android`, `web`, `reload`, `logs` and `worktree warm` also
 record the `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` of the shell that ran
 them, which names the session exactly. `title` is the short name the tool keeps
 for the session; Stim reads no prompts or conversation. `openUrl` opens the
@@ -1325,11 +1343,29 @@ nothing runs and `machine` is `null`, it is the fixed estimate the memory
 budget uses, with `memorySource: "estimate"`. `stim guide facts status`
 lists every field.
 
+Status always shows this Mac's load, as a `load 17.6/core (busy at 2)` line and
+in `--json` as `capacity.load`: `cpus`, `loadPerCore` (the 5-minute load
+average divided by `cpus`), `busyAt` (`server.maxLoadPerCore`, the load at
+which automatic placement prefers another machine), `limit` and `state`.
+`state` is `free` under `busyAt`, `busy` at or over it, or `holding` at or
+over `limit`. No setting sets `limit` yet, so it is `null` and `state` is
+never `holding`.
+
+While `concurrency.maxBuilds` or `concurrency.maxDevices` is set, status shows
+how many of those slots are in use and who holds them, as a `builds 1/2` or
+`devices 6/6` line, and in `--json` as `capacity.builds` and
+`capacity.devices`: `max`, `inUse` and `holders`. A build slot's holder names
+the workspace building in it, or the client whose offloaded build this Mac
+runs; a device's holder names the workspace label and device slot that record
+it. `capacity.devices.inUse` is `null`, with `unknown` saying why, when the
+devices could not be listed. With neither cap set, neither field appears.
+
 `--watch` keeps running and prints the status again each time it changes.
 With `--json` it prints one complete payload per line: one immediately, then
 one per change, never two identical payloads in a row. In a watch line, a CPU or memory figure keeps
 its value from the previous line until it moves by 5 percentage points or 16 MB;
 resident memory and process counts follow their owner's row, and `capacity.committedMb` is held on its own, so it can differ from the sum of the environments' `memoryMb`.
+`capacity.load` keeps its value until its `loadPerCore` moves by 1 per core or its `state` changes.
 A change in only a bookkeeping timestamp (each `pullRequest.checkedAt`, `maintenance.lastChecks`, `maintenance.lastPass.startedAt` and `durationMs`, `maintenance.running.startedAt`) prints no line; a line that prints carries the current values.
 It reacts to changes in
 `$STIM_HOME` state and the EAS session ledger, git HEAD, index and ref changes
@@ -1535,7 +1571,7 @@ Each booted simulator and detected emulator also shows who is using it:
 ```
 
 In `--json`, those devices carry
-`activity: { state, driver?, lastActivityAt?, basis }`. `state` is `driven`
+`activity: { state, driver?, lastActivityAt?, basis, unknown? }`, where `unknown` lists the checks a `driven` device could not read. `state` is `driven`
 when a tool holds the device now, `active` when it had activity in the last 10
 minutes, `idle` otherwise, and `unknown` when a claim or driver check could not
 be read. Stim counts as drivers a live agent-device session (its recorded
@@ -1698,7 +1734,7 @@ checkout refuses.
 
 `--refresh` updates the source checkout before the copy: it checks the upstream, fetches changes when needed,
 fast-forwards whatever branch is checked out there, and installs dependencies or
-Pods when the new commits moved a lockfile, when nothing is installed, or when
+Pods when the new commits moved a lockfile (or `patches/` in an npm project), when nothing is installed, or when
 `ios/Pods` does not match `ios/Podfile.lock`. See
 [worktree isolation](./worktrees.md#refresh-the-source-checkout-first).
 
@@ -1769,6 +1805,12 @@ directory without a readable `workspace.json` is reported and never deleted.
 Nothing deletes a workspace that is in use: a running dev server, a `stim ios`
 or `stim android` run, a live build, or a held tunnel or remote lock.
 
+Unless `maintenance.mode` is `off`, `--delete` also stops each workspace, other than the one it runs in, that has had no real activity for
+[`maintenance.idleStopHours`](./dev-server-and-logs.md#idle-workspace-stop)
+(6 by default), as `stim stop` does: its dev server stops and its owned
+devices shut down, never deleted. The dry run lists those stops in its
+maintenance plan.
+
 `stim status` caches each folder's size and each worktree's pull request under
 `$STIM_HOME/disk-usage` and `$STIM_HOME/pull-requests`. `worktree remove` drops
 the entries of the worktree it removes, but not the size entries of its owned
@@ -1801,14 +1843,21 @@ only when it is a `remove-*` directory with a valid `trash.json` written by
 `worktree remove`, its ownership claim is free and the worktree it came from is
 gone. It keeps one a removal or its background `rm` still holds, one whose
 worktree still exists (a removal killed before git ran; run `stim worktree
-remove` on it to finish), and any other directory under `trash`. See [remove a worktree](./worktrees.md#remove-a-worktree).
+remove` on it to finish), and any other directory under `trash`. A trash entry
+that `worktree warm` wrote (its `trash.json` has `"kind": "warm"`) holds paths
+removed from a copy of a live worktree, so `--delete` deletes it once its claim
+is free, whether or not the worktree exists. See [remove a worktree](./worktrees.md#remove-a-worktree).
 
-`--delete` also clears the build outputs (`derived-data/`, `gradle-build/`,
-`android-cas/`, `cache-provider/`, `macos/build`, staged `macos/<Product>.app`
-and interrupted-build `macos/staging-*` directories) of every workspace that
-is not in use. A running, building, unverified or hosted macOS app keeps its
-workspace untouched. The workspace keeps its state, logs, devices, ports,
-`macos/runtime.lock` and its claim set; the project's own `.build` stays. See
+`--delete` also lightens every workspace that is not building and ran no
+`stim ios`, `stim android` or `stim macos` in the last 15 minutes, even with
+its dev server running or its simulator booted. It clears the build outputs
+(`derived-data/`, `gradle-build/`, `android-cas/`, `cache-provider/`,
+`macos/build`, staged `macos/<Product>.app` and interrupted-build
+`macos/staging-*` directories) and the project's git-ignored
+`android/app/build`, `android/build`, `android/.gradle` and `.build`, and
+prints the bytes freed per workspace. A running, building, unverified or hosted
+macOS app keeps its workspace untouched. The workspace keeps its state, logs,
+devices, ports, `macos/runtime.lock` and its claim set. See
 [workspace build outputs](./build-caches.md#workspace-build-outputs).
 
 `gc` reports the size of each workspace's logs. The Metro, client and device
@@ -1921,7 +1970,11 @@ there.
 - `--older-than <days>` also selects devices and workspace build outputs of
   workspaces no Stim command has used for that many days, and unused cache
   entries. It limits the parked simulators and emulators `--delete` clears to
-  those parked at least that many days.
+  those parked at least that many days. A cache directory it cannot list
+  (EACCES, EPERM or ELOOP, for example) counts as a failed trim, not an empty
+  one: gc prints how many entries could not be read or removed, records the
+  cache as failed and exits 1. A directory that is missing or is not a
+  directory is not a failure.
 - `--cache <name|all|workspaces|recordings|parked>` with `--delete` empties the caches whose name
   or directory carries `<name>` whole, or every cache and the workspace build
   outputs with `all`. `workspaces` clears only the workspace build outputs,

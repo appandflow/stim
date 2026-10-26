@@ -13,6 +13,7 @@ import {
 import { getConcurrencyLimits, loadConfig } from './config.ts';
 import { isJsonObject } from './json-file.ts';
 import { settingDefinition } from './settings-registry.ts';
+import type { LoadState } from './status.ts';
 
 const NATIVE_PHASES = new Set(['prebuild', 'pods', 'compile']);
 const SLOT_PREFIX = 'slot-';
@@ -93,7 +94,7 @@ export interface MachineCapacity {
   maxLoadPerCore: number;
 }
 
-function maxLoadPerCore(): number {
+export function maxLoadPerCore(): number {
   const value = loadConfig()?.server?.maxLoadPerCore;
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
   return settingDefinition('server.maxLoadPerCore')!.default as number;
@@ -129,11 +130,20 @@ function liveNativeBuilds(): number {
   return count;
 }
 
-export function machineCapacity(): MachineCapacity {
+/** The 5-minute load average per CPU, rounded to one decimal, and the CPU count it divides by. */
+export function loadPerCore(): { cpus: number; loadPerCore: number } {
   const cpus = Math.max(1, availableParallelism());
+  return { cpus, loadPerCore: Math.round((loadavg()[1]! / cpus) * 10) / 10 };
+}
+
+export function loadState(load: number, busyAt: number, limit: number | null): LoadState {
+  if (limit !== null && limit > 0 && load >= limit) return 'holding';
+  return load >= busyAt ? 'busy' : 'free';
+}
+
+export function machineCapacity(): MachineCapacity {
   return {
-    cpus,
-    loadPerCore: Math.round((loadavg()[1]! / cpus) * 10) / 10,
+    ...loadPerCore(),
     builds: liveNativeBuilds() + liveOffloadedSlots(),
     maxBuilds: getConcurrencyLimits().maxBuilds,
     maxLoadPerCore: maxLoadPerCore(),

@@ -278,7 +278,57 @@
         "liveCount": 1,
         "committedMb": 3700,
         "totalMemoryMb": 49152,
-        "overCapacity": false
+        "overCapacity": false,
+        "load": {
+          "cpus": 12,
+          "loadPerCore": 3,
+          "busyAt": 2,
+          "limit": null,
+          "state": "busy"
+        },
+        "devices": {
+          "max": 3,
+          "inUse": 3,
+          "holders": [
+            {
+              "platform": "android",
+              "label": "wide-insets",
+              "workspace": "/Users/dev/app/.worktrees/wide-insets/apps/mobile",
+              "slot": "default"
+            },
+            {
+              "platform": "ios",
+              "label": "wide-insets",
+              "workspace": "/Users/dev/app/.worktrees/wide-insets/apps/mobile",
+              "slot": "ipad",
+              "booting": true
+            },
+            {
+              "platform": "ios",
+              "label": "stim-old (iPhone 17 27.0)",
+              "workspace": null,
+              "slot": null
+            }
+          ]
+        },
+        "builds": {
+          "max": 2,
+          "inUse": 2,
+          "holders": [
+            {
+              "slot": 0,
+              "workspace": "/Users/dev/app/.worktrees/wide-insets/apps/mobile",
+              "client": null,
+              "since": "2026-09-25T02:00:00.000Z"
+            },
+            {
+              "slot": 1,
+              "workspace": null,
+              "client": "dev-macbook",
+              "since": "2026-09-25T02:01:00.000Z"
+            }
+          ]
+        }
       },
       "machine": null,
       "deviceLeases": [],

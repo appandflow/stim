@@ -89,6 +89,7 @@ import {
   type EasSessionSweep,
 } from './gc/eas-sessions.ts';
 import { formatGcReport, gcReportSections, type GcJsonSections, type GcReport } from './gc/report.ts';
+import { collectWorktreeDependencies, lightenWorktreeDependencies } from './gc/dependencies.ts';
 import {
   clearWorkspaceOutputs,
   collectOrphanedWorkspaces,
@@ -124,6 +125,7 @@ import { collectInventory, type GcInventory } from './gc/inventory.ts';
 import { collectParkedHostedDevices, deleteParkedHostedDevices } from './gc/hosted-devices.ts';
 import { collectFinishedDevices, deleteFinishedDevices, ownedDeviceDisk } from './gc/finished-devices.ts';
 import { ownedDeviceUsage } from '../maintenance/devices.ts';
+import { stopIdleWorkspaces } from './gc/idle-workspaces.ts';
 import {
   collectMemoryReport,
   GRADLE_DAEMONS_KIND,
@@ -155,6 +157,7 @@ interface CollectGcReportOptions {
   cache?: string | null;
   worktrees?: boolean;
   refresh?: boolean;
+  measureBuildState?: boolean;
   now?: number;
   lastTouched?: (path: string) => number;
 }
@@ -166,6 +169,8 @@ interface RunGcOptions {
   delete?: boolean;
   worktrees?: boolean;
   json?: boolean;
+  /** False reports worktree build-state sizes only from the disk-usage cache: a stale one is unmeasured (null), and no `du` runs for it. */
+  measureBuildState?: boolean;
 }
 
 interface GcRefusal {
@@ -204,11 +209,17 @@ export interface GcExecutionResult {
   exitCode: 0 | 1;
 }
 
-export type GcReadOptions = Pick<RunGcOptions, 'olderThan' | 'cache' | 'worktrees'>;
+export type GcReadOptions = Pick<RunGcOptions, 'olderThan' | 'cache' | 'worktrees' | 'measureBuildState'>;
 
 export function readGcReport(options: GcReadOptions = {}, deps: GcDependencies = {}): Promise<GcPayload> {
   return sweep(
-    { olderThan: options.olderThan, cache: options.cache, worktrees: options.worktrees, json: true },
+    {
+      olderThan: options.olderThan,
+      cache: options.cache,
+      worktrees: options.worktrees,
+      measureBuildState: options.measureBuildState,
+      json: true,
+    },
     deps,
     { output: GC_OUTPUT, takeResults: () => [] },
     true,
@@ -283,6 +294,7 @@ export async function collectGcReport(
     cache = null,
     worktrees = false,
     refresh = true,
+    measureBuildState = true,
     now = Date.now(),
     lastTouched = workspaceLastUsed,
   }: CollectGcReportOptions = {},
@@ -333,6 +345,7 @@ export async function collectGcReport(
             exclude: isWorkspacesScope(scope) ? await removedWholeWorkspaceDirs(operation) : [],
             signal: operation?.signal,
             operation,
+            lighten: true,
           })
         : null,
       workspaceLogs: [],
@@ -575,6 +588,7 @@ export async function collectGcReport(
   const worktreeSweep = await measureWorktreeSweep(
     await collectWorktreeSweep({ idle: worktrees, olderThan, now, refresh, operation }),
     operation,
+    measureBuildState,
   );
 
   return {
@@ -616,7 +630,9 @@ export async function collectGcReport(
       exclude: goneWorkspaceDirs,
       signal: operation?.signal,
       operation,
+      lighten: true,
     }),
+    worktreeDependencies: await collectWorktreeDependencies({ now, operation }),
     workspaceLogs: await collectWorkspaceLogs({ exclude: goneWorkspaceDirs, operation }),
     recordings: await collectRecordings({ whole: false, olderThan, now }, goneWorkspaceDirs, operation?.signal),
     worktreeSweep,
@@ -1003,6 +1019,7 @@ function reportActionable(report: GcReport): boolean {
     deadProjects.length + invalidProjects.length > 0 ||
       report.orphanedWorkspaces.length > 0 ||
       Boolean(report.workspaceOutputs?.workspaces.some((entry) => entry.willClear)) ||
+      Boolean(report.worktreeDependencies?.candidates.length) ||
       report.workspaceLogs.some((entry) => entry.willTrim) ||
       report.recordings.some((entry) => entry.willDelete && !entry.withWorkspace) ||
       Boolean(report.tempLeftovers?.entries.some((entry) => entry.willDelete)) ||
@@ -1042,6 +1059,7 @@ async function runGcCore(
       cache,
       worktrees: Boolean(opts.worktrees),
       refresh,
+      measureBuildState: opts.measureBuildState,
     },
     deps,
   );
@@ -1150,12 +1168,21 @@ async function runGcCore(
 
   let deleteFailures = idleFailures;
   throwIfCancelled(signal, 'GC');
+  if (cache === null) deleteFailures += await stopIdleWorkspaces(output, deps.operation);
+  throwIfCancelled(signal, 'GC');
   deleteFailures += await deleteArchives(report.archives, output, signal);
   throwIfCancelled(signal, 'GC');
   deleteFailures += report.workspaceOutputs
-    ? (await clearWorkspaceOutputs(report.workspaceOutputs, { olderThan, signal, operation: deps.operation }, output))
-        .failures
+    ? (
+        await clearWorkspaceOutputs(
+          report.workspaceOutputs,
+          { olderThan, signal, operation: deps.operation, lighten: true },
+          output,
+        )
+      ).failures
     : 0;
+  throwIfCancelled(signal, 'GC');
+  deleteFailures += await lightenWorktreeDependencies(report.worktreeDependencies, output, deps.operation);
   throwIfCancelled(signal, 'GC');
   deleteFailures += await trimWorkspaceLogs(report.workspaceLogs, output, deps.operation);
   throwIfCancelled(signal, 'GC');
@@ -1302,7 +1329,7 @@ async function runGcCore(
 
   throwIfCancelled(signal, 'GC');
   if (all) {
-    await emptyCaches(caches, output, signal, deps.operation);
+    deleteFailures += await emptyCaches(caches, output, signal, deps.operation);
   } else if (olderThan === null) {
     if (caches.length) {
       output.log(
@@ -1310,7 +1337,7 @@ async function runGcCore(
       );
     }
   } else {
-    await trimCaches(caches, olderThan, output, signal, deps.operation);
+    deleteFailures += (await trimCaches(caches, olderThan, output, signal, deps.operation)).failures;
   }
   return payload(deleteFailures);
 }
@@ -1327,7 +1354,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--delete',
-      'actually prune the reported entries, reap the reported devices, clear the build outputs of every workspace not in use, and trim its Metro, client and device logs to their newest 8 MiB',
+      'actually prune the reported entries, reap the reported devices, lighten every workspace that is not building and ran no ios, android or macos command in the last 15 minutes by clearing its build outputs, a running dev server or booted device included, trim its Metro, client and device logs to their newest 8 MiB, and, unless maintenance.mode is off, stop each workspace idle past maintenance.idleStopHours as stim stop does',
     )
     .option(
       '--older-than <days>',

@@ -4,6 +4,13 @@ import type { StimContext } from '@stim-cli/core';
 import { homedir, platform, totalmem } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 import chalk from 'chalk';
+import {
+  EMPTY_SWEEP_WINDOW_MS,
+  canSkipEmptySweep,
+  readEmptySweep,
+  sweepMarker,
+  writeEmptySweep,
+} from './budget-sweep.ts';
 import { phaseLine } from './command-output.ts';
 import { formatBytes, measuredDirectorySizeAsync, volumeRootFor } from './fs-util.ts';
 import { capacity, environmentState, formatSpace, type AndroidRuntimeFacts } from './status.ts';
@@ -20,9 +27,10 @@ import {
 } from './commands/gc/idle.ts';
 import { canonicalPath } from './commands/gc/paths.ts';
 import type { Finding } from './diagnostics/doctor.ts';
-import { clearWorkspaceOutputs, collectWorkspaceOutputs } from './commands/gc/workspaces.ts';
+import { clearWorkspaceOutputs, collectWorkspaceOutputs, keptByLock } from './commands/gc/workspaces.ts';
 import { openGcLog } from './commands/gc/log.ts';
 import { createGcResults, type GcOutput } from './commands/gc/results.ts';
+import { lowestFree } from './maintenance/pressure.ts';
 import { workspaceActivity } from './devices/activity.ts';
 import { ownedAvdSerialResolverAsync } from './devices/android.ts';
 import { projectDeviceSlots } from './devices/device-slots.ts';
@@ -336,6 +344,7 @@ interface StepContext {
   note: (line: string) => void;
   record?: GcOutput['record'];
   now: number;
+  freeMb: number;
   diskRecovered: () => Promise<boolean>;
   signal?: AbortSignal;
   operation?: StimContext;
@@ -523,9 +532,12 @@ async function reclaimWorkspaceOutputs({
     .toSorted((a, b) => a.since - b.since)
     .map(({ entry }) => entry);
   if (dryRun) return { targets: clearable.map((entry) => entry.projectRoot!), failures: 0 };
+  const locked = report.workspaces.filter(
+    (entry) => keptByLock(entry) && entry.projectRoot !== null && other(entry.projectRoot),
+  );
   const targets: string[] = [];
   let failures = 0;
-  for (const entry of clearable) {
+  for (const entry of [...locked, ...clearable]) {
     const result = await clearWorkspaceOutputs(
       { ...report, workspaces: [entry] },
       { olderThan: null, now, signal, operation },
@@ -548,10 +560,32 @@ export function trimmableCaches(env: NodeJS.ProcessEnv = process.env, cwd?: stri
   );
 }
 
-async function reclaimStaleCacheEntries({ dryRun, note, record, env, cwd, signal }: StepContext): Promise<StepResult> {
+async function reclaimStaleCacheEntries({
+  dryRun,
+  note,
+  record,
+  env,
+  cwd,
+  now,
+  freeMb,
+  signal,
+}: StepContext): Promise<StepResult> {
   const caches = trimmableCaches(env, cwd);
   if (dryRun) return { targets: caches.map(cacheLabel), failures: 0 };
+  const current = { at: now, freeMb, marker: sweepMarker(caches, STALE_CACHE_DAYS) };
+  if (canSkipEmptySweep(readEmptySweep(), current)) {
+    note(
+      chalk.dim(
+        phaseLine(
+          'budget',
+          `cache trim skipped: the last one, under ${EMPTY_SWEEP_WINDOW_MS / 60_000} minutes ago with the same caches and about the same free disk, found nothing older than ${STALE_CACHE_DAYS}d`,
+        ),
+      ),
+    );
+    return { targets: [], failures: 0 };
+  }
   const { trimmed, failures } = await trimCaches(caches, STALE_CACHE_DAYS, stepOutput(note, record), signal);
+  writeEmptySweep(trimmed.length === 0 && failures === 0 ? current : null);
   return { targets: trimmed.map(cacheLabel), failures };
 }
 
@@ -616,19 +650,19 @@ async function spaceUsers(
     ['Android emulators', join(home, '.android', 'avd')],
   ];
   const measured = new Set<string>();
-  const users: { label: string; bytes: number }[] = [];
+  const targets: [string, string][] = [];
   for (const [label, path] of candidates) {
     const canonical = canonicalPath(path);
     if (measured.has(canonical) || [...measured].some((dir) => canonical.startsWith(`${dir}${sep}`))) continue;
     measured.add(canonical);
-    if (!existsSync(path)) continue;
-    const bytes = await measuredDirectorySizeAsync(path, {
-      timeoutMs: USAGE_TIMEOUT_MS,
-      signal,
-      operation,
-    });
-    if (bytes) users.push({ label: `${label} ${path}`, bytes });
+    if (existsSync(path)) targets.push([label, path]);
   }
+  const sizes = await Promise.all(
+    targets.map(([, path]) => measuredDirectorySizeAsync(path, { timeoutMs: USAGE_TIMEOUT_MS, signal, operation })),
+  );
+  const users = targets.flatMap(([label, path], index) =>
+    sizes[index] ? [{ label: `${label} ${path}`, bytes: sizes[index] }] : [],
+  );
   return users.toSorted((a, b) => b.bytes - a.bytes).map(({ label, bytes }) => `${label}: ${formatBytes(bytes)}`);
 }
 
@@ -742,6 +776,7 @@ export async function enforceBudget(
       note,
       record: gcResults?.record,
       now: deps.now(),
+      freeMb: lowestFree(measure.volumes),
       diskRecovered: async () =>
         budgetShortfalls(budget, {
           volumes: await (deps.volumesAsync?.(paths) ?? deps.volumes(paths)),

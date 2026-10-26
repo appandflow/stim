@@ -85,7 +85,7 @@
       "nonNull": 49
     },
     "test": {
-      "as": 35,
+      "as": 34,
       "nonNull": 44
     }
   },
@@ -115,17 +115,17 @@
       "nonNull": 121
     },
     "test": {
-      "as": 253,
-      "nonNull": 407
+      "as": 255,
+      "nonNull": 405
     }
   },
   "packages/stim-cli": {
     "src": {
-      "as": 839,
-      "nonNull": 342
+      "as": 835,
+      "nonNull": 341
     },
     "test": {
-      "as": 537,
+      "as": 540,
       "nonNull": 810
     }
   },

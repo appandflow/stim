@@ -187,6 +187,38 @@ jobs:
           pnpm test packages/stim-cli/src/__tests__/api-start.test.ts -t "cancelling startup drains dynamic Expo config"
           pnpm test packages/stim-cli/src/__tests__/start-context.test.ts -t "pending Windows supervisor launcher"
 
+  test-macos:
+    name: test (macos)
+    if: github.event_name != 'schedule'
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+
+      - name: Start CoreSimulator
+        continue-on-error: true
+        timeout-minutes: 5
+        run: xcrun simctl list devices > /dev/null
+
+      - name: Darwin-gated unit tests (vitest)
+        shell: bash
+        run: |
+          unit_files=()
+          while IFS= read -r -d '' unit_file; do
+            unit_files+=("$unit_file")
+          done < <(node scripts/ci-darwin-unit-test-files.mjs)
+          pnpm run test "${unit_files[@]}" --testTimeout=60000 --reporter=default --reporter=json --outputFile.json=test-results/unit-macos.json
+
+      - name: Retain unit-test timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-timings-macos
+          path: test-results/unit-macos.json
+          if-no-files-found: ignore
+          retention-days: 7
+
   native-process-inspection:
     name: native process inspection (${{ matrix.os }})
     if: github.event_name != 'schedule'

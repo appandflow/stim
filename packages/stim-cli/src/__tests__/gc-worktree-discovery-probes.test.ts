@@ -7,6 +7,10 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { collectWorktreeSweep, type WorktreeSweep } from '../commands/gc/worktrees.ts';
 import { measureWorktreeSweep } from '../commands/gc/worktree-sizes.ts';
+import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
+import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { holdDuUntilOverlapped } from './_du-barrier.ts';
+import { testContext } from './_context.ts';
 
 let home: string;
 let root: string;
@@ -170,4 +174,124 @@ test('a stalled Git inventory child is terminated and leaves no unlisted deletio
   const report = await pending;
   expect(child?.signalCode).toBe('SIGKILL');
   expect(report.unlisted).toEqual([]);
+});
+
+test('a report without build-state measurement reads only cached sizes and runs no du', async () => {
+  mkdirSync(join(root, '.build'));
+  writeFileSync(join(root, '.build', 'artifact'), 'build');
+  const executor = getExecutor();
+  const programs: string[] = [];
+  setExecutor({
+    ...executor,
+    runFileAsync: (file, args, options) => {
+      programs.push(file);
+      return executor.runFileAsync(file, args, options);
+    },
+  });
+  const report = sweep();
+  report.worktrees = [
+    {
+      path: root,
+      keys: [root],
+      idleDays: null,
+      merge: null,
+      head: null,
+      pullRequest: null,
+      skipCode: 'source-checkout',
+      skipped: 'source checkout',
+      eligibleAt: null,
+      activity: null,
+    },
+  ];
+  const cachedOnly = await measureWorktreeSweep(report, undefined, false);
+  expect(cachedOnly.worktrees[0]?.buildState).toEqual({ bytes: null, dirs: [{ path: '.build', bytes: null }] });
+  expect(programs).not.toContain('du');
+  const measured = await measureWorktreeSweep(report);
+  expect(measured.worktrees[0]?.buildState?.dirs).toEqual([{ path: '.build', bytes: expect.any(Number) }]);
+  expect(programs).toContain('du');
+});
+
+test('worktree reads overlap only while no claim records the children of the operation', async () => {
+  const executor = getExecutor();
+  for (let index = 0; index < 4; index++) {
+    const path = join(root, '.worktrees', `wt${index}`);
+    executor.runFile('git', ['-C', root, 'worktree', 'add', '-q', '-b', `wt${index}`, path], { timeoutMs: 5000 });
+    upsertProject(path, { metroPort: null });
+  }
+  let active = 0;
+  let most = 0;
+  setExecutor({
+    ...executor,
+    runFileAsync: async (file, args, options) => {
+      active++;
+      most = Math.max(most, active);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return await executor.runFileAsync(file, args, options);
+      } finally {
+        active--;
+      }
+    },
+  });
+  const operation = testContext({ home });
+  const run = () => collectWorktreeSweep({ idle: true, olderThan: null, now: Date.now(), graceMs: 0, operation });
+  await run();
+  expect(most).toBeGreaterThan(1);
+  const got = tryAcquireClaim({ root: join(home, 'maintenance.lock'), mode: 'exclusive' });
+  if (!got.acquired) throw new Error('claim unavailable');
+  declareSpawnsOn(operation, got.acquired);
+  most = 0;
+  try {
+    await run();
+  } finally {
+    stopDeclaringSpawnsOn(operation, got.acquired);
+    releaseClaim(got.acquired);
+  }
+  expect(most).toBe(1);
+}, 120_000);
+
+function sourceCheckoutSweep(): WorktreeSweep {
+  const report = sweep();
+  report.worktrees = [
+    {
+      path: root,
+      keys: [root],
+      idleDays: null,
+      merge: null,
+      head: null,
+      pullRequest: null,
+      skipCode: 'source-checkout',
+      skipped: 'source checkout',
+      eligibleAt: null,
+      activity: null,
+    },
+  ];
+  return report;
+}
+
+test('the build-state directories of a worktree are measured at the same time, each keeping its own size', async () => {
+  mkdirSync(join(root, '.build'));
+  mkdirSync(join(root, '.pnpm-store'));
+  const sizes = new Map([
+    [join(root, '.build'), 5],
+    [join(root, '.pnpm-store'), 7],
+  ]);
+  const scans = holdDuUntilOverlapped(2, (dir) => sizes.get(dir) ?? 0);
+  const measured = await measureWorktreeSweep(sourceCheckoutSweep(), testContext({ home }));
+  expect(scans.peak()).toBe(2);
+  expect(measured.worktrees[0]?.buildState?.dirs).toEqual([
+    { path: '.pnpm-store', bytes: 7 * 1024 },
+    { path: '.build', bytes: 5 * 1024 },
+  ]);
+});
+
+test('unlisted worktree directories are measured at the same time, each keeping its own size', async () => {
+  const lost = ['lost1', 'lost2', 'lost3'].map((name) => join(root, '.worktrees', name));
+  for (const dir of lost) mkdirSync(dir, { recursive: true });
+  const scans = holdDuUntilOverlapped(3, (dir) => 100 * (lost.indexOf(dir) + 1));
+  const measured = await measureWorktreeSweep(sourceCheckoutSweep(), testContext({ home }));
+  expect(scans.peak()).toBe(3);
+  expect(measured.unlisted?.map(({ path, bytes }) => [path, bytes])).toEqual(
+    lost.map((dir, index) => [dir, 100 * (index + 1) * 1024]),
+  );
 });

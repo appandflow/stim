@@ -19,6 +19,7 @@ import {
   parseLogcatTimestamp,
   parsePidof,
   pidWatchInterval,
+  waitForAppPid,
   watchAppPid,
   NOISE_TAGS,
 } from '../collector/android.ts';
@@ -33,7 +34,7 @@ import {
 } from '../collector/ios-device.ts';
 import { isAppLaunchError } from '../command-output.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
-import { makeExecutor } from './_factories.ts';
+import { makeChildProcess, makeExecutor } from './_factories.ts';
 
 function isNotNull<T>(value: T | null): value is T {
   return value !== null;
@@ -494,6 +495,33 @@ describe('ios: demoting device noise', () => {
     expect(mainThreadChecker.level).toBe('fatal');
   });
 
+  test('a SwiftUI Invalid Configuration fault is a warning, not an app error', () => {
+    const duplicateServer = event({
+      messageType: 'Fault',
+      subsystem: 'com.apple.SwiftUI',
+      category: 'Invalid Configuration',
+      eventMessage:
+        'ForEach<Array<DevServer>, DevServer, DevServerRow>: the ID DevServer(url: "http://169.254.136.94:8087", description: "Metro", source: Stim.DevServer.Source.recent) occurs multiple times within the collection, this will give undefined results!',
+    });
+    const record = parseLogStreamLine(JSON.stringify(duplicateServer));
+    assert(record);
+    expect(record.level).toBe('warn');
+    expect(isAppLaunchError({ ...record, platform: 'ios' })).toBe(false);
+
+    const lazyStack = parseLogStreamLine(
+      JSON.stringify({
+        ...duplicateServer,
+        eventMessage:
+          'LazyVStackLayout: the ID ViewList.ID.Canonical(explicitID: 1) is used by multiple child views, this will give undefined results!',
+      }),
+    );
+    assert(lazyStack);
+    expect(lazyStack.level).toBe('warn');
+
+    expect(levelForEvent({ ...duplicateServer, category: 'Other' })).toBe('fatal');
+    expect(levelForEvent({ ...duplicateServer, subsystem: 'com.example.app' })).toBe('fatal');
+  });
+
   test('the focus-cache rule requires the exact UIKit focus event', () => {
     const nearMisses = [
       event({ subsystem: 'com.apple.UIKit.child', category: 'UIFocus', eventMessage: focusCacheMessage }),
@@ -650,7 +678,7 @@ describe('android: logcat -v time', () => {
     expect(parseLogcatLine(line.replace('.542', '.542987'))!.ts).toBe(1788902582542);
   });
 
-  test('clock alignment uses the midpoint of a bounded adb sample and rejects unsupported or slow clocks', () => {
+  test('clock alignment uses the midpoint of a bounded adb sample and rejects unsupported or slow clocks', async () => {
     const before = 1788902585000;
     let after = before + 40;
     let output = '1788902582281\n';
@@ -668,18 +696,69 @@ describe('android: logcat -v time', () => {
       },
     });
     const sample = () => androidClockOffset('serial', { exec, now: () => (calls++ % 2 === 0 ? before : after) });
-    expect(sample()).toBe(2739);
+    expect(await sample()).toBe(2739);
     output = '1788902587759';
-    expect(sample()).toBe(-2739);
+    expect(await sample()).toBe(-2739);
     output = '1788902582%3N';
-    expect(sample()).toBe(null);
+    expect(await sample()).toBe(null);
     output = '1788902582281';
     after = before + 1001;
-    expect(sample()).toBe(null);
+    expect(await sample()).toBe(null);
     after = before - 1;
-    expect(sample()).toBe(null);
+    expect(await sample()).toBe(null);
     failed = true;
-    expect(sample()).toBe(null);
+    expect(await sample()).toBe(null);
+  });
+
+  test('the clock sample and the pid reads use the async executor with their adb argument lists', async () => {
+    const asyncCalls: string[][] = [];
+    const exec = makeExecutor({
+      runFile: () => {
+        throw new Error('a synchronous adb read blocks the log stream');
+      },
+      runFileQuiet: () => {
+        throw new Error('a synchronous adb read blocks the log stream');
+      },
+      runFileAsync: async (_file, args) => {
+        asyncCalls.push(args);
+        return args.includes('date') ? String(Date.now()) : '3132\n';
+      },
+    });
+    expect(await androidClockOffset('serial', { exec })).not.toBeNull();
+    expect(await waitForAppPid({ serial: 'serial', packageName: 'com.x', exec })).toEqual({ ok: true, pid: 3132 });
+    const watcher = watchAppPid({ serial: 'serial', packageName: 'com.x', pid: 3132, exec, onChange: () => {} });
+    try {
+      expect(await watcher.probe()).toBe(3132);
+    } finally {
+      watcher.stop();
+    }
+    expect(asyncCalls).toEqual([
+      ['-s', 'serial', 'shell', 'date', '+%s%3N'],
+      ['-s', 'serial', 'shell', 'pidof', '-s', 'com.x'],
+      ['-s', 'serial', 'shell', 'pidof', '-s', 'com.x'],
+    ]);
+  });
+
+  test('an adb read still in flight when the collector stops is killed instead of orphaned', async () => {
+    const killed: Array<NodeJS.Signals | number | undefined> = [];
+    const child = makeChildProcess({
+      kill: (signal?: NodeJS.Signals | number) => {
+        killed.push(signal);
+        return true;
+      },
+    });
+    const exec = makeExecutor({
+      runFileAsync: (_file, _args, options) => {
+        options.onSpawn?.(child);
+        return new Promise<string>(() => {});
+      },
+    });
+    const stopping = new AbortController();
+    void androidClockOffset('serial', { exec, signal: stopping.signal });
+    void waitForAppPid({ serial: 'serial', packageName: 'com.x', exec, signal: stopping.signal });
+    expect(killed).toEqual([]);
+    stopping.abort();
+    expect(killed).toEqual(['SIGKILL', 'SIGKILL']);
   });
 
   test('parsePidof reads the single pid, and nothing from empty output', () => {

@@ -539,6 +539,51 @@ describe('ios', () => {
     expect(exec.calls.at(-1)).toContain('--initialUrl');
   });
 
+  test('the Metro wiring write is issued while the process probe is still pending', async () => {
+    const inner = recordingExec();
+    let writeIssued: () => void = () => {};
+    const written = new Promise<void>((resolve) => {
+      writeIssued = resolve;
+    });
+    let writeSeenDuringProbe = false;
+    const exec: RecordingExec = {
+      ...inner,
+      async runFileAsync(file, args = [], opts) {
+        const key = [file, ...args].join(' ');
+        const out = inner.runFile(file, args, opts);
+        if (key.includes('defaults write')) writeIssued();
+        if (key.includes('launchctl list')) {
+          writeSeenDuringProbe = await Promise.race([
+            written.then(() => true),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+          ]);
+        }
+        return out;
+      },
+    };
+    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    expect(result.ok).toBe(true);
+    expect(writeSeenDuringProbe).toBe(true);
+    expect(inner.calls.at(-1)).toEqual(['xcrun', 'simctl', 'launch', 'U1', 'com.example.app']);
+  });
+
+  test('a dev-client launch that stops the running app writes the Metro wiring only after the stop', async () => {
+    const exec = recordingExec({
+      outputs: { 'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n' },
+    });
+    await launchIosApp(
+      { udid: 'U1', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
+      { exec },
+    );
+    expect(exec.calls.slice(0, 3).map((call) => call.slice(1, 4).join(' '))).toEqual([
+      'simctl spawn U1',
+      'simctl terminate U1',
+      'simctl spawn U1',
+    ]);
+    expect(exec.calls[0]).toContain('launchctl');
+    expect(exec.calls[2]).toContain('RCT_jsLocation');
+  });
+
   test('a failed terminate refuses an openurl into the old process', async () => {
     const exec = recordingExec({
       fail: 'simctl terminate',
@@ -1408,6 +1453,21 @@ describe('verifyLaunch', () => {
     expect(result.waitedMs >= VERIFY_TIMEOUT_MS).toBeTruthy();
   });
 
+  test('an aborted run stops waiting with STIM_CANCELLED instead of waiting out the bundle deadline', async () => {
+    const controller = new AbortController();
+    const waiting = verifyLaunch({
+      since: Date.now(),
+      timeoutMs: 60_000,
+      pollMs: 10,
+      readRecords: () => [],
+      readDeviceRecords: () => [],
+      readClientRecords: () => [],
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 30);
+    await expect(waiting).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  });
+
   describe('manifest requests from an Expo dev client', () => {
     const manifest = (
       stage: 'started' | 'finished' | 'failed',
@@ -1918,6 +1978,26 @@ describe('optional app readiness', () => {
       ['waiting-ready', 5000],
     ]);
   });
+
+  test.each([
+    ['copied 4s behind', (at: number) => at - 4000, 'ready', 8000],
+    ['never copied', () => null, undefined, 13000],
+  ] as const)(
+    'a device log %s holds the windows until it covers them, within a bound',
+    async (_, copied, readiness, waitedMs) => {
+      const clock = fakeClock();
+      const through = () => copied(clock.at());
+      const { result } = await run([], {
+        readDeviceRecords: () =>
+          [signal(2000, 'pending'), signal(5000, 'ready')].filter((record) => Number(record.ts) <= (through() ?? 0)),
+        deviceLogsThrough: through,
+        now: clock.now,
+        sleep: clock.sleep,
+      });
+      expect(result).toMatchObject({ verified: true, waitedMs });
+      expect(result.readiness).toBe(readiness);
+    },
+  );
 
   test('a fast ready replaces the default stability delay', async () => {
     const { result } = await run([signal(1000, 'pending'), signal(1500, 'ready', { msg: "'[stim:readiness] ready'" })]);

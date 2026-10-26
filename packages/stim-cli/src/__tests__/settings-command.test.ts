@@ -111,6 +111,111 @@ test('--json reports each layer, the winning one, environment overrides, and def
   expect(payload.unknown).toEqual([{ key: 'bogus', scope: 'committed', file: join(repo, '.stim.json'), value: true }]);
 });
 
+test('a removed setting is listed with the command that replaces it', async () => {
+  writeFileSync(join(app, '.stim.json'), JSON.stringify({ remote: { buildMode: 'force' } }));
+  const [printed] = (await settings(['--json'])).out;
+  expect(JSON.parse(printed ?? '').unknown).toEqual([
+    {
+      key: 'remote.buildMode',
+      scope: 'committed',
+      file: join(app, '.stim.json'),
+      value: 'force',
+      replacement: 'stim settings set remote.build remote',
+    },
+  ]);
+  const { note } = await settings([]);
+  expect(note).toEqual([
+    expect.stringContaining(
+      `remote.buildMode in ${join(app, '.stim.json')} is not read by Stim. Run \`stim settings set remote.build remote\` instead.`,
+    ),
+  ]);
+});
+
+test('a removed setting in the machine config is listed with its replacement too', async () => {
+  writeFileSync(
+    join(home, 'config.json'),
+    JSON.stringify({ version: 2, projects: { [app]: {} }, repos: {}, remote: { buildMode: 'off' } }),
+  );
+  const [printed] = (await settings(['--json'])).out;
+  expect(JSON.parse(printed ?? '').unknown).toEqual([
+    expect.objectContaining({
+      key: 'remote.buildMode',
+      scope: 'machine',
+      value: 'off',
+      replacement: 'stim settings set remote.build local',
+    }),
+  ]);
+});
+
+test.each([
+  ['auto', 'auto'],
+  ['force', 'remote'],
+  ['off', 'local'],
+])(
+  'set of the removed remote.buildMode %s names stim settings set remote.build %s and writes nothing',
+  async (old, value) => {
+    const file = join(home, 'config.json');
+    const before = JSON.stringify({ version: 2, projects: {}, repos: {}, remote: { buildMode: 'off' } });
+    writeFileSync(file, before);
+    const { note, exitCode } = await settings(['set', 'remote.buildMode', old, '--scope', 'machine']);
+    expect(exitCode).toBe(1);
+    expect(note.join('\n')).toContain('STIM_BAD_ARG: "remote.buildMode" was replaced by remote.build');
+    expect(note.join('\n')).toContain(`stim settings set remote.build ${value}`);
+    expect(readFileSync(file, 'utf-8')).toBe(before);
+  },
+);
+
+test('get of the removed remote.buildMode points at remote.build', async () => {
+  const { note, exitCode } = await settings(['get', 'remote.buildMode']);
+  expect(exitCode).toBe(1);
+  expect(note.join('\n')).toContain('was replaced by remote.build');
+});
+
+test('unset of the removed remote.buildMode removes it from every layer that has it', async () => {
+  const machine = join(home, 'config.json');
+  writeFileSync(
+    machine,
+    JSON.stringify({
+      version: 2,
+      projects: { [app]: { settings: { remote: { buildMode: 'auto' }, ios: { runtime: '26.0' } } } },
+      repos: {},
+      remote: { machines: ['mini'], buildMode: 'force' },
+    }),
+  );
+  writeFileSync(join(app, '.stim.json'), JSON.stringify({ remote: { buildMode: 'off' }, ios: { runtime: '26.2' } }));
+
+  const { out, exitCode } = await settings(['unset', 'remote.buildMode', '--json']);
+
+  expect(exitCode).toBe(0);
+  expect(JSON.parse(out[0] ?? '')).toEqual({
+    key: 'remote.buildMode',
+    replacedBy: 'remote.build',
+    removed: [
+      { scope: 'machine', file: machine },
+      { scope: 'workspace', file: `${machine} (projects["${app}"].settings)` },
+      { scope: 'committed', file: join(app, '.stim.json') },
+    ],
+  });
+  const config = JSON.parse(readFileSync(machine, 'utf-8'));
+  expect(config.remote).toEqual({ machines: ['mini'] });
+  expect(config.projects[app].settings).toEqual({ ios: { runtime: '26.0' } });
+  expect(JSON.parse(readFileSync(join(app, '.stim.json'), 'utf-8'))).toEqual({ ios: { runtime: '26.2' } });
+  expect(JSON.parse((await settings(['--json'])).out[0] ?? '').unknown).toEqual([]);
+});
+
+test('unset of the removed remote.buildMode with --scope leaves the other layers alone', async () => {
+  const machine = join(home, 'config.json');
+  writeFileSync(machine, JSON.stringify({ version: 2, projects: {}, repos: {}, remote: { buildMode: 'force' } }));
+  writeFileSync(join(app, '.stim.json'), JSON.stringify({ remote: { buildMode: 'off' } }));
+
+  const { out } = await settings(['unset', 'remote.buildMode', '--scope', 'committed']);
+
+  expect(out).toEqual([`unset remote.buildMode in ${join(app, '.stim.json')}`]);
+  expect(JSON.parse(readFileSync(machine, 'utf-8')).remote).toEqual({ buildMode: 'force' });
+  const again = await settings(['unset', 'remote.buildMode', '--scope', 'committed']);
+  expect(again.out).toEqual(['remote.buildMode was not set in the committed layer.']);
+});
+
 test('set and unset edit .stim.json in place, keeping other keys and indentation', async () => {
   const file = join(app, '.stim.json');
   writeFileSync(

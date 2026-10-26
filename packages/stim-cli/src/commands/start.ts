@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
+import { restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
@@ -15,7 +16,7 @@ import { listeningPidsAsync, pidExists, processCwds, resolveProjectMetro, signal
 import { captureProcessToken, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
-import { IDLE_STOP_KEY, queryLogs } from '@stim-cli/core/state';
+import { IDLE_STOP_KEY, queryLogs, trace } from '@stim-cli/core/state';
 import { levelRank } from '../ndjson.ts';
 import {
   ensureWorkspaceStorage,
@@ -72,6 +73,7 @@ import {
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
   tunnelModeSetting,
+  inertSettingWarning,
   unknownSettingKeys,
   type ProjectSettingsContext,
   type SettingsObject,
@@ -415,6 +417,9 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
       if (!root) {
         return fail(NO_PROJECT_REFUSAL);
       }
+      const lightened = (await runProcessOperation(root, (context) => restoreLightenedDependencies(root, context)))
+        .value;
+      if (lightened) return fail(lightened);
       const problem = projectProblem(root, 'dev-server');
       if (problem) {
         return fail({
@@ -447,7 +452,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         });
       }
       for (const key of unknownSettingKeys(settings)) {
-        note(chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`));
+        note(chalk.yellow(inertSettingWarning(settings, key)));
       }
       const cacheProviderError = cacheProviderSettingError(settings);
       if (cacheProviderError) note(chalk.yellow(`Warning: ${cacheProviderError} No cache provider is used.`));
@@ -1680,15 +1685,21 @@ async function waitForMetro({
   aborted?: () => boolean;
   probe?: (port: number, root: string) => Promise<MetroResolution>;
 }): Promise<boolean> {
-  const deadline = Date.now() + seconds * 1000;
-  while (Date.now() < deadline) {
-    const resolution = await probe(port, root);
-    if (resolution.metro) return true;
-    if (aborted()) return false;
-    await waitForStartup(POLL_MS);
-  }
-  const last = await probe(port, root);
-  return Boolean(last.metro);
+  return trace.spanAsync(
+    'wait for metro',
+    async () => {
+      const deadline = Date.now() + seconds * 1000;
+      while (Date.now() < deadline) {
+        const resolution = await probe(port, root);
+        if (resolution.metro) return true;
+        if (aborted()) return false;
+        await waitForStartup(POLL_MS);
+      }
+      const last = await probe(port, root);
+      return Boolean(last.metro);
+    },
+    { port },
+  );
 }
 
 async function waitForExpoTunnel({

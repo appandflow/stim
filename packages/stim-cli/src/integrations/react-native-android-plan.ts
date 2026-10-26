@@ -1,6 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
+import { memoizedFingerprint } from '../cache/fingerprint-memo.ts';
 import { reportSignal } from '../report-runtime.ts';
 import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
@@ -252,6 +253,7 @@ export async function planReactNativeAndroid(
       slot,
       platform: 'android',
       machine: target.machine,
+      ...(target.placement ? { placement: target.placement } : {}),
       selectors: {
         ...(target.systemImage ? { systemImage: target.systemImage } : {}),
         ...(target.deviceProfile ? { deviceProfile: target.deviceProfile } : {}),
@@ -281,10 +283,16 @@ export async function planReactNativeAndroid(
           }
         : {}),
     });
+    if (hostedPlan.kind === 'refused')
+      return refuse({
+        code: hostedPlan.code,
+        message: hostedPlan.message,
+        remedy: hostedPlan.remedy,
+      });
     if (hostedPlan.kind === 'unknown') {
       return refuse({
         code: 'STIM_BAD_ARG',
-        message: `android.remote is ${target.machine}, and its emulator ABI is unknown here: ${hostedPlan.reason}.`,
+        message: `android.remote is ${target.placement ?? target.machine}, and its emulator ABI is unknown here: ${hostedPlan.reason}.`,
         remedy:
           'Run `stim android` to build for the remote device, or unset android.remote to plan the owned emulator.',
       });
@@ -313,10 +321,21 @@ export async function planReactNativeAndroid(
 
   let fingerprint;
   try {
-    fingerprint =
-      operation && reportSignal(operation)
-        ? await readDoctorFingerprint(operation, { root, platform: PLATFORM, androidLayout: layout })
-        : await deps.fingerprint(root, { platform: PLATFORM, androidLayout: layout });
+    fingerprint = (
+      await memoizedFingerprint(
+        root,
+        { platform: PLATFORM, androidLayout: layout },
+        {
+          consult: build.cache.read,
+          operation: operation && reportSignal(operation) ? undefined : operation,
+          record: false,
+          fingerprint: (projectRoot, fingerprintTarget) =>
+            operation && reportSignal(operation)
+              ? readDoctorFingerprint(operation, { root: projectRoot, platform: PLATFORM, androidLayout: layout })
+              : deps.fingerprint(projectRoot, fingerprintTarget),
+        },
+      )
+    ).fingerprint;
   } catch (error) {
     operation?.signal.throwIfAborted();
     return refuse({

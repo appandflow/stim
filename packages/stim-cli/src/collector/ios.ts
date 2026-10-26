@@ -60,6 +60,12 @@ const NOISE_RULES: NoiseRule[] = [
     category: 'CFNetwork Performance Diagnostic',
     level: 'warn',
   },
+  {
+    id: 'swiftui-invalid-configuration',
+    exactSubsystem: 'com.apple.SwiftUI',
+    category: 'Invalid Configuration',
+    level: 'warn',
+  },
 ];
 
 interface NoiseRule {

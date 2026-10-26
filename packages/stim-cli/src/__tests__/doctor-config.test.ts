@@ -183,6 +183,71 @@ test('a key Stim no longer reads is named as inert', () => {
   );
 });
 
+test.each([
+  ['auto', 'auto'],
+  ['force', 'remote'],
+  ['off', 'local'],
+])('remote.buildMode %s is reported with the stim settings set remote.build %s that replaces it', (old, value) => {
+  const findings = check({ remote: { buildMode: old } });
+  expect(findings).toHaveLength(1);
+  expect(findings[0]).toMatchObject({
+    level: 'note',
+    title: 'remote.buildMode was replaced by remote.build',
+    fix: `Run \`stim settings set remote.build ${value}\`, then remove remote.buildMode from ${MACHINE}.`,
+  });
+  expect(findings[0]?.detail).toContain(`remote.buildMode in ${MACHINE} is not read by Stim`);
+});
+
+test('an unreadable remote.buildMode still names the setting that replaced it', () => {
+  const [finding] = check({ remote: { buildMode: 'sometimes' } });
+  expect(finding?.fix).toBe(`Set remote.build, then remove remote.buildMode from ${MACHINE}.`);
+});
+
+test('STIM_REMOTE_BUILD_MODE in the environment is reported with its replacement', () => {
+  const findings = check({}, [], { STIM_REMOTE_BUILD_MODE: 'force' });
+  expect(findings).toEqual([
+    expect.objectContaining({
+      title: 'STIM_REMOTE_BUILD_MODE was replaced by remote.build',
+      fix: 'Run `stim settings set remote.build remote`, then unset STIM_REMOTE_BUILD_MODE.',
+    }),
+  ]);
+  expect(check({}, [], { STIM_REMOTE_BUILD_MODE: '  ' })).toEqual([]);
+});
+
+test('an invalid remote.build in the machine config is flagged as a wrong type', () => {
+  const findings = checkMachineSettings({
+    settings: {},
+    layers: [],
+    projectRoot: '/app',
+    env: {},
+    remoteBuild: 'bad word',
+  });
+  expect(findings).toEqual([
+    {
+      level: 'cost',
+      title: 'A setting has the wrong type',
+      detail:
+        'Invalid remote.build setting "bad word". Expected local, auto, remote, remote-only, or a tailnet machine name.',
+      fix: 'Replace it with `stim settings set remote.build <value>`; `stim guide settings` lists the values it takes.',
+    },
+  ]);
+  for (const remoteBuild of [undefined, null, 'auto', ' auto ', 'remote-only', 'mini:7444'])
+    expect(checkMachineSettings({ settings: {}, layers: [], projectRoot: '/app', env: {}, remoteBuild })).toEqual([]);
+});
+
+test('an invalid STIM_REMOTE_BUILD in the environment is flagged with the message settings get gives', () => {
+  expect(check({}, [], { STIM_REMOTE_BUILD: 'bad word' })).toEqual([
+    {
+      level: 'cost',
+      title: 'A setting has the wrong type',
+      detail:
+        'Invalid STIM_REMOTE_BUILD value "bad word". Expected local, auto, remote, remote-only, or a tailnet machine name.',
+      fix: 'Fix the environment variable, or unset it and run `stim settings set remote.build <value>`.',
+    },
+  ]);
+  for (const value of ['remote-only', ' Mini ', '  ']) expect(check({}, [], { STIM_REMOTE_BUILD: value })).toEqual([]);
+});
+
 test('a config with nothing wrong reports nothing', () => {
   expect(check({ optimizations: { buildCache: true, android: { compilerCache: 'ccache' } } })).toEqual([]);
 });
@@ -218,6 +283,59 @@ describe('against a config file on disk', () => {
     const layers = settingsLayers({ projectPath: project, gitCommonDir: null, repoRoot: project });
     return { layers, settings: mergeSettingsLayers(layers.map((layer) => layer.settings)) };
   }
+
+  test('a remote.buildMode left in the machine config reaches doctor with its replacement', () => {
+    writeConfig({ version: 2, repos: {}, projects: {}, remote: { machines: ['mini'], buildMode: 'force' } });
+    const { layers, settings } = machineSettings();
+    const findings = checkMachineSettings({ settings, layers, projectRoot: project, env: {} });
+    expect(findings).toEqual([
+      expect.objectContaining({
+        title: 'remote.buildMode was replaced by remote.build',
+        fix: `Run \`stim settings set remote.build remote\`, then remove remote.buildMode from ${join(home, 'config.json')}.`,
+      }),
+    ]);
+  });
+
+  test('a remote.build hand-edited into the machine config to an invalid value reaches doctor', async () => {
+    writeConfig({ version: 2, repos: {}, projects: {}, remote: { build: 'bad word' } });
+    const wrongType = (await runDoctor(project)).filter((found) => found.title === 'A setting has the wrong type');
+    expect(wrongType).toEqual([
+      expect.objectContaining({
+        level: 'cost',
+        detail:
+          'Invalid remote.build setting "bad word". Expected local, auto, remote, remote-only, or a tailnet machine name.',
+      }),
+    ]);
+  });
+
+  test('a remote.buildMode in the repository .stim.json above the project is reported too', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'stim-doctor-config-repo-'));
+    try {
+      const app = join(repo, 'apps', 'mobile');
+      mkdirSync(app, { recursive: true });
+      writeFileSync(join(repo, '.stim.json'), JSON.stringify({ remote: { buildMode: 'off' } }));
+      writeFileSync(join(app, '.stim.json'), JSON.stringify({ remote: { buildMode: 'force' } }));
+      writeConfig({ version: 2, repos: {}, projects: {} });
+      const machine = readMachineSettings({ projectPath: app, gitCommonDir: null, repoRoot: repo });
+      const findings = checkMachineSettings({ ...machine, projectRoot: app, env: {} });
+      expect(findings.map((finding) => finding.fix)).toEqual([
+        `Run \`stim settings set remote.build remote\`, then remove remote.buildMode from ${join(app, '.stim.json')}.`,
+        `Run \`stim settings set remote.build local\`, then remove remote.buildMode from ${join(repo, '.stim.json')}.`,
+      ]);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('a remote.buildMode left in two layers is reported once for each file', () => {
+    writeConfig({ version: 2, repos: {}, projects: {}, remote: { buildMode: 'force' } });
+    writeFileSync(join(project, '.stim.json'), JSON.stringify({ remote: { buildMode: 'off' } }));
+    const findings = checkMachineSettings({ ...machineSettings(), projectRoot: project, env: {} });
+    expect(findings.map((finding) => finding.fix)).toEqual([
+      `Run \`stim settings set remote.build local\`, then remove remote.buildMode from ${join(project, '.stim.json')}.`,
+      `Run \`stim settings set remote.build remote\`, then remove remote.buildMode from ${join(home, 'config.json')}.`,
+    ]);
+  });
 
   test('a projects entry for a checkout that is gone is left to gc while its settings are swept', () => {
     const dead = join(home, 'deleted-checkout');

@@ -21,8 +21,7 @@ import Foundation
     guard case .open(let hello) = client.state, hello.features?.contains("desktop-reports") == true else {
       throw ServerError(code: "unsupported", message: "Update the local stim-server to read storage reports.")
     }
-    _ = try await client.request("desktop.reports.invalidate", [:])
-    let result = try await client.request("desktop.reports.get", ["report": .string("gc")])
+    let result = try await client.report(["report": .string("gc")])
     guard case .object(let snapshot) = result, snapshot["pending"] == .bool(false), let value = snapshot["value"] else {
       throw ServerError(code: "bad-response", message: "The local stim-server did not return a completed storage report.")
     }

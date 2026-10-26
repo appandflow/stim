@@ -192,7 +192,7 @@ test.each([
       if (target === 'unlisted worktree') mkdirSync(join(root, '.worktrees', 'lost'), { recursive: true });
       else {
         mkdirSync(join(root, 'node_modules'));
-        mkdirSync(join(root, 'ios', 'build'), { recursive: true });
+        mkdirSync(join(root, 'android', 'build'), { recursive: true });
       }
       upsertProject(root, { metroPort: null });
     }

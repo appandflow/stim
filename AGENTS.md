@@ -189,7 +189,10 @@ pick another. When you choose an issue yourself, take the highest priority among
 free issues, and treat an unlabeled issue as `priority: P2`. To claim, comment
 `Claimed: <branch>`, then push the branch to `origin` before implementing
 anything. The open pull request replaces the claim. If you stop without one,
-comment `Released:` and delete the branch.
+comment `Released:` and delete the branch. The `stale-claims` workflow posts
+`Released:` on a claim older than two days with no open pull request or recent
+commit on its branch; it never deletes a branch, so release your own claim when
+you stop.
 
 Implement each valid issue in its own git worktree and branch created from the
 refreshed `origin/main`. Independent issues may run in parallel worktrees. Keep
@@ -346,9 +349,13 @@ outside it moves to its own issue and pull request.
   `server/build-clients.json`, apart from `devices.json`. The client names its
   remote machines in `remote.machines` and pins each one's stim-server key in
   `build-machines.json`; a worker that cannot prove that key is refused.
-  `remote.buildMode` places iOS simulator Debug builds and Android emulator
-  debug builds and macOS SwiftPM Debug builds;
-  every offload failure falls back to a local build, and no failure path
+  `remote.build` places iOS simulator Debug builds and Android emulator
+  debug builds and macOS SwiftPM Debug builds with the placement words every
+  workload shares (`local`, `auto`, `remote`, `remote-only` or one machine),
+  trying the machines of `remote.machines` in that order, each only while it
+  has a free slot and a load under its own `server.maxLoadPerCore`;
+  every offload failure falls back to a local build unless the selection is
+  `remote-only` or one machine, and no failure path
   writes the cache. Two machines build for each other, and reuse each other's
   completed React Native and SwiftPM artifacts, when their bundled Stim
   reports the same `STIM_BUILD_COMPAT`
@@ -430,11 +437,12 @@ outside it moves to its own issue and pull request.
   The host's person lists and stops sessions through
   `device-host.sessions` and `device-host.sessions.stop` on Desktop's Unix
   socket connection; person-side stop uses the existing stop path.
-  A session's Metro endpoint listens only on worker loopback and reaches only the
-  authenticated client's peer address. The client gateway listens only on its own
-  tailnet address, pins the worker peer, requires a fresh secret and forwards only
-  to its verified loopback Metro. Stop and revocation close the bridge and active
-  streams. Keep the recorded worker port on reconnect; refuse an occupied port.
+  A session's Metro endpoint listens only on worker loopback. The worker never
+  connects to the client: each accepted connection rides one idle
+  `device-host.metro.link` connection the session's own client opened and
+  authenticated, and the client forwards it only to its verified loopback Metro.
+  Stop and revocation close the bridge, idle links and active streams. Keep the
+  recorded worker port on reconnect; refuse an occupied port.
   App transfer uses bounded digest chunks, including the manifest itself. The
   worker validates content, contained links, simulator platform, architecture
   and minimum OS before installing on the exact ledger-owned device. Hold the
@@ -683,7 +691,10 @@ tool at least once. Use a timeout around `simctl`.
 initial lookup and single-flight lock on the pre-mutation key. After a mutation,
 fingerprint again and resolve once under the new key before compiling. Store
 the artifact, `lastBuild`, and remote upload only under the post-mutation key.
-Do not store the same artifact under both keys.
+Do not store the same artifact under both keys. A recorded fingerprint from
+`$STIM_HOME/fingerprint-memo` may stand in only for the pre-mutation lookup.
+The post-mutation fingerprint, the build worker and `doctor` always compute it
+in full. Write a record only from a full fingerprint, never from a recorded one.
 
 ### 11. Preserve launch status semantics
 

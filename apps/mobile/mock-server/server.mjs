@@ -31,13 +31,14 @@ const { values } = parseArgs({
     'free-gb': { type: 'string', default: '212' },
     overlay: { type: 'string' },
     'slot-waits': { type: 'boolean', default: false },
+    capacity: { type: 'boolean', default: false },
   },
 });
 
 const PAIRING_TTL_MS = 5 * 60 * 1000;
 const DEVICES_FILE = join(tmpdir(), 'stim-mobile-mock-server-devices.json');
 const IDENTITY_FILE = join(tmpdir(), 'stim-mobile-mock-server-identity.key');
-const fixtures = loadFixtures({ slotWaits: values['slot-waits'] });
+const fixtures = loadFixtures({ slotWaits: values['slot-waits'], capacity: values.capacity });
 const legacyArchives = process.env.STIM_MOCK_LEGACY_ARCHIVES === '1';
 const recording = loadRecording();
 const recordingFor = (params) => {

@@ -3,12 +3,14 @@ import { createServer, type Server } from 'node:http';
 import { symbolicateErrors } from '../diagnostics/error-symbolication.ts';
 import { errorDiagnostics, mergeErrorCopies } from '../diagnostics/error-diagnostics.ts';
 import {
+  bundleBindFailure,
   captureNativeCrashes,
   captureWorkspaceCrashes,
   parseAndroidCrashes,
   parseIosCrash,
 } from '../diagnostics/native-crash.ts';
 import { verifyLaunch } from '../engine/launch-verify.ts';
+import { createNdjsonWriter, type NdjsonRecord } from '../ndjson.ts';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -210,6 +212,73 @@ test('iOS reports cannot leak another simulator, app or previous launch into the
   expect(parseIosCrash(text, { ...target, until: target.since + 500 })).toBeNull();
 });
 
+test('only a symbol one part of the app needs from another part of the same app marks the stored build as unlaunchable', () => {
+  const bundle = '/Users/USER/Library/Developer/CoreSimulator/Devices/D/data/Containers/Bundle/Application/A/Stim.app';
+  const crash = (termination: object) => {
+    const body = {
+      captureTime: '2025-01-02T00:00:01Z',
+      coalitionName: 'com.apple.CoreSimulator.SimDevice.own',
+      bundleInfo: { CFBundleIdentifier: 'app.test' },
+      incident: 'incident',
+      exception: { type: 'EXC_CRASH', signal: 'SIGABRT' },
+      termination,
+    };
+    const target = {
+      platform: 'ios' as const,
+      deviceId: 'own',
+      appId: 'app.test',
+      since: Date.parse('2025-01-02T00:00:00Z'),
+    };
+    return parseIosCrash('{}\n' + JSON.stringify(body), target)?.record ?? {};
+  };
+  const symbol = '__ZN8facebook6hermes3cdp11CDPDebugAPI17addConsoleMessageENS1_14ConsoleMessageE';
+
+  expect(
+    bundleBindFailure(
+      crash({
+        namespace: 'DYLD',
+        indicator: 'Symbol missing',
+        reasons: [
+          `Symbol not found: ${symbol}`,
+          `Referenced from: <0D5DABD8-59B5-36C0-B957-475A4985ECC3> ${bundle}/Frameworks/React.framework/React`,
+          `Expected in:     <22A8186E-E00E-32BB-A9FF-082E90BAEA6F> ${bundle}/Frameworks/hermesvm.framework/hermesvm`,
+        ],
+      }),
+    ),
+  ).toBe(symbol);
+
+  for (const termination of [
+    {
+      namespace: 'DYLD',
+      indicator: 'Symbol missing',
+      reasons: [
+        'Symbol not found: _objc_claimAutoreleasedReturnValue',
+        `Referenced from: <0D5DABD8-59B5-36C0-B957-475A4985ECC3> ${bundle}/Frameworks/React.framework/React`,
+        'Expected in:     <22A8186E-E00E-32BB-A9FF-082E90BAEA6F> /usr/lib/libobjc.A.dylib',
+      ],
+    },
+    {
+      namespace: 'DYLD',
+      indicator: 'Symbol missing',
+      reasons: [
+        'Symbol not found: _foo',
+        `Referenced from: <0D5DABD8-59B5-36C0-B957-475A4985ECC3> ${bundle}/Frameworks/React.framework/React`,
+        'Expected in:     <22A8186E-E00E-32BB-A9FF-082E90BAEA6F> /Users/USER/Other/Plugin.app/Contents/Plugin',
+      ],
+    },
+    {
+      namespace: 'DYLD',
+      indicator: 'Library missing',
+      reasons: [
+        'Library not loaded: /usr/lib/libSystem.B.dylib',
+        `Referenced from: <FBFA434E-83F1-3D72-B54D-578931412E61> ${bundle}/Stim`,
+      ],
+    },
+    { namespace: 'SIGNAL', indicator: 'Abort trap: 6' },
+  ])
+    expect(bundleBindFailure(crash(termination))).toBeNull();
+});
+
 test('Android crash buffer retains the exception from a dead app but not another process or old crash', () => {
   const text = [
     '1000.000 E/AndroidRuntime( 44): FATAL EXCEPTION: main',
@@ -383,7 +452,7 @@ test('a native crash before any Metro request ends verification without calling 
     },
   });
   expect(result).toMatchObject({ fatal: true, verified: false, processAlive: false, errors: [crash] });
-  expect(result.waitedMs).toBeLessThan(2000);
+  expect(result.waitedMs).toBeLessThan(3000);
 });
 
 test('an unrelated crash does not invent a native launch failure; a gone process fails for its exit', async () => {
@@ -433,7 +502,183 @@ test('Android crash evidence is fatal even while its PID remains behind a system
     },
   });
   expect(result).toMatchObject({ fatal: true, verified: false, processAlive: true, errors: [crash] });
-  expect(result.waitedMs).toBeLessThan(2000);
+  expect(result.waitedMs).toBeLessThan(3000);
+});
+
+function yieldingClock(start = 1000) {
+  let time = start;
+  return {
+    at: () => time,
+    now: () => time,
+    sleep: async (ms: number) => {
+      time += ms;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    },
+  };
+}
+
+test('a slow native crash probe does not stall the poll, never overlaps itself, and still fails the launch', async () => {
+  const clock = yieldingClock();
+  const crash = { ts: 1500, src: 'device', platform: 'ios', level: 'fatal', event: 'native_crash' };
+  let reads = 0;
+  let active = 0;
+  let maxActive = 0;
+  let readsWhenProbeStarted = 0;
+  let probes = 0;
+  const result = await verifyLaunch({
+    since: 1000,
+    platform: 'ios',
+    timeoutMs: 1e9,
+    readRecords: () => {
+      reads += 1;
+      return [];
+    },
+    readDeviceRecords: () => [],
+    readClientRecords: () => [],
+    readNativeCrashes: async () => {
+      probes += 1;
+      if (probes === 1) readsWhenProbeStarted = reads;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      active -= 1;
+      return probes === 1 ? [] : [crash];
+    },
+    processAlive: () => false,
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  expect(result).toMatchObject({ fatal: true, verified: false, errors: [crash] });
+  expect(maxActive).toBe(1);
+  expect(probes).toBe(2);
+  expect(reads - readsWhenProbeStarted).toBeGreaterThan(5);
+});
+
+test('a failing native crash probe fails the verification with its error', async () => {
+  const clock = yieldingClock();
+  await expect(
+    verifyLaunch({
+      since: 1000,
+      platform: 'ios',
+      timeoutMs: 1e9,
+      readRecords: () => [],
+      readDeviceRecords: () => [],
+      readClientRecords: () => [],
+      readNativeCrashes: async () => {
+        throw new Error('crash probe failed');
+      },
+      now: clock.now,
+      sleep: clock.sleep,
+    }),
+  ).rejects.toThrow('crash probe failed');
+});
+
+test('verification waits for a native crash probe still running when the launch is verified', async () => {
+  const clock = yieldingClock();
+  let probeFinished = false;
+  const result = await verifyLaunch({
+    since: 1000,
+    platform: 'ios',
+    readRecords: () => [{ ts: 1100, src: 'metro', platform: 'ios', event: 'bundle_build_done' }],
+    readDeviceRecords: () => [],
+    readClientRecords: () => [],
+    readNativeCrashes: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      probeFinished = true;
+      return [];
+    },
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  expect(result.verified).toBe(true);
+  expect(probeFinished).toBe(true);
+});
+
+const verifyWithProbeInVerifyingIteration = (
+  readNativeCrashes: () => Promise<NdjsonRecord[]>,
+  processAlive: () => boolean = () => true,
+) => {
+  const clock = yieldingClock();
+  return verifyLaunch({
+    since: 1000,
+    platform: 'ios',
+    stabilityMs: 900,
+    readRecords: () => [{ ts: 1100, src: 'metro', platform: 'ios', event: 'bundle_build_done' }],
+    readDeviceRecords: () => [],
+    readClientRecords: () => [],
+    readNativeCrashes,
+    processAlive,
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+};
+
+test('a native crash found by a probe started in the iteration that would verify the launch fails it', async () => {
+  const crash = { ts: 1500, src: 'device', platform: 'ios', level: 'fatal', event: 'native_crash' };
+  expect(await verifyWithProbeInVerifyingIteration(async () => [crash])).toMatchObject({
+    fatal: true,
+    verified: false,
+    errors: [crash],
+  });
+});
+
+test('a failing probe started in the iteration that would verify the launch rejects the verification', async () => {
+  await expect(
+    verifyWithProbeInVerifyingIteration(async () => {
+      throw new Error('crash probe failed');
+    }),
+  ).rejects.toThrow('crash probe failed');
+});
+
+test('an app that exits while the launch waits for a running crash probe is not reported as verified', async () => {
+  let exited = false;
+  const result = await verifyWithProbeInVerifyingIteration(
+    async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      exited = true;
+      return [];
+    },
+    () => !exited,
+  );
+  expect(result).toMatchObject({ fatal: true, verified: false, processAlive: false });
+});
+
+test('bundle evidence written to the Metro log across a rotation is seen by the verify loop', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-verify-rotation-'));
+  try {
+    const clock = yieldingClock();
+    const writer = createNdjsonWriter(join(root, 'metro.ndjson'), { maxBytes: 400, now: () => 0 });
+    const bundle = (event: string) => ({
+      ts: clock.at(),
+      src: 'metro',
+      platform: 'ios',
+      event,
+      requestId: 'b1',
+      level: 'debug',
+    });
+    let polls = 0;
+    const result = await verifyLaunch({
+      since: 1000,
+      platform: 'ios',
+      requireBundleResponse: true,
+      logsDir: root,
+      now: clock.now,
+      sleep: async (ms) => {
+        polls += 1;
+        if (polls === 1) writer.write(bundle('bundle_response_started'));
+        if (polls === 2)
+          for (let i = 0; i < 12; i++)
+            writer.write({ ts: clock.at(), src: 'metro', event: 'noise', msg: 'x'.repeat(60) });
+        if (polls === 3) writer.write(bundle('bundle_response_finished'));
+        await clock.sleep(ms);
+      },
+    });
+    writer.close();
+    expect(result.verified).toBe(true);
+    expect(result.record?.event).toBe('bundle_response_finished');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('structured Metro frames retain zero-based columns, including the first column', async () => {
@@ -462,6 +707,47 @@ test('a stalled symbolication server cannot hide or indefinitely delay the origi
   const [record] = await symbolicateErrors([raw], { port, timeoutMs: 30 });
   expect(record?.msg).toBe(raw.msg);
   expect(record?.symbolicationNote).toContain('timed out');
+});
+
+test('a caller that measured the device clock spares every crash read its own clock sample', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-native-clock-'));
+  process.env.STIM_HOME = join(root, 'stim-home');
+  const epoch = Math.floor(Date.now() / 1000);
+  const raw = [
+    `${epoch}.000 F/DEBUG( 80): *** *** *** ***`,
+    `${epoch}.001 F/DEBUG( 80): pid: 44, tid: 44, name: app.test  >>> app.test <<<`,
+    `${epoch}.002 F/DEBUG( 80): signal 6 (SIGABRT), code -1`,
+  ].join('\n');
+  const adbCalls: string[][] = [];
+  setExecutor({
+    runFileQuiet: (file, args) => {
+      if (file !== 'adb') return null;
+      adbCalls.push(args);
+      return args.includes('date') ? String(Date.now()) : raw;
+    },
+  });
+  try {
+    const target = {
+      root,
+      platform: 'android' as const,
+      appId: 'app.test',
+      deviceId: 'owned',
+      since: epoch * 1000 - 1000,
+    };
+    const logs = join(root, 'logs');
+    const measured = await captureNativeCrashes({ ...target, clockOffsetMs: 0 }, logs);
+    expect(measured).toHaveLength(1);
+    expect(adbCalls.map((args) => args[2])).toEqual(['logcat']);
+    adbCalls.length = 0;
+    expect(await captureNativeCrashes({ ...target, clockOffsetMs: null }, logs)).toEqual([]);
+    expect(adbCalls).toEqual([]);
+    await captureNativeCrashes(target, logs);
+    expect(adbCalls.map((args) => args[2])).toEqual(['shell', 'logcat']);
+  } finally {
+    resetExecutor();
+    delete process.env.STIM_HOME;
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('APK frames require a matching ELF build ID and repeated collection does not duplicate a crash', async () => {

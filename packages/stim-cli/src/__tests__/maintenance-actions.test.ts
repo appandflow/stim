@@ -44,6 +44,7 @@ import { liveClaimOwner, plantClaim } from './_factories.ts';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MB = 1024 * 1024;
 
+const initialCwd = process.cwd();
 let home: string;
 let projects: string;
 
@@ -79,6 +80,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  process.chdir(initialCwd);
   resetExecutor();
   rmSync(home, { recursive: true, force: true });
   rmSync(projects, { recursive: true, force: true });
@@ -265,6 +267,30 @@ test('the age sweep removes only what is provably stale', async () => {
   expect(readManifest().caches.map((entry) => entry.dir)).toEqual([cache]);
   expect(actionKinds().toSorted()).toEqual(['clear-outputs', 'remove-orphan', 'trim-cache', 'unregister-cache']);
 });
+
+test.skipIf(process.platform === 'win32')(
+  'the age sweep keeps the outputs of a git-locked worktree unused for olderThanDays, and logs it as locked',
+  async () => {
+    process.env.STIM_MAINTENANCE_WORKTREE_CHECK_MINUTES = '1000000';
+    process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
+    const repo = join(projects, 'repo');
+    mkdirSync(repo);
+    const git = (cwd: string, args: string) => execSync(`git ${args}`, { cwd, timeout: 15_000 });
+    git(repo, 'init -q -b main');
+    git(repo, '-c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init');
+    git(repo, `worktree add -q --detach "${join(projects, 'rollback')}"`);
+    git(repo, `worktree lock --reason rollback "${join(projects, 'rollback')}"`);
+    const rollback = workspace('rollback', { usedDaysAgo: 10 });
+    const idle = workspace('idle-ten', { usedDaysAgo: 10 });
+
+    await runMaintenance('test');
+
+    expect(hasOutputs(idle.dir)).toBe(false);
+    expect(hasOutputs(rollback.dir)).toBe(true);
+    expect(JSON.stringify(records())).toContain(`Kept ${realpathSync(rollback.root)}: locked with git worktree lock`);
+  },
+  60_000,
+);
 
 test('maintenance records in a workspace log do not make the workspace look used', () => {
   const old = workspace('written-by-maintenance', { usedDaysAgo: 30 });

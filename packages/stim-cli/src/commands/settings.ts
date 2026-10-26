@@ -7,8 +7,14 @@ import {
   settingEntry,
   SettingsRefusal,
 } from '../workspace/settings-payload.ts';
-import { SETTING_SCOPES, type SettingEntry, type SettingWriteResult } from '@stim-cli/core/state';
-import { mutateSetting, requireSetting, readScope } from '../workspace/settings-write.ts';
+import { REPLACED_SETTINGS, SETTING_SCOPES, type SettingEntry, type SettingWriteResult } from '@stim-cli/core/state';
+import {
+  mutateSetting,
+  readScope,
+  requireSetting,
+  unsetReplacedSetting,
+  type ReplacedSettingRemoval,
+} from '../workspace/settings-write.ts';
 
 interface SettingsFailure {
   code: string;
@@ -80,7 +86,11 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
           io.out(`${entry.key.padEnd(width)}  ${shown}${shown ? '  ' : ''}${chalk.dim(`(${formatOrigin(entry)})`)}`);
         }
         for (const entry of payload.unknown) {
-          io.note(chalk.yellow(`Warning: ${entry.key} in ${entry.file} is not read by Stim.`));
+          io.note(
+            chalk.yellow(
+              `Warning: ${entry.key} in ${entry.file} is not read by Stim.${entry.replacement ? ` Run \`${entry.replacement}\` instead.` : ''}`,
+            ),
+          );
         }
       }),
     );
@@ -129,6 +139,14 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
     .option('--json', 'print the setting after removal as JSON')
     .action((key: string, opts: SubcommandOptions, command: Command) =>
       run(wantsJson(opts, command), io, async () => {
+        if (Object.hasOwn(REPLACED_SETTINGS, key)) {
+          const removal = await unsetReplacedSetting(
+            { key, scope: opts.scope },
+            { cwd: process.cwd(), env, note: io.note },
+          );
+          reportRemoval(io, wantsJson(opts, command), removal, opts.scope);
+          return;
+        }
         const result = await mutateSetting(
           { action: 'unset', key, scope: opts.scope },
           { cwd: process.cwd(), env, note: io.note },
@@ -136,6 +154,16 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
         report(io, wantsJson(opts, command), result, 'unset');
       }),
     );
+}
+
+function reportRemoval(io: Output, json: boolean, removal: ReplacedSettingRemoval, scope?: string): void {
+  if (json) {
+    io.out(JSON.stringify(removal));
+    return;
+  }
+  for (const { file } of removal.removed) io.out(`unset ${removal.key} in ${file}`);
+  if (removal.removed.length === 0)
+    io.out(`${removal.key} was not set in ${scope ? `the ${scope} layer` : 'any layer'}.`);
 }
 
 function report(io: Output, json: boolean, result: SettingWriteResult, verb: 'set' | 'unset'): void {

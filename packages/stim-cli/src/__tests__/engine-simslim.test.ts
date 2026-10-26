@@ -154,12 +154,12 @@ test('a missing SimSlim executable does not fail a default-on run', async () => 
       out: (line) => lines.push(line),
       spawn: missing,
     }),
-  ).resolves.toEqual({ managed: false, profile: null });
+  ).resolves.toEqual({ managed: false, profile: null, notInstalled: true });
   expect(lines).toEqual([expect.stringContaining('brew install mobai-app/tap/simslim')]);
 
   await expect(
     reconcileSimSlim({ context: undefined, udid: 'U1', slimByDefault: true, previouslyManaged: true, spawn: missing }),
-  ).resolves.toEqual({ managed: true, profile: null });
+  ).resolves.toEqual({ managed: true, profile: null, notInstalled: true });
 });
 
 test('includes recent SimSlim output when the command fails', async () => {

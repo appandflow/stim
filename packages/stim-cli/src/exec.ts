@@ -12,6 +12,7 @@ import { spawnDeclared } from './engine/spawn-claims.ts';
 import { operationState } from './engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { groupExitBudgetMs, waitForGroupExit } from './process-group-exit.ts';
+import { redactArgv, redactCommandLine, trace } from '@stim-cli/core/state';
 import { debugLog } from './debug-log.ts';
 import { reportSignal, trackReportResource } from './report-runtime.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from './process-identity.ts';
@@ -672,19 +673,50 @@ function outcomeOf(error: unknown): Record<string, unknown> {
 
 let executionId = 0;
 
+interface ChildSpan {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+function fileSpan(file: string, args: readonly string[] | undefined, opts: ExecOptions): ChildSpan {
+  const program = basename(file);
+  const argv = redactArgv(args ?? [], opts.redact, file);
+  const first = argv[0];
+  return {
+    name: first && /^[a-z][a-z0-9-]{1,23}$/.test(first) ? `${program} ${first}` : program,
+    args: {
+      argv: [file, ...argv],
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
+    },
+  };
+}
+
+function commandSpan(cmd: string, opts: ExecOptions): ChildSpan {
+  return {
+    name: programOf(cmd.replace(/^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+/, '')).replace(/["']/g, ''),
+    args: { command: redactCommandLine(cmd, opts.redact), ...(opts.cwd ? { cwd: opts.cwd } : {}) },
+  };
+}
+
 function timedSync<A extends unknown[]>(
   fn: (...args: A) => string,
   program: (...args: A) => string,
+  span: (...args: A) => ChildSpan,
 ): (...args: A) => string {
   return (...args) => {
-    if (!debugLog.enabled()) return fn(...args);
+    const logging = debugLog.enabled();
+    const tracing = trace.enabled();
+    if (!logging && !tracing) return fn(...args);
     const id = ++executionId;
     const name = program(...args);
     const started = performance.now();
+    const traced = tracing ? span(...args) : null;
+    const end = traced ? trace.beginExec(traced.name, traced.args) : null;
     debugLog.log('exec.start', { program: name, executionId: id });
     try {
       const out = fn(...args);
       debugLog.log('exec', { program: name, executionId: id, ms: Math.round(performance.now() - started), ok: true });
+      end?.({ ok: true });
       return out;
     } catch (error) {
       debugLog.log('exec', {
@@ -693,6 +725,7 @@ function timedSync<A extends unknown[]>(
         ms: Math.round(performance.now() - started),
         ...outcomeOf(error),
       });
+      end?.(outcomeOf(error));
       throw error;
     }
   };
@@ -700,20 +733,30 @@ function timedSync<A extends unknown[]>(
 
 const debugExecutor: Executor = {
   ...defaultExecutor,
-  run: timedSync((cmd: string, opts: ExecOptions) => defaultExecutor.run(cmd, opts), programOf),
+  run: timedSync(
+    (cmd: string, opts: ExecOptions) => defaultExecutor.run(cmd, opts),
+    programOf,
+    (cmd, opts) => commandSpan(cmd, opts),
+  ),
   runFile: timedSync(
     (file: string, args: string[], opts: ExecOptions) => defaultExecutor.runFile(file, args, opts),
     (file) => basename(file),
+    (file, args, opts) => fileSpan(file, args, opts),
   ),
   async runFileAsync(file, args, opts) {
-    if (!debugLog.enabled()) return defaultExecutor.runFileAsync(file, args, opts);
+    const logging = debugLog.enabled();
+    const tracing = trace.enabled();
+    if (!logging && !tracing) return defaultExecutor.runFileAsync(file, args, opts);
     const id = ++executionId;
     const name = basename(file);
     const started = performance.now();
+    const traced = tracing ? fileSpan(file, args, opts) : null;
+    const end = traced ? trace.beginExec(traced.name, traced.args) : null;
     debugLog.log('exec.start', { program: name, executionId: id });
     try {
       const out = await defaultExecutor.runFileAsync(file, args, opts);
       debugLog.log('exec', { program: name, executionId: id, ms: Math.round(performance.now() - started), ok: true });
+      end?.({ ok: true });
       return out;
     } catch (error) {
       debugLog.log('exec', {
@@ -722,8 +765,22 @@ const debugExecutor: Executor = {
         ms: Math.round(performance.now() - started),
         ...outcomeOf(error),
       });
+      end?.(outcomeOf(error));
       throw error;
     }
+  },
+  spawn(cmd, args, opts) {
+    const child = defaultExecutor.spawn(cmd, args, opts);
+    if (!trace.enabled()) return child;
+    const { name, args: spanArgs } = fileSpan(cmd, args, {
+      timeoutMs: 'unbounded',
+      ...(typeof opts?.cwd === 'string' ? { cwd: opts.cwd } : {}),
+    });
+    const end = trace.beginExec(name, { ...spanArgs, spawned: true });
+    child.once('close', (exit, signal) =>
+      end({ ok: exit === 0, ...(exit !== null ? { exit } : {}), ...(signal ? { signal } : {}) }),
+    );
+    return child;
   },
 };
 
@@ -736,9 +793,11 @@ const derivedAsync = new WeakSet<object>();
 
 /**
  * @internal Test seam that swaps the process executor. A mock without the async methods, or one spread from another
- * mock, answers `runFileAsync` from its own `runFile` and `runFileQuietAsync` from its own `runFileQuiet`.
+ * mock, answers `runFileAsync` from its own `runFile` and `runFileQuietAsync` from its own `runFileQuiet`. A mock
+ * without `findExecutable` finds nothing on PATH.
  */
 export function setExecutor(e: MockExecutor): void {
+  e.findExecutable ??= () => null;
   if (e.runFile && (!e.runFileAsync || derivedAsync.has(e.runFileAsync))) {
     e.runFileAsync = async (...args: Parameters<Executor['runFile']>) => {
       if (!e.runFile) throw new Error('the mock executor has no runFile');
