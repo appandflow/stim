@@ -457,7 +457,7 @@ test('a running dev server whose emulators cannot be listed is kept', async () =
   setExecutor({
     ...real,
     runFile: (file, args, options) => {
-      if (file.endsWith('emulator')) throw new Error('emulator -list-avds timed out');
+      if (file.endsWith('adb')) throw new Error('adb devices timed out');
       return real.runFile(file, args, options);
     },
   });
@@ -580,4 +580,30 @@ test.each([
 
   const stops = (readMaintenanceState()?.plan ?? []).filter((action) => action.check === 'idle');
   expect(stops.map((action) => action.target)).toEqual(planned ? [root] : []);
+});
+
+test.each([
+  ['the owned AVD', 'stim-droppy', false],
+  ['another AVD', 'pixel-user', true],
+])('an emulator the activity reader missed that adb names as %s keeps the workspace: %s', async (_, name, stops) => {
+  const root = serving('droppy', 8100);
+  upsertProject(root, { platforms: { android: { avdName: 'stim-droppy', owned: true } } });
+  appendLog(root, 'metro.ndjson', [{ ts: Date.now() - 7 * HOUR_MS, src: 'metro', event: 'expo_stdout', msg: 'x' }]);
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFile: (file, args, options) =>
+      file.endsWith('adb') && args[0] === 'devices'
+        ? 'List of devices attached\nemulator-5554\tdevice\n'
+        : real.runFile(file, args, options),
+    runFileQuiet: (file, args, options) =>
+      file.endsWith('adb') && args.includes('avd') ? `${name}\nOK\n` : real.runFileQuiet(file, args, options),
+  });
+
+  const { actions, skips } = await plan(() => []);
+
+  expect(actions.map((action) => action.target)).toEqual(stops ? [root] : []);
+  expect(skips.map((skip) => skip.reason)).toEqual(
+    stops ? [] : ['its emulator stim-droppy runs as emulator-5554, but its activity could not be read'],
+  );
 });

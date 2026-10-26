@@ -157,7 +157,8 @@ running `stim ios`, `android`, `stop` or `start`, a running macOS app, a hosted
 or remote session, an unexpired device lease, a managed tunnel, a running owned
 Chrome, a device driver other than agent-device, a live agent-device claim whose
 session activity Stim cannot find, or device activity, an emulator list or an
-emulator's AVD name that Stim cannot read keeps the workspace. Maintenance logs each stop with the idle time and
+emulator's AVD name that Stim cannot read keeps the workspace. A stale offline
+emulator in `adb devices` has no readable AVD name; `adb kill-server` clears it. Maintenance logs each stop with the idle time and
 each workspace kept past the window with its reason (`stim logs --source maintenance`), and
 `stim status` shows the dev server stopped by automatic maintenance. The next
 `stim start`, `stim ios` or `stim android` starts it again. A stop never

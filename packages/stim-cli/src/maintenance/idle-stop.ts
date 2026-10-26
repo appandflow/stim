@@ -21,8 +21,6 @@ import {
   getAvdNameForSerialAsync,
   listAdbDevices,
   listAdbDevicesAsync,
-  ownedAvdSerialResolver,
-  ownedAvdSerialResolverAsync,
 } from '../devices/android.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { leaseIsExpired, listLeaseFiles } from '../engine/device-lease.ts';
@@ -294,15 +292,9 @@ function rethrowCleanup(error: unknown, signal: AbortSignal | undefined): void {
   signal?.throwIfAborted();
 }
 
-async function emulatorListError(avdNames: readonly string[], operation?: StimContext): Promise<string | null> {
+async function unseenEmulatorError(unseen: readonly string[], operation?: StimContext): Promise<string | null> {
   try {
     const signal = operation?.signal;
-    const resolve = operation
-      ? ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal, operation })
-      : ownedAvdSerialResolver({ timeoutMs: 5000 });
-    let unseen = false;
-    for (const name of avdNames) if ((await resolve(name)).notRunning) unseen = true;
-    if (!unseen) return null;
     const adb = operation
       ? await listAdbDevicesAsync({ timeoutMs: 5000, signal, operation })
       : listAdbDevices({ timeoutMs: 5000 });
@@ -311,6 +303,7 @@ async function emulatorListError(avdNames: readonly string[], operation?: StimCo
         ? await getAvdNameForSerialAsync(serial, { timeoutMs: 5000, signal, operation })
         : getAvdNameForSerial(serial, { timeoutMs: 5000 });
       if (name === null) return `its emulators cannot be identified to prove them idle (${serial} gave no AVD name)`;
+      if (unseen.includes(name)) return `its emulator ${name} runs as ${serial}, but its activity could not be read`;
     }
     return null;
   } catch (error) {
@@ -363,7 +356,9 @@ async function candidate(
     platforms.android?.owned && platforms.android.avdName ? [platforms.android.avdName] : [],
   );
   if (supervisor.status !== 'ours' && booted.length === 0) return null;
-  const emulators = avdNames.length ? await emulatorListError(avdNames, operation) : null;
+  const seen = new Set(booted.flatMap((device) => (device.kind === 'android' ? [device.id] : [])));
+  const unseen = avdNames.filter((name) => !seen.has(name));
+  const emulators = unseen.length ? await unseenEmulatorError(unseen, operation) : null;
   if (emulators) return { skip: emulators };
   return { path, hours: setting.hours, serving: supervisor.status === 'ours', devices: booted };
 }

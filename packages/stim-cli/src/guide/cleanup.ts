@@ -75,7 +75,9 @@ is a maintenance_action line naming the idle time (gc --delete records itself
 as the requester), each workspace kept past the window a maintenance_skip line
 with the reason, and status shows the dev server as stopped by automatic
 maintenance. The next start, ios or android starts it
-again. A dev server started by an older Stim, which did not record HMR
+again. An owned emulator the activity check missed keeps the workspace while
+adb lists it, and so does any emulator adb lists without an AVD name, such as
+a stale offline entry that adb kill-server clears. A dev server started by an older Stim, which did not record HMR
 updates, is kept until stim stop and stim start restart it. Unlike the other actions, it can stop the workspace whose dev server
 supervisor or status --watch timer started the pass; a pass a command starts,
 gc --delete included, never stops the command's own workspace.
