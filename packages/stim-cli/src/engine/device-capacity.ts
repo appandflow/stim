@@ -485,6 +485,8 @@ export interface DeviceSlotWaitPolicy {
   reclaimIdleMinutes?: number;
   waitingFor?: (info: BuildWaitingFor | null) => void;
   onWait?: (ms: number) => void;
+  /** Called once admission lets the boot start, just before it runs. */
+  onBootStart?: () => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -667,6 +669,7 @@ export async function withDeviceBootAdmission<T>(
     sleep = (ms) => delay(ms, undefined, { signal }),
     waitingFor = () => {},
     onWait = () => {},
+    onBootStart = () => {},
   }: DeviceSlotWaitPolicy & {
     root: string;
     max?: number;
@@ -685,7 +688,10 @@ export async function withDeviceBootAdmission<T>(
   };
   signal?.throwIfAborted();
   requireMembership();
-  if (!max || max <= 0) return boot();
+  if (!max || max <= 0) {
+    onBootStart();
+    return boot();
+  }
   const workspace = workspaceId(root);
   device = { ...device, workspace, displayName };
   let ticket: ClaimHandle | undefined;
@@ -815,6 +821,7 @@ export async function withDeviceBootAdmission<T>(
       }
     }
     requireMembership();
+    onBootStart();
     return await boot();
   } finally {
     releaseClaim(marker);

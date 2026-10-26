@@ -13,6 +13,7 @@ import {
   BUILD_PHASES,
   LAST_BUILD_KEYS,
   isJsonObject,
+  loadPerCore,
   parseMissReason,
   workspaceBuildDetailFile,
   type ActiveBuildState,
@@ -66,6 +67,10 @@ export interface ActiveBuildRecord {
   estimate?: BuildEstimate;
   /** What the current `device` or `launch` phase waits on; a phase change clears it. */
   activity?: Omit<BuildActivity, 'percent'>;
+  /** This machine's 5-minute load per core when the run started. */
+  loadPerCore?: number;
+  /** When the run's first owned-device boot started, and the load per core then. */
+  boot?: { startedAt: string; loadPerCore: number };
 }
 
 /**
@@ -102,6 +107,8 @@ export interface BuildProgress {
   /** Records the workspace root whose build of the same artifact the run waits on; null when it is not known. */
   waitingOn(root: string | null): void;
   waitingFor(info: BuildWaitingFor | null, kind?: BuildWaitingFor['kind']): void;
+  /** Records that the run's owned-device boot starts now; a later boot of the same run keeps the first. */
+  bootStarted(): void;
   /** Reads one record the run writes to its build log, for the native tool's progress. */
   output(record: unknown): void;
   durations(): Record<string, number>;
@@ -123,6 +130,7 @@ export const NO_BUILD_PROGRESS: BuildProgress = {
   place: () => {},
   waitingOn: () => {},
   waitingFor: () => {},
+  bootStarted: () => {},
   output: () => {},
   durations: () => ({}),
   phase: () => null,
@@ -223,6 +231,7 @@ export function startBuildProgress({
   slot,
   claim,
   now = Date.now,
+  load = () => loadPerCore().loadPerCore,
   note = () => {},
 }: {
   root: string;
@@ -230,6 +239,7 @@ export function startBuildProgress({
   slot: string;
   claim: ClaimHandle;
   now?: () => number;
+  load?: () => number;
   note?: (line: string) => void;
 }): BuildProgress {
   const startedAt = new Date(now()).toISOString();
@@ -241,6 +251,7 @@ export function startBuildProgress({
     phaseStartedAt: startedAt,
     phases: [{ phase: 'prepare', startedAt }],
     claim: { root: claim.root, path: claim.path, claimId: claim.claimId, pid: claim.owner.pid },
+    loadPerCore: load(),
   };
   let warned = false;
   const guard = (fn: () => void): void => {
@@ -353,6 +364,11 @@ export function startBuildProgress({
       const first = [...waits.values()].toSorted((a, b) => Date.parse(a.since) - Date.parse(b.since))[0];
       if (first) record.waitingFor = first;
       else delete record.waitingFor;
+      write();
+    },
+    bootStarted() {
+      if (record.boot) return;
+      record.boot = { startedAt: new Date(now()).toISOString(), loadPerCore: load() };
       write();
     },
     waitingOn(holder) {
@@ -514,7 +530,14 @@ function updateFinishedBuild(
     const phases = own ? phaseDurations(own.phases, now()) : {};
     if (own) {
       const offload = own.placement ? withOffloadPhase(own.offload, own.placement, now()) : own.offload;
-      Object.assign(ran, { id: own.claim.claimId, phases, phase: own.phase, ...(offload ? { offload } : {}) });
+      Object.assign(ran, {
+        id: own.claim.claimId,
+        phases,
+        phase: own.phase,
+        ...(offload ? { offload } : {}),
+        ...(own.loadPerCore === undefined ? {} : { loadPerCore: own.loadPerCore }),
+        ...(own.boot ? { boot: own.boot } : {}),
+      });
     }
     const entry: Record<string, unknown> = {
       ...Object.fromEntries(HISTORY_FIELDS.filter((key) => key in record).map((key) => [key, record[key]])),
@@ -602,6 +625,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
   const estimate = parseEstimate(record.estimate);
   const activity = parseActivity(record.activity);
   const offload = parseOffload(record.offload);
+  const boot = parseBoot(record.boot);
   return {
     platform: record.platform,
     slot: typeof record.slot === 'string' ? record.slot : 'default',
@@ -619,6 +643,8 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     ...(record.outcome === 'hit' || record.outcome === 'cold' ? { outcome: record.outcome } : {}),
     ...(estimate ? { estimate } : {}),
     ...(activity ? { activity } : {}),
+    ...(isLoad(record.loadPerCore) ? { loadPerCore: record.loadPerCore } : {}),
+    ...(boot ? { boot } : {}),
     claim: {
       root: claim.root,
       path: typeof claim.path === 'string' ? claim.path : '',
@@ -626,6 +652,15 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
       pid: typeof claim.pid === 'number' ? claim.pid : 0,
     },
   };
+}
+
+function isLoad(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function parseBoot(value: unknown): ActiveBuildRecord['boot'] | null {
+  if (!isJsonObject(value) || typeof value.startedAt !== 'string' || !isLoad(value.loadPerCore)) return null;
+  return { startedAt: value.startedAt, loadPerCore: value.loadPerCore };
 }
 
 function parseOffload(value: unknown): ActiveBuildRecord['offload'] | null {

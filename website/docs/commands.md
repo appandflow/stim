@@ -945,7 +945,10 @@ result.
   failed or was cancelled. A record has the project, workspace and branch, the
   scheme or variant, where it ran (and why an offload fell back to this Mac), the cache
   result and key, the time in each phase, the failure code, message and remedy,
-  the simulator or emulator it targeted, and the Stim version. It outlives the
+  the simulator or emulator it targeted, this Mac's load per core when the run
+  started, when the run's owned simulator or emulator boot started and the load
+  per core then (`loadPerCore` and `boot`, absent from older records), and the
+  Stim version. It outlives the
   workspace, works from any directory, stands alone (`--source all` leaves it
   out), and takes the same options as `--source gc`; `--errors` shows only failed
   builds. `stim gc` never removes it.

@@ -719,6 +719,26 @@ test('the non-binding slot peek reports a live owned slot and FIFO waiters witho
   }
 });
 
+test('a boot reports its start only once admitted, before it runs, and a refused boot never does', async () => {
+  const events: string[] = [];
+  const boot = async () => {
+    events.push('boot');
+  };
+  const onBootStart = () => events.push('start');
+  await withDeviceBootAdmission({ platform: 'ios', key: 'a' }, boot, { root, max: 0, onBootStart });
+  await withDeviceBootAdmission({ platform: 'ios', key: 'b' }, boot, { root, max: 2, sources: empty, onBootStart });
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'c' }, boot, {
+      root,
+      max: 1,
+      noWait: true,
+      sources: { ...empty, sims: occupied },
+      onBootStart,
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+  expect(events).toEqual(['start', 'boot', 'start', 'boot']);
+});
+
 test('status slot usage names the workspace and slot of each counted device and reports an uncountable inventory', async () => {
   const sims = [
     makeIosSim({ udid: 'held', name: 'stim-held', state: 'Booted' }),

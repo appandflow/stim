@@ -331,7 +331,15 @@ msg and
   failure         failed or cancelled runs: { code, message, remedy, phase }
   device          { name, runtime? } of the simulator, emulator or device;
                   never its serial or UDID
+  loadPerCore     this machine's 5-minute load average per CPU when the run
+                  started, to one decimal
+  boot            { startedAt, loadPerCore } of the run's first owned
+                  simulator or emulator boot: epoch milliseconds when it
+                  started, once any concurrency.maxDevices wait was over,
+                  and the load per core then. Absent when the run booted
+                  nothing.
   stimVersion     the stim that ran the build
+Records written before these fields existed lack loadPerCore and boot.
 A run that stopped before it had an app to build (a refused flag, a missing
 project) writes no record. Writing the record never changes the run's result.
 

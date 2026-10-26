@@ -893,6 +893,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     waitMs: plan.deviceSlotWaitMs,
     reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     waitingFor: (info: Parameters<typeof progress.waitingFor>[0]) => progress.waitingFor(info, 'device-slot'),
+    onBootStart: () => progress.bootStarted(),
     onWait: (ms: number) => {
       stats.addDeviceSlotWaitMs(ms);
       if (record.devicePlacement?.decision === 'local' && ms > 0) record.devicePlacement.decision = 'waited-locally';
