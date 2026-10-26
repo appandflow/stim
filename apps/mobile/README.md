@@ -1074,6 +1074,12 @@ slot wait during compilation, or `a4-offloading` to see a build slot wait during
 pods. Both wait timers start at 0:42 and count up. The optional state lives in
 `mock-server/fixtures/slot-waits.json`; the default captured fixtures stay unchanged.
 
+To screenshot the machine's load and slot meters, run `pnpm run mock-server --capacity`. The Mac status
+sheet then shows a Load row and `Devices 6 / 6` and `Builds 2 / 2` meters, with the devices holding the
+slots listed because they are full. Without the flag the capture carries none of these fields, which is what
+a Mac running an older `stim` sends; the sheet shows only the memory line. The added state lives in
+`mock-server/fixtures/capacity.json`.
+
 To try the home screen with two Macs, run two mock servers on different ports.
 `--workspaces <regex>` keeps only the app workspaces and source-only worktrees whose path matches, and
 `--free-gb <n>` sets the free disk `machine.get` reports:

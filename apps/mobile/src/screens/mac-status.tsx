@@ -38,6 +38,7 @@ import {
 } from '@/lib/build-machines';
 import { clockDuration } from '@/lib/format';
 import { pairingScope } from '@/lib/connection';
+import { deviceHolderRows, loadView, slotMeters } from '@/lib/capacity';
 import { budgetRows, minFreeDiskGb, usageCharts, type BudgetRow } from '@/lib/home';
 import {
   agoLabel,
@@ -158,6 +159,7 @@ export function MacStatus({ id }: { id: string }) {
             <UsageCharts charts={charts} />
           </Card>
         ) : null}
+        {status?.capacity ? <CapacityCard capacity={status.capacity} status={status} now={now} /> : null}
         {status?.capacity ? (
           <Text variant="footnote" tone={status.capacity.overCapacity ? 'warning' : 'secondary'}>
             {capacityLine(status.capacity)}
@@ -705,6 +707,65 @@ function DiskHeadline({
         </Text>
       ) : null}
     </View>
+  );
+}
+
+function CapacityCard({
+  capacity,
+  status,
+  now,
+}: {
+  capacity: NonNullable<StatusPayload['capacity']>;
+  status: StatusPayload;
+  now: number;
+}) {
+  const load = capacity.load ? loadView(capacity.load) : null;
+  const meters = slotMeters(capacity);
+  const holders =
+    capacity.devices && meters.some((m) => m.kind === 'devices' && m.full)
+      ? deviceHolderRows(capacity, status, now)
+      : [];
+  if (!load && meters.length === 0) return null;
+  return (
+    <Card>
+      {load ? (
+        <RowLayout
+          title={t`Load`}
+          subtitle={load.state}
+          trailing={
+            <Text variant="callout" tone={load.tone} style={styles.tabular}>
+              {load.value}
+            </Text>
+          }
+        />
+      ) : null}
+      {meters.map((meter) => (
+        <View key={meter.kind}>
+          <View style={[styles.separated]}>
+            <RowLayout
+              title={meter.label}
+              subtitle={meter.reason}
+              trailing={
+                <Text variant="callout" tone={meter.full ? 'warning' : 'default'} style={styles.tabular}>
+                  {meter.value}
+                </Text>
+              }
+            />
+          </View>
+          {meter.kind === 'devices'
+            ? holders.map((holder) => (
+                <RowLayout
+                  key={holder.key}
+                  indent
+                  leading={holder.platform ? <PlatformGlyph platform={holder.platform} size={16} /> : null}
+                  title={holder.title}
+                  subtitle={holder.subtitle}
+                />
+              ))
+            : null}
+        </View>
+      ))}
+    </Card>
   );
 }
 
