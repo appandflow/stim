@@ -14,12 +14,11 @@ extension CapacityLoad {
 
   /// What the state means for new work on this Mac.
   public var explanation: String {
-    let busy = "Placement prefers another machine from \(formatLoad(busyAt)) per core."
     switch state {
-    case .free: return "Under \(formatLoad(busyAt)) per core, so builds stay on this Mac."
-    case .busy: return busy
+    case .free: return "Under \(formatLoad(busyAt)) per core."
+    case .busy: return "At or over \(formatLoad(busyAt)) per core, so placement prefers another machine."
     case .holding:
-      return "New native builds and device boots on this Mac wait"
+      return "New local native work waits"
         + (limit.map { " until the load is under \(formatLoad($0)) per core." } ?? ".")
     case .other: return "Stim reported a load state this version does not know."
     }
@@ -92,7 +91,8 @@ extension DeviceSlots {
       let device = holder.workspace.flatMap { path in
         environments.first { $0.path == path }?.devices.first { $0.platform == holder.platform && $0.slot == slot }
       }
-      let idle = ActivityBadge(device?.activity, now: now).map(\.text)
+      let screenChangedAt = device?.activityKey.flatMap { ScreenActivity.shared.lastChange($0) }
+      let idle = ActivityBadge(device?.activity, screenChangedAt: screenChangedAt, now: now).map(\.text)
       return DeviceHolderRow(
         id: "\(index):\(holder.platform):\(holder.workspace ?? ""):\(holder.slot ?? ""):\(holder.label)",
         label: holder.label, platform: holder.platform, slot: holder.slot,
