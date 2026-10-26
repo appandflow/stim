@@ -5,6 +5,7 @@ import {
   machineCapacity,
   parseHostedChoice,
   parseHostedNativeOffer,
+  parseMachine,
   type AutomaticPlacement,
   type DevicePlacement,
   type HostedAndroidChoice,
@@ -52,6 +53,10 @@ export async function probeHost(
   appMode?: HostedAppOffer['mode'],
   signal?: AbortSignal,
 ): Promise<{ probe: PlacementProbe; target?: HostedNativeTarget }> {
+  if (appMode === 'development' && parseMachine(machine)?.transport === 'local')
+    return {
+      probe: { machine, failure: "a Debug run there cannot reach this machine's Metro over the local network" },
+    };
   let host: HostConnection | undefined;
   const deadline = Date.now() + 3000;
   const cancel = () => host?.connection.close();

@@ -6,7 +6,8 @@ import { setImmediate, setTimeout as delay } from 'node:timers/promises';
 import { hostedMetroGateways } from '@stim-cli/core/state';
 import { watchHostedMetro } from '../supervisor/hosted-metro.ts';
 import { captureProcessToken } from '../process-identity.ts';
-import { closeHostedMetro, requireHostedMetro } from '../device-host/metro-gateway.ts';
+import { closeHostedMetro, requireHostedMetro, requireTailnetMetro } from '../device-host/metro-gateway.ts';
+import { probeHost } from '../device-host/auto-placement.ts';
 import { writeHostedNative } from '../device-host/ios-state.ts';
 import type { HostedIosPlacement } from '@stim-cli/core/state';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -192,4 +193,14 @@ test('a live supervisor must advertise its watcher before a hosted Debug run can
   } finally {
     await close();
   }
+});
+
+test('a hosted Debug run never goes to a local network machine, whose host cannot reach Metro without the tailnet', async () => {
+  expect(() => requireTailnetMetro('local:10.0.0.92')).toThrow(
+    expect.objectContaining({ code: 'STIM_HOSTING_REFUSED' }),
+  );
+  expect(() => requireTailnetMetro('mini')).not.toThrow();
+  expect(await probeHost('local:10.0.0.92', 'ios', {}, 'development')).toEqual({
+    probe: { machine: 'local:10.0.0.92', failure: expect.stringContaining('Metro') },
+  });
 });

@@ -46,7 +46,7 @@ import {
   type HostConnection,
   type HostedSession,
 } from './hosted-client.ts';
-import { requestHostedMetro, closeHostedMetro, requireHostedMetro } from './metro-gateway.ts';
+import { requestHostedMetro, closeHostedMetro, requireHostedMetro, requireTailnetMetro } from './metro-gateway.ts';
 import { writeHostedNative } from './ios-state.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { cancellableSleep } from '../cancellation.ts';
@@ -309,6 +309,7 @@ async function placeHostedNativeOnce(
   const closeOnAbort = () => host.connection.close();
   signal?.addEventListener('abort', closeOnAbort, { once: true });
   try {
+    if (mode === 'development') requireTailnetMetro(host.machine);
     if (mode === 'development' && metro === requestHostedMetro) requireHostedMetro(root);
     enterPhase('device');
     host = await connectHost(host.machine, undefined, true, signal);

@@ -88,6 +88,24 @@ export function gatewayAddresses(
   return { address, peer: peer.address };
 }
 
+/**
+ * A hosted Debug run needs the hosting machine to reach this machine's Metro, which today goes through a gateway on
+ * this machine's tailnet address that trusts WireGuard source addresses. A `local:` machine has no such address.
+ */
+export function requireTailnetMetro(machine: string): void {
+  if (parseMachine(machine)?.transport !== 'local') return;
+  throw Object.assign(
+    new Error(
+      `${machine} is on the local network, and hosted Debug runs there cannot reach this machine's Metro yet: the hosting machine's connection to Metro needs a tailnet address.`,
+    ),
+    {
+      code: 'STIM_HOSTING_REFUSED',
+      remedy:
+        'Run a Release configuration or variant there, run Debug on a remote.machines entry on the tailnet, or run it on this machine.',
+    },
+  );
+}
+
 export function requireHostedMetro(root: string): void {
   const supervisor = readWorkspaceState(root)?.supervisor;
   if (supervisor?.hostedMetro === true && inspectProcessIdentity(supervisor) === 'same') return;
@@ -106,6 +124,7 @@ export async function requestHostedMetro(
   signal?: AbortSignal,
 ): Promise<{ gatewayPort: number; secret: string }> {
   throwIfCancelled(signal, 'hosted Metro gateway');
+  requireTailnetMetro(credential.machine);
   requireHostedMetro(root);
   const addresses = gatewayAddresses(credential, await tailscaleStatusAsync(signal));
   throwIfCancelled(signal, 'hosted Metro gateway');

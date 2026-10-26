@@ -543,9 +543,10 @@ leased until <time>" for each one.`,
                   null when off; plan lists what the next start, ios or
                   android would reclaim, in the \`reclaimed\` shape without
                   freedMb, and is empty while under budget
-  deviceHosts     one { machine, state, dnsName?, deviceId?, requestedAt?, expiresAt?,
-                  host? } per remote.machines entry. state is "approved",
-                  "pending", "not-asked", "revoked", "lapsed", "key-changed", "outdated",
+  deviceHosts     one { machine, state, dnsName?, fingerprint?, deviceId?, requestedAt?,
+                  expiresAt?, host? } per remote.machines entry. state is "approved",
+                  "pending", "not-asked", "revoked", "lapsed", "key-changed",
+                  "key-unconfirmed", "outdated",
                   "not-on-tailnet", "tailscale-off", "unreachable", "invalid",
                   "credentials-unavailable" or "busy". Setup tickets stay private.
                   Only --fix asks for access or forgets removed names. A
@@ -561,7 +562,12 @@ leased until <time>" for each one.`,
                   expires, absent for a Stim Desktop ticket; "lapsed" is a
                   pending request whose expiry passed. --fix asks again.
                   "key-changed" means the worker did not prove the
-                  stim-server key pinned at approval. "outdated" means its
+                  stim-server key pinned at approval. "key-unconfirmed" is a
+                  local: machine that approved this one but whose key no
+                  person confirmed, so nothing pinned it; fingerprint is the
+                  key's fingerprint to compare with the one stim-server setup
+                  printed there, and only stim doctor --fix in a terminal asks.
+                  A local: entry has no dnsName. "outdated" means its
                   stim-server speaks protocol 1; the finding names the
                   stim-server service update command to run there.
   toolchain       { entries, projectNode } on macOS, else null. entries is one { name, value,
@@ -574,11 +580,12 @@ leased until <time>" for each one.`,
                   pins Node (bin, version and match are null when no install
                   fits the pin; match is "exact", or "major" for the newest
                   install of the pinned major not older than the pin), else null
-  remoteMachines  one { machine, state, diagnosis?, dnsName?, deviceId?, requestedAt?,
-                  expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
+  remoteMachines  one { machine, state, diagnosis?, dnsName?, fingerprint?, deviceId?,
+                  requestedAt?, expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
                   remote.machines entry, for its build approval; state is "approved", "pending", "not-asked",
                   "revoked" (revoked or denied), "lapsed" (the request lapsed
-                  before approval), "key-changed", "outdated",
+                  before approval), "key-changed", "key-unconfirmed" (as in
+                  deviceHosts), "outdated",
                   "not-on-tailnet", "tailscale-off", "unreachable" or
                   "invalid". diagnosis is { layer, code, title, message, remedy }
                   for the first layer that stopped this machine, present for
@@ -593,6 +600,11 @@ leased until <time>" for each one.`,
                   nothing behind the route), server-not-ready (503: running but
                   not serving; its message gives the cause the server reports),
                   server-no-answer (silent route while tailscale ping reaches the Mac), server-outdated and connect-failed (none of the above).
+                  A local: machine never reads Tailscale and reports
+                  lan-not-listening (nothing accepts connections on its
+                  stim-server port), lan-no-answer (no reply: the network, or
+                  the macOS firewall on that machine), server-not-ready or
+                  connect-failed.
                   Tailscale's own "offline" flag lags a reachable peer, so an
                   answer from the machine outranks it. host has the same shape and presence rule as in
                   deviceHosts, as do expiresAt (a pending request's lapse

@@ -19,12 +19,21 @@ export async function agentAccess(
   note: (line: string) => void,
   platform: 'macos' | 'ios' | 'android' = 'macos',
 ): Promise<HostedAgentAccess> {
+  const machine = parseMachine(credential.machine);
+  if (machine?.transport === 'local') {
+    if (grant !== undefined)
+      note(
+        `Agent control of apps hosted on ${credential.machine} needs a tailnet machine; the local network does not carry it.`,
+      );
+    await removeAgentAccess(file);
+    return { driver: 'none', setting: 'hosting.agentDriver' };
+  }
   const parsed = grant === undefined ? null : parseHostedAgentGrant(grant);
   const issued = parsed && 'token' in parsed ? parsed : null;
   const loaded = issued ? await agentDriverClient(issued.driver) : null;
   if ((grant !== undefined && !parsed) || (loaded && 'unavailable' in loaded))
     note(`${credential.machine} offered agent control this Stim does not support.`);
-  const port = parseMachine(credential.machine)?.port ?? 443;
+  const port = machine?.port ?? 443;
   const client = loaded && 'client' in loaded ? loaded.client : null;
   const target = client ? join(dirname(file), client.configFile) : file;
   const access =
