@@ -97,6 +97,7 @@ export interface StimConfig {
     buildsPaused?: unknown;
     devicesPaused?: unknown;
     acceptClientBuilds?: unknown;
+    lanAddresses?: unknown;
     maxLoadPerCore?: unknown;
     workerRoot?: unknown;
     gradleDaemonIdleMinutes?: unknown;

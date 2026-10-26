@@ -1376,6 +1376,8 @@ export interface BuildMachineReport {
   /** Present for a state that stops at a layer below approval (`tailscale-off`, `not-on-tailnet`, `unreachable`, `outdated`). */
   diagnosis?: RemoteDiagnosis;
   dnsName?: string;
+  /** For `key-unconfirmed`: the fingerprint of the key a `local:` machine answered with, for a person to compare. */
+  fingerprint?: string;
   deviceId?: string;
   requestedAt?: string;
   offloadable?: boolean;

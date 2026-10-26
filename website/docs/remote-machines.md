@@ -8,7 +8,9 @@ import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
-A **remote machine** is another machine on your tailnet that Stim can use in two ways.
+A **remote machine** is another machine on your tailnet, or on your local
+network (see [Local network, without Tailscale](#local-network-without-tailscale)),
+that Stim can use in two ways.
 It can compile your app and return the artifact; the app still runs on this
 machine's device unless you select a remote target. It can also host an owned
 simulator or emulator and run your app there. One list, `remote.machines`,
@@ -337,8 +339,9 @@ worker machine need Java and the Android SDK. Device and Release/non-Debug build
 EAS/proxy runs, Android CAS compiler-cache builds, and iOS/Android runs with
 artifact caching disabled in settings do not offload.
 
-Both machines need Tailscale running on the same tailnet and Node 22.12.0 or
-later. Sign in to a GUI login session on a worker Mac to run setup and
+Both machines need Node 22.12.0 or later, and either Tailscale running on the
+same tailnet or a shared local network (see
+[Local network, without Tailscale](#local-network-without-tailscale)). Sign in to a GUI login session on a worker Mac to run setup and
 answer its permission prompts. A reused server must speak protocol 2 (stim-server 1.21.0 or later).
 Setup refuses an older Desktop-run server with an update remedy and never
 downgrades a newer server.
@@ -821,6 +824,76 @@ Gradle daemon (4 GB or more), and the kernel stopped the daemon and restarted
 `stim-server`. Use 32 GB, or stop the daemon (`./gradlew --stop`) before
 starting an emulator.
 
+### Local network, without Tailscale
+
+A worker on the same local network as this machine can take its builds without
+Tailscale. Name it in `remote.machines` as `local:` and its private IPv4 address
+or host name, with an optional stim-server port (default 7787). Every connection
+runs Stim's own authenticated, encrypted handshake, so it travels as plain
+WebSocket without TLS.
+
+On the worker, first choose where stim-server listens. `server.lanAddresses`
+takes network interface names, such as `en0`, or private IPv4 addresses. It is
+empty by default, which listens on no local network address, and refuses
+`0.0.0.0`, loopback, public and IPv6 addresses. A running server applies a
+change within a few seconds. An interface name follows the interface onto any
+private network it joins, such as a coffee shop's, so on a laptop or any machine
+that moves between networks, name its address instead; use an interface name
+only on a worker that stays on one network:
+
+<StimTabs code={`stim settings set server.lanAddresses '["10.0.0.92"]'`} />
+
+On this machine, add the worker and ask for access:
+
+<StimTabs
+code={`stim settings set remote.machines '["local:10.0.0.92"]'
+stim doctor --fix`}
+/>
+
+On the worker, run the `stim-server setup` command doctor printed; on a Linux or
+Windows worker, which takes builds only, leave out `--device-host`. Setup checks
+that stim-server listens on the local network, and skips the tailnet route when
+Tailscale is not running there. It prints the endpoints and the worker's
+**server key fingerprint**, and waits for this machine.
+
+Then run `stim doctor --fix` again on this machine, **in a terminal**. It shows
+the fingerprint the worker answered with and asks whether it matches the one
+setup printed. Answer `y` only when it does. Stim pins the worker's key only
+then, and every later connection must prove that key. Until a person confirms,
+`stim doctor` reports the machine as `key-unconfirmed` and Stim does not use it.
+Stim never answers this question for you, and neither should an agent.
+
+Nothing on a local network vouches for a machine the way a tailnet does: an
+address can be taken over. The setup ticket already keeps a machine without it
+from completing the handshake, and the fingerprint check also catches a ticket
+that reached the wrong machine. When the fingerprints differ, do not confirm;
+check the address in `remote.machines`.
+
+The setup command doctor prints carries the ticket in `STIM_SETUP_TICKET`, and
+the ticket is a credential: once setup stores it, the first machine to spend it
+gets the approval. On a tailnet that machine also had to be in your tailnet; on
+a local network it only needs the ticket and a route to the worker. Copy the
+command only to the worker. Afterward, `stim-server devices` on the worker lists
+the address each approved machine connected from; the name in setup's approval
+line is the one the requesting machine chose. The ticket also lands in
+the worker's shell history; it stops working when it expires, within two hours.
+
+On a Mac with the macOS firewall on, setup warns that macOS asks whether the
+stim-server's `node` may accept incoming connections. Choose **Allow**, or allow
+it in **System Settings > Network > Firewall > Options**; other machines cannot
+connect until then. The question appears in the worker's logged-in session, so
+answer it there. Setup never changes the firewall. On Linux, allow TCP port 7787
+from your local network in the firewall you use, for example
+`sudo ufw allow from 192.168.1.0/24 to any port 7787 proto tcp`. A Linux worker
+set up with `scripts/linux-worker/setup.sh --no-tailscale` takes the same
+`server.lanAddresses` setting.
+
+Offloaded builds and hosted Debug and Release runs on a simulator or emulator
+work over the local network. Agent control of hosted apps needs a tailnet
+machine. `stim-server pair` puts the worker's local network
+endpoint in the phone pairing code when Tailscale is not running there and
+`server.lanAddresses` is set.
+
 ### Windows worker
 
 A Windows machine can take this machine's offloaded Android debug builds. It
@@ -962,6 +1035,18 @@ secrets: Stim assumes every paired Mac belongs to the same person. Nothing under
 neither is build output the fingerprint ignores, such as `ios/Pods` or
 `android/build`.
 
+A worker on the local network listens only on the private addresses
+`server.lanAddresses` names. Before a client authenticates, it answers only the
+handshake, its version on `/health`, and setup journals named by a ticket. A
+setup journal, at `/setup/<journal>`, shows setup's progress, such as its steps,
+endpoints and grant ids, but never a ticket or secret, and its name derives from
+the ticket, so a peer cannot guess it. Each listening address holds at most 64
+unauthenticated connections, 16 from one address, closes one that sends no
+request within 10 seconds or does not finish the handshake within 5, and turns
+an address away for a minute after 5 failed handshakes or 60 first contacts
+naming a ticket it does not hold. An address never authenticates anyone or names
+a client's records.
+
 Build approval permits the client's project code, including config plugins,
 CocoaPods hooks, Xcode script phases and Gradle plugins, to run as the server
 user. It is not a sandbox for untrusted projects. Approved build or device-host
@@ -1012,6 +1097,8 @@ app still shows its short label.
 |                       | `server-not-ready`                  | The route answers 503: stim-server runs but does not serve. The message gives the cause when the server reports one, such as a Stim home it cannot read because its disk stopped answering. | Check the disk that holds the Stim home on that Mac; stim-server serves again by itself once it answers. `stim-server service status` there shows the exact reason. |
 |                       | `server-no-answer`                  | `tailscale ping` reaches the Mac, but the serve route and stim-server sent no reply in time: stim-server may be starting, stalled or restarting.                                            | On that Mac, run `stim-server service status`; it reports a restart loop or a Stim home it is still reading, and the log file to read.                              |
 |                       | `connect-failed`                    | The connection failed in a way none of the other codes names.                                                                                                                               | On that Mac, run `stim-server service status`.                                                                                                                      |
+| Local network         | `lan-not-listening`                 | The worker answers, but nothing accepts connections on its stim-server port.                                                                                                                | On that machine, run `stim-server service status` and check `server.lanAddresses`; the server log names each entry it cannot use.                                   |
+|                       | `lan-no-answer`                     | Nothing answered the connection.                                                                                                                                                            | Check that the machine is awake and on this network, and that its firewall allows stim-server's `node`.                                                             |
 | Compatibility         | `server-outdated`                   | stim-server speaks an older protocol.                                                                                                                                                       | Run the update command the finding prints.                                                                                                                          |
 
 `stim ios|android|macos --remote` prints the same message and remedy when the

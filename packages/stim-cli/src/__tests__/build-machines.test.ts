@@ -1,11 +1,19 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { decodeSecret } from '@stim-cli/core/noise-session';
+import { decodeSecret, keyFingerprint } from '@stim-cli/core/noise-session';
 import { buildMachinesFile, deviceHostMachinesFile, readBuildMachines } from '@stim-cli/core/state';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { inspectBuildMachines, resolveEndpoint, type Endpoint } from '../offload/build-machines.ts';
-import { findPeer, parseMachine, realIo, type HelloReply, type MachineAuth } from '../offload/tailnet.ts';
+import {
+  findPeer,
+  keyConfirmer,
+  parseMachine,
+  realIo,
+  type HelloReply,
+  type MachineAuth,
+  type TailnetMachineIo,
+} from '../offload/tailnet.ts';
 import { startProtocol1Server } from './_noise-server.ts';
 import { createServer, type Server } from 'node:http';
 import type { PeerStartup } from '../offload/diagnosis.ts';
@@ -109,8 +117,15 @@ describe('findPeer', () => {
     expect(findPeer(status(), 'mini.tail1.ts.net')).toEqual(mini);
     expect(findPeer(status(), 'nope')).toBe('missing');
     expect(findPeer(status('macOS', 'minimal.tail1.ts.net.'), 'minimal')).toBe('ambiguous');
-    expect(parseMachine('Mini:7444')).toEqual({ name: 'mini', port: 7444 });
+    expect(parseMachine('Mini:7444')).toEqual({ transport: 'tailscale', name: 'mini', port: 7444 });
     expect(parseMachine('mini;rm')).toBeNull();
+  });
+
+  it('reads a local: entry as a host on the local network at stim-server port 7787 unless it names one', () => {
+    expect(parseMachine('local:10.0.0.92')).toEqual({ transport: 'local', name: '10.0.0.92', port: 7787 });
+    expect(parseMachine('local:Mini.local:7800')).toEqual({ transport: 'local', name: 'mini.local', port: 7800 });
+    for (const entry of ['local:', 'lan:10.0.0.92', 'local:10.0.0.92:0', 'local:[fd00::1]', 'local:a b'])
+      expect(parseMachine(entry)).toBeNull();
   });
 });
 
@@ -191,6 +206,144 @@ describe('inspectBuildMachines', () => {
     expect(machines).toEqual([expect.objectContaining({ state: 'key-changed' })]);
     expect(findings[0]!.title).toBe('Remote machine mini answered with a different server key');
     expect(readBuildMachines()[0]!.serverKey).toBe(SERVER_KEY);
+  });
+
+  describe('a machine on the local network', () => {
+    const LAN = 'local:10.0.0.92';
+    const noTailscale = (
+      replies: HelloReply[],
+      readStatus: () => unknown = () => {
+        throw new Error('a local network machine must not read tailscale status');
+      },
+    ) => {
+      const fake = fakeIo(replies);
+      const io: TailnetMachineIo = { ...fake.io, status: readStatus };
+      return { io, calls: fake.calls };
+    };
+    const firstContact = (replies: HelloReply[]) => {
+      const fake = noTailscale(replies);
+      const hello = fake.io.hello;
+      fake.io.hello = async (endpoint, auth) => {
+        if ('onServerKey' in auth) await auth.onServerKey?.(SERVER_KEY);
+        return hello(endpoint, auth);
+      };
+      return fake;
+    };
+    const confirming = (answer: boolean) => {
+      const asked: [string, string][] = [];
+      return {
+        asked,
+        confirmKey: async (machine: string, key: string) => {
+          asked.push([machine, key]);
+          return answer;
+        },
+      };
+    };
+
+    it('connects to its stim-server port over plain WebSocket without Tailscale', async () => {
+      const { io, calls } = noTailscale([notYet]);
+      const { machines } = await inspectBuildMachines({ fix: true, version: '9.9.9' }, io, [LAN]);
+      expect(calls[0]?.endpoint).toEqual({
+        url: 'ws://10.0.0.92:7787',
+        servername: '10.0.0.92',
+        host: '10.0.0.92:7787',
+      });
+      expect(machines).toEqual([expect.objectContaining({ machine: LAN, state: 'pending' })]);
+      expect(readBuildMachines()[0]).toMatchObject({ machine: LAN, transport: 'local', address: '10.0.0.92' });
+    });
+
+    it('prints a setup command for the port the entry names, which is the server port there', async () => {
+      const { findings } = await inspectBuildMachines({ fix: true, version: '9.9.9' }, noTailscale([notYet]).io, [
+        'local:10.0.0.92:7799',
+      ]);
+      expect(findings[0]?.fix).toMatch(/stim-server setup --expires \S+ --build --device-host --port 7799\n/);
+    });
+
+    it('never pins the key its ticket authenticated until a person confirms the fingerprint', async () => {
+      await inspectBuildMachines({ fix: true, version: '9.9.9' }, noTailscale([notYet]).io, [LAN]);
+      const declined = confirming(false);
+      const { findings, machines } = await inspectBuildMachines(
+        { fix: true, confirmKey: declined.confirmKey },
+        firstContact([approved()]).io,
+        [LAN],
+      );
+      expect(declined.asked).toEqual([[LAN, SERVER_KEY]]);
+      expect(machines).toEqual([
+        expect.objectContaining({ state: 'key-unconfirmed', fingerprint: expect.any(String) }),
+      ]);
+      expect(findings[0]?.detail).toContain(machines[0]?.fingerprint);
+      expect(readBuildMachines()[0]).toMatchObject({ state: 'pending' });
+      expect(readBuildMachines()[0]).not.toHaveProperty('serverKey');
+
+      const accepted = confirming(true);
+      const later = await inspectBuildMachines(
+        { fix: true, confirmKey: accepted.confirmKey },
+        firstContact([approved()]).io,
+        [LAN],
+      );
+      expect(later.machines).toEqual([expect.objectContaining({ state: 'approved' })]);
+      expect(readBuildMachines()[0]).toMatchObject({ state: 'approved', serverKey: SERVER_KEY });
+
+      const { io, calls } = noTailscale([approved()]);
+      await inspectBuildMachines({ fix: false, confirmKey: confirming(false).confirmKey }, io, [LAN]);
+      expect(calls.map((call) => call.auth)).toEqual([{ access: 'build', serverKey: SERVER_KEY }]);
+    });
+
+    it('refuses a pinned machine that answers with another key, and says how to pair again', async () => {
+      await inspectBuildMachines({ fix: true, version: '9.9.9' }, noTailscale([notYet]).io, [LAN]);
+      await inspectBuildMachines(
+        { fix: false, confirmKey: confirming(true).confirmKey },
+        firstContact([approved()]).io,
+        [LAN],
+      );
+      const { findings, machines } = await inspectBuildMachines(
+        { fix: true, confirmKey: confirming(true).confirmKey },
+        noTailscale([{ error: { code: 'server-key-mismatch', message: 'another key' } }]).io,
+        [LAN],
+      );
+      expect(machines).toEqual([expect.objectContaining({ state: 'key-changed' })]);
+      expect(findings[0]).toMatchObject({
+        detail: expect.stringContaining('10.0.0.92 did not prove it holds the stim-server key'),
+        fix: expect.stringContaining(`remove ${LAN} from remote.machines`),
+      });
+      expect(readBuildMachines()[0]?.serverKey).toBe(SERVER_KEY);
+    });
+
+    it('asks a person once per machine and key, one question at a time, and answers no without a terminal', async () => {
+      const questions: string[] = [];
+      let open = 0;
+      let most = 0;
+      const confirm = keyConfirmer(async (question) => {
+        questions.push(question);
+        most = Math.max(most, ++open);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        open--;
+        return true;
+      });
+      expect(await Promise.all([confirm(LAN, SERVER_KEY), confirm(LAN, SERVER_KEY), confirm(LAN, OTHER_KEY)])).toEqual([
+        true,
+        true,
+        true,
+      ]);
+      expect(questions).toHaveLength(2);
+      expect(most).toBe(1);
+      expect(questions[0]).toContain(keyFingerprint(Buffer.from(SERVER_KEY, 'base64url')));
+      expect(await keyConfirmer(null)(LAN, SERVER_KEY)).toBe(false);
+    });
+
+    it('still reaches a local machine while Tailscale is off for the tailnet ones', async () => {
+      let read = 0;
+      const { io } = noTailscale([notYet], () => {
+        read++;
+        return null;
+      });
+      const { machines } = await inspectBuildMachines({ fix: true, version: '9.9.9' }, io, ['mini', LAN]);
+      expect(read).toBe(1);
+      expect(machines).toEqual([
+        expect.objectContaining({ machine: 'mini', state: 'tailscale-off' }),
+        expect.objectContaining({ machine: LAN, state: 'pending' }),
+      ]);
+    });
   });
 
   describe('a worker that still runs a protocol 1 stim-server', () => {

@@ -477,6 +477,9 @@ importers:
       '@stim-cli/transport':
         specifier: workspace:*
         version: link:../transport
+      '@stim-cli/transport-local':
+        specifier: workspace:*
+        version: link:../transport-local
       '@stim-cli/transport-tailscale':
         specifier: workspace:*
         version: link:../transport-tailscale
@@ -547,6 +550,12 @@ importers:
         version: 0.1.1
 
   packages/transport: {}
+
+  packages/transport-local:
+    dependencies:
+      '@stim-cli/transport':
+        specifier: workspace:*
+        version: link:../transport
 
   packages/transport-tailscale:
     dependencies:

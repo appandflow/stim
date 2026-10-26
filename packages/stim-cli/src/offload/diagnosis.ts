@@ -230,6 +230,54 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
   };
 }
 
+/**
+ * Why a `local:` machine did not connect. Nothing below stim-server's own port is in the way, so the causes are the
+ * network, the machine's firewall, or a server that does not listen on that address.
+ */
+export function diagnoseLocalUnreachable(
+  input: Pick<UnreachableInput, 'entry' | 'port' | 'reason' | 'transport' | 'startup'>,
+): RemoteDiagnosis {
+  const { entry, port, transport } = input;
+  if (transport?.kind === 'refused') {
+    return {
+      layer: 'server',
+      code: 'lan-not-listening',
+      title: 'Not listening on the local network',
+      message: `${entry} answers on the local network, but nothing accepts connections on port ${port}: its stim-server is not running or does not listen on that address.`,
+      remedy: `On ${entry}, run \`stim-server service status\`, and check that server.lanAddresses names the network interface or address this machine reaches (\`npx --yes stim settings get server.lanAddresses\`). Its stim-server log names each entry it cannot use.`,
+    };
+  }
+  if (transport?.kind === 'silent') {
+    return {
+      layer: 'peer',
+      code: 'lan-no-answer',
+      title: 'Not answering',
+      message: `${entry} did not answer a connection on port ${port}.`,
+      remedy: `Check that ${entry} is awake, on the same network as this machine and has that address. On a Mac, the macOS firewall drops connections until a person allows incoming connections for stim-server's node there (System Settings > Network > Firewall > Options).`,
+    };
+  }
+  if (transport?.kind === 'http' && transport.status === 503)
+    return diagnoseUnreachable({ ...input, peer: { nodeId: '', dnsName: entry, address: entry } });
+  return {
+    layer: 'server',
+    code: 'connect-failed',
+    title: 'Not answering',
+    message: `Could not connect to stim-server on ${entry}: ${sentence(input.reason)}`,
+    remedy: `On ${entry}, run \`stim-server service status\`. To keep it running there, run \`stim-server service install\`.`,
+  };
+}
+
+/** The doctor finding for a `local:` machine whose server key no person has confirmed, so Stim has not pinned it. */
+export function unconfirmedKeyFinding(code: string, entry: string, fingerprint: string): Finding {
+  return {
+    code,
+    level: 'note',
+    title: `Remote machine ${entry} needs its server key confirmed`,
+    detail: `${entry} approved this machine and answered with the stim-server key fingerprint ${fingerprint}. On the local network nothing vouches for that key, so Stim pins it only after a person checks it against the fingerprint \`stim-server setup\` printed there. Until then this machine does not use ${entry}.`,
+    fix: `Run \`stim doctor --fix\` in a terminal here and answer y only if the fingerprint matches. If it does not, another machine answered at that address: do not confirm, and check the address in remote.machines.`,
+  };
+}
+
 export function diagnosisFinding(code: string, entry: string, diagnosis: RemoteDiagnosis): Finding {
   return {
     code,

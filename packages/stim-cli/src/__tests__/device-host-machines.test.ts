@@ -322,3 +322,36 @@ test('automatic hosting considers only the remote machines this machine asked fo
   writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: 'mini' } }));
   expect(await hostingMachines(() => status())).toBeNull();
 });
+
+test('a local network machine asks for hosting without Tailscale and pins its key only once a person confirms it', async () => {
+  const LAN = 'local:10.0.0.92';
+  const noTailscale = (replies: HelloReply[]) => {
+    const fake = fakeIo(replies);
+    fake.io.status = () => {
+      throw new Error('a local network machine must not read tailscale status');
+    };
+    return fake;
+  };
+  const first = await inspectDeviceHostMachines({ fix: true }, noTailscale([notYet]).io, [LAN]);
+  expect(first.machines).toEqual([expect.objectContaining({ machine: LAN, state: 'pending' })]);
+  const asked: string[] = [];
+  const confirmKey = (answer: boolean) => async (_machine: string, key: string) => {
+    asked.push(key);
+    return answer;
+  };
+  const declined = await inspectDeviceHostMachines(
+    { fix: true, confirmKey: confirmKey(false) },
+    noTailscale([hosting()]).io,
+    [LAN],
+  );
+  expect(declined.machines).toEqual([expect.objectContaining({ state: 'key-unconfirmed' })]);
+  expect(readDeviceHostMachines()[0]).not.toHaveProperty('serverKey');
+  const accepted = await inspectDeviceHostMachines(
+    { fix: true, confirmKey: confirmKey(true) },
+    noTailscale([hosting()]).io,
+    [LAN],
+  );
+  expect(accepted.machines).toEqual([expect.objectContaining({ state: 'approved' })]);
+  expect(readDeviceHostMachines()[0]).toMatchObject({ transport: 'local', serverKey: SERVER_KEY });
+  expect(asked).toEqual([SERVER_KEY, SERVER_KEY]);
+});

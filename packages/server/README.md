@@ -470,8 +470,9 @@ connection itself with a Noise handshake (see [Pairing](#pairing)), so
 Tailscale's identity of a peer only labels it. You need Tailscale on the Mac and on the phone, in the
 same tailnet or with the Mac shared to the phone's user.
 
-`stim-server` listens only on `127.0.0.1` and on the machine's Tailscale
-addresses, never on every interface. It re-reads the Tailscale state in the
+`stim-server` listens only on `127.0.0.1`, on the machine's Tailscale
+addresses and on the local network addresses `server.lanAddresses` names (see
+[Local network](#local-network)), never on every interface. It re-reads the Tailscale state in the
 background, so a server that started before Tailscale was up, or while it did
 not answer, starts listening on the Tailscale addresses once it runs, and stops
 when it goes away. In Stim Desktop, the Pair a Phone wizard (Settings > Phones) creates and
@@ -509,6 +510,38 @@ through Funnel. Only the fixed `tailscale serve --bg --https=<free port>
 http://127.0.0.1:<server port>` invocation runs, followed by route verification.
 No LaunchAgent or Funnel configuration is created. Failure output remains
 available for an explicit retry, including Tailscale's HTTPS approval link.
+
+## Local network
+
+Without Tailscale, `stim-server` also serves machines and phones on the same
+local network through `@stim-cli/transport-local`, on the private IPv4
+addresses the machine setting `server.lanAddresses` names: network interface
+names such as `en0`, or addresses. The setting is empty by default, which
+listens on no local network address, and wildcard (`0.0.0.0`), loopback, public
+and IPv6 addresses are refused; the log names each entry it cannot use. The
+server re-reads the setting and the interfaces every few seconds, so a change or
+a new DHCP lease applies without a restart, and the local `/health` reports the
+addresses it listens on as `lan: { addresses, port }`.
+
+A local network connection is plain WebSocket on the server's own port. Every
+connection runs the Noise handshake before any request, so it needs no TLS and
+the address never identifies a client. Before a client authenticates, each
+network listener holds at most 64 connections, 16 from one address; it closes a
+connection that sends no request within 10 seconds or does not finish the
+handshake within 5, and turns an address away for a minute after 5 failed
+handshakes or 60 first contacts naming a pairing token or setup ticket it does
+not hold. `/health` tells a peer only the version, and `/setup/<journal>`
+serves only setup progress, never a secret. Prefer addresses to interface names
+on a machine that moves between networks: an interface name follows it onto
+any private network it joins.
+
+When `server.lanAddresses` is set, `stim-server setup` waits up to 15 seconds for the local network
+listener, and skips the tailnet route only when Tailscale is not running. It prints its endpoints and this server's key fingerprint, and warns when
+the macOS application firewall is on, since other machines cannot connect until
+a person allows stim-server's `node` there. Setup never changes the firewall.
+The requesting machine pins the worker's key only after a person confirms that
+fingerprint in `stim doctor --fix`. `stim-server pair` uses the first local
+network address as the pairing endpoint when Tailscale is not running.
 
 ## Pairing
 

@@ -21,6 +21,7 @@ const PACKAGE_DIRS = [
   'ci',
   'transport',
   'transport-tailscale',
+  'transport-local',
   'server',
 ];
 const EXACT_RANGE = 'workspace:*';

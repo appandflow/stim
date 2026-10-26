@@ -364,7 +364,11 @@ the account plan's session limit. A run reuses a live session without checking h
 much of the cap is left.
 
 `remote.machines` names the remote machines this machine may build on and host owned
-simulator sessions on, by MagicDNS name and optional serve port (default 7443).
+simulator sessions on, by MagicDNS name and optional serve port (default 7443),
+or, for a machine on the local network without Tailscale, as `local:` and its
+private IPv4 address or host name with an optional stim-server port (default
+7787); that machine lists where it listens in `server.lanAddresses`, which is
+empty by default. See [Local network, without Tailscale](./remote-machines.md#local-network-without-tailscale).
 Name each node and port once. Set it with
 `stim settings set remote.machines '["janics-mac-mini"]'`, then run
 `stim doctor --fix` in an app directory. Build and device-host approvals are

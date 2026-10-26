@@ -1,5 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import { reportSignal, trackReportResource } from '../report-runtime.ts';
+import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { ConnectionOptions } from 'node:tls';
 import { WebSocket, type ClientOptions } from 'ws';
@@ -9,11 +10,13 @@ import {
   MAX_SERVER_MESSAGE_BYTES,
   TRANSPORT_OVERHEAD_BYTES,
   decodeSecret,
+  keyFingerprint,
   newSecret,
   type NoiseSocket,
 } from '@stim-cli/core/noise-session';
 import {
   clientIdentity,
+  DEFAULT_SERVER_PORT,
   endpoint,
   findPeer,
   isJsonObject,
@@ -21,6 +24,7 @@ import {
   parseMachine,
   type Endpoint,
   type MachineCredential,
+  type MachineTransport,
   type TailnetPeer,
 } from '@stim-cli/core/state';
 export { parseMachine, findPeer, endpoint, type Endpoint, type TailnetPeer } from '@stim-cli/core/state';
@@ -28,6 +32,7 @@ import { getExecutor } from '../exec.ts';
 import { readAccessTicket } from './access-ticket.ts';
 import {
   classifyTransport,
+  diagnoseLocalUnreachable,
   diagnoseUnreachable,
   parsePeerStartup,
   readTailscale,
@@ -110,12 +115,13 @@ function rawTailscaleStatus(): unknown {
 function peerStartup({ url, servername, host }: Endpoint): Promise<PeerStartup | null> {
   return new Promise((resolve) => {
     const base = new URL(url);
-    const request = httpsRequest(
+    const plain = base.protocol === 'ws:';
+    const request = (plain ? httpRequest : httpsRequest)(
       {
         host: base.hostname.replace(/^\[|\]$/g, ''),
-        port: base.port || 443,
+        port: base.port || (plain ? 80 : 443),
         path: '/health',
-        servername,
+        ...(plain ? {} : { servername }),
         headers: { Host: host },
         timeout: HEALTH_TIMEOUT_MS,
       },
@@ -277,15 +283,16 @@ export function openAuthenticated(
     );
     signal?.addEventListener('abort', cancel, { once: true });
     if (signal?.aborted) return cancel();
+    const served = target.url.startsWith('wss:');
     const failed = (error: Error & { code?: string }, status?: number) =>
       finish({
         failure:
-          status === 502
+          status === 502 && served
             ? 'no stim-server answers behind its tailscale serve route (HTTP 502)'
             : status === 503
-              ? 'stim-server answers behind its tailscale serve route but is not serving clients (HTTP 503)'
+              ? `stim-server answers${served ? ' behind its tailscale serve route' : ''} but is not serving clients (HTTP 503)`
               : status !== undefined
-                ? `its tailscale serve route answered HTTP ${status}`
+                ? `${served ? 'its tailscale serve route' : 'it'} answered HTTP ${status}`
                 : error.message,
         refused: false,
         transport:
@@ -452,6 +459,20 @@ export async function diagnoseConnectFailure(
 ): Promise<RemoteDiagnosis | null> {
   const parsed = parseMachine(machine);
   if (!parsed) return null;
+  if (parsed.transport === 'local') {
+    const target = machineEndpoint(machine, null);
+    const startup =
+      typeof target !== 'string' && failure.transport?.kind === 'http' && failure.transport.status === 503
+        ? await peerStartup(target)
+        : null;
+    return diagnoseLocalUnreachable({
+      entry: machine,
+      port: parsed.port,
+      reason: failure.failure,
+      startup,
+      ...(failure.transport ? { transport: failure.transport } : {}),
+    });
+  }
   const peer = findPeer(await tailscaleStatusAsync(signal), parsed.name);
   if (typeof peer === 'string') return null;
   return diagnoseOutcome(
@@ -479,7 +500,10 @@ export async function resolveEndpoint(
   status: () => unknown = () => tailscaleStatusAsync(signal),
   signal?: AbortSignal,
 ): Promise<Endpoint | string> {
-  return machineEndpoint(credential.machine, parseMachine(credential.machine) ? await status() : null);
+  return machineEndpoint(
+    credential.machine,
+    parseMachine(credential.machine)?.transport === 'tailscale' ? await status() : null,
+  );
 }
 
 /** Where a remote machine stands with this machine, for one access. */
@@ -489,6 +513,7 @@ export type AccessOutcome =
   | { state: 'lapsed'; credential: MachineCredential }
   | { state: 'revoked'; credential: MachineCredential; reason: string }
   | { state: 'key-changed'; credential: MachineCredential }
+  | { state: 'unconfirmed'; credential: MachineCredential; fingerprint: string }
   | { state: 'not-asked' }
   | { state: 'outdated'; credential: MachineCredential; command: string | null }
   | { state: 'unreachable'; credential?: MachineCredential; reason: string; transport?: Transport };
@@ -514,10 +539,45 @@ export interface AccessInput {
   io: TailnetMachineIo;
   /** Tickets made in this doctor run by machine, so its build and device-host checks print one command. */
   tickets: GeneratedTickets;
+  /**
+   * For a machine on the local network, which no transport pins: asks a person to compare the server key's fingerprint
+   * with the one `stim-server setup` printed there, after the ticket's handshake. The key is pinned only on true; a
+   * key this machine already pinned for the same entry is not asked again.
+   */
+  confirmKey?: (serverKey: string) => Promise<boolean>;
   now?: number;
 }
 
 export type GeneratedTickets = Map<string, { ticket: string; expiresAt: string }>;
+
+/** Whether a person confirmed that `serverKey` is the key of the stim-server on `machine`. */
+export type KeyConfirmer = (machine: string, serverKey: string) => Promise<boolean>;
+
+/**
+ * Shows a local network machine's server key fingerprint and asks a person whether it matches the one
+ * `stim-server setup` printed there. Questions go one at a time, and each machine and key is asked once per doctor
+ * run, so its build and device-host checks share the answer. Without a terminal every answer is no.
+ */
+export function keyConfirmer(ask: ((question: string) => Promise<boolean>) | null): KeyConfirmer {
+  const answers = new Map<string, Promise<boolean>>();
+  let queue: Promise<unknown> = Promise.resolve();
+  return (machine, serverKey) => {
+    if (!ask) return Promise.resolve(false);
+    const id = `${machine}\0${serverKey}`;
+    let answer = answers.get(id);
+    if (!answer) {
+      const fingerprint = keyFingerprint(Buffer.from(serverKey, 'base64url'));
+      answer = queue.then(() =>
+        ask(
+          `${machine} answered with this stim-server key fingerprint:\n  ${fingerprint}\nDoes it match the fingerprint \`stim-server setup\` printed on ${machine}? Only then does Stim trust it. [y/N] `,
+        ),
+      );
+      queue = answer.catch(() => false);
+      answers.set(id, answer);
+    }
+    return answer;
+  };
+}
 
 /** The remedy for a pending request: the printed setup command, or where the person finds it. */
 export function setupRemedy(entry: string, command: string | null): string {
@@ -526,14 +586,20 @@ export function setupRemedy(entry: string, command: string | null): string {
     : `A person on ${entry} runs the \`stim-server setup\` command Stim Desktop showed for this machine.`;
 }
 
-function setupCommand(ticket: string, expiresAt: string, flags: Access[], version: string): string {
-  return `STIM_SETUP_TICKET=${ticket} STIM_SETUP_ORIGIN=doctor npx --yes --package @stim-cli/server@${version} stim-server setup --expires ${expiresAt} ${flags.map((flag) => `--${flag}`).join(' ')}`;
+function setupCommand(machine: string, ticket: string, expiresAt: string, flags: Access[], version: string): string {
+  const parsed = parseMachine(machine);
+  const port = parsed?.transport === 'local' && parsed.port !== DEFAULT_SERVER_PORT ? ` --port ${parsed.port}` : '';
+  return `STIM_SETUP_TICKET=${ticket} STIM_SETUP_ORIGIN=doctor npx --yes --package @stim-cli/server@${version} stim-server setup --expires ${expiresAt} ${flags.map((flag) => `--${flag}`).join(' ')}${port}`;
+}
+
+function transportOf(machine: string): MachineTransport {
+  return parseMachine(machine)?.transport ?? 'tailscale';
 }
 
 function newPending(input: AccessInput, ticket: string, expiresAt: string | undefined, now: number): MachineCredential {
   return {
     machine: input.machine,
-    transport: 'tailscale',
+    transport: transportOf(input.machine),
     address: input.address,
     state: 'pending',
     requestedAt: new Date(now).toISOString(),
@@ -551,7 +617,7 @@ function approved(
     state: 'approved',
     credential: {
       machine: input.machine,
-      transport: 'tailscale',
+      transport: transportOf(input.machine),
       address: input.address,
       state: 'approved',
       requestedAt,
@@ -594,19 +660,32 @@ export async function reachMachine(input: AccessInput): Promise<AccessOutcome> {
       if ('result' in resumed && resumed.result.capabilities.includes(access))
         return approved(input, resumed, pending.requestedAt);
     }
+    const known = (serverKey: string) => pending.serverKey === serverKey || input.other()?.serverKey === serverKey;
     const reply = await io.hello(input.endpoint, {
       access,
       ticket: pending.ticket!,
       name: input.deviceName,
       onServerKey: (serverKey) => {
+        if (input.confirmKey && !known(serverKey)) return;
         pending = { ...pending, serverKey };
         return input.persist(pending);
       },
     });
-    if ('result' in reply && reply.result.capabilities.includes(access))
+    if ('result' in reply && reply.result.capabilities.includes(access)) {
+      if (input.confirmKey && !known(reply.serverKey)) {
+        if (!(await input.confirmKey(reply.serverKey)))
+          return {
+            state: 'unconfirmed',
+            credential: pending,
+            fingerprint: keyFingerprint(Buffer.from(reply.serverKey, 'base64url')),
+          };
+        pending = { ...pending, serverKey: reply.serverKey };
+        await input.persist(pending);
+      }
       return approved(input, reply, pending.requestedAt);
+    }
     const command = pending.expiresAt
-      ? setupCommand(pending.ticket!, pending.expiresAt, input.setupFlags, input.serverVersion)
+      ? setupCommand(input.machine, pending.ticket!, pending.expiresAt, input.setupFlags, input.serverVersion)
       : null;
     if ('error' in reply && reply.error.code === SERVER_OUTDATED)
       return { state: 'outdated', credential: pending, command };
