@@ -6,6 +6,7 @@ type GcResultKind =
   | 'idleDevice'
   | 'deviceRecord'
   | 'workspaceOutputs'
+  | 'worktreeDependencies'
   | 'recording'
   | 'workspaceDirectory'
   | 'project'

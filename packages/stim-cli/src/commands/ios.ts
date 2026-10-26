@@ -19,7 +19,7 @@ import {
   thrownRunFailureRecord,
   type BuildProgress,
 } from '../engine/build-progress.ts';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { artifactCachePolicy, optimizationBuildProfile } from '../optimizations.ts';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
@@ -76,6 +76,7 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import type { ReclaimedStep } from '../budget.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
+import { printLightenedFailure, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { ensureDevServer, isPhysicalDeviceRequest, type MobileRuntimePreparation } from './native-runtime.ts';
 import {
@@ -234,6 +235,12 @@ export function runIosOperation(
         root,
         { command: 'ios', platform: PLATFORM, slot: opts.slot ?? 'default' },
         async (claim) => {
+          const lightened = await restoreLightenedDependencies(root, context);
+          if (lightened) {
+            printLightenedFailure(context, lightened, Boolean(opts.json));
+            onFailure(lightened);
+            return null;
+          }
           await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
           const progress = startBuildProgress({
             root,
@@ -626,7 +633,6 @@ async function runIos(
   const deviceSlotWait = {
     automatic: false,
     waitMs: deviceSlotWaitMs,
-    displayName: basename(root),
     reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     ...deviceWaitRun.policy,
     onWait: (ms: number) => {

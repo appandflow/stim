@@ -6,9 +6,9 @@ import { diskUsageCacheFile, readDiskUsage } from '@stim-cli/core/state';
 import { getExecutor } from '../../exec.ts';
 import { writeCacheFile } from '../../status-measures.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
-import { ARTIFACT_DIRS, appRoots } from '../../maintenance/artifacts.ts';
-import { listWorktreesAsync, resolveSourceCheckoutAsync } from '../../workspace/worktree.ts';
-import { matchWorktreeEntry } from '../worktree.ts';
+import { appRoots } from '../../maintenance/artifacts.ts';
+import { ARTIFACT_DIRS } from '../../workspace/regenerable-dirs.ts';
+import { listWorktreesAsync, matchWorktreeEntry, resolveSourceCheckoutAsync } from '../../workspace/worktree.ts';
 import { canonicalPath } from './paths.ts';
 import { phase } from './progress.ts';
 import { candidateRootsAsync, type UnlistedWorktreeDir, type WorktreeSweep } from './worktrees.ts';
@@ -43,7 +43,7 @@ async function buildStateDirs(path: string, keys: readonly string[], operation?:
   });
   const own = keys.filter((key) => matchWorktreeEntry(entries, key)?.path === path);
   const root = canonicalPath(path);
-  const worktree = { path, linked: true, keys: own };
+  const worktree = { path, linked: true, locked: Boolean(matchWorktreeEntry(entries, path)?.locked), keys: own };
   const dirs = new Map<string, string>();
   const add = (dir: string) => {
     if (!isDirectory(dir)) return;

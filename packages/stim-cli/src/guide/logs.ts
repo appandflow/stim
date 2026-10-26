@@ -123,7 +123,8 @@ serve bounded log queries.
   SecTrust, WebKit, CoreUI) that have nothing to do with your app. The proven
   ones are demoted to info by the collector, and iOS main-thread
   "Synchronous URL loading" performance diagnostics (Expo icons served by
-  Metro raise them) to warn, so a launch does not count them as app errors;
+  Metro raise them) and SwiftUI "Invalid Configuration" faults (the Expo dev
+  launcher raises them for a duplicated server entry) to warn, so a launch does not count them as app errors;
   the scope rule covers the rest.
   The metro stream carries exactly one demotion of its own, and it is Stim's
   doing: the dev-client deep link \`ios\`/\`android\` open to wire the app to
@@ -330,7 +331,15 @@ msg and
   failure         failed or cancelled runs: { code, message, remedy, phase }
   device          { name, runtime? } of the simulator, emulator or device;
                   never its serial or UDID
+  loadPerCore     this machine's 5-minute load average per CPU when the run
+                  started, to one decimal
+  boot            { startedAt, loadPerCore } of the run's first owned
+                  simulator or emulator boot: epoch milliseconds when it
+                  started, once any concurrency.maxDevices wait was over,
+                  and the load per core then. Absent when the run booted
+                  nothing.
   stimVersion     the stim that ran the build
+Records written before these fields existed lack loadPerCore and boot.
 A run that stopped before it had an app to build (a refused flag, a missing
 project) writes no record. Writing the record never changes the run's result.
 
@@ -448,7 +457,8 @@ WHAT WRITES WHAT
                        -- and, on iOS, where every Apple framework running in
                        the app's process also logs. The proven noise sources
                        are recorded at info rather than error (Synchronous
-                       URL loading diagnostics at warn); the rest is why
+                       URL loading diagnostics and SwiftUI Invalid Configuration
+                       faults at warn); the rest is why
                        --errors leaves this source out unless asked. A VERIFIED
                        LAUNCH counts these records and prints one line:
 

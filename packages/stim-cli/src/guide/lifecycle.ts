@@ -1,4 +1,4 @@
-import { WATCH_CPU_STEP_PERCENT, WATCH_MEMORY_STEP_MB } from '../status-watch.ts';
+import { WATCH_CPU_STEP_PERCENT, WATCH_LOAD_STEP_PER_CORE, WATCH_MEMORY_STEP_MB } from '../status-watch.ts';
 import type { GuideTopic } from './types.ts';
 
 const lifecycle: GuideTopic = {
@@ -276,7 +276,8 @@ WAITING FOR A CHANGE
   status payload per line: one at once, then one each time the payload
   changes, never two identical ones in a row. In a watch line, a usage
   figure repeats its value in the previous line until it moves by a step: an owner's cpuPercent ${WATCH_CPU_STEP_PERCENT} points, an
-  owner's or environment's memoryMb and capacity.committedMb ${WATCH_MEMORY_STEP_MB} MB. An owner's row
+  owner's or environment's memoryMb and capacity.committedMb ${WATCH_MEMORY_STEP_MB} MB, and
+  capacity.load as a whole until its loadPerCore moves ${WATCH_LOAD_STEP_PER_CORE} per core or its state changes. An owner's row
   changes as a whole, so its residentMb and processes update with it. A change
   in only a bookkeeping timestamp prints no line: each pullRequest.checkedAt,
   maintenance.lastChecks, maintenance.lastPass.startedAt and durationMs, and
@@ -632,8 +633,8 @@ Logcat retains a finite buffer; records already evicted or persisted beyond the
 overlap may be unavailable. An oversized query retries the recent tail and writes
 a device warning naming any dropped interval. Followers share a child-aware log
 claim; install and stop cancel and settle the worker before native operations.
-Stop copies logs before and after the host's final collection and teardown, with
-each client drain bounded to 30 seconds and progress on stderr. Collected logs
+Stop copies logs once, after the host's final collection and teardown, bounded to
+30 seconds with progress on stderr; Ctrl-C cancels the copy and keeps the placement. Collected logs
 remain readable after stop. The host advertises hosted-android-data for Android
 handoff and native logs. Older hosts get a newer stim-server note, use upload
 and show records already copied here.`,
@@ -2065,8 +2066,10 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             Waiting prints the count, holder workspace names
                             and elapsed time at once and about every 10s, then
                             the queue position, head workspace name and
-                            $STIM_HOME/device-waits path. Timeout names the
-                            same head and path. Stop cancels a queued run and
+                            $STIM_HOME/device-waits path. Workspaces that
+                            share a project name show the directory that tells
+                            them apart, as in mobile (qa-b-p2). Timeout names
+                            the same head and path. Stop cancels a queued run and
                             releases its ticket without booting its device.
                             Status JSON adds build.waitingFor independently
                             of phase: { kind: "device-slot" | "build-slot",

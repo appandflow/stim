@@ -27,7 +27,7 @@ import {
 } from './commands/gc/idle.ts';
 import { canonicalPath } from './commands/gc/paths.ts';
 import type { Finding } from './diagnostics/doctor.ts';
-import { clearWorkspaceOutputs, collectWorkspaceOutputs } from './commands/gc/workspaces.ts';
+import { clearWorkspaceOutputs, collectWorkspaceOutputs, keptByLock } from './commands/gc/workspaces.ts';
 import { openGcLog } from './commands/gc/log.ts';
 import { createGcResults, type GcOutput } from './commands/gc/results.ts';
 import { lowestFree } from './maintenance/pressure.ts';
@@ -532,9 +532,12 @@ async function reclaimWorkspaceOutputs({
     .toSorted((a, b) => a.since - b.since)
     .map(({ entry }) => entry);
   if (dryRun) return { targets: clearable.map((entry) => entry.projectRoot!), failures: 0 };
+  const locked = report.workspaces.filter(
+    (entry) => keptByLock(entry) && entry.projectRoot !== null && other(entry.projectRoot),
+  );
   const targets: string[] = [];
   let failures = 0;
-  for (const entry of clearable) {
+  for (const entry of [...locked, ...clearable]) {
     const result = await clearWorkspaceOutputs(
       { ...report, workspaces: [entry] },
       { olderThan: null, now, signal, operation },

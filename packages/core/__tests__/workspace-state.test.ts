@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { workspaceStateDir } from '../index.ts';
 import {
   BUILD_HISTORY_LIMIT,
+  lastNativeUseFrom,
   lastUseFrom,
   readBuildHistory,
   readLastBuilds,
@@ -60,6 +61,21 @@ describe('last use of a workspace', () => {
       vi.unstubAllEnvs();
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe('last native run of a workspace', () => {
+  test('is when the newest ios, android or macos run finished, ignoring dev server use', () => {
+    const state = {
+      lastUsedAt: '2026-09-10T00:00:00Z',
+      supervisor: { startedAt: '2026-09-10T00:00:00Z' },
+      lastIosBuild: { platform: 'ios', status: 'success', startedAt: '2026-09-01T00:00:00Z', durationMs: 0 },
+      buildHistory: {
+        macos: [{ platform: 'macos', status: 'success', startedAt: '2026-09-05T00:00:00Z', durationMs: 60_000 }],
+      },
+    };
+    expect(lastNativeUseFrom(state)).toBe(Date.parse('2026-09-05T00:01:00Z'));
+    expect(lastNativeUseFrom({ lastUsedAt: '2026-09-10T00:00:00Z' })).toBeNaN();
   });
 });
 

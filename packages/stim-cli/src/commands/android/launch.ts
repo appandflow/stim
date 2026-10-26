@@ -9,6 +9,7 @@ import {
   type waitForBoot,
 } from '../../devices/android.ts';
 import { teardownOwnedAvd } from '../../devices/teardown.ts';
+import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import { formatBytes } from '../../fs-util.ts';
 import type { ChildProcess } from 'node:child_process';
 import { statSync } from 'node:fs';
@@ -300,28 +301,31 @@ export async function verifyAndroidMetroRun({
     phase('verify', `waiting up to 60s for bundle load (${device.created ? 'new' : 'adopted'} emulator)`);
   const siblings = metroCheck ? await siblingPlatformSlots(root, 'android', slot) : [];
   const verification: VerifyLaunchResultLike = metroCheck
-    ? await verifyLaunched({
-        timeoutMs,
-        requireBundleResponse: true,
-        slot: launchSlotScope(root, slot),
-        platformShared: siblings.length > 0,
-        onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
-        onActivity: enterActivity,
-        logsDir,
-        since: launchedAt,
-        metroPort,
-        platform: 'android',
-        mode: workspaceDevServerMode(root, isExpo),
-        readNativeCrashes,
-        readDeviceRecords: hostedLogs?.readDeviceRecords,
-        deviceLogsThrough: hostedLogs?.deviceLogsThrough,
-        processAlive: hostedLogs
-          ? null
-          : async () => {
-              const running = await androidAppProcess(serial, androidPackage);
-              return running.state === 'unknown' ? null : running.state === 'running';
-            },
-      })
+    ? await withDrainingCancellation(operation, operation?.signal, () =>
+        verifyLaunched({
+          signal: operation?.signal,
+          timeoutMs,
+          requireBundleResponse: true,
+          slot: launchSlotScope(root, slot),
+          platformShared: siblings.length > 0,
+          onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
+          onActivity: enterActivity,
+          logsDir,
+          since: launchedAt,
+          metroPort,
+          platform: 'android',
+          mode: workspaceDevServerMode(root, isExpo),
+          readNativeCrashes,
+          readDeviceRecords: hostedLogs?.readDeviceRecords,
+          deviceLogsThrough: hostedLogs?.deviceLogsThrough,
+          processAlive: hostedLogs
+            ? null
+            : async () => {
+                const running = await androidAppProcess(serial, androidPackage);
+                return running.state === 'unknown' ? null : running.state === 'running';
+              },
+        }),
+      )
     : { verified: false, skipped: true };
   const nativeCrashes = verification.errors?.some((record) => record.event === 'native_crash')
     ? []

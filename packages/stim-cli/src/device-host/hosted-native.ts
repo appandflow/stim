@@ -51,6 +51,7 @@ import { writeHostedNative } from './ios-state.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { cancellableSleep } from '../cancellation.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
+import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { ambientContext, ambientWrite } from '@stim-cli/core';
 
 function hostingRefusal(machine: string, error: unknown): Error & { code: string } {
@@ -257,7 +258,17 @@ export function hostedMetroPortProbe(
   };
 }
 
-export async function placeHostedNative(
+export function placeHostedNative(
+  target: HostedNativeTarget,
+  options: Parameters<typeof placeHostedNativeOnce>[1],
+): ReturnType<typeof placeHostedNativeOnce> {
+  const context = ambientContext();
+  return withDrainingCancellation(context, runCancellationSignal(context), () =>
+    placeHostedNativeOnce(target, options),
+  );
+}
+
+async function placeHostedNativeOnce(
   target: HostedNativeTarget,
   {
     root,
@@ -294,10 +305,13 @@ export async function placeHostedNative(
   },
 ): Promise<{ placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>; launched: true | 'unverified' }> {
   let host = target.host;
+  const signal = runCancellationSignal(ambientContext());
+  const closeOnAbort = () => host.connection.close();
+  signal?.addEventListener('abort', closeOnAbort, { once: true });
   try {
     if (mode === 'development' && metro === requestHostedMetro) requireHostedMetro(root);
     enterPhase('device');
-    host = await connectHost(host.machine, undefined, true);
+    host = await connectHost(host.machine, undefined, true, signal);
     target.host = host;
     requireHostedAppMode(host, platform, mode);
     let session =
@@ -469,6 +483,7 @@ export async function placeHostedNative(
   } catch (error) {
     throw hostingRefusal(host.machine, error);
   } finally {
+    signal?.removeEventListener('abort', closeOnAbort);
     if (platform === 'android') host.connection.close();
   }
 }
@@ -495,16 +510,6 @@ export async function stopHostedNative(
     signal?.addEventListener('abort', cancel, { once: true });
     try {
       host = await connectHost(placement.machine, undefined, false, signal);
-      try {
-        await pullHostedNativeLogs(root, name, placement, host, true, platform, signal);
-      } catch (error) {
-        signal?.throwIfAborted();
-        ambientWrite(
-          'stderr',
-          `Could not copy final native logs from ${placement.machine}: ${(error as Error).message}\n`,
-        );
-      }
-      signal?.throwIfAborted();
       const stopped = await settle(
         host,
         hostedSession(host, await call(host, 'device-host.stop', { session: placement.session }), platform),

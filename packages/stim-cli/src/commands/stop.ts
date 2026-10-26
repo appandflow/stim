@@ -386,7 +386,9 @@ async function stopWorkspaceHostedNative(
   slot: string | undefined,
   report: (line: string) => void,
   failed: () => void,
+  operation: StimContext | undefined,
 ): Promise<{ devices: Record<string, DeviceOutcomeEntry>; failed: boolean }> {
+  const signal = operation?.signal;
   const devices: Record<string, DeviceOutcomeEntry> = {};
   let anyFailed = false;
   for (const platform of ['ios', 'android'] as const) {
@@ -397,10 +399,11 @@ async function stopWorkspaceHostedNative(
         ? `${placement.device ? ('udid' in placement.device ? placement.device.name : hostedAndroidDeviceName(placement.device)) : `${platform} device`} on ${placement.machine}`
         : `hosted ${platform === 'ios' ? 'iOS simulator' : 'Android emulator'} for slot ${name}`;
       try {
-        await (platform === 'ios' ? stopHostedIos : stopHostedAndroid)(root, name);
+        await (platform === 'ios' ? stopHostedIos : stopHostedAndroid)(root, name, signal);
         devices[`${platform}:host:${name}`] = { status: 'shut-down', label };
         report(chalk.dim(phaseLine('device', `stopped ${label}`)));
       } catch (error) {
+        signal?.throwIfAborted();
         const reason = (error as Error).message;
         devices[`${platform}:host:${name}`] = { status: 'failed', label, reason };
         report(chalk.red(phaseLine('device', reason)));
@@ -688,9 +691,15 @@ async function stopWorkspace({
     stopMacos,
   );
 
-  const hosted = await stopWorkspaceHostedNative(root, hostedSlot, report, () => {
-    ok = false;
-  });
+  const hosted = await stopWorkspaceHostedNative(
+    root,
+    hostedSlot,
+    report,
+    () => {
+      ok = false;
+    },
+    operation,
+  );
   Object.assign(outcomes.device, hosted.devices);
   await updateWorkspaceStateAsync(root, (workspace) => {
     const slots = isJsonObject(workspace.deviceSlots) ? workspace.deviceSlots : {};

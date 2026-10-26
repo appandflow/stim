@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
+import { restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
@@ -416,6 +417,9 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
       if (!root) {
         return fail(NO_PROJECT_REFUSAL);
       }
+      const lightened = (await runProcessOperation(root, (context) => restoreLightenedDependencies(root, context)))
+        .value;
+      if (lightened) return fail(lightened);
       const problem = projectProblem(root, 'dev-server');
       if (problem) {
         return fail({

@@ -312,8 +312,9 @@ describe('offloadBuild', () => {
               },
             );
             try {
-              await vi.waitFor(() =>
-                expect(machine.methods).toContain(pause === 'build.progress' ? 'build.start' : pause),
+              await vi.waitFor(
+                () => expect(machine.methods).toContain(pause === 'build.progress' ? 'build.start' : pause),
+                { timeout: 30_000 },
               );
               const before = [...machine.methods];
               requestNativeRunCancel(repo, claim.claimId);

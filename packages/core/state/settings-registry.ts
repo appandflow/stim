@@ -481,7 +481,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: true,
     env: 'STIM_ARCHIVE_ENABLED',
     scopedHomeValue: false,
-    description: 'Keep workspace history on removal; false under STIM_HOME unless explicitly enabled',
+    description:
+      "Keep workspace history on removal, and archive a dirty finished worktree's changes before gc removes it; false keeps such worktrees, and is the default under STIM_HOME unless explicitly enabled",
   },
   {
     key: 'archive.maxAgeDays',
@@ -489,7 +490,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 30,
     env: 'STIM_ARCHIVE_MAX_AGE_DAYS',
-    description: 'Days to keep archived workspace records; 0 keeps nothing',
+    description: 'Days to keep archived workspace records and worktree change archives; 0 keeps nothing',
   },
   {
     key: 'archive.maxCount',
@@ -505,7 +506,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 5,
     env: 'STIM_ARCHIVE_MAX_TOTAL_GB',
-    description: 'Total archived bytes in binary GB; 0 keeps no artifacts',
+    description: 'Total archived bytes in binary GB, and separately the worktree change archives; 0 keeps no artifacts',
   },
   {
     key: 'archive.logs.maxAgeDays',
@@ -804,7 +805,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 10,
     env: 'STIM_MAINTENANCE_PRESSURE_PROTECT_MINUTES',
     description:
-      'Protection window, in minutes, that replaces maintenance.protectRecentHours at disk pressure levels 2 and 3',
+      'Protection window, in minutes, that replaces maintenance.protectRecentHours at disk pressure levels 2 and 3, except for workspace build outputs and build directories, which level 2 keeps for 15 minutes after the last ios, android or macos run',
   },
   {
     key: 'maintenance.gradleVersionIdleDays',
@@ -822,7 +823,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: true,
     env: 'STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES',
     description:
-      'Remove clean linked worktrees whose branch or pull request finished, under gc.worktreeGraceMinutes, and at disk pressure level 3 clean, pushed ones with no commits of their own',
+      "Remove linked worktrees whose branch or pull request finished, under gc.worktreeGraceMinutes, archiving a dirty one's uncommitted files first, and clean, pushed ones with no commits of their own once idle",
   },
   {
     key: 'maintenance.removeIdleWorktrees',

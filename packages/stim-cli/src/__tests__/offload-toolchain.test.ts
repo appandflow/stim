@@ -349,7 +349,7 @@ test('the Xcode apps of a worker come from version.plist, with the license check
   setExecutor(
     makeExecutor({
       runFileQuiet: (_file, args, options) => {
-        calls.push(`${options.env?.DEVELOPER_DIR?.split('/').at(-3)} ${args.join(' ')}`);
+        calls.push(`${options.env?.DEVELOPER_DIR?.split(/[\\/]/).at(-3)} ${args.join(' ')}`);
         return args[0] === '-license' && options.env?.DEVELOPER_DIR?.includes('26.4') ? null : '';
       },
     }),

@@ -1045,7 +1045,8 @@ the ones it offloaded.
 \`server.maxLoadPerCore\` (default 2) is also the busy threshold for
 automatic iOS, Android and macOS placement. It is the load per core at which a
 machine counts as saturated: each machine applies its own value, and a remote
-machine past it is skipped like a full one.
+machine past it is skipped like a full one. \`stim status\` shows this machine's
+load per core against it, as \`capacity.load\` in JSON.
 
 Device, Release and
 \`--remote eas|proxy\` builds, Android builds with the Apple Clang CAS compiler cache,
@@ -1256,6 +1257,9 @@ be setup steps are supplied by Stim on the command lines it composes itself:
                SWIFT_OTHER_PREFIX_MAPPINGS on a Swift 6.4+ toolchain -- so no
                Podfile post_install block (Xcode 26+ only, and skipped when the
                project configured ccache, which defeats it)
+               Debug builds for the iOS simulator also get
+               DEBUG_INFORMATION_FORMAT=dwarf, which skips the dSYM bundle;
+               Release and device builds keep the project's setting
   gradlew      --build-cache -- so no org.gradle.caching=true in a committed
                gradle.properties. Debug builds add
                -PreactNativeArchitectures=<target ABI> when the owned

@@ -384,7 +384,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
           record(
             'maintenance_action',
             action.kind === 'would-remove-worktree' ? 'warn' : 'info',
-            `${describeDone(action)} (${formatBytes(outcome.bytes)}): ${action.reason}`,
+            `${describeDone(action)} (${formatBytes(outcome.bytes)}): ${action.kind === 'would-remove-worktree' ? outcome.detail : action.reason}`,
             fields,
           );
         else if (outcome.status === 'failed') {

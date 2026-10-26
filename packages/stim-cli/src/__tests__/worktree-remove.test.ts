@@ -17,7 +17,6 @@ import { basename, join, resolve } from 'node:path';
 import {
   excludePodChurn,
   excludeWatchmanCookies,
-  matchWorktreeEntry,
   porcelainPath,
   removalBlockers,
   removalPath,
@@ -27,6 +26,7 @@ import {
 import type { Command } from 'commander';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { serviceRunningFrom } from '../workspace/service-guard.ts';
+import { matchWorktreeEntry } from '../workspace/worktree.ts';
 import { registerStart } from '../commands/start.ts';
 import { asProcessExit } from './_factories.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';

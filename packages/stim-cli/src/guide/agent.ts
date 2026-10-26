@@ -289,16 +289,20 @@ reserved named ports, even outside the workspace. Read guide ports before use.
 
 Ask the user before these actions:
 
-- worktree remove, because it deletes the worktree and gives up its owned
-  device. It works with any linked worktree, warmed or not, without requiring
+- worktree remove of a worktree you did not create, because it deletes the
+  worktree and gives up its owned device. It works with any linked worktree, warmed or not, without requiring
   a Stim registry entry. Git-created branches are kept; a branch with an
   existing Stim ownership record is deleted only when it has no unique commits.
 - worktree remove --force, because it also discards uncommitted and untracked
   files.
 - gc --delete, because it deletes orphaned resources, removes clean linked
   worktrees whose branch or pull request is merged (or whose pull request
-  was closed), and clears the build outputs of every
-  workspace not in use. Run stim gc --json first and show
+  was closed), and lightens every workspace that is not building and ran
+  no ios, android or macos command in the last 15 minutes, a running dev
+  server included, by clearing its build outputs and its git-ignored
+  in-tree build directories, and deletes node_modules and ios/Pods of idle
+  linked worktrees, which the next start, ios or android restores with
+  worktree warm. Run stim gc --json first and show
   the user the entries its sections list (guide facts gc). gc --delete
   --cache all empties the shared build caches and those outputs instead, and
   gc --delete --cache workspaces clears only the outputs; both inspect
@@ -319,8 +323,10 @@ Ask the user before these actions:
 
 LEAVE THE MACHINE CLEAN
 
-Run stim stop when you pause or finish a task, and stim worktree remove once
-it is merged or abandoned. Never create a simulator or emulator by hand;
+Run stim stop when you pause or finish a task, and stim worktree remove on
+the worktree you created once its work is merged or abandoned. Keep scratch
+files, test output and downloads outside the worktree: a stray untracked file
+blocks that removal, and automatic cleanup then has to archive it. Never create a simulator or emulator by hand;
 every device comes from Stim. Before starting a new workspace, check stim
 status for an idle workspace to reuse and confirm capacity headroom instead of
 adding another. Never quit Device Hub or Simulator.app: on Xcode 27

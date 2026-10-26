@@ -648,7 +648,8 @@ ON FAILURE
   An \`ios\` or \`android\` run that \`stim stop\` or Ctrl-C interrupted
   reports STIM_CANCELLED and exits 130. A
   run that exits on the interrupt at once (a second Ctrl-C, or Ctrl-C with no
-  build tool or SimSlim to stop) exits 130 with no payload.
+  build tool, SimSlim, launch readiness wait or hosted app delivery to stop)
+  exits 130 with no payload.
 
   \`stop --json\` prints { root, ok, supervisor, collectors, metro, device,
   port, metroTunnel, releasedLeases, macos? }. macos is { status: stopped | failed,
@@ -845,7 +846,8 @@ RULES
                   why) or "failed" (detail says why and what to retry).
                   kind: device, parkedDevice, parkedHostedDevice, idleDevice,
                   deviceRecord,
-                  workspaceOutputs, recording, workspaceDirectory, project,
+                  workspaceOutputs, worktreeDependencies, recording,
+                  workspaceDirectory, project,
                   buildLock, buildSlot, deviceLease, easSession, worktree,
                   cache, gradleVersion, tempLeftover (one "done" labelled
                   with the TMPDIR it cleared, plus a "kept" or "failed" per
@@ -913,9 +915,9 @@ RULES
                               else null. buildState is { bytes, dirs:
                               { path, bytes } } for the in-tree build and
                               dependency directories automatic maintenance
-                              clears (ios/build, android/app/build,
-                              android/build, android/.gradle, .build,
-                              node_modules, ios/Pods, at the root, a
+                              clears (android/app/build, android/build,
+                              android/.gradle, .build, node_modules,
+                              ios/Pods, at the root, a
                               project root, or apps/* and packages/* for
                               build directories) and a root .pnpm-store,
                               paths relative to the worktree, largest
@@ -1014,18 +1016,29 @@ RULES
                               Metro, client and device logs over twice the
                               8 MiB cap; willTrim marks the ones it would
                               trim
+    worktreeDependencies    { path, willDelete, detail }  node_modules and
+                              ios/Pods of linked worktrees; willDelete marks
+                              the ones --delete would lighten, and detail
+                              says why the others stay. Sizes are not
+                              measured: APFS clones make them misleading
     recordings              { dir, projectRoot, bytes, deleteBytes,
                               willDelete, withWorkspace, reason, detail }
                               recordings/ of each workspace; deleteBytes is
                               what --delete would remove; withWorkspace
                               marks those of a gone workspace, removed with
                               its workspace directory
-    workspaceBuildOutputs   { dir, projectRoot, bytes, idleDays, willClear,
-                              reason, detail }  derived-data, gradle-build,
-                              android-cas, cache-provider, macos/build,
-                              macos/<Product>.app and macos/staging-* of each
-                              workspace; willClear marks the ones --delete
-                              would clear; --cache workspaces omits the
+    workspaceBuildOutputs   { dir, projectRoot, inTreeDirs, bytes, idleDays,
+                              willClear, reason, detail }  derived-data,
+                              gradle-build, android-cas, cache-provider,
+                              macos/build, macos/<Product>.app and
+                              macos/staging-* of each workspace; inTreeDirs
+                              lists the project's android/app/build,
+                              android/build,
+                              android/.gradle and .build that --delete
+                              clears with them, every file in them
+                              ignored by git and none tracked, and
+                              bytes includes them; willClear marks the ones
+                              --delete would lighten; --cache workspaces omits the
                               directories that --delete removes whole (dead
                               projects and orphanedWorkspaces), and --cache
                               all does not
@@ -1128,8 +1141,8 @@ RULES
   reason is null for an entry --delete acts on, and otherwise a stable code
   to branch on; detail is the text line, for the user. Never parse detail.
   A linked worktree's detail is never null.
-    workspaceBuildOutputs   unresolved | in-use | last-use-unknown |
-                            recently-used
+    workspaceBuildOutputs   unresolved | locked | lock-unknown | in-use |
+                            last-use-unknown | recently-used
     workspaceLogs           unresolved | in-use | collector
     recordings              unresolved | retained | recently-recorded
     memory                  in-use | busy | unknown | build-running |
@@ -1775,7 +1788,35 @@ RULES
 
   capacity.committedMb sums memoryMb; in a \`status --watch --json\` line each
   figure, including an environment's memoryMb, is held on its own (see
-  \`guide lifecycle\`), so the sums can differ from what they sum. The memory budget plans before a boot
+  \`guide lifecycle\`), so the sums can differ from what they sum.
+
+  capacity.load is always present. capacity.builds is present only while
+  concurrency.maxBuilds is set, and capacity.devices only while
+  concurrency.maxDevices is set (see \`guide lifecycle concurrency\`):
+
+  load     { cpus, loadPerCore, busyAt, limit, state }. loadPerCore is the
+           5-minute load average divided by cpus, to one decimal. busyAt is
+           server.maxLoadPerCore (\`guide settings\`). state is free under
+           busyAt, busy at or over it, where automatic placement prefers
+           another machine, or holding at or over limit. limit is null
+           because no setting sets it yet, so state is never holding.
+
+  builds   { max, inUse, holders: [{ slot, workspace, client, since,
+           unresolved? }] }. inUse counts the slots below max that a new
+           build cannot take. workspace is the root of the local build in
+           the slot; client is the device id of the client whose offloaded
+           build this machine runs in it. An unresolved slot has a claim
+           whose holder Stim cannot identify; both are null, and the slot
+           stays in use until that claim is removed.
+  devices  { max, inUse, unknown?, holders: [{ platform, label, workspace,
+           slot, booting? }] }, the owned devices the cap counts: booted or
+           booting stim simulators, owned emulators adb lists, and boots in
+           progress. label is the label of the workspace that records the
+           device, with its device slot; for a device no workspace records,
+           label is its name and workspace and slot are null. inUse is null
+           and unknown says why when the devices could not be listed.
+
+  The memory budget plans before a boot
   and always uses the estimate. What is using CPU and memory now is the
   top-level machine section:
 

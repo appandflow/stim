@@ -174,17 +174,18 @@ async function clearOutputs(action: MaintenanceAction, context: ActContext): Pro
   if (!root) return kept('the action names no workspace');
   if (root === context.protectedRoot) return kept('the command that started this pass runs in it');
   if (maintenancePinned(root)) return kept('pinned by maintenance.keep');
-  const recent = recentUse(root, context.settings, protectWindowMs(action, context.settings));
+  const lighten = action.level === 2;
+  const recent = lighten ? null : recentUse(root, context.settings, protectWindowMs(action, context.settings));
   if (recent) return kept(recent);
   const olderThan = action.olderThanDays ?? null;
   const now = Date.now();
-  const report = collectWorkspaceOutputs({ olderThan, now, measure: false });
+  const report = collectWorkspaceOutputs({ olderThan, now, measure: false, lighten, only: root });
   const entry = report.workspaces.find(
     (candidate) => candidate.projectRoot && canonicalPath(candidate.projectRoot) === root,
   );
   if (!entry) return kept('it has no build outputs any more');
   const { results } = await quietly(() =>
-    clearWorkspaceOutputs({ ...report, workspaces: [entry] }, { olderThan, now }),
+    clearWorkspaceOutputs({ ...report, workspaces: [entry] }, { olderThan, now, lighten }),
   );
   return outcomeOf(results, action.bytes);
 }
@@ -199,7 +200,9 @@ async function removeWorktree(action: MaintenanceAction, context: ActContext): P
   if (worktree.keys.some(maintenancePinned)) return kept('pinned by maintenance.keep');
   const before = lowestFree(measureDisk());
   const { results } = await quietly(() => removeWorktrees({ ...sweep, worktrees: [worktree] }));
-  return outcomeOf(results, freedSince(before));
+  const outcome = outcomeOf(results, freedSince(before));
+  const removal = results.find((result) => result.status === 'done')?.detail;
+  return outcome.status === 'done' ? { ...outcome, detail: removal ?? action.reason } : outcome;
 }
 
 async function removeOrphan(action: MaintenanceAction): Promise<ActionOutcome> {

@@ -42,7 +42,9 @@ and `npx stim@1.9.0` failed with E404 until then. The `smoke` job waits up to
   [Stale or wrong dist-tags](#stale-or-wrong-dist-tags).
 - `npx stim@X.Y.Z --version` or `npx -p @stim-cli/server@X.Y.Z stim-server
 --version` that installs but fails or prints another version: the published package is broken. A published version cannot be
-  replaced, so fix it and release a new version.
+  replaced, so fix it and release a new version. First confirm that you ran it from a scratch directory: inside this
+  repository npx runs the workspace's own bin or a `stim` on `PATH` when the version matches the workspace's
+  (RELEASE.md section 4 step 8).
 
 ## Manual publish fallback
 

@@ -49,6 +49,8 @@ test('without STIM_TRACE a command writes no trace file', () => {
   stop({});
   expect(readdirSync(dir).filter((entry) => !['home', '.git', 'package.json'].includes(entry))).toEqual([]);
   expect(
-    readdirSync(dir, { recursive: true }).filter((entry) => /(?:^|\/)[^/]*trace[^/]*\.json$/i.test(String(entry))),
+    readdirSync(dir, { recursive: true }).filter((entry) =>
+      /(?:^|[\\/])[^\\/]*trace[^\\/]*\.json$/i.test(String(entry)),
+    ),
   ).toEqual([]);
 });
