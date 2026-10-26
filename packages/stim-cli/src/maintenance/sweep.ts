@@ -4,7 +4,12 @@ import { isAbsolute, sep } from 'node:path';
 import type { MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
 import { cacheLabel, trimmableCaches } from '../budget.ts';
 import { readManifest } from '../cache/cache-manifest.ts';
-import { collectOrphanedWorkspaces, collectWorkspaceOutputs, isInsideWorkspaces } from '../commands/gc/workspaces.ts';
+import {
+  collectOrphanedWorkspaces,
+  collectWorkspaceOutputs,
+  isInsideWorkspaces,
+  keptByLock,
+} from '../commands/gc/workspaces.ts';
 import { collectWorktreeSweep, worktreeRemovalReason, type WorktreeSweep } from '../commands/gc/worktrees.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
@@ -16,7 +21,6 @@ import type { MaintenancePlan } from './plan.ts';
 import type { MaintenanceSettings } from './settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
-import { LOCKED_REASON } from '../workspace/worktree.ts';
 
 export async function planSweep({
   settings,
@@ -51,8 +55,8 @@ export async function planSweep({
       : { workspaces: [] };
   for (const entry of outputs.workspaces) {
     const root = entry.projectRoot === null ? null : canonicalPath(entry.projectRoot);
-    if (root !== null && entry.keptCode === 'locked')
-      skips.push({ target: root, reason: LOCKED_REASON, workspace: root });
+    if (root !== null && keptByLock(entry) && entry.keptReason)
+      skips.push({ target: root, reason: entry.keptReason, workspace: root });
     if (root === null || !entry.willClear || root === protectedRoot) continue;
     if (pinned(root)) {
       skips.push({ target: root, reason: 'pinned by maintenance.keep', workspace: root });

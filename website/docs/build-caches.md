@@ -474,11 +474,11 @@ stim gc --delete --cache workspaces`}
 Plain `gc --delete` lightens every workspace that is not building and did not
 run `stim ios`, `stim android` or `stim macos` in the last 15 minutes, and
 prints the bytes it freed for each. A workspace whose worktree is locked with
-`git worktree lock` is never lightened, at any disk pressure level. A running
-dev server, a booted or hosted simulator or emulator, or a tunnel no longer
-keeps the outputs. They stay while a `stim ios` or `stim android` run holds the
-workspace, a build names it, or its macOS app or build runs or cannot be
-verified. Lightening also clears the
+`git worktree lock` is never lightened, at any disk pressure level, and nor is
+a workspace whose worktree git cannot list. A running dev server, a booted or
+hosted simulator or emulator, or a tunnel no longer keeps the outputs. They
+stay while a `stim ios` or `stim android` run holds the workspace, a build names
+it, or its macOS app or build runs or cannot be verified. Lightening also clears the
 project's own `android/app/build`, `android/build`, `android/.gradle` and
 `.build` when git ignores every file in the directory and tracks none.
 `ios/build` stays, because React Native's `pod install` writes files there that

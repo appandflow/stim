@@ -2,11 +2,10 @@ import type { StimContext } from '@stim-cli/core';
 import type { DiskPressureLevel, MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { collectWorkspaceOutputs, LIGHTEN_AFTER_MS } from '../commands/gc/workspaces.ts';
+import { collectWorkspaceOutputs, keptByLock, LIGHTEN_AFTER_MS } from '../commands/gc/workspaces.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
-import { LOCKED_REASON } from '../workspace/worktree.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { formatBytes } from '../fs-util.ts';
 import { cachedDeviceActivityAsync, workspaceActiveReason, workspaceActiveReasonAsync } from './activity.ts';
@@ -54,8 +53,8 @@ async function planLevel2({
   ).workspaces
     .flatMap((entry) => {
       const root = entry.projectRoot === null ? null : canonicalPath(entry.projectRoot);
-      if (root !== null && entry.keptCode === 'locked')
-        skips.push({ target: root, reason: LOCKED_REASON, workspace: root });
+      if (root !== null && keptByLock(entry) && entry.keptReason)
+        skips.push({ target: root, reason: entry.keptReason, workspace: root });
       if (root === null || !entry.willClear || root === protectedRoot || pinned(root)) return [];
       const used = workspaceLastUsed(root);
       return Number.isFinite(used) ? [{ root, used }] : [];

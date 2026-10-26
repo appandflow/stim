@@ -13,7 +13,7 @@ import { ARTIFACT_DIRS, existingDirsOf, regenerableDirProblem } from '../../work
 import { workspaceBuildInProgress } from './idle.ts';
 import { mapLimited, sizeConcurrency } from './limited.ts';
 import { canonicalPath } from './paths.ts';
-import { LOCKED_REASON, worktreeLocked, worktreeLockedAsync } from '../../workspace/worktree.ts';
+import { lockReason, worktreeLock, worktreeLockAsync, type WorktreeLock } from '../../workspace/worktree.ts';
 import type { GcSkip } from './types.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 import type { StimContext } from '@stim-cli/core';
@@ -278,7 +278,17 @@ export function recentNativeUseReason(nativeUsed: number, now: number): string |
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export type WorkspaceKeptCode = 'unresolved' | 'locked' | 'in-use' | 'last-use-unknown' | 'recently-used';
+export type WorkspaceKeptCode =
+  | 'unresolved'
+  | 'locked'
+  | 'lock-unknown'
+  | 'in-use'
+  | 'last-use-unknown'
+  | 'recently-used';
+
+export function keptByLock(entry: Pick<WorkspaceOutputs, 'keptCode'>): boolean {
+  return entry.keptCode === 'locked' || entry.keptCode === 'lock-unknown';
+}
 
 export interface WorkspaceOutputs {
   dir: string;
@@ -304,18 +314,18 @@ export function planWorkspaceOutputs(
     lastUsed: number;
     nativeUsed: number;
     inUse: string[];
-    locked?: boolean;
+    lock?: WorktreeLock | null;
   })[],
   { olderThan, now }: { olderThan: number | null; now: number },
 ): WorkspaceOutputs[] {
-  return entries.map(({ dir, projectRoot, problem, inTreeDirs = [], bytes, lastUsed, nativeUsed, inUse, locked }) => {
+  return entries.map(({ dir, projectRoot, problem, inTreeDirs = [], bytes, lastUsed, nativeUsed, inUse, lock }) => {
     const recentNative = recentNativeUseReason(nativeUsed, now);
     const idleDays = Number.isFinite(lastUsed) ? Math.max(0, Math.floor((now - lastUsed) / DAY_MS)) : null;
     const [keptCode, keptReason]: [WorkspaceKeptCode | null, string | null] =
       projectRoot === null
         ? ['unresolved', `workspace directory not resolved: ${problem ?? 'unknown project root'}`]
-        : locked
-          ? ['locked', LOCKED_REASON]
+        : lock
+          ? [lock === 'locked' ? 'locked' : 'lock-unknown', lockReason(lock)]
           : inUse.length
             ? ['in-use', `in use: ${inUse.join('; ')}`]
             : recentNative
@@ -422,7 +432,12 @@ export function collectWorkspaceOutputs({
       })
       .filter((entry) => entry.paths.length > 0);
   const report = (
-    sizes: (WorkspaceDirEntry & { inTreeDirs: string[]; bytes: number | null; inUse: string[]; locked: boolean })[],
+    sizes: (WorkspaceDirEntry & {
+      inTreeDirs: string[];
+      bytes: number | null;
+      inUse: string[];
+      lock: WorktreeLock | null;
+    })[],
   ): WorkspaceOutputsReport => ({
     root: workspacesRoot(),
     workspaces: planWorkspaceOutputs(
@@ -443,7 +458,7 @@ export function collectWorkspaceOutputs({
         Object.assign({}, entry, {
           bytes: null,
           inUse: entry.projectRoot === null ? [] : inUseOf(entry.projectRoot),
-          locked: entry.projectRoot !== null && worktreeLocked(entry.projectRoot),
+          lock: entry.projectRoot === null ? null : worktreeLock(entry.projectRoot),
         }),
       ),
     );
@@ -452,7 +467,7 @@ export function collectWorkspaceOutputs({
       inTreeDirs: string[];
       bytes: number | null;
       inUse: string[];
-      locked: boolean;
+      lock: WorktreeLock | null;
     })[] = [];
     const listed = await listWorkspaceDirsAsync(signal);
     const inTree = new Map<string, string[]>();
@@ -468,15 +483,15 @@ export function collectWorkspaceOutputs({
           operation,
         )
       : [];
-    const locked = await mapLimited(entries, sizeConcurrency(operation), async ({ projectRoot }) =>
-      projectRoot === null ? false : worktreeLockedAsync(projectRoot, gitRead(operation)),
+    const locks = await mapLimited(entries, sizeConcurrency(operation), async ({ projectRoot }) =>
+      projectRoot === null ? null : worktreeLockAsync(projectRoot, gitRead(operation)),
     );
     for (const [index, { paths: _paths, ...entry }] of entries.entries()) {
       signal?.throwIfAborted();
       sizes.push({
         ...entry,
         bytes: bytes[index] ?? null,
-        locked: locked[index] ?? false,
+        lock: locks[index] ?? null,
         inUse:
           entry.projectRoot === null
             ? []
@@ -528,7 +543,7 @@ export async function clearWorkspaceOutputs(
                 lastUsed: workspaceLastUsed(root),
                 nativeUsed: lighten ? lastNativeUseFrom(readWorkspaceState(root)) : NaN,
                 inUse: lighten && workspaceBuildInProgress(root) ? [BUILD_IN_PROGRESS] : [],
-                locked: await worktreeLockedAsync(root, gitRead(operation)),
+                lock: await worktreeLockAsync(root, gitRead(operation)),
               },
             ],
             { olderThan, now },

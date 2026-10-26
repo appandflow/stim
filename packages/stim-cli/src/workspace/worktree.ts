@@ -836,6 +836,13 @@ export function matchWorktreeEntry(
 }
 
 export const LOCKED_REASON = 'locked with git worktree lock';
+export const LOCK_UNKNOWN_REASON = 'git could not tell whether its worktree is locked';
+
+export type WorktreeLock = 'locked' | 'unknown';
+
+export function lockReason(lock: WorktreeLock): string {
+  return lock === 'locked' ? LOCKED_REASON : LOCK_UNKNOWN_REASON;
+}
 
 function parseWorktrees(out: string): WorktreeEntry[] {
   const entries: WorktreeEntry[] = [];
@@ -885,13 +892,25 @@ export async function listWorktreesAsync(cwd: string, options: AsyncReadOptions 
   return out ? parseWorktrees(out) : [];
 }
 
-/** Whether git lists the worktree holding `root` as locked; a path git does not list as a worktree is not locked. */
-export function worktreeLocked(root: string): boolean {
-  return Boolean(matchWorktreeEntry(listWorktrees(root), root)?.locked);
+function insideGitCheckout(root: string): boolean {
+  for (let dir = resolve(root); ; dir = dirname(dir)) {
+    if (existsSync(join(dir, '.git'))) return true;
+    if (dirname(dir) === dir) return false;
+  }
 }
 
-export async function worktreeLockedAsync(root: string, options: AsyncReadOptions = {}): Promise<boolean> {
-  return Boolean(matchWorktreeEntry(await listWorktreesAsync(root, options), root)?.locked);
+function lockOf(entries: WorktreeEntry[], root: string): WorktreeLock | null {
+  if (entries.length === 0) return insideGitCheckout(root) ? 'unknown' : null;
+  return matchWorktreeEntry(entries, root)?.locked ? 'locked' : null;
+}
+
+/** Null when `root` is not in a locked worktree; 'unknown' when git lists nothing for a path inside a git checkout. */
+export function worktreeLock(root: string): WorktreeLock | null {
+  return lockOf(listWorktrees(root), root);
+}
+
+export async function worktreeLockAsync(root: string, options: AsyncReadOptions = {}): Promise<WorktreeLock | null> {
+  return lockOf(await listWorktreesAsync(root, options), root);
 }
 
 function branchOf(head: string): string | undefined {

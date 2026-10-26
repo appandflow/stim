@@ -27,10 +27,11 @@ import { finishLightened, recordLightened, restoreProblem } from '../workspace/l
 import {
   listWorktrees,
   LOCKED_REASON,
+  lockReason,
   matchWorktreeEntry,
   resolveSourceCheckoutAsync,
   sourceCheckoutOf,
-  worktreeLockedAsync,
+  worktreeLockAsync,
   type SourceCheckout,
   type WorktreeEntry,
 } from '../workspace/worktree.ts';
@@ -363,16 +364,14 @@ export async function clearArtifact(
   const before = lowestFree(measureDisk());
   const [key] = candidate.keys;
   const remove = async () => {
-    const reason = keptReason(
-      { ...candidate, locked: candidate.locked || (await worktreeLockedAsync(candidate.worktree)) },
-      kind,
-      {
-        ...options,
-        now: Date.now(),
-        running: kind === 'dependencies' ? await readRunningProcessesAsync() : null,
-        ...(key ? { locked: key } : {}),
-      },
-    );
+    const lock = candidate.locked ? 'locked' : await worktreeLockAsync(candidate.worktree);
+    if (lock) return lockReason(lock);
+    const reason = keptReason(candidate, kind, {
+      ...options,
+      now: Date.now(),
+      running: kind === 'dependencies' ? await readRunningProcessesAsync() : null,
+      ...(key ? { locked: key } : {}),
+    });
     if (reason) return reason;
     const record = kind === 'dependencies' && !unrestorable;
     if (record) recordLightened(candidate.keys, candidate.path);
