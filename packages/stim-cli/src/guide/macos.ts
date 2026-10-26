@@ -473,6 +473,15 @@ The host's own owned devices count toward concurrency.maxDevices.
 
 The agent-device rows work once the host's agent field names agent-device.
 
+On macOS 27, agent-device screenshot of a hosted app can return a 66x20 image of
+the window-sharing indicator instead of the app window. macOS adds that small
+window to the app while something, such as a Stim viewer, captures the app, and
+agent-device picks it as the front window (callstack/agent-device#3961).
+snapshot -i lists it as an axdialog named "Window" with a
+WindowSharingSessionButton before the real window. Read the UI with snapshot
+until agent-device selects the app's main window; click, press and fill are
+unaffected.
+
 DESKTOP DOGFOOD
 
 This repository's apps/desktop/.stim.json selects the full StimDesktop app,
