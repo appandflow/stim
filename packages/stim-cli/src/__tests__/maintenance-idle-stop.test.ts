@@ -607,3 +607,27 @@ test.each([
     stops ? [] : ['its emulator stim-droppy runs as emulator-5554, but its activity could not be read'],
   );
 });
+
+test.each([
+  ['still runs', () => liveClaimOwner().processToken, true],
+  ['is gone', () => undefined, false],
+])('a dev server that %s after its supervisor exited keeps the workspace: %s', async (_, token, kept) => {
+  const { root } = bootedWorkspace('orphan', 7 * HOUR_MS);
+  const serverPid = token() ? process.pid : 2 ** 22 + 7;
+  writeWorkspaceState(root, {
+    supervisor: {
+      pid: 2 ** 22 + 5,
+      processToken: 'upid1.gone',
+      mode: 'command-child',
+      serverPid,
+      ...(token() ? { serverProcessToken: token() } : {}),
+    },
+  });
+
+  const { actions, skips } = await plan();
+
+  expect(actions.map((action) => action.target)).toEqual(kept ? [] : [root]);
+  expect(skips.map((skip) => skip.reason)).toEqual(
+    kept ? [`its dev server (pid ${serverPid}) may still run after its supervisor exited`] : [],
+  );
+});

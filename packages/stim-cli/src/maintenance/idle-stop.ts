@@ -29,6 +29,7 @@ import {
   withWorkspaceProcessLock,
   workspaceProcessLockError,
 } from '../engine/workspace-process-lock.ts';
+import { pidExists } from '../metro.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { MODE_COMMAND, readRemoteSession } from '../supervisor/state.ts';
@@ -312,6 +313,17 @@ async function unseenEmulatorError(unseen: readonly string[], operation?: StimCo
   }
 }
 
+function survivingServer(recorded: Record<string, unknown> | undefined): string | null {
+  const pid = recorded?.serverPid;
+  if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return null;
+  const token = recorded?.serverProcessToken;
+  const alive =
+    typeof token === 'string'
+      ? ['same', 'unknown'].includes(inspectProcessIdentity({ pid, processToken: token }))
+      : pidExists(pid);
+  return alive ? `its dev server (pid ${pid}) may still run after its supervisor exited` : null;
+}
+
 async function candidate(
   path: string,
   env: NodeJS.ProcessEnv,
@@ -356,6 +368,8 @@ async function candidate(
     platforms.android?.owned && platforms.android.avdName ? [platforms.android.avdName] : [],
   );
   if (supervisor.status !== 'ours' && booted.length === 0) return null;
+  const orphan = supervisor.status === 'stale' ? survivingServer(readWorkspaceState(path)?.supervisor) : null;
+  if (orphan) return { skip: orphan };
   const seen = new Set(booted.flatMap((device) => (device.kind === 'android' ? [device.id] : [])));
   const unseen = avdNames.filter((name) => !seen.has(name));
   const emulators = unseen.length ? await unseenEmulatorError(unseen, operation) : null;
