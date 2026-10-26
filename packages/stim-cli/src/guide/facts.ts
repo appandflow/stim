@@ -1753,8 +1753,8 @@ RULES
   minutes. It caches them in $STIM_HOME/agent-sessions.json, which one-shot
   status reads and ignores once it is 2 minutes old. Both sources are other
   tools' internal files; a missing or changed one only drops its sessions.
-  \`start\`, \`ios\`, \`android\`, \`web\`, \`reload\` and \`worktree warm\`
-  also record the CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID of the shell
+  \`start\`, \`ios\`, \`android\`, \`web\`, \`reload\`, \`logs\` and
+  \`worktree warm\` also record the CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID of the shell
   that ran them, so that session is listed for 30 minutes after the command
   even when status cannot see it, and for as long as it runs.
 

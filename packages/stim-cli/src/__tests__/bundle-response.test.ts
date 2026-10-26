@@ -269,6 +269,7 @@ test('an HMR update Metro pushes over /hot after a file change is recorded, at m
   const { records, url } = await listen((res) => res.end());
   const hmrMessages: string[] = [];
   server.on('upgrade', (_req, socket) => {
+    socket.on('error', () => {});
     socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n');
     for (const message of hmrMessages) socket.write(Buffer.from(message));
     socket.end();
@@ -276,6 +277,7 @@ test('an HMR update Metro pushes over /hot after a file change is recorded, at m
   const upgrade = async (path: string) => {
     const request = get(`${url}${path}`, { headers: { Connection: 'Upgrade', Upgrade: 'websocket' } });
     const [, socket] = await once(request, 'upgrade');
+    socket.on('error', () => {});
     socket.destroy();
   };
   const [incoming] = await once(get(`${url}/status`), 'response');

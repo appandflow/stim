@@ -33,6 +33,7 @@ import { liveClaimOwner } from './_factories.ts';
 const HOUR_MS = 3_600_000;
 const MINUTE_MS = 60_000;
 const PROTECTED = '/nowhere/protected';
+const posixModes = process.getuid?.() !== 0 && process.platform !== 'win32';
 
 let home: string;
 let projects: string;
@@ -298,7 +299,7 @@ const activity = (state: DeviceActivity['state'], basis: string[], tool: string)
   lastActivityAt: new Date(Date.now() - 7 * HOUR_MS).toISOString(),
 });
 
-test('an automation driver keeps the workspace, an agent-device session left open does not', async () => {
+test('an automation driver keeps the workspace, an agent-device session left open is judged by its last command', async () => {
   const { root, udid } = bootedWorkspace('driven', 7 * HOUR_MS);
   const device = (state: DeviceActivity) => () => [
     { kind: 'ios' as const, id: udid, name: 'sim', project: root, slot: 'default', activity: state },
@@ -310,7 +311,12 @@ test('an automation driver keeps the workspace, an agent-device session left ope
   const unknown = await plan(device(activity('unknown', ['driver-process'], 'ps')));
   expect(unknown.skips).toEqual([expect.objectContaining({ reason: expect.stringMatching(/unknown activity/) })]);
 
-  const agent = await plan(device(activity('driven', ['agent-device-claim'], 'agent-device')));
+  const claimed = activity('driven', ['agent-device-claim'], 'agent-device');
+  const unseen = await plan(device(claimed));
+  expect(unseen.skips).toEqual([expect.objectContaining({ reason: expect.stringMatching(/agent-device claim/) })]);
+
+  const old = new Date(Date.now() - 7 * HOUR_MS).toISOString();
+  const agent = await plan(device({ ...claimed, recent: { 'agent-action': old } }));
   expect(agent.actions.map((action) => action.target)).toEqual([root]);
 });
 
@@ -350,7 +356,7 @@ test('a STIM_HOME-scoped home plans and runs no idle stop, since its devices are
   expect(shutdown).not.toHaveBeenCalled();
 });
 
-test('an unreadable Metro log keeps the workspace', async () => {
+test.skipIf(!posixModes)('an unreadable Metro log keeps the workspace', async () => {
   const root = serving('unreadable', 8100);
   appendLog(root, 'metro.ndjson', [{ ts: Date.now() - 1000, src: 'metro', event: 'expo_stdout', msg: 'spam' }]);
   chmodSync(join(workspaceLogsDir(root), 'metro.ndjson'), 0o000);
@@ -452,7 +458,7 @@ test('a running dev server with no Metro log keeps the workspace', async () => {
   ]);
 });
 
-test('agent-device sessions that cannot be read keep the workspace', async () => {
+test.skipIf(!posixModes)('agent-device sessions that cannot be read keep the workspace', async () => {
   const { root } = bootedWorkspace('sessions', 7 * HOUR_MS);
   const sessions = join(workspaceAgentDeviceDir(root), 'sessions');
   mkdirSync(join(sessions, 'cwd_1234_default'), { recursive: true });

@@ -27,7 +27,7 @@ import { MODE_COMMAND, readRemoteSession } from '../supervisor/state.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../workspace/in-use.ts';
 import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
-import { resolveProjectSettings, settingValueAt } from '../workspace/settings.ts';
+import { resolveProjectSettings, resolveProjectSettingsAsync, settingValueAt } from '../workspace/settings.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
 import type { MaintenancePlan } from './plan.ts';
@@ -75,7 +75,11 @@ function decideIdleStop(
   return { stop: true, idleMs: idle };
 }
 
-function idleStopHours(root: string, env: NodeJS.ProcessEnv = process.env): { hours: number } | { invalid: string } {
+async function idleStopHours(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  operation?: StimContext,
+): Promise<{ hours: number } | { invalid: string }> {
   const setting = settingDefinition(SETTING);
   if (!setting?.env) return { invalid: `${SETTING} is not in the settings registry` };
   const raw = env[setting.env];
@@ -84,8 +88,12 @@ function idleStopHours(root: string, env: NodeJS.ProcessEnv = process.env): { ho
   if (fromEnv) value = coerceSettingText(setting, raw);
   else {
     try {
-      value = settingValueAt(resolveProjectSettings(root).settings, SETTING);
+      const resolved = operation
+        ? await resolveProjectSettingsAsync(root, { env, signal: operation.signal, declareFor: operation })
+        : resolveProjectSettings(root);
+      value = settingValueAt(resolved.settings, SETTING);
     } catch (error) {
+      rethrowCleanup(error, operation?.signal);
       return { invalid: `${SETTING} cannot be resolved: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
@@ -101,6 +109,8 @@ function deviceKeepReason(device: OwnedDeviceActivity, platform: NodeJS.Platform
   const what = `its ${device.kind === 'ios' ? 'simulator' : 'emulator'} ${device.name}`;
   if (activity.state === 'driven' && !activity.basis.every((basis) => AGENT_DEVICE_DRIVERS.has(basis)))
     return `${what} is driven by ${activity.driver?.tool ?? 'an unknown tool'}`;
+  if (activity.basis.includes('agent-device-claim') && !activity.recent?.['agent-action'])
+    return `${what} has a live agent-device claim whose session activity cannot be found`;
   // The host driver probe runs `ps -axww`, which Windows lacks. Stim drives only Android there, and Android
   // drivers run on-device instrumentation the adb probe reads.
   const unknown = platform === 'win32' ? activity.basis.filter((basis) => basis !== 'driver-process') : activity.basis;
@@ -286,7 +296,7 @@ async function candidate(
   const ownsIos = slots.some(({ platforms }) => platforms.ios?.owned === true);
   const owns = ownsIos || slots.some(({ platforms }) => platforms.android?.owned === true);
   if (!owns && (supervisor.status === 'none' || supervisor.status === 'stale')) return null;
-  const setting = idleStopHours(path, env);
+  const setting = await idleStopHours(path, env, operation);
   if ('invalid' in setting) return { skip: setting.invalid };
   if (setting.hours === 0) return null;
   let booted: OwnedDeviceActivity[] = [];
