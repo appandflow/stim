@@ -473,14 +473,14 @@ The host's own owned devices count toward concurrency.maxDevices.
 
 The agent-device rows work once the host's agent field names agent-device.
 
-On macOS 27, agent-device screenshot of a hosted app can return a 66x20 image of
-the window-sharing indicator instead of the app window. macOS adds that small
-window to the app while something, such as a Stim viewer, captures the app, and
-agent-device picks it as the front window (callstack/agent-device#3961).
+On macOS 27, agent-device screenshot of a hosted app can return an image of the
+window-sharing indicator (66x20 points, 132x40 pixels) instead of the app
+window. macOS adds that small window to the app while something captures the
+app, and agent-device picks it as the front window (callstack/agent-device#3961).
 snapshot -i lists it as an axdialog named "Window" with a
 WindowSharingSessionButton before the real window. Read the UI with snapshot
-until agent-device selects the app's main window; click, press and fill are
-unaffected.
+until agent-device selects the app's main window. Commands that use the front
+window's frame, such as scroll, may also target the indicator.
 
 DESKTOP DOGFOOD
 
