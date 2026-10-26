@@ -11,7 +11,7 @@ import {
 } from '../commands/gc/worktrees.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { recentNativeUseReason, workspaceBuildReasons } from '../commands/gc/workspaces.ts';
-import { matchWorktreeEntry, reclaimKeys } from '../commands/worktree.ts';
+import { reclaimKeys } from '../commands/worktree.ts';
 import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
 import { childEnvironment } from '../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
@@ -26,8 +26,12 @@ import {
 import { finishLightened, recordLightened, restoreProblem } from '../workspace/lightened.ts';
 import {
   listWorktrees,
+  LOCKED_REASON,
+  lockReason,
+  matchWorktreeEntry,
   resolveSourceCheckoutAsync,
   sourceCheckoutOf,
+  worktreeLockAsync,
   type SourceCheckout,
   type WorktreeEntry,
 } from '../workspace/worktree.ts';
@@ -41,6 +45,7 @@ const SCAN_LIMIT = 20_000;
 export interface ArtifactWorktree {
   path: string;
   linked: boolean;
+  locked: boolean;
   keys: string[];
 }
 
@@ -48,6 +53,7 @@ export interface ArtifactCandidate {
   worktree: string;
   path: string;
   keys: string[];
+  locked: boolean;
 }
 
 function isDirectory(path: string): boolean {
@@ -84,7 +90,7 @@ function artifactWorktree(
   const entry = matchWorktreeEntry(entries, root);
   if (!entry || entry.bare || 'refusal' in source) return null;
   const keys = reclaimKeys(entry.path).filter((key) => matchWorktreeEntry(entries, key)?.path === entry.path);
-  return { path: entry.path, linked: entry.path !== source.path, keys };
+  return { path: entry.path, linked: entry.path !== source.path, locked: Boolean(entry.locked), keys };
 }
 
 async function artifactWorktreesAsync(signal: AbortSignal, operation?: StimContext): Promise<ArtifactWorktree[]> {
@@ -210,6 +216,7 @@ function artifactGuard(
 ): string | null {
   const { worktree, path, keys } = candidate;
   if (keys.some(pinned)) return 'pinned by maintenance.keep';
+  if (candidate.locked) return LOCKED_REASON;
   if (!pathExists(path)) return 'it is already gone';
   let real: string;
   try {
@@ -266,7 +273,7 @@ export async function collectArtifactsAsync(
           signal.throwIfAborted();
           continue;
         }
-        const candidate = { worktree: worktree.path, path, keys: worktree.keys };
+        const candidate = { worktree: worktree.path, path, keys: worktree.keys, locked: worktree.locked };
         let reason = protectedHere
           ? 'the command that started this pass runs inside its worktree'
           : artifactGuard(candidate, kind, options.pinned, undefined, running);
@@ -311,7 +318,7 @@ export function collectArtifacts(
         } catch {
           continue;
         }
-        const candidate = { worktree: worktree.path, path, keys: worktree.keys };
+        const candidate = { worktree: worktree.path, path, keys: worktree.keys, locked: worktree.locked };
         const reason = protectedHere
           ? 'the command that started this pass runs inside its worktree'
           : keptReason(candidate, kind, { ...options, running });
@@ -348,7 +355,7 @@ export async function clearArtifact(
   const root = canonicalPath(worktree.path);
   if (options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`))
     return { status: 'kept', bytes: 0, detail: 'the command that started this pass runs inside its worktree' };
-  const candidate = { worktree: worktree.path, path: action.target, keys: worktree.keys };
+  const candidate = { worktree: worktree.path, path: action.target, keys: worktree.keys, locked: worktree.locked };
   const running = kind === 'dependencies' ? await readRunningProcessesAsync() : null;
   const early = keptReason(candidate, kind, { ...options, now: Date.now(), running });
   if (early) return { status: 'kept', bytes: 0, detail: early };
@@ -357,6 +364,8 @@ export async function clearArtifact(
   const before = lowestFree(measureDisk());
   const [key] = candidate.keys;
   const remove = async () => {
+    const lock = candidate.locked ? 'locked' : await worktreeLockAsync(candidate.worktree);
+    if (lock) return lockReason(lock);
     const reason = keptReason(candidate, kind, {
       ...options,
       now: Date.now(),

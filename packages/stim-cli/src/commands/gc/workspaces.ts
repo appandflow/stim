@@ -13,6 +13,7 @@ import { ARTIFACT_DIRS, existingDirsOf, regenerableDirProblem } from '../../work
 import { workspaceBuildInProgress } from './idle.ts';
 import { mapLimited, sizeConcurrency } from './limited.ts';
 import { canonicalPath } from './paths.ts';
+import { lockReason, worktreeLock, worktreeLockAsync, type WorktreeLock } from '../../workspace/worktree.ts';
 import type { GcSkip } from './types.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 import type { StimContext } from '@stim-cli/core';
@@ -277,7 +278,17 @@ export function recentNativeUseReason(nativeUsed: number, now: number): string |
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export type WorkspaceKeptCode = 'unresolved' | 'in-use' | 'last-use-unknown' | 'recently-used';
+export type WorkspaceKeptCode =
+  | 'unresolved'
+  | 'locked'
+  | 'lock-unknown'
+  | 'in-use'
+  | 'last-use-unknown'
+  | 'recently-used';
+
+export function keptByLock(entry: Pick<WorkspaceOutputs, 'keptCode'>): boolean {
+  return entry.keptCode === 'locked' || entry.keptCode === 'lock-unknown';
+}
 
 export interface WorkspaceOutputs {
   dir: string;
@@ -303,31 +314,40 @@ export function planWorkspaceOutputs(
     lastUsed: number;
     nativeUsed: number;
     inUse: string[];
+    lock?: WorktreeLock | null;
   })[],
   { olderThan, now }: { olderThan: number | null; now: number },
 ): WorkspaceOutputs[] {
-  return entries.map(({ dir, projectRoot, problem, inTreeDirs = [], bytes, lastUsed, nativeUsed, inUse }) => {
+  return entries.map(({ dir, projectRoot, problem, inTreeDirs = [], bytes, lastUsed, nativeUsed, inUse, lock }) => {
     const recentNative = recentNativeUseReason(nativeUsed, now);
     const idleDays = Number.isFinite(lastUsed) ? Math.max(0, Math.floor((now - lastUsed) / DAY_MS)) : null;
     const [keptCode, keptReason]: [WorkspaceKeptCode | null, string | null] =
       projectRoot === null
         ? ['unresolved', `workspace directory not resolved: ${problem ?? 'unknown project root'}`]
-        : inUse.length
-          ? ['in-use', `in use: ${inUse.join('; ')}`]
-          : recentNative
-            ? ['recently-used', recentNative]
-            : olderThan === null
-              ? [null, null]
-              : idleDays === null
-                ? ['last-use-unknown', 'its last use is unknown']
-                : idleDays < olderThan
-                  ? ['recently-used', `used ${idleDays}d ago, within --older-than ${olderThan}`]
-                  : [null, null];
+        : lock
+          ? [lock === 'locked' ? 'locked' : 'lock-unknown', lockReason(lock)]
+          : inUse.length
+            ? ['in-use', `in use: ${inUse.join('; ')}`]
+            : recentNative
+              ? ['recently-used', recentNative]
+              : olderThan === null
+                ? [null, null]
+                : idleDays === null
+                  ? ['last-use-unknown', 'its last use is unknown']
+                  : idleDays < olderThan
+                    ? ['recently-used', `used ${idleDays}d ago, within --older-than ${olderThan}`]
+                    : [null, null];
     return { dir, projectRoot, inTreeDirs, bytes, idleDays, willClear: keptCode === null, keptCode, keptReason };
   });
 }
 
 const SIZE_TIMEOUT_MS = 60_000;
+
+const gitRead = (operation?: StimContext, signal?: AbortSignal) => ({
+  env: operation?.env,
+  signal: signal ?? operation?.signal,
+  declareFor: operation,
+});
 
 function outputPaths(dir: string): string[] {
   const paths = WORKSPACE_OUTPUT_DIRS.map((name) => join(dir, name)).filter((path) => existsSync(path));
@@ -371,6 +391,7 @@ interface WorkspaceOutputsOptions {
   olderThan: number | null;
   now: number;
   exclude?: readonly string[];
+  only?: string;
   measure?: boolean;
   sizeTimeoutMs?: number;
   signal?: AbortSignal;
@@ -390,6 +411,7 @@ export function collectWorkspaceOutputs({
   olderThan,
   now,
   exclude = [],
+  only,
   measure = true,
   sizeTimeoutMs = SIZE_TIMEOUT_MS,
   signal,
@@ -400,6 +422,9 @@ export function collectWorkspaceOutputs({
   const outputEntries = (entries: WorkspaceDirEntry[], inTree: ReadonlyMap<string, string[]> = new Map()) =>
     entries
       .filter((entry) => !exclude.includes(entry.dir))
+      .filter(
+        (entry) => only === undefined || (entry.projectRoot !== null && canonicalPath(entry.projectRoot) === only),
+      )
       .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
       .map((entry) => {
         const inTreeDirs = inTree.get(entry.dir) ?? [];
@@ -407,7 +432,12 @@ export function collectWorkspaceOutputs({
       })
       .filter((entry) => entry.paths.length > 0);
   const report = (
-    sizes: (WorkspaceDirEntry & { inTreeDirs: string[]; bytes: number | null; inUse: string[] })[],
+    sizes: (WorkspaceDirEntry & {
+      inTreeDirs: string[];
+      bytes: number | null;
+      inUse: string[];
+      lock: WorktreeLock | null;
+    })[],
   ): WorkspaceOutputsReport => ({
     root: workspacesRoot(),
     workspaces: planWorkspaceOutputs(
@@ -428,11 +458,17 @@ export function collectWorkspaceOutputs({
         Object.assign({}, entry, {
           bytes: null,
           inUse: entry.projectRoot === null ? [] : inUseOf(entry.projectRoot),
+          lock: entry.projectRoot === null ? null : worktreeLock(entry.projectRoot),
         }),
       ),
     );
   return (async () => {
-    const sizes: (WorkspaceDirEntry & { inTreeDirs: string[]; bytes: number | null; inUse: string[] })[] = [];
+    const sizes: (WorkspaceDirEntry & {
+      inTreeDirs: string[];
+      bytes: number | null;
+      inUse: string[];
+      lock: WorktreeLock | null;
+    })[] = [];
     const listed = await listWorkspaceDirsAsync(signal);
     const inTree = new Map<string, string[]>();
     if (lighten)
@@ -447,11 +483,15 @@ export function collectWorkspaceOutputs({
           operation,
         )
       : [];
+    const locks = await mapLimited(entries, sizeConcurrency(operation), async ({ projectRoot }) =>
+      projectRoot === null ? null : worktreeLockAsync(projectRoot, gitRead(operation, signal)),
+    );
     for (const [index, { paths: _paths, ...entry }] of entries.entries()) {
       signal?.throwIfAborted();
       sizes.push({
         ...entry,
         bytes: bytes[index] ?? null,
+        lock: locks[index] ?? null,
         inUse:
           entry.projectRoot === null
             ? []
@@ -503,6 +543,7 @@ export async function clearWorkspaceOutputs(
                 lastUsed: workspaceLastUsed(root),
                 nativeUsed: lighten ? lastNativeUseFrom(readWorkspaceState(root)) : NaN,
                 inUse: lighten && workspaceBuildInProgress(root) ? [BUILD_IN_PROGRESS] : [],
+                lock: await worktreeLockAsync(root, gitRead(operation, signal)),
               },
             ],
             { olderThan, now },

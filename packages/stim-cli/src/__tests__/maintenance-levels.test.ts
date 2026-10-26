@@ -186,8 +186,14 @@ test('level 2 actions stop once free disk is back above the floor', async () => 
 function repoWithFeatureWorktree({
   linkAndroid = false,
   nested = false,
+  locked = false,
   iosRanMinutesAgo,
-}: { linkAndroid?: boolean; nested?: boolean; iosRanMinutesAgo?: { repo?: number; feature?: number } } = {}) {
+}: {
+  linkAndroid?: boolean;
+  nested?: boolean;
+  locked?: boolean;
+  iosRanMinutesAgo?: { repo?: number; feature?: number };
+} = {}) {
   const repo = join(projects, 'repo');
   mkdirSync(repo, { recursive: true });
   const git = (args: string, cwd = repo) => execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 }).trim();
@@ -202,6 +208,7 @@ function repoWithFeatureWorktree({
   git('commit -q -m init');
   const feature = nested ? join(repo, '.worktrees', 'feature') : join(projects, 'feature');
   git(`worktree add -q "${feature}" -b feature`);
+  if (locked) git(`worktree lock --reason rollback "${feature}"`);
   for (const base of [repo, feature]) {
     write(join(base, 'ios', 'build', 'App.app', 'binary'));
     write(join(base, 'node_modules', 'pkg', 'index.js'));
@@ -289,6 +296,54 @@ test.skipIf(process.platform === 'win32')(
   60_000,
 );
 
+test.skipIf(process.platform === 'win32')(
+  'levels 2 and 3 never lighten a git-locked worktree, and the log says it is locked',
+  async () => {
+    const { repo, feature } = repoWithFeatureWorktree({ locked: true, iosRanMinutesAgo: { repo: 60, feature: 60 } });
+    const outputs = join(workspaceDir(feature), 'derived-data', 'blob');
+    const repoOutputs = join(workspaceDir(repo), 'derived-data', 'blob');
+    write(outputs);
+    write(repoOutputs);
+    freeDisk(15);
+
+    await pass();
+
+    expect(existsSync(repoOutputs)).toBe(false);
+    expect(existsSync(join(repo, 'apps', 'desktop', '.build'))).toBe(false);
+    expect(existsSync(outputs)).toBe(true);
+    expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(true);
+
+    freeDisk(4);
+    await pass();
+
+    expect(existsSync(join(feature, 'node_modules', 'pkg', 'index.js'))).toBe(true);
+    expect(recordedDirs(feature)).toEqual([]);
+    const log = readFileSync(maintenanceNdjsonFile(), 'utf8');
+    for (const kept of [feature, join(feature, 'apps', 'desktop', '.build'), join(feature, 'node_modules')])
+      expect(log).toContain(`Kept ${kept}: locked with git worktree lock`);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'execution rechecks the git lock when the worktree snapshot says unlocked',
+  async () => {
+    const { feature } = repoWithFeatureWorktree({ locked: true, iosRanMinutesAgo: { feature: 60 } });
+    freeDisk(15);
+    const clear = (kind: 'would-clear-build-dirs' | 'would-delete-dependencies', target: string) =>
+      executeAction({ kind, target, bytes: 0, reason: 'test', level: 2 }, actContext(feature));
+
+    const build = await clear('would-clear-build-dirs', join(feature, 'apps', 'desktop', '.build'));
+    const dependencies = await clear('would-delete-dependencies', join(feature, 'node_modules'));
+
+    expect([build.status, dependencies.status]).toEqual(['kept', 'kept']);
+    expect(dependencies.detail).toBe('locked with git worktree lock');
+    expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(true);
+    expect(existsSync(join(feature, 'node_modules', 'pkg', 'index.js'))).toBe(true);
+  },
+  60_000,
+);
+
 test('a build directory reached through a linked parent is kept', async () => {
   const { feature } = repoWithFeatureWorktree({ linkAndroid: true });
   freeDisk(15);
@@ -313,7 +368,7 @@ const actContext = (feature: string) => ({
   settings: resolveMaintenanceSettings(),
   budget: { minFreeDiskMb: 20 * GB, hardFloorDiskMb: 5 * GB, maxCommittedMemoryMb: 0, maxLiveWorkspaces: 0 },
   protectedRoot: '/nowhere',
-  worktrees: [{ path: feature, linked: true, keys: [feature] }],
+  worktrees: [{ path: feature, linked: true, locked: false, keys: [feature] }],
 });
 
 test('a nested worktree holding its native-run lock keeps its build directory at execution', async () => {

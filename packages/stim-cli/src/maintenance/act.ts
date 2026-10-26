@@ -179,7 +179,7 @@ async function clearOutputs(action: MaintenanceAction, context: ActContext): Pro
   if (recent) return kept(recent);
   const olderThan = action.olderThanDays ?? null;
   const now = Date.now();
-  const report = collectWorkspaceOutputs({ olderThan, now, measure: false, lighten });
+  const report = collectWorkspaceOutputs({ olderThan, now, measure: false, lighten, only: root });
   const entry = report.workspaces.find(
     (candidate) => candidate.projectRoot && canonicalPath(candidate.projectRoot) === root,
   );

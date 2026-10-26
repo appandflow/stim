@@ -1,4 +1,14 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, chmodSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  chmodSync,
+  writeFileSync,
+} from 'node:fs';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import fsPromises from 'node:fs/promises';
@@ -14,6 +24,7 @@ import {
   type ReclaimStepName,
 } from '../budget.ts';
 import { register } from '../cache/cache-manifest.ts';
+import { clearWorkspaceOutputs, collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -291,6 +302,89 @@ describe('reclaiming in a scratch STIM_HOME with a floor above the free disk', (
     expect(existsSync(join(workspaceDir(other), 'derived-data'))).toBe(false);
     expect(existsSync(join(workspaceDir(current), 'derived-data'))).toBe(true);
     expect(readGcLog()).toMatchObject([{ trigger: 'budget', kind: 'workspaceOutputs', status: 'done', label: other }]);
+  });
+
+  test('a real run keeps the outputs of a git-locked worktree and says why', async () => {
+    process.env.STIM_BUDGET_MIN_FREE_DISK_GB = '1000000000';
+    process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '1000000000';
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', ...args], { cwd, timeout: 15_000 });
+    const repo = join(apps, 'repo');
+    mkdirSync(repo);
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+    const current = workspaceWithOutputs('current');
+    const rollback = join(apps, 'rollback');
+    git(repo, 'worktree', 'add', '-q', '--detach', rollback);
+    git(repo, 'worktree', 'lock', rollback);
+    const locked = realpathSync(rollback);
+    upsertProject(locked, { isExpo: false });
+    mkdirSync(join(ensureWorkspaceStorage(locked), 'derived-data', 'Build'), { recursive: true });
+    recordWorkspaceUse(locked, new Date(Date.now() - 60 * 60_000));
+    const notes: string[] = [];
+    await enforceBudget({ root: current, note: (line) => notes.push(line) }, { usage: () => [] });
+    expect(existsSync(join(workspaceDir(locked), 'derived-data'))).toBe(true);
+    expect(notes.join('\n')).toContain(`Kept the build outputs of ${locked}: locked`);
+  });
+
+  test('outputs of a project inside a git checkout git cannot read are kept', async () => {
+    process.env.STIM_BUDGET_MIN_FREE_DISK_GB = '1000000000';
+    process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '1000000000';
+    const current = workspaceWithOutputs('current');
+    const broken = workspaceWithOutputs('broken');
+    writeFileSync(join(broken, '.git'), 'gitdir: /nonexistent/stim-test\n');
+    const notes: string[] = [];
+    await enforceBudget({ root: current, note: (line) => notes.push(line) }, { usage: () => [] });
+    expect(existsSync(join(workspaceDir(broken), 'derived-data'))).toBe(true);
+    expect(notes.join('\n')).toContain(
+      `Kept the build outputs of ${broken}: git could not tell whether its worktree is locked`,
+    );
+  });
+
+  test('outputs of a project whose directory is gone are still cleared inside a git checkout', async () => {
+    process.env.STIM_BUDGET_MIN_FREE_DISK_GB = '1000000000';
+    process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '1000000000';
+    const repo = join(apps, 'repo');
+    mkdirSync(repo);
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo, timeout: 15_000 });
+    const current = workspaceWithOutputs('current');
+    const gone = join(realpathSync(repo), 'gone');
+    mkdirSync(gone);
+    upsertProject(gone, { isExpo: false });
+    mkdirSync(join(ensureWorkspaceStorage(gone), 'derived-data', 'Build'), { recursive: true });
+    recordWorkspaceUse(gone, new Date(Date.now() - 60 * 60_000));
+    rmSync(gone, { recursive: true });
+    await enforceBudget({ root: current, note: () => {} }, { usage: () => [] });
+    expect(existsSync(join(workspaceDir(gone), 'derived-data'))).toBe(false);
+  });
+
+  test('clearing re-reads the lock a worktree gained after the report was made', async () => {
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', ...args], { cwd, timeout: 15_000 });
+    const repo = join(apps, 'repo');
+    mkdirSync(repo);
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+    const worktree = join(apps, 'later-locked');
+    git(repo, 'worktree', 'add', '-q', '--detach', worktree);
+    const root = realpathSync(worktree);
+    upsertProject(root, { isExpo: false });
+    mkdirSync(join(ensureWorkspaceStorage(root), 'derived-data', 'Build'), { recursive: true });
+    recordWorkspaceUse(root, new Date(Date.now() - 60 * 60_000));
+    const report = await collectWorkspaceOutputs({
+      olderThan: null,
+      now: Date.now(),
+      measure: false,
+      signal: new AbortController().signal,
+    });
+    expect(report.workspaces.find((entry) => entry.projectRoot === root)?.willClear).toBe(true);
+    git(repo, 'worktree', 'lock', worktree);
+    await clearWorkspaceOutputs(
+      report,
+      { olderThan: null },
+      { log: () => {}, error: () => {}, record: () => {}, fail: () => {} },
+    );
+    expect(existsSync(join(workspaceDir(root), 'derived-data'))).toBe(true);
   });
 
   test.each(['devices', 'dev servers'] as const)('cancelling idle %s inventory starts no reclamation', async (kind) => {

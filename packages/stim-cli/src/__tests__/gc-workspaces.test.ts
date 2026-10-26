@@ -22,7 +22,8 @@ import { runGc } from '../commands/gc.ts';
 import { collectWorkspaceLogs, trimWorkspaceLogs } from '../commands/gc/logs.ts';
 import { testContext } from './_context.ts';
 import { operationState } from '../engine/operation-state.ts';
-import { matchWorktreeEntry, removeWorktreeTarget } from '../commands/worktree.ts';
+import { removeWorktreeTarget } from '../commands/worktree.ts';
+import { matchWorktreeEntry } from '../workspace/worktree.ts';
 import { classifyStatusCaches, deleteStaleStatusCaches } from '../commands/gc/status-caches.ts';
 import {
   classifyWorkspaceDirs,

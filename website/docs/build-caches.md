@@ -473,10 +473,12 @@ stim gc --delete --cache workspaces`}
 
 Plain `gc --delete` lightens every workspace that is not building and did not
 run `stim ios`, `stim android` or `stim macos` in the last 15 minutes, and
-prints the bytes it freed for each. A running dev server, a booted or hosted
-simulator or emulator, or a tunnel no longer keeps the outputs. They stay while
-a `stim ios` or `stim android` run holds the workspace, a build names it, or its
-macOS app or build runs or cannot be verified. Lightening also clears the
+prints the bytes it freed for each. A workspace whose worktree is locked with
+`git worktree lock` is never lightened, at any disk pressure level, and nor is
+a workspace whose worktree git cannot list. A running dev server, a booted or
+hosted simulator or emulator, or a tunnel no longer keeps the outputs. They
+stay while a `stim ios` or `stim android` run holds the workspace, a build names
+it, or its macOS app or build runs or cannot be verified. Lightening also clears the
 project's own `android/app/build`, `android/build`, `android/.gradle` and
 `.build` when git ignores every file in the directory and tracks none.
 `ios/build` stays, because React Native's `pod install` writes files there that
@@ -502,8 +504,9 @@ restages the app.
 
 Plain `gc --delete` also lightens linked worktrees that have a Stim workspace:
 it deletes their `node_modules` and `ios/Pods`, never the source checkout's.
-A worktree keeps them while its dev server runs or a native run or build holds
-it, for 15 minutes after its last git, Stim or dependency activity, while git
+A worktree locked with `git worktree lock` always keeps them, so a rollback
+checkout stays runnable. Otherwise a worktree keeps them while its dev server
+runs or a native run or build holds it, for 15 minutes after its last git, Stim or dependency activity, while git
 tracks a file in them, and while a stim-server service, the `stim` on your PATH
 or a running process (by command line or working directory) uses the worktree.
 It also keeps them when `stim worktree warm` could not restore the same

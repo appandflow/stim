@@ -43,6 +43,8 @@ import {
   hasUncommittedWorkAsync,
   listWorktrees,
   listWorktreesAsync,
+  LOCKED_REASON,
+  matchWorktreeEntry,
   resolveSourceCheckoutAsync,
   resolveFullRefAsync,
   sourceCheckoutOf,
@@ -51,7 +53,6 @@ import {
 import {
   excludePodChurn,
   excludeWatchmanCookies,
-  matchWorktreeEntry,
   nestedWorktrees,
   porcelainPath,
   reclaimKeys,
@@ -276,7 +277,7 @@ function removalBlocker(
     return skip('source-checkout-unknown', `source checkout unknown: ${facts.source.refusal}`);
   }
   if (facts.source === 'source') return skip('source-checkout', 'source checkout');
-  if (facts.locked) return skip('locked', 'locked with git worktree lock');
+  if (facts.locked) return skip('locked', LOCKED_REASON);
   if (facts.nested?.length) return skip('nested-worktree', `contains the worktree ${facts.nested.join(', ')}`);
   if (facts.inUse.length) return skip('in-use', `in use: ${facts.inUse.join('; ')}`);
   if (facts.porcelain === null) return skip('status-unreadable', 'git status could not be read');

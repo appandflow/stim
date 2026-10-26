@@ -148,8 +148,8 @@ DISK PRESSURE LEVELS
        gradle-versions, run again after step 5 so a daemon that did not exit
        still keeps them
   A directory is cleared only when it is a real directory inside its
-  worktree, git tracks nothing in it, its worktree is not in use, holds no
-  lock or build and is not pinned, and, for the node_modules and ios/Pods of
+  worktree, git tracks nothing in it, its worktree is not in use, is not
+  locked with git worktree lock, holds no build lock and is not pinned, and, for the node_modules and ios/Pods of
   level 3, nothing under it, nor the worktree's git index, HEAD or Stim
   state, changed within the short window. A build directory of level 2 also
   stays in a worktree where no Stim workspace has recorded any state; a build
@@ -1129,7 +1129,12 @@ WORKSPACE BUILD OUTPUTS
   detected cache, "Workspace build outputs", with a per-workspace size, last
   use and verdict. Plain \`gc --delete\` lightens every workspace, before
   anything else, by clearing them, and prints the bytes freed per workspace.
-  A running dev server, a booted or hosted simulator or emulator and a managed
+  A workspace whose worktree is locked with git worktree lock is never
+  lightened: not its outputs, not its project's build directories, at any
+  disk pressure level, including gc --older-than and the budget, and gc and
+  the maintenance log name the lock. The outputs also stay when git lists
+  nothing for a project inside a git checkout (code lock-unknown). A
+  running dev server, a booted or hosted simulator or emulator and a managed
   tunnel no longer keep them. They stay while the workspace is building (its
   native-run.lock is held, a live or unresolvable build lock or slot names
   it, or its build claim is live), while its macOS app or build runs or cannot
@@ -1168,10 +1173,11 @@ WORKTREE DEPENDENCIES
   Plain \`gc --delete\` also lightens linked worktrees: it deletes the
   node_modules and ios/Pods at the root or a project root of a linked
   worktree that has a Stim workspace, never the source checkout. A worktree
-  keeps them while it is in use (its dev server runs, a native run or build
-  holds it), while it was used in the last 15 minutes (a git index, HEAD or
-  reflog write, a Stim state or log write, or a write at the top of the
-  directory), while git tracks a file in them, while a stim-server service
+  locked with git worktree lock keeps them always, so a rollback checkout
+  stays runnable. Otherwise a worktree keeps them while it is in use (its
+  dev server runs, a native run or build holds it), while it was used in
+  the last 15 minutes (a git index, HEAD or reflog write, a Stim state or
+  log write, or a write at the top of the directory), while git tracks a file in them, while a stim-server service
   or the stim on PATH runs from it, while a live process has its command
   line or working directory in it, and when the running processes cannot be
   listed (always on Windows). It also keeps them when \`stim worktree warm\`
