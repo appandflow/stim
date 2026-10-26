@@ -18,10 +18,13 @@ export interface MetroLink {
 
 /** The idle links a hosted session's client keeps open; a bridge takes one per accepted connection. */
 export interface MetroLinks {
-  /** False when the links are closed or already hold `METRO_LINK_LIMIT` idle links; the caller closes the link. */
+  /**
+   * False when the links are closed; the caller closes the link. At `METRO_LINK_LIMIT` idle links it closes the oldest,
+   * so links that died without a close cannot crowd out live ones.
+   */
   add: (link: MetroLink) => boolean;
   remove: (link: MetroLink) => void;
-  /** Resolves the oldest idle link, waiting at most `waitMs` for one; null when none arrived or the links closed. */
+  /** Resolves the newest idle link, waiting at most `waitMs` for one; null when none arrived or the links closed. */
   take: (waitMs: number) => Promise<MetroLink | null>;
   close: () => void;
 }
@@ -41,7 +44,7 @@ export function createMetroLinks(): MetroLinks {
         waiter(link);
         return true;
       }
-      if (idle.length >= METRO_LINK_LIMIT) return false;
+      if (idle.length >= METRO_LINK_LIMIT) idle.shift()?.close();
       idle.push(link);
       return true;
     },
@@ -50,7 +53,7 @@ export function createMetroLinks(): MetroLinks {
       if (index >= 0) idle.splice(index, 1);
     },
     take: (waitMs) => {
-      const link = idle.shift();
+      const link = idle.pop();
       if (link || closed) return Promise.resolve(link ?? null);
       return new Promise((resolve) => {
         const waiter = (taken: MetroLink | null) => {

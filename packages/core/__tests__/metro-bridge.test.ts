@@ -100,6 +100,21 @@ test('skips a link that is already closing and serves the connection over the ne
   expect(reads).toEqual(['/status']);
 });
 
+test('pairs the newest link and closes the oldest idle link past sixteen, so dead links cannot fill the session', async () => {
+  const { links, port } = await bridge();
+  const closed: string[] = [];
+  const opened: string[] = [];
+  const named = (name: string): MetroLink => {
+    const live = link();
+    return { open: (socket) => (opened.push(name), live.open(socket)), close: () => closed.push(name) };
+  };
+  for (let index = 0; index < 16; index++) expect(links.add(named(`dead-${index}`))).toBe(true);
+  expect(links.add(named('live'))).toBe(true);
+  expect(closed).toEqual(['dead-0']);
+  expect(await failure('/status', port)).toBe('answered');
+  expect(opened).toEqual(['live']);
+});
+
 test('closes a connection no link takes in time without reaching Metro', async () => {
   const { port } = await bridge(50);
   expect(await failure('/status', port)).toBe('ECONNRESET');
