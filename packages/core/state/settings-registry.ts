@@ -744,7 +744,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 5,
     env: 'STIM_MAINTENANCE_IDLE_CHECK_MINUTES',
     description:
-      'Interval in minutes of the check that shuts down owned simulators and emulators idle for devices.idleShutdownMinutes, also with no dev server running',
+      'Interval in minutes of the check that shuts down owned simulators and emulators idle for devices.idleShutdownMinutes, also with no dev server running, and stops workspaces idle for maintenance.idleStopHours',
   },
   {
     key: 'maintenance.idleStopHours',

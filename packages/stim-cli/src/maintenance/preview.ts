@@ -165,16 +165,24 @@ export async function plannedMaintenance(
   if (idle && devices) {
     merge(planIdleShutdown({ protectedRoot: root, now: Date.now(), env }));
     const now = Date.now();
-    merge(
-      await planIdleStop({
-        protectedRoot: root,
-        now,
-        env,
-        devices: operation
-          ? cachedDeviceActivityAsync(now, env, operation.signal, operation)
-          : cachedDeviceActivity(now),
-      }),
-    );
+    try {
+      merge(
+        await planIdleStop({
+          protectedRoot: root,
+          now,
+          env,
+          operation,
+          devices: operation
+            ? cachedDeviceActivityAsync(now, env, operation.signal, operation)
+            : cachedDeviceActivity(now),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
+      result.blocked.push(`idle stop could not be planned: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   if (pressure) {
     const level = diskPressureLevel(lowestFree(pressure.disk), budget, settings);

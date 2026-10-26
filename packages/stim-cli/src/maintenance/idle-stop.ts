@@ -1,15 +1,16 @@
-import { readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { StimContext } from '@stim-cli/core';
+import { rotatedLogPath, type StimContext } from '@stim-cli/core';
 import {
   coerceSettingText,
-  readNdjsonGenerations,
+  parseNdjsonText,
   settingDefinition,
   settingValueError,
   type DeviceActivity,
   type MaintenanceAction,
 } from '@stim-cli/core/state';
 import { formatLongDuration } from '../command-output.ts';
+import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { runStop } from '../commands/stop.ts';
@@ -21,9 +22,9 @@ import {
   workspaceProcessLockError,
 } from '../engine/workspace-process-lock.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
-import { readRemoteSession } from '../supervisor/state.ts';
+import { MODE_COMMAND, readRemoteSession } from '../supervisor/state.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
+import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../workspace/in-use.ts';
 import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { resolveProjectSettings, settingValueAt } from '../workspace/settings.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -128,27 +129,45 @@ function agentSessionsActedAt(root: string): number {
   return latest;
 }
 
-function metroRequestAt(root: string): number | string {
+function metroRequestAt(root: string, since: number): number | string {
   const file = join(workspaceLogsDir(root), 'metro.ndjson');
-  try {
-    statSync(file);
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return NaN;
-    return `its Metro log cannot be read (${error instanceof Error ? error.message : String(error)})`;
+  const rotated = rotatedLogPath(file);
+  const records = [];
+  for (const path of [rotated, file]) {
+    try {
+      records.push(...parseNdjsonText(readFileSync(path, 'utf8')));
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
+      return `its Metro log cannot be read (${error instanceof Error ? error.message : String(error)})`;
+    }
   }
   let latest = NaN;
-  for (const record of readNdjsonGenerations(file))
-    if (typeof record.event === 'string' && METRO_REQUESTS.has(record.event) && typeof record.ts === 'number')
-      if (!(record.ts <= latest)) latest = record.ts;
+  let earliest = Infinity;
+  for (const record of records) {
+    if (typeof record.ts !== 'number') continue;
+    earliest = Math.min(earliest, record.ts);
+    if (typeof record.event === 'string' && METRO_REQUESTS.has(record.event) && !(record.ts <= latest))
+      latest = record.ts;
+  }
+  if (!Number.isFinite(latest) && earliest > since && existsSync(rotated))
+    return `its rotated Metro log does not reach back ${SETTING}`;
   return latest;
 }
 
-function keepReasons(
+async function keepReasons(
   root: string,
   devices: readonly OwnedDeviceActivity[],
-  { now, platform, locked }: { now: number; platform: NodeJS.Platform; locked: boolean },
+  {
+    now,
+    platform,
+    locked,
+    operation,
+  }: { now: number; platform: NodeJS.Platform; locked: boolean; operation?: StimContext },
 ) {
-  const keep = workspaceInUse(root, { devServer: false, nativeRun: !locked });
+  const checks = { devServer: false, nativeRun: !locked };
+  const keep = operation
+    ? await workspaceInUseAsync(root, checks, operation.signal, operation)
+    : workspaceInUse(root, checks);
   if (workspaceBuildInProgress(root)) keep.push('a build is in progress');
   if (readRemoteSession(root)) keep.push('it has a remote device session');
   const holder = canonicalPath(root);
@@ -164,7 +183,7 @@ function keepReasons(
   return keep;
 }
 
-function idleStopEvidence(
+async function idleStopEvidence(
   root: string,
   devices: readonly OwnedDeviceActivity[],
   {
@@ -172,9 +191,10 @@ function idleStopEvidence(
     idleMs,
     platform = process.platform,
     locked = false,
-  }: { now: number; idleMs: number; platform?: NodeJS.Platform; locked?: boolean },
-): IdleStopEvidence {
-  const keep = keepReasons(root, devices, { now, platform, locked });
+    operation,
+  }: { now: number; idleMs: number; platform?: NodeJS.Platform; locked?: boolean; operation?: StimContext },
+): Promise<IdleStopEvidence> {
+  const keep = await keepReasons(root, devices, { now, platform, locked, operation });
   if (keep.length) return { activity: [], keep };
   const state = readWorkspaceState(root);
   const build = state?.lastBuild;
@@ -190,7 +210,7 @@ function idleStopEvidence(
     ]),
   ].filter(({ at }) => Number.isFinite(at));
   if (activity.some(({ at }) => now - at < idleMs)) return { activity, keep };
-  const metro = metroRequestAt(root);
+  const metro = metroRequestAt(root, now - idleMs);
   if (typeof metro === 'string') return { activity, keep: [metro] };
   if (Number.isFinite(metro)) activity.push({ basis: 'Metro request', at: metro });
   return { activity, keep };
@@ -204,10 +224,17 @@ interface IdleStopCandidate {
 
 type DeviceReader = (withSims: boolean) => OwnedDeviceActivity[] | Promise<OwnedDeviceActivity[]>;
 
+function rethrowCleanup(error: unknown, signal: AbortSignal | undefined): void {
+  if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+    throw error;
+  signal?.throwIfAborted();
+}
+
 async function candidate(
   path: string,
   env: NodeJS.ProcessEnv,
   devices: DeviceReader,
+  signal?: AbortSignal,
 ): Promise<IdleStopCandidate | { skip: string } | null> {
   const project = loadConfig()?.projects?.[path];
   if (!project) return null;
@@ -226,7 +253,8 @@ async function candidate(
   if (owns) {
     try {
       booted = (await devices(ownsIos)).filter((device) => device.project === path);
-    } catch {
+    } catch (error) {
+      rethrowCleanup(error, signal);
       return supervisor.status === 'none' || supervisor.status === 'stale'
         ? null
         : { skip: 'its owned devices cannot be listed to prove them idle' };
@@ -234,6 +262,8 @@ async function candidate(
   }
   if (supervisor.status === 'unverified')
     return { skip: `its dev server supervisor cannot be verified: ${supervisor.reason ?? 'unknown identity'}` };
+  if (supervisor.status === 'ours' && readWorkspaceState(path)?.supervisor?.mode === MODE_COMMAND)
+    return { skip: 'its dev server runs metro.command, whose bundle and HMR requests Stim cannot see' };
   if (supervisor.status !== 'ours' && booted.length === 0) return null;
   return { path, hours: setting.hours, devices: booted };
 }
@@ -248,25 +278,30 @@ export async function planIdleStop({
   devices,
   env = process.env,
   platform = process.platform,
+  operation,
 }: {
   protectedRoot: string;
   now: number;
   devices: DeviceReader;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
+  operation?: StimContext;
 }): Promise<MaintenancePlan> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
+  if (deviceSweepIsScoped(env)) return plan;
   for (const path of Object.keys(loadConfig()?.projects ?? {})) {
     const root = canonicalPath(path);
     if (root === protectedRoot) continue;
-    const found = await candidate(path, env, devices);
+    operation?.signal.throwIfAborted();
+    const found = await candidate(path, env, devices, operation?.signal);
     if (!found) continue;
     if ('skip' in found) {
       plan.skips.push({ target: root, reason: found.skip, workspace: root });
       continue;
     }
     const idleMs = found.hours * HOUR_MS;
-    const decision = decideIdleStop(idleStopEvidence(path, found.devices, { now, idleMs, platform }), { idleMs, now });
+    const evidence = await idleStopEvidence(path, found.devices, { now, idleMs, platform, operation });
+    const decision = decideIdleStop(evidence, { idleMs, now });
     if (!decision.stop) {
       plan.skips.push({ target: root, reason: decision.reason, workspace: root });
       continue;
@@ -306,18 +341,18 @@ export async function stopIdleWorkspace(
 ): Promise<IdleStopOutcome> {
   const root = action.workspace ?? action.target;
   if (root === protectedRoot) return kept('the command that started this pass runs in it');
+  if (deviceSweepIsScoped(env)) return kept('STIM_HOME scopes this config, and devices are machine-wide');
   const path = Object.keys(loadConfig()?.projects ?? {}).find((entry) => canonicalPath(entry) === root) ?? root;
-  const stillIdle = async (locked: boolean): Promise<string | null> => {
+  const stillIdle = async (): Promise<string | null> => {
     const now = Date.now();
-    const found = await candidate(path, env, devices());
+    const found = await candidate(path, env, devices(), operation?.signal);
     if (!found) return 'nothing of it runs any more';
     if ('skip' in found) return found.skip;
     const idleMs = found.hours * HOUR_MS;
-    const decision = decideIdleStop(idleStopEvidence(path, found.devices, { now, idleMs, locked }), { idleMs, now });
+    const evidence = await idleStopEvidence(path, found.devices, { now, idleMs, locked: true, operation });
+    const decision = decideIdleStop(evidence, { idleMs, now });
     return decision.stop ? null : decision.reason;
   };
-  const first = await stillIdle(false);
-  if (first) return kept(first);
   const signal = operation?.signal;
   const run = await withIdleWorkspace(
     path,
@@ -327,7 +362,7 @@ export async function stopIdleWorkspace(
           workspaceDir(path),
           'metro-start',
           async () => {
-            const active = await stillIdle(true);
+            const active = await stillIdle();
             if (active) return kept(active);
             const lines: string[] = [];
             const stopped = await runStop({

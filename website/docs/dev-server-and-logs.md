@@ -161,6 +161,14 @@ each kept workspace with its reason (`stim logs --source maintenance`), and
 `stim status` shows the dev server stopped by automatic maintenance. The next
 `stim start`, `stim ios` or `stim android` starts it again.
 
+A dev server started through `metro.command` is always kept, because Stim sees
+none of its bundle or HMR requests. A Metro log that cannot be read, or that
+rotated within the window, keeps the workspace too. A home redirected with
+`STIM_HOME` never stops idle workspaces, because simulators and emulators are
+machine-wide. `maintenance.keep` does not keep a
+workspace from this stop, which deletes nothing; set `maintenance.idleStopHours`
+to `0` at workspace scope to keep one running.
+
 <StimTabs code={`stim settings set maintenance.idleStopHours 1 --scope machine`} />
 
 Try it with an agent:

@@ -1,7 +1,17 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deviceViewersDir, type DeviceActivity } from '@stim-cli/core/state';
+import * as gcDevices from '../commands/gc/devices.ts';
 import { collectOwnedDeviceActivity, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import * as teardown from '../devices/teardown.ts';
 import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
@@ -41,6 +51,7 @@ beforeEach(() => {
   });
   saveConfig({ version: 2, projects: {}, repos: {} });
   sims = [];
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
 });
 
 afterEach(() => {
@@ -112,13 +123,13 @@ test('device, app and dev server log lines alone do not keep a workspace past ma
   ]);
 });
 
-function serving(name: string, port: number) {
+function serving(name: string, port: number, mode = 'expo-child') {
   const root = join(projects, name);
   mkdirSync(root, { recursive: true });
   ensureWorkspaceStorage(root);
   upsertProject(root, { metroPort: 8100, platforms: {} });
   recordWorkspaceUse(root, new Date(Date.now() - 7 * HOUR_MS));
-  writeWorkspaceState(root, { supervisor: { ...liveClaimOwner(), port, mode: 'expo-child' } });
+  writeWorkspaceState(root, { supervisor: { ...liveClaimOwner(), port, mode } });
   return root;
 }
 
@@ -128,6 +139,7 @@ test('a running dev server whose only recent records are its own output is stopp
     { ts: Date.now() - 1000, src: 'metro', level: 'warn', event: 'expo_stdout', msg: 'WARN App Start Span' },
   ]);
   const unverified = serving('unverified', 9999);
+  const command = serving('command', 8100, 'command-child');
 
   const { actions, skips } = await plan();
 
@@ -137,7 +149,48 @@ test('a running dev server whose only recent records are its own output is stopp
       target: unverified,
       reason: expect.stringMatching(/^its dev server supervisor cannot be verified/),
     }),
+    expect.objectContaining({ target: command, reason: expect.stringMatching(/metro\.command/) }),
   ]);
+});
+
+test('a Metro log rotated within the window keeps the workspace, since an older request may be gone', async () => {
+  const root = serving('rotated', 8100);
+  appendLog(root, 'metro.ndjson.1', [{ ts: Date.now() - HOUR_MS, src: 'metro', event: 'expo_stdout', msg: 'spam' }]);
+  appendLog(root, 'metro.ndjson', [{ ts: Date.now() - 1000, src: 'metro', event: 'expo_stdout', msg: 'spam' }]);
+
+  const { actions, skips } = await plan();
+
+  expect(actions).toEqual([]);
+  expect(skips).toEqual([
+    expect.objectContaining({ target: root, reason: expect.stringMatching(/rotated Metro log/) }),
+  ]);
+});
+
+test('an unexpired device lease held by the workspace keeps it', async () => {
+  const { root } = bootedWorkspace('leased', 7 * HOUR_MS);
+  expect(takeLease({ root, platform: 'ios', id: 'PHONE-2', kind: 'declared' }).status).toBe('taken');
+
+  const { actions, skips } = await plan();
+
+  expect(actions).toEqual([]);
+  expect(skips).toEqual([expect.objectContaining({ target: root, reason: expect.stringMatching(/device lease on/) })]);
+});
+
+test('activity after the plan keeps the workspace when the stop runs', async () => {
+  const { root } = bootedWorkspace('resumed', 7 * HOUR_MS);
+  const shutdown = vi.spyOn(teardown, 'teardownOwnedIosSim');
+  const { actions } = await plan();
+  expect(actions).toHaveLength(1);
+  recordWorkspaceUse(root);
+
+  const outcomes = await Promise.all(
+    actions.map((action) => stopIdleWorkspace(action, { protectedRoot: PROTECTED, devices: () => realDevices })),
+  );
+
+  expect(outcomes).toEqual([
+    expect.objectContaining({ status: 'kept', detail: expect.stringMatching(/stim command/) }),
+  ]);
+  expect(shutdown).not.toHaveBeenCalled();
 });
 
 const recent = Date.now() - HOUR_MS;
@@ -270,4 +323,32 @@ test('the stop shuts the idle simulator down without deleting it and leaves devi
   expect(shutdown.mock.calls).toEqual([[udid, expect.not.objectContaining({ del: true })]]);
   expect(existsSync(deviceLeasePath('ios', 'PHONE-1'))).toBe(true);
   expect((await plan()).actions).toEqual([]);
+});
+
+test('a STIM_HOME-scoped home plans and runs no idle stop, since its devices are machine-wide', async () => {
+  const { root } = bootedWorkspace('scoped', 7 * HOUR_MS);
+  vi.mocked(gcDevices.deviceSweepIsScoped).mockReturnValue(true);
+  const shutdown = vi.spyOn(teardown, 'teardownOwnedIosSim');
+
+  expect(await plan()).toEqual({ actions: [], blocked: [], skips: [] });
+  expect(
+    await stopIdleWorkspace(
+      { target: root, workspace: root, reason: 'idle' },
+      { protectedRoot: PROTECTED, devices: () => realDevices },
+    ),
+  ).toMatchObject({ status: 'kept', detail: expect.stringMatching(/STIM_HOME/) });
+  expect(shutdown).not.toHaveBeenCalled();
+});
+
+test('an unreadable Metro log keeps the workspace', async () => {
+  const root = serving('unreadable', 8100);
+  appendLog(root, 'metro.ndjson', [{ ts: Date.now() - 1000, src: 'metro', event: 'expo_stdout', msg: 'spam' }]);
+  chmodSync(join(workspaceLogsDir(root), 'metro.ndjson'), 0o000);
+
+  const { actions, skips } = await plan();
+
+  expect(actions).toEqual([]);
+  expect(skips).toEqual([
+    expect.objectContaining({ target: root, reason: expect.stringMatching(/Metro log cannot be read/) }),
+  ]);
 });

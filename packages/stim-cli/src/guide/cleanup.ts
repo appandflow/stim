@@ -71,7 +71,12 @@ the check decides again under the native-run and metro-start locks. Each stop
 is a maintenance_action line naming the idle time, each kept workspace a
 maintenance_skip line with the reason, and status shows the dev server as
 stopped by automatic maintenance. The next start, ios or android starts it
-again.
+again. A dev server run through metro.command is kept: Stim sees none of its
+bundle or HMR requests. A Metro log that cannot be read, or that rotated
+within the window, keeps the workspace too. A STIM_HOME-scoped home never
+idle-stops, because its devices are machine-wide. maintenance.keep does not keep a workspace from idle
+stop, which deletes nothing; set maintenance.idleStopHours 0 at workspace
+scope instead.
   stim settings set maintenance.idleStopHours 1 --scope machine
 
 In on mode a pass runs, cheapest to rebuild first:
@@ -118,7 +123,8 @@ live build lock, or in a Metro store with a running or unverifiable dev
 server. Anything the pass cannot verify is kept. A device is deleted only when
 its workspace is idle: no dev server, native run, build, lease, managed lock,
 driven or busy device, and no recorded use within the window. Below disk
-pressure level 3 a pass never stops a dev server or watchman; removing a
+pressure level 3 a pass stops a dev server only by IDLE STOP below and never
+stops watchman; removing a
 finished worktree or orphaned directory does tear down that workspace's own
 dev server, owned devices and Chrome profile, as gc --delete does. ccache evicts by itself under
 caches.ccacheMaxGb.

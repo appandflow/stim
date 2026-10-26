@@ -1,7 +1,8 @@
 import chalk from 'chalk';
 import type { StimContext } from '@stim-cli/core';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { cachedDeviceActivity, cachedDeviceActivityAsync } from '../../maintenance/activity.ts';
-import { planIdleStop, stopIdleWorkspace } from '../../maintenance/idle-stop.ts';
+import { planIdleStop, stopIdleWorkspace, type IdleStopOutcome } from '../../maintenance/idle-stop.ts';
 import { triggeringRoot } from '../../maintenance/preview.ts';
 import type { GcOutput } from './results.ts';
 
@@ -13,11 +14,19 @@ export async function stopIdleWorkspaces(output: GcOutput, operation?: StimConte
     return operation ? cachedDeviceActivityAsync(now, env, operation.signal, operation) : cachedDeviceActivity(now);
   };
   const protectedRoot = triggeringRoot(operation);
-  const plan = await planIdleStop({ protectedRoot, now: Date.now(), env, devices: devices() });
+  const plan = await planIdleStop({ protectedRoot, now: Date.now(), env, devices: devices(), operation });
   let failures = 0;
   for (const action of plan.actions) {
     operation?.signal.throwIfAborted();
-    const outcome = await stopIdleWorkspace(action, { protectedRoot, devices, operation });
+    let outcome: IdleStopOutcome;
+    try {
+      outcome = await stopIdleWorkspace(action, { protectedRoot, devices, operation });
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
+      outcome = { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
+    }
     output.record('devServer', outcome.status, action.target, {
       detail: outcome.status === 'done' ? action.reason : outcome.detail,
     });
