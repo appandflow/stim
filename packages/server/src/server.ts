@@ -390,6 +390,7 @@ const LOCAL_DEVICE: PairedDevice = {
 
 type ServerSocket = WebSocket | NoiseSocket;
 const CLOSE_AUTH_TIMEOUT = 4408;
+const CLOSE_METRO_RESET = 4410;
 const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
 const METRO_LINK_BUFFERED_BYTES = 1024 * 1024;
@@ -1581,6 +1582,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     let buildSession: BuildSession | null = null;
     let metroLink: MetroLink | null = null;
     let metroStream: Socket | null = null;
+    let metroDrain: (() => void) | null = null;
     let queue = Promise.resolve();
     let archiveReads = Promise.resolve();
     const relay = new HostedRelay(
@@ -4096,14 +4098,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (metroStream) {
         const stream = metroStream;
         if (stream.destroyed || stream.write(frame)) return;
+        if (socket.readyState !== socket.OPEN) return void stream.destroy();
         socket.pause();
         return new Promise<void>((resolve) => {
           const resume = () => {
+            metroDrain = null;
             stream.off('drain', resume);
             stream.off('close', resume);
             socket.resume();
             resolve();
           };
+          metroDrain = resume;
           stream.on('drain', resume);
           stream.on('close', resume);
         });
@@ -4123,7 +4128,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           if (socket.readyState !== socket.OPEN) return false;
           metroLink = null;
           metroStream = stream;
-          stream.once('close', () => socket.close(1000));
+          stream.once('close', (hadError) => socket.close(hadError ? CLOSE_METRO_RESET : 1000));
           stream.on('data', (chunk: Buffer) => {
             socket.send(chunk, { binary: true }, () => {
               if (stream.isPaused() && socket.bufferedAmount < METRO_LINK_BUFFERED_BYTES) stream.resume();
@@ -4423,7 +4428,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     socket.on('close', (code) => {
       if (metroLink) hostedDevices.metroUnlink(metroLink);
       const stream = metroStream;
-      if (stream && code === 1000) queue = queue.then(() => void stream.end());
+      if (stream && code === 1000 && !metroDrain) queue = queue.then(() => void stream.end());
       else stream?.destroy();
       relay.close();
       relays.delete(socket);

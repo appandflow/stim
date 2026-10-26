@@ -588,6 +588,11 @@ export class DeviceHost {
 
   async metroOpen(client: string, params: unknown): Promise<AppAnswer<{ port: number }>> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
+    if (isJsonObject(params) && ('gatewayPort' in params || 'secret' in params))
+      return refused(
+        'protocol-unsupported',
+        'This stim-server carries Metro over connections the client opens, and this Stim is too old for that. Update stim on this machine, then retry.',
+      );
     if (
       !isJsonObject(params) ||
       typeof params.session !== 'string' ||
@@ -777,8 +782,7 @@ export class DeviceHost {
         throw new Error('Only a ready session attached to this owner can link Metro.');
       if (record.platform !== 'ios' && record.platform !== 'android')
         throw new Error('Hosted Metro supports iOS and Android sessions only.');
-      if (!(owned.links ??= createMetroLinks()).add(link))
-        return refused('device-busy', 'This session already holds its maximum idle Metro links.');
+      if (!(owned.links ??= createMetroLinks()).add(link)) throw new Error('This session Metro bridge is closing.');
       return { result: {} };
     } catch (error) {
       return refused('action-failed', error instanceof Error ? error.message : String(error));

@@ -42,7 +42,7 @@ serving command: see [Run as a service](#run-as-a-service). When serving, a bare
 `pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
 `from` (where it paired from, as a label only), `keyFingerprint`, `pairedAt`,
-`lastSeenAt` and `capabilities`, followed by the [build clients](#build-access)
+`lastSeenAt` (refreshed by a hello at most once a minute) and `capabilities`, followed by the [build clients](#build-access)
 and [device-host clients](#device-host-approval). The plain listing shows
 `from` and the first 12 characters of the key fingerprint.
 `log --json` prints `{ "actions": [...] }`, the records described under
@@ -1140,20 +1140,25 @@ The client keeps its verified workspace Metro on loopback, and the worker never
 connects to the client. On its own approved `device-host` connections, the
 client calls `device-host.metro.link` with `{session}`. The server answers `{}`
 and holds that connection as an idle link of the session; it refuses a session
-that is not this client's ready iOS or Android session, a second link on the
-same connection, and more than 16 idle links per session. The feature
-`hosted-metro-link` advertises it.
+that is not this client's ready iOS or Android session and a second link on the
+same connection. A session holds at most 16 idle links: a new one closes the
+oldest, so links whose client vanished without closing them cannot crowd out
+live ones. The feature `hosted-metro-link` advertises it.
 
 Call `device-host.metro.open` with `{session, clientMetroPort?}` on the approved
-hosted connection; it returns `{port}` for the worker's loopback endpoint. For
-each connection the hosted device makes to that endpoint, the server takes the
-oldest idle link, waiting up to 10 seconds for one, sends it the event
-`device-host.metro.link.open`, and then carries that one TCP stream as binary
-frames in both directions with backpressure. Either side closing ends the link
-connection with code 1000. The client forwards a link only to its fixed
-loopback Metro port, never to a client supplied URL, and opens a replacement
-link for each one the server opens. Client frames stay within the 64 KiB client
-message limit.
+hosted connection; it returns `{port}` for the worker's loopback endpoint. A
+request that still carries the retired `gatewayPort` or `secret` comes from a
+client that predates links and is refused with `protocol-unsupported`, naming
+the client update. For each connection the hosted device makes to that
+endpoint, the server takes the newest idle link, waiting up to 10 seconds for
+one, sends it the event `device-host.metro.link.open`, and then carries that
+one TCP stream as binary frames in both directions with backpressure. A clean
+end on either side closes the link connection with code 1000; a device
+connection that fails or resets closes it with 4410, and the client then resets
+its Metro connection too. The client forwards a link only to its fixed loopback
+Metro port, never to a client supplied URL, and opens a replacement link for
+each one the server opens. Client frames stay within the 64 KiB client message
+limit.
 
 `clientMetroPort` is required for Android and validated as an integer
 from 1 through 65535. The session records it alongside the bridge port. Android
