@@ -21,6 +21,7 @@ let links: FakeLink[];
 let pool: MetroLinkPool | undefined;
 let refusal: string | null;
 let openOnRequest: number;
+let connectFailures: Error[];
 let ready: number;
 let errors: string[];
 
@@ -47,6 +48,7 @@ function fakeLink(): FakeLink {
       onBinary: (listener: typeof binary) => (binary = listener),
       onDropped: () => {},
       sendBinary: async (frame: Buffer) => void link.sent.push(Buffer.from(frame)),
+      flushed: async () => {},
       close: () => (link.closed = true),
       get failure() {
         return link.closed ? 'closed' : null;
@@ -64,6 +66,8 @@ function start(): void {
     onReady: () => ready++,
     onError: (message) => errors.push(message),
     connect: async () => {
+      const failure = connectFailures.shift();
+      if (failure) throw failure;
       const link = fakeLink();
       links.push(link);
       return link.connection;
@@ -75,6 +79,7 @@ beforeEach(async () => {
   links = [];
   refusal = null;
   openOnRequest = 0;
+  connectFailures = [];
   ready = 0;
   errors = [];
   metro = createServer((request, response) => {
@@ -120,6 +125,22 @@ test('refills links the host opened before their registration reply arrived', as
   start();
   await vi.waitFor(() => expect(links).toHaveLength(8));
   expect(links.slice(4).every((link) => link.requests.length === 1 && !link.closed)).toBe(true);
+});
+
+test('does not report one transient connect failure while the other links come up', async () => {
+  connectFailures = [new Error('connect ETIMEDOUT')];
+  start();
+  await vi.waitFor(() => expect(ready).toBe(1));
+  expect(errors).toEqual([]);
+});
+
+test('reports a hosting refusal at once instead of waiting for every link to fail', async () => {
+  connectFailures = [
+    Object.assign(new Error('mini has not confirmed hosting access'), { code: 'STIM_HOSTING_REFUSED' }),
+  ];
+  start();
+  await vi.waitFor(() => expect(errors).toHaveLength(1));
+  expect(errors[0]).toContain('has not confirmed hosting access');
 });
 
 test('reports a refusal before any link is ready and offers no link', async () => {

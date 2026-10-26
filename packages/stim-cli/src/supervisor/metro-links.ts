@@ -69,8 +69,10 @@ export function openMetroLinks({
     metro.on('error', () => metro.destroy());
     metro.once('close', () => {
       streams.delete(metro);
-      live.delete(connection);
-      connection.close();
+      void connection.flushed().then(() => {
+        live.delete(connection);
+        return connection.close();
+      });
     });
     connection.onDropped((code) => (code === 1000 ? metro.end() : metro.destroy()));
     connection.onBinary((frame) => metro.write(frame));
@@ -104,13 +106,15 @@ export function openMetroLinks({
         carry(linked);
         fill();
       });
+      let registered = false;
       linked.onDropped(() => {
-        if (opened) return;
+        if (opened || !registered) return;
         live.delete(linked);
         waiting.delete(linked);
         failed(`The link to ${machine} closed.`, false);
       });
       const reply = await linked.request('device-host.metro.link', { session });
+      registered = true;
       if ('error' in reply)
         throw Object.assign(new Error(`${machine} refused the Metro link: ${reply.error.message}`), {
           refused: reply.error.code !== 'closed' && reply.error.code !== 'timeout',
@@ -128,7 +132,10 @@ export function openMetroLinks({
       connection?.close();
       failed(
         error instanceof Error ? error.message : String(error),
-        typeof error === 'object' && error !== null && 'refused' in error && error.refused === true,
+        typeof error === 'object' &&
+          error !== null &&
+          (('refused' in error && error.refused === true) ||
+            ('code' in error && error.code === 'STIM_HOSTING_REFUSED')),
       );
     } finally {
       opening--;

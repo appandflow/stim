@@ -389,6 +389,7 @@ export class BuildConnection {
   private event: ((event: Record<string, unknown>) => void) | null = null;
   private dropped: ((code: number) => void) | null = null;
   private closed: string | null = null;
+  private lastWrite: Promise<void> = Promise.resolve();
   private heard = Date.now();
   private watched = false;
   private ended = false;
@@ -550,8 +551,11 @@ export class BuildConnection {
     if (this.closed) return;
     let completed = false;
     let resume: (() => void) | undefined;
+    let written: (() => void) | undefined;
+    this.lastWrite = new Promise((resolve) => (written = resolve));
     this.socket.send(frame, { binary: true }, () => {
       completed = true;
+      written?.();
       resume?.();
     });
     if (completed || this.closed || this.socket.bufferedAmount <= MAX_BUFFERED) return;
@@ -563,6 +567,11 @@ export class BuildConnection {
       resume = wake;
       this.writeWaiters.add(wake);
     });
+  }
+
+  /** Resolves once the last binary frame left this process, or at once when the connection has ended. */
+  flushed(): Promise<void> {
+    return this.closed ? Promise.resolve() : this.lastWrite;
   }
 
   onProgress(listener: ((event: ProgressEvent) => void) | null): void {
