@@ -264,6 +264,31 @@ test('reports the links lost when the host drops all of them, then ready again o
   expect(errors).toEqual([]);
 });
 
+test('after the host held links, a refusal while its session is not attached again is retried until it links', async () => {
+  start();
+  await vi.waitFor(() => expect(ready).toBe(1));
+  refusal = 'Only a ready session attached to this owner can link Metro.';
+  for (const link of links.slice(0, 4)) link.drop(1006);
+  expect(lost).toBe(1);
+  await vi.waitFor(() => expect(links.length).toBeGreaterThan(8), { timeout: 3000 });
+  refusal = null;
+  await vi.waitFor(() => expect(ready).toBe(2), { timeout: 5000 });
+  expect(errors).toEqual([]);
+});
+
+test('retries while Tailscale cannot name the host and links once it can', async () => {
+  let statusReads = 0;
+  setExecutor({
+    ...getExecutor(),
+    runFileAsync: async () =>
+      statusReads++ === 0 ? JSON.stringify({ BackendState: 'Running', Peer: {} }) : TAILSCALE_STATUS,
+  });
+  start();
+  await vi.waitFor(() => expect(ready).toBe(1), { timeout: 3000 });
+  expect(errors).toEqual([]);
+  expect(statusReads).toBe(2);
+});
+
 test('stops reading the link while loopback Metro is not reading, and resumes when it drains', async () => {
   const received: Buffer[] = [];
   const accepted: Socket[] = [];

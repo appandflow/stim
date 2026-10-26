@@ -1155,8 +1155,8 @@ endpoint, the server takes the newest idle link, waiting up to 10 seconds for
 one, sends it the event `device-host.metro.link.open`, and then carries that
 one TCP stream as binary frames in both directions with backpressure. A clean
 end on either side closes the link connection with code 1000, and the other side
-ends its socket after writing what it already received, within 30 seconds on
-the server. A device or Metro connection that fails or resets closes the link
+ends its socket after writing what it already received, on the server as
+long as the device keeps reading within 30 seconds. A device or Metro connection that fails or resets closes the link
 with 4410, and the other side resets its socket too. The client forwards a link only to its fixed loopback
 Metro port, never to a client supplied URL, and opens a replacement link for
 each one the server opens. Client frames stay within the 64 KiB client message

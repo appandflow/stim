@@ -157,7 +157,8 @@ export async function connectHost(
 /**
  * Opens `device-host` connections to `machine` for a caller that retries on its own, as `connectHost` does but without
  * diagnosing failures, resolving the machine's address again only after one fails. Only a failure a retry cannot fix,
- * such as a refusal or a missing approval, carries a `STIM_` code.
+ * such as a refusal or a missing approval, carries a `STIM_` code; Tailscale not running or not listing the machine is
+ * worth retrying.
  */
 export function hostConnector(machine: string): () => Promise<BuildConnection> {
   let resolving: Promise<Endpoint | string> | undefined;
@@ -170,7 +171,7 @@ export function hostConnector(machine: string): () => Promise<BuildConnection> {
     });
     if (typeof target === 'string') {
       if (resolving === pending) resolving = undefined;
-      throw credentialRefusal(`Stim does not connect to ${machine}: ${target}.`);
+      throw Object.assign(new Error(`Stim does not connect to ${machine}: ${target}.`), { code: 'closed' });
     }
     const opened = await BuildConnection.open(target, credential.serverKey!, CONNECT_TIMEOUT_MS, 'device-host').catch(
       (error: unknown): ConnectFailure => ({

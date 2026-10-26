@@ -4438,11 +4438,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       clearInterval(metroPing);
       if (metroLink) hostedDevices.metroUnlink(metroLink);
       const stream = metroStream;
-      if (stream && code === 1000) {
+      if (stream && code === 1000 && !stream.destroyed) {
         queue = queue.then(() => void stream.end());
-        const ending = setTimeout(() => stream.destroy(), METRO_END_MS);
-        ending.unref();
-        stream.once('close', () => clearTimeout(ending));
+        let ending: NodeJS.Timeout | undefined;
+        const arm = () => {
+          clearTimeout(ending);
+          ending = setTimeout(() => stream.destroy(), METRO_END_MS);
+          ending.unref();
+        };
+        arm();
+        stream.on('drain', arm);
+        stream.once('close', () => {
+          clearTimeout(ending);
+          stream.off('drain', arm);
+        });
       } else if (stream && !stream.destroyed) stream.resetAndDestroy();
       relay.close();
       relays.delete(socket);

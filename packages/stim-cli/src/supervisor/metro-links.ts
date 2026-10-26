@@ -15,8 +15,9 @@ export interface MetroLinkPool {
  * Keeps `IDLE_LINKS` authenticated connections open to `machine`, each offered to `session`'s Metro bridge there. The
  * host pairs one with each connection the hosted device makes; this side then pipes it to loopback `metroPort` and
  * opens a replacement. `onReady` runs when the host holds a link after holding none, and `onLost` when no linked
- * connection to the host is left. Failures that a retry can fix are retried; a refusal before the host holds a link
- * calls `onError` and stops the pool.
+ * connection to the host is left. Failures that a retry can fix are retried; a refusal before the host ever held a
+ * link calls `onError` and stops the pool. Once it has, refusals are retried too, since a session the host restarted
+ * refuses links until its client attaches again.
  */
 export function openMetroLinks({
   machine,
@@ -41,6 +42,7 @@ export function openMetroLinks({
   let opening = 0;
   let failures = 0;
   let ready = false;
+  let linkedOnce = false;
   let closed = false;
   let retry: NodeJS.Timeout | undefined;
 
@@ -62,7 +64,7 @@ export function openMetroLinks({
 
   const failed = (message: string, refused: boolean) => {
     if (closed) return;
-    if (refused && !ready) {
+    if (refused && !linkedOnce) {
       stop();
       onError(message);
       return;
@@ -152,6 +154,7 @@ export function openMetroLinks({
       failures = 0;
       if (!ready) {
         ready = true;
+        linkedOnce = true;
         onReady();
       }
     } catch (error) {
