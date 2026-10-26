@@ -81,6 +81,7 @@ export function makeBuildSlot(overrides: Partial<BuildSlotInfo> = {}): BuildSlot
     projectRoot: '/w/project',
     startedAt: '2026-01-01T00:00:00.000Z',
     logFile: '/w/.stim/logs/build.log',
+    client: null,
     alive: true,
     unresolved: false,
     ...overrides,

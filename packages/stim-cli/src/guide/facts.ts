@@ -543,9 +543,10 @@ leased until <time>" for each one.`,
                   null when off; plan lists what the next start, ios or
                   android would reclaim, in the \`reclaimed\` shape without
                   freedMb, and is empty while under budget
-  deviceHosts     one { machine, state, dnsName?, deviceId?, requestedAt?, expiresAt?,
-                  host? } per remote.machines entry. state is "approved",
-                  "pending", "not-asked", "revoked", "lapsed", "key-changed", "outdated",
+  deviceHosts     one { machine, state, dnsName?, fingerprint?, deviceId?, requestedAt?,
+                  expiresAt?, host? } per remote.machines entry. state is "approved",
+                  "pending", "not-asked", "revoked", "lapsed", "key-changed",
+                  "key-unconfirmed", "outdated",
                   "not-on-tailnet", "tailscale-off", "unreachable", "invalid",
                   "credentials-unavailable" or "busy". Setup tickets stay private.
                   Only --fix asks for access or forgets removed names. A
@@ -561,7 +562,12 @@ leased until <time>" for each one.`,
                   expires, absent for a Stim Desktop ticket; "lapsed" is a
                   pending request whose expiry passed. --fix asks again.
                   "key-changed" means the worker did not prove the
-                  stim-server key pinned at approval. "outdated" means its
+                  stim-server key pinned at approval. "key-unconfirmed" is a
+                  local: machine that approved this one but whose key no
+                  person confirmed, so nothing pinned it; fingerprint is the
+                  key's fingerprint to compare with the one stim-server setup
+                  printed there, and only stim doctor --fix in a terminal asks.
+                  A local: entry has no dnsName. "outdated" means its
                   stim-server speaks protocol 1; the finding names the
                   stim-server service update command to run there.
   toolchain       { entries, projectNode } on macOS, else null. entries is one { name, value,
@@ -574,11 +580,12 @@ leased until <time>" for each one.`,
                   pins Node (bin, version and match are null when no install
                   fits the pin; match is "exact", or "major" for the newest
                   install of the pinned major not older than the pin), else null
-  remoteMachines  one { machine, state, diagnosis?, dnsName?, deviceId?, requestedAt?,
-                  expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
+  remoteMachines  one { machine, state, diagnosis?, dnsName?, fingerprint?, deviceId?,
+                  requestedAt?, expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
                   remote.machines entry, for its build approval; state is "approved", "pending", "not-asked",
                   "revoked" (revoked or denied), "lapsed" (the request lapsed
-                  before approval), "key-changed", "outdated",
+                  before approval), "key-changed", "key-unconfirmed" (as in
+                  deviceHosts), "outdated",
                   "not-on-tailnet", "tailscale-off", "unreachable" or
                   "invalid". diagnosis is { layer, code, title, message, remedy }
                   for the first layer that stopped this machine, present for
@@ -593,6 +600,11 @@ leased until <time>" for each one.`,
                   nothing behind the route), server-not-ready (503: running but
                   not serving; its message gives the cause the server reports),
                   server-no-answer (silent route while tailscale ping reaches the Mac), server-outdated and connect-failed (none of the above).
+                  A local: machine never reads Tailscale and reports
+                  lan-not-listening (nothing accepts connections on its
+                  stim-server port), lan-no-answer (no reply: the network, or
+                  the macOS firewall on that machine), server-not-ready or
+                  connect-failed.
                   Tailscale's own "offline" flag lags a reachable peer, so an
                   answer from the machine outranks it. host has the same shape and presence rule as in
                   deviceHosts, as do expiresAt (a pending request's lapse
@@ -648,7 +660,8 @@ ON FAILURE
   An \`ios\` or \`android\` run that \`stim stop\` or Ctrl-C interrupted
   reports STIM_CANCELLED and exits 130. A
   run that exits on the interrupt at once (a second Ctrl-C, or Ctrl-C with no
-  build tool or SimSlim to stop) exits 130 with no payload.
+  build tool, SimSlim, launch readiness wait or hosted app delivery to stop)
+  exits 130 with no payload.
 
   \`stop --json\` prints { root, ok, supervisor, collectors, metro, device,
   port, metroTunnel, releasedLeases, macos? }. macos is { status: stopped | failed,
@@ -845,7 +858,8 @@ RULES
                   why) or "failed" (detail says why and what to retry).
                   kind: device, parkedDevice, parkedHostedDevice, idleDevice,
                   deviceRecord,
-                  workspaceOutputs, recording, workspaceDirectory, project,
+                  workspaceOutputs, worktreeDependencies, recording,
+                  workspaceDirectory, project,
                   buildLock, buildSlot, deviceLease, easSession, worktree,
                   cache, gradleVersion, tempLeftover (one "done" labelled
                   with the TMPDIR it cleared, plus a "kept" or "failed" per
@@ -913,9 +927,9 @@ RULES
                               else null. buildState is { bytes, dirs:
                               { path, bytes } } for the in-tree build and
                               dependency directories automatic maintenance
-                              clears (ios/build, android/app/build,
-                              android/build, android/.gradle, .build,
-                              node_modules, ios/Pods, at the root, a
+                              clears (android/app/build, android/build,
+                              android/.gradle, .build, node_modules,
+                              ios/Pods, at the root, a
                               project root, or apps/* and packages/* for
                               build directories) and a root .pnpm-store,
                               paths relative to the worktree, largest
@@ -1014,18 +1028,29 @@ RULES
                               Metro, client and device logs over twice the
                               8 MiB cap; willTrim marks the ones it would
                               trim
+    worktreeDependencies    { path, willDelete, detail }  node_modules and
+                              ios/Pods of linked worktrees; willDelete marks
+                              the ones --delete would lighten, and detail
+                              says why the others stay. Sizes are not
+                              measured: APFS clones make them misleading
     recordings              { dir, projectRoot, bytes, deleteBytes,
                               willDelete, withWorkspace, reason, detail }
                               recordings/ of each workspace; deleteBytes is
                               what --delete would remove; withWorkspace
                               marks those of a gone workspace, removed with
                               its workspace directory
-    workspaceBuildOutputs   { dir, projectRoot, bytes, idleDays, willClear,
-                              reason, detail }  derived-data, gradle-build,
-                              android-cas, cache-provider, macos/build,
-                              macos/<Product>.app and macos/staging-* of each
-                              workspace; willClear marks the ones --delete
-                              would clear; --cache workspaces omits the
+    workspaceBuildOutputs   { dir, projectRoot, inTreeDirs, bytes, idleDays,
+                              willClear, reason, detail }  derived-data,
+                              gradle-build, android-cas, cache-provider,
+                              macos/build, macos/<Product>.app and
+                              macos/staging-* of each workspace; inTreeDirs
+                              lists the project's android/app/build,
+                              android/build,
+                              android/.gradle and .build that --delete
+                              clears with them, every file in them
+                              ignored by git and none tracked, and
+                              bytes includes them; willClear marks the ones
+                              --delete would lighten; --cache workspaces omits the
                               directories that --delete removes whole (dead
                               projects and orphanedWorkspaces), and --cache
                               all does not
@@ -1128,8 +1153,8 @@ RULES
   reason is null for an entry --delete acts on, and otherwise a stable code
   to branch on; detail is the text line, for the user. Never parse detail.
   A linked worktree's detail is never null.
-    workspaceBuildOutputs   unresolved | in-use | last-use-unknown |
-                            recently-used
+    workspaceBuildOutputs   unresolved | locked | lock-unknown | in-use |
+                            last-use-unknown | recently-used
     workspaceLogs           unresolved | in-use | collector
     recordings              unresolved | retained | recently-recorded
     memory                  in-use | busy | unknown | build-running |
@@ -1336,7 +1361,7 @@ RULES
   Each booted simulator and detected emulator in environments (and in
   slots) carries activity; a shut-down or physical device has none:
 
-  activity  { state, driver?, lastActivityAt?, recent?, basis }
+  activity  { state, driver?, lastActivityAt?, recent?, basis, unknown? }
 
   state            "driven"   a live claim or driver holds the device now
                    "active"   no driver, but activity in the last 10 minutes
@@ -1359,6 +1384,8 @@ RULES
                    workspace-use, supervisor-start, page-log or viewer, each
                    rounded down to the minute. viewer is now while a
                    stim-server client streams the device's frames
+  unknown          for "driven" only: the checks that could not be read, in
+                   basis's vocabulary; absent when every check was read
   basis            the evidence behind state, strongest first:
                    agent-device-claim, agent-device-lease  agent-device state,
                      read only; live only when every recorded process is alive
@@ -1740,8 +1767,8 @@ RULES
   minutes. It caches them in $STIM_HOME/agent-sessions.json, which one-shot
   status reads and ignores once it is 2 minutes old. Both sources are other
   tools' internal files; a missing or changed one only drops its sessions.
-  \`start\`, \`ios\`, \`android\`, \`web\`, \`reload\` and \`worktree warm\`
-  also record the CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID of the shell
+  \`start\`, \`ios\`, \`android\`, \`web\`, \`reload\`, \`logs\` and
+  \`worktree warm\` also record the CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID of the shell
   that ran them, so that session is listed for 30 minutes after the command
   even when status cannot see it, and for as long as it runs.
 
@@ -1775,7 +1802,35 @@ RULES
 
   capacity.committedMb sums memoryMb; in a \`status --watch --json\` line each
   figure, including an environment's memoryMb, is held on its own (see
-  \`guide lifecycle\`), so the sums can differ from what they sum. The memory budget plans before a boot
+  \`guide lifecycle\`), so the sums can differ from what they sum.
+
+  capacity.load is always present. capacity.builds is present only while
+  concurrency.maxBuilds is set, and capacity.devices only while
+  concurrency.maxDevices is set (see \`guide lifecycle concurrency\`):
+
+  load     { cpus, loadPerCore, busyAt, limit, state }. loadPerCore is the
+           5-minute load average divided by cpus, to one decimal. busyAt is
+           server.maxLoadPerCore (\`guide settings\`). state is free under
+           busyAt, busy at or over it, where automatic placement prefers
+           another machine, or holding at or over limit. limit is null
+           because no setting sets it yet, so state is never holding.
+
+  builds   { max, inUse, holders: [{ slot, workspace, client, since,
+           unresolved? }] }. inUse counts the slots below max that a new
+           build cannot take. workspace is the root of the local build in
+           the slot; client is the device id of the client whose offloaded
+           build this machine runs in it. An unresolved slot has a claim
+           whose holder Stim cannot identify; both are null, and the slot
+           stays in use until that claim is removed.
+  devices  { max, inUse, unknown?, holders: [{ platform, label, workspace,
+           slot, booting? }] }, the owned devices the cap counts: booted or
+           booting stim simulators, owned emulators adb lists, and boots in
+           progress. label is the label of the workspace that records the
+           device, with its device slot; for a device no workspace records,
+           label is its name and workspace and slot are null. inUse is null
+           and unknown says why when the devices could not be listed.
+
+  The memory budget plans before a boot
   and always uses the estimate. What is using CPU and memory now is the
   top-level machine section:
 

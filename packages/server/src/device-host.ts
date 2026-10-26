@@ -2,8 +2,15 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { connect, isIP, type AddressInfo } from 'node:net';
-import { withDirLock, createMetroBridge, type MetroBridge } from '@stim-cli/core';
+import { connect, type AddressInfo } from 'node:net';
+import {
+  withDirLock,
+  createMetroBridge,
+  createMetroLinks,
+  type MetroBridge,
+  type MetroLink,
+  type MetroLinks,
+} from '@stim-cli/core';
 import {
   clearClaimChild,
   ClaimRefusedError,
@@ -91,13 +98,11 @@ interface OwnedSession {
   metro?: {
     bridge: MetroBridge;
     ready: Promise<number>;
-    peer: string;
-    gatewayPort: number;
     clientMetroPort?: number;
-    secret: string;
     port?: number;
     closing?: boolean;
   };
+  links?: MetroLinks;
   viewer?: { close: () => Promise<void> };
 }
 
@@ -581,29 +586,23 @@ export class DeviceHost {
     }
   }
 
-  async metroOpen(client: string, params: unknown, peer: string | null): Promise<AppAnswer<{ port: number }>> {
+  async metroOpen(client: string, params: unknown): Promise<AppAnswer<{ port: number }>> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
+    if (isJsonObject(params) && ('gatewayPort' in params || 'secret' in params))
+      return refused(
+        'protocol-unsupported',
+        'This stim-server carries Metro over connections the client opens, and this Stim is too old for that. Update stim on this machine, then retry.',
+      );
     if (
       !isJsonObject(params) ||
       typeof params.session !== 'string' ||
-      !peer ||
-      !isIP(peer) ||
-      typeof params.gatewayPort !== 'number' ||
-      !Number.isInteger(params.gatewayPort) ||
-      params.gatewayPort < 1 ||
-      params.gatewayPort > 65535 ||
-      typeof params.secret !== 'string' ||
-      !/^[a-f0-9]{64}$/.test(params.secret) ||
       (params.clientMetroPort !== undefined &&
         (typeof params.clientMetroPort !== 'number' ||
           !Number.isInteger(params.clientMetroPort) ||
           params.clientMetroPort < 1 ||
           params.clientMetroPort > 65535))
     )
-      return refused(
-        'bad-request',
-        'Metro needs its session, client gateway port and 256-bit secret on a tailnet connection.',
-      );
+      return refused('bad-request', 'Metro needs its session and, when given, a client Metro port.');
     try {
       const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
       if (!record || record.state !== 'ready' || this.closed || !this.owned.has(record.id))
@@ -617,19 +616,14 @@ export class DeviceHost {
         throw new Error('This hosted session has a native operation in progress.');
       if (owned.metro) {
         if (owned.metro.closing) throw new Error('This session Metro bridge is closing.');
-        if (
-          owned.metro.peer !== peer ||
-          owned.metro.gatewayPort !== params.gatewayPort ||
-          owned.metro.secret !== params.secret ||
-          owned.metro.clientMetroPort !== params.clientMetroPort
-        )
-          throw new Error('Close this session Metro bridge before replacing its gateway.');
+        if (owned.metro.clientMetroPort !== params.clientMetroPort)
+          throw new Error('Close this session Metro bridge before changing its client Metro port.');
         const port = await owned.metro.ready;
         await this.restoreAndroidMetro(record, owned);
         return { result: { port } };
       }
       const devClientPort = record.platform === 'ios' ? (params.clientMetroPort as number | undefined) : undefined;
-      const bridge = createMetroBridge({ peer, gatewayPort: params.gatewayPort, secret: params.secret });
+      const bridge = createMetroBridge((owned.links ??= createMetroLinks()));
       const inUse = () =>
         Object.assign(
           new Error(
@@ -651,9 +645,6 @@ export class DeviceHost {
       const metro: NonNullable<OwnedSession['metro']> = {
         bridge,
         ready,
-        peer,
-        gatewayPort: params.gatewayPort,
-        secret: params.secret,
         clientMetroPort: params.clientMetroPort as number | undefined,
       };
       owned.metro = metro;
@@ -777,7 +768,34 @@ export class DeviceHost {
     }
   }
 
+  /** Holds a connection the client opened as an idle link that the session's Metro bridge pairs with one stream. */
+  metroLink(client: string, params: unknown, link: MetroLink): AppAnswer<Record<string, never>> {
+    if (this.closed || !this.options.allowed(client))
+      return refused('forbidden', 'Current device-host approval is required.');
+    if (!isJsonObject(params) || typeof params.session !== 'string')
+      return refused('bad-request', 'A Metro link needs a session.');
+    try {
+      const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
+      if (!record) return refused('unknown-session', 'This client has no such hosted session.');
+      const owned = this.owned.get(record.id);
+      if (record.state !== 'ready' || !owned || owned.stopping)
+        throw new Error('Only a ready session attached to this owner can link Metro.');
+      if (record.platform !== 'ios' && record.platform !== 'android')
+        throw new Error('Hosted Metro supports iOS and Android sessions only.');
+      if (!(owned.links ??= createMetroLinks()).add(link)) throw new Error('This session Metro bridge is closing.');
+      return { result: {} };
+    } catch (error) {
+      return refused('action-failed', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  metroUnlink(link: MetroLink): void {
+    for (const owned of this.owned.values()) owned.links?.remove(link);
+  }
+
   private async closeMetro(owned: OwnedSession): Promise<void> {
+    owned.links?.close();
+    delete owned.links;
     const metro = owned.metro;
     if (!metro) return;
     metro.closing = true;

@@ -266,8 +266,9 @@ new devices wait in FIFO order across the Stim home for 600 seconds by default.
 Use `--wait <seconds>` to change the bound, or `--no-wait` / `--wait 0` to
 refuse immediately. A workspace's own live device bypasses the queue. Waiting
 prints holder names and elapsed time, followed by the queue position, head
-workspace name and `$STIM_HOME/device-waits` path. Timeout names the same head
-and path. `stim stop` cancels a queued run and releases its ticket without
+workspace name and `$STIM_HOME/device-waits` path. Workspaces that share a
+project name show the directory that tells them apart, as in
+`mobile (qa-b-p2)`. Timeout names the same head and path. `stim stop` cancels a queued run and releases its ticket without
 booting its device. Status adds `build.waitingFor`, and
 stats records `capacityWaits` and positive placement `deviceSlotWaitMs`.
 `0` or an unset cap means unlimited devices.
@@ -363,7 +364,11 @@ the account plan's session limit. A run reuses a live session without checking h
 much of the cap is left.
 
 `remote.machines` names the remote machines this machine may build on and host owned
-simulator sessions on, by MagicDNS name and optional serve port (default 7443).
+simulator sessions on, by MagicDNS name and optional serve port (default 7443),
+or, for a machine on the local network without Tailscale, as `local:` and its
+private IPv4 address or host name with an optional stim-server port (default
+7787); that machine lists where it listens in `server.lanAddresses`, which is
+empty by default. See [Local network, without Tailscale](./remote-machines.md#local-network-without-tailscale).
 Name each node and port once. Set it with
 `stim settings set remote.machines '["janics-mac-mini"]'`, then run
 `stim doctor --fix` in an app directory. Build and device-host approvals are
@@ -413,6 +418,8 @@ approval, a free slot and a 5-minute load per core under that machine's own
 `server.maxLoadPerCore`; a machine at its caps, over that limit, unreachable or
 without approval is skipped and the next one in order is tried. Load does not
 rank the machines that qualify, so the first one fills before the next is used.
+`stim status` shows this Mac's load per core against its own
+`server.maxLoadPerCore`, as `capacity.load` in `--json`.
 Put the fastest machine first and set the order with
 `stim settings set remote.machines '["fast-mini","slow-mini"]'`;
 `stim doctor` prints it as `placement order`, and its JSON gives each machine a
@@ -421,7 +428,8 @@ Put the fastest machine first and set the order with
 `remote.build` is a machine setting, defaulting to `auto`. On `ios`,
 `android` and `macos`, `--remote-build <local|auto|remote|remote-only|name>` overrides
 `STIM_REMOTE_BUILD`, which overrides the setting. A blank environment value
-is unset. Trimmed placement words are case-insensitive; names match configured
+is unset, and `stim doctor` flags an invalid value in the machine config or in
+`STIM_REMOTE_BUILD`. Trimmed placement words are case-insensitive; names match configured
 names case-insensitively with port 7443 when omitted. Reports use the configured
 entry:
 
@@ -431,6 +439,12 @@ entry:
 - `remote-only` is `remote` without the local build: it refuses with `STIM_OFFLOAD_REFUSED` when no remote machine accepts the build, or the build cannot leave this machine.
 - A tailnet name requires a matching entry in `remote.machines`, already
   paired and approved. It ignores this machine's load and slots.
+
+`remote.buildMode` and `STIM_REMOTE_BUILD_MODE` were removed and are no longer read.
+`stim doctor` and `stim settings` report any left in a config file or the environment.
+Use `remote.build` instead: `auto` stays `auto`, `force` becomes `remote` and `off`
+becomes `local`. `stim settings unset remote.buildMode` removes the leftover key from
+every layer that has it, and `--scope` removes it from one.
 
 A named selection never prompts for pairing, uses another machine or falls
 back locally. Missing configuration/pairing, denied or pending approval,
@@ -749,8 +763,8 @@ stim settings set workspace.hidden true
 
 `workspace.hidden` is false by default and lives only in the workspace layer, so
 it takes no `--scope`. `stim status --json` reports `hidden: true` on that
-environment. The next `start`, `ios`, `android`, `web`, `macos`, `reload` or
-`worktree warm` in the workspace clears it, so a workspace in use is never
+environment. The next `start`, `ios`, `android`, `web`, `macos`, `reload`, `logs`
+or `worktree warm` in the workspace clears it, so a workspace in use is never
 hidden. `stim settings unset workspace.hidden` shows it again, and
 `worktree remove` drops it with the workspace.
 
@@ -805,6 +819,13 @@ largest kind of the oldest archive while total caps are exceeded. Artifact
 expiry keeps records. Turning `recording.enabled` off at machine scope deletes
 archived recordings on the next retention pass.
 
+The same `archive.enabled`, `archive.maxAgeDays` and `archive.maxTotalGb` govern
+the uncommitted changes gc archives before it removes a dirty finished worktree
+([remove finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk)).
+Those archives have their own `archive.maxTotalGb` budget, so all archives
+together can take twice that, and `archive.enabled false` keeps such worktrees
+instead.
+
 <StimTabs code="stim settings set archive.enabled false --scope repo" />
 
 See [archived workspaces](./worktrees.md#archived-workspaces) for privacy and deletion.
@@ -817,7 +838,9 @@ measures, plans and logs and deletes nothing, and `off` disables passes.
 `STIM_HOME` and `CI` make the mode `off` unless `STIM_MAINTENANCE` is set.
 All of these settings have machine scope except `maintenance.keep`, a project
 setting that pins a workspace: automatic passes never clear its build outputs,
-delete its owned devices or remove its worktree. GB and MB below mean GiB and MiB.
+delete its owned devices or remove its worktree. `maintenance.idleStopHours`
+takes machine and project layers; see
+[idle workspace stop](./dev-server-and-logs.md#idle-workspace-stop). GB and MB below mean GiB and MiB.
 
 <MaintenanceSettings />
 
@@ -840,7 +863,7 @@ worktrees (only with `maintenance.removeIdleWorktrees`, off by default); `mainte
 before that sweep deletes its owned simulators and emulators (0 turns it off);
 `maintenance.gradleVersionIdleDays` (7) sets how long a Gradle version no project pins stays unmodified before level 3 stops the idle Gradle and Kotlin daemons that keep it and deletes it (0 turns that off);
 `maintenance.removeFinishedWorktrees` controls the worktree
-check. Memory pressure is recorded; below disk pressure level 3 a pass never stops a dev server (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
+check. Memory pressure is recorded; below disk pressure level 3 a pass stops a dev server only after `maintenance.idleStopHours` without real activity (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
 
 ## Debug logs
@@ -880,9 +903,12 @@ to that file, never to stdout or stderr, so `--json` output is unchanged.
 The command you start truncates the file; the processes it starts, such as the
 Metro supervisor, append to it, so use a new path for each command. The file is a
 JSON array with one event per line and no closing bracket, which Perfetto and
-`chrome://tracing` accept. Argument values of flags that look like secrets and
-credentials in URLs are replaced with `[redacted]`. A trace still holds full
-paths and arguments, so treat it like a log.
+`chrome://tracing` accept. Argument values of flags that look like secrets,
+credentials in URLs and common token shapes are replaced with `[redacted]`, as
+are the credentials of `curl -u` and `security import -P`. Other programs'
+short flags such as `-p` and `-u` are kept, because they usually mean a path, a
+port or a user. A trace still holds full paths and arguments, so treat it like a
+log.
 
 Try this with your agent:
 

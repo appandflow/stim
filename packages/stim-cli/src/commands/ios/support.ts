@@ -399,6 +399,7 @@ export function createIosDeviceWaitRun(
         progress.waitingFor(info, 'device-slot');
       },
       onWait: stats.addDeviceSlotWaitMs,
+      onBootStart: () => progress.bootStarted(),
     },
     record(next) {
       if (waiting) outcome = next;

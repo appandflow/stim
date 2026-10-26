@@ -158,15 +158,13 @@ export function recordFromLine(
   if (stream === 'stderr' && msg.startsWith('stim-bundle-response: ')) {
     try {
       const record = JSON.parse(msg.slice('stim-bundle-response: '.length));
-      if (
-        record.src === 'metro' &&
+      const request =
         /^(?:bundle_(?:response|prefetch)_(?:started|progress|finished|failed)|manifest_request_(?:started|finished|failed))$/.test(
           record.event,
         ) &&
         ['ios', 'android'].includes(record.platform) &&
-        typeof record.requestId === 'string' &&
-        Number.isFinite(record.ts)
-      )
+        typeof record.requestId === 'string';
+      if (record.src === 'metro' && (request || record.event === 'hmr_update') && Number.isFinite(record.ts))
         return record;
     } catch {}
   }
@@ -344,7 +342,7 @@ export async function startExpoServer({
   });
 
   let tunnelUrlSeen = false;
-  return superviseChildServer({
+  const handle = superviseChildServer({
     mode: 'expo-child',
     child,
     log,
@@ -360,4 +358,6 @@ export async function startExpoServer({
       }
     },
   });
+  handle.observesRequests = storeEnv !== null;
+  return handle;
 }

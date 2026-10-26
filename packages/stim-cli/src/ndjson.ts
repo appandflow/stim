@@ -4,6 +4,7 @@ import { closeSync, openSync, writeSync } from 'fs';
 import { dirname } from 'path';
 
 export {
+  createNdjsonTail,
   LEVELS,
   levelRank,
   parseNdjsonLine,

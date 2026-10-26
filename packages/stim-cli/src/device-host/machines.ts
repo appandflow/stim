@@ -11,6 +11,7 @@ import {
   acceptsShape,
   cannotHost,
   isJsonObject,
+  localEndpoint,
   MACHINE_CREDENTIALS_VERSION,
   readBuildMachines,
   readDeviceHostMachines,
@@ -20,7 +21,12 @@ import {
 import type { Finding } from '../diagnostics/doctor.ts';
 import { withDirLock } from '../dir-lock.ts';
 import { readHostPermissions } from '../offload/access-ticket.ts';
-import { diagnosisFinding, notOnTailnetDiagnosis } from '../offload/diagnosis.ts';
+import {
+  diagnoseLocalUnreachable,
+  diagnosisFinding,
+  notOnTailnetDiagnosis,
+  unconfirmedKeyFinding,
+} from '../offload/diagnosis.ts';
 import {
   diagnoseOutcome,
   diagnoseTailscale,
@@ -33,6 +39,7 @@ import {
   setupRemedy,
   tailscaleStatusAsync,
   type GeneratedTickets,
+  type KeyConfirmer,
   type TailnetMachineIo,
 } from '../offload/tailnet.ts';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
@@ -44,6 +51,7 @@ interface MachineReport {
     | 'tailscale-off'
     | 'not-on-tailnet'
     | 'key-changed'
+    | 'key-unconfirmed'
     | 'not-asked'
     | 'pending'
     | 'approved'
@@ -55,6 +63,8 @@ interface MachineReport {
     | 'busy';
   diagnosis?: RemoteDiagnosis;
   dnsName?: string;
+  /** For `key-unconfirmed`: the fingerprint of the key the machine answered with, for a person to compare. */
+  fingerprint?: string;
   deviceId?: string;
   requestedAt?: string;
   expiresAt?: string;
@@ -92,7 +102,7 @@ export async function hostingMachines(status?: () => unknown, signal?: AbortSign
   } catch {
     candidates = configured;
   }
-  if (!candidates.length) return candidates;
+  if (!candidates.some((machine) => parseMachine(machine)?.transport === 'tailscale')) return candidates;
   const current = await (status ? status() : tailscaleStatusAsync(signal));
   signal?.throwIfAborted();
   return candidates.filter((machine) => !cannotHost(current, machine));
@@ -129,7 +139,14 @@ export async function inspectDeviceHostMachines(
     version = '<version>',
     tickets = new Map(),
     operation,
-  }: { fix: boolean; version?: string; tickets?: GeneratedTickets; operation?: StimContext },
+    confirmKey,
+  }: {
+    fix: boolean;
+    version?: string;
+    tickets?: GeneratedTickets;
+    operation?: StimContext;
+    confirmKey?: KeyConfirmer;
+  },
   io: TailnetMachineIo = realIo,
   entries: string[] | null = configuredMachines(),
 ): Promise<Inspection> {
@@ -196,55 +213,60 @@ export async function inspectDeviceHostMachines(
       }
     }
     if (!entries.length) return { findings: [], machines: [] };
-    const status = await io.status();
-    if (!isJsonObject(status)) {
-      const diagnosis = await diagnoseTailscale(io);
-      return {
-        findings: [
-          note(
-            'Remote machines are unreachable',
-            `remote.machines names remote machines. ${diagnosis.message}`,
-            diagnosis.remedy,
-          ),
-        ],
-        machines: entries.map((machine) => ({ machine, state: 'tailscale-off', diagnosis })),
-      };
+    const tailnet = entries.some((entry) => parseMachine(entry)?.transport !== 'local');
+    const status = tailnet ? await io.status() : null;
+    const inspected: Inspection = { findings: [], machines: [] };
+    let off: RemoteDiagnosis | null = null;
+    if (tailnet && !isJsonObject(status)) {
+      off = await diagnoseTailscale(io);
+      inspected.findings.push(
+        note('Remote machines are unreachable', `remote.machines names remote machines. ${off.message}`, off.remedy),
+      );
     }
-    const self = isJsonObject(status.Self) ? status.Self : {};
+    const self = isJsonObject(status) && isJsonObject(status.Self) ? status.Self : {};
     const raw = typeof self.HostName === 'string' && self.HostName ? self.HostName : hostname();
     const deviceName =
       raw
         .replace(/[\p{Cc}\p{Cf}]/gu, '')
         .trim()
         .slice(0, 64) || 'Mac';
-    const inspected: Inspection = { findings: [], machines: [] };
     const namedNodes = new Set<string>();
     for (const machine of new Set(entries)) {
       const parsed = parseMachine(machine);
       if (!parsed) {
         inspected.machines.push({ machine, state: 'invalid' });
         inspected.findings.push(
-          note(`Remote machine ${machine} is not a tailnet name`, 'Expected `name` or `name:port`.'),
+          note(
+            `Remote machine ${machine} is not a tailnet name or local: address`,
+            'Expected `name`, `name:port`, `local:<host>` or `local:<host>:port`.',
+          ),
         );
         continue;
       }
-      const current = await io.status();
-      if (!isJsonObject(current)) {
+      const local = parsed.transport === 'local';
+      if (!local && off) {
+        inspected.machines.push({ machine, state: 'tailscale-off', diagnosis: off });
+        continue;
+      }
+      const current = local ? null : await io.status();
+      if (!local && !isJsonObject(current)) {
         const diagnosis = await diagnoseTailscale(io);
         inspected.machines.push({ machine, state: 'tailscale-off', diagnosis });
         inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;
       }
-      const peer = findPeer(current, parsed.name);
+      const peer = local ? null : findPeer(current, parsed.name);
       if (peer === 'missing' || peer === 'ambiguous') {
         const diagnosis = notOnTailnetDiagnosis(machine, peer === 'ambiguous');
         inspected.machines.push({ machine, state: 'not-on-tailnet', diagnosis });
         inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;
       }
-      const nodeRoute = `${peer.nodeId}:${parsed.port}`;
+      const target = peer ? endpoint(peer, parsed.port) : localEndpoint(parsed.name, parsed.port);
+      const dnsName = peer ? { dnsName: peer.dnsName } : {};
+      const nodeRoute = peer ? `${peer.nodeId}:${parsed.port}` : `local:${parsed.name}:${parsed.port}`;
       if (namedNodes.has(nodeRoute)) {
-        inspected.machines.push({ machine, dnsName: peer.dnsName, state: 'invalid' });
+        inspected.machines.push({ machine, ...dnsName, state: 'invalid' });
         inspected.findings.push(
           note(
             `Remote machine ${machine} repeats a named node`,
@@ -255,7 +277,7 @@ export async function inspectDeviceHostMachines(
       }
       namedNodes.add(nodeRoute);
       if (cannotHost(current, machine)) {
-        inspected.machines.push({ machine, dnsName: peer.dnsName, state: 'not-asked' });
+        inspected.machines.push({ machine, ...dnsName, state: 'not-asked' });
         continue;
       }
       const credential = credentials.find((each) => each.machine === machine);
@@ -263,8 +285,8 @@ export async function inspectDeviceHostMachines(
       const outcome = await reachMachine({
         machine,
         access: 'device-host',
-        endpoint: endpoint(peer, parsed.port),
-        address: peer.dnsName,
+        endpoint: target,
+        address: peer?.dnsName ?? parsed.name,
         credential,
         other: () => readBuildMachines().find((each) => each.machine === machine),
         persist: async (next) => {
@@ -277,6 +299,9 @@ export async function inspectDeviceHostMachines(
         serverVersion: version,
         io,
         tickets,
+        ...(local
+          ? { confirmKey: (serverKey: string) => confirmKey?.(machine, serverKey) ?? Promise.resolve(false) }
+          : {}),
       });
       reportSignal(operation)?.throwIfAborted();
       if (outcome.state !== 'not-asked' && outcome.credential) {
@@ -289,7 +314,7 @@ export async function inspectDeviceHostMachines(
       const saved = outcome.state !== 'not-asked' ? outcome.credential : undefined;
       const known = {
         machine,
-        dnsName: peer.dnsName,
+        ...dnsName,
         ...(saved?.deviceId ? { deviceId: saved.deviceId } : {}),
         ...(saved ? { requestedAt: saved.requestedAt } : {}),
       };
@@ -361,15 +386,26 @@ export async function inspectDeviceHostMachines(
         inspected.findings.push(note(outdated.title, outdated.detail, outdated.fix));
         continue;
       }
+      if (outcome.state === 'unconfirmed') {
+        inspected.machines.push({ ...known, state: 'key-unconfirmed', fingerprint: outcome.fingerprint });
+        inspected.findings.push(unconfirmedKeyFinding('device-host-machine', machine, outcome.fingerprint));
+        continue;
+      }
       if (outcome.state === 'unreachable') {
-        const diagnosis = await diagnoseOutcome(io, {
+        const failure = {
           entry: machine,
-          peer,
           port: parsed.port,
-          target: endpoint(peer, parsed.port),
+          target,
           reason: outcome.reason,
           transport: outcome.transport,
-        });
+        };
+        const startup =
+          !peer && outcome.transport?.kind === 'http' && outcome.transport.status === 503
+            ? await io.startup?.(target)
+            : null;
+        const diagnosis = peer
+          ? await diagnoseOutcome(io, { ...failure, peer })
+          : diagnoseLocalUnreachable({ ...failure, startup });
         inspected.machines.push({ ...known, state: 'unreachable', diagnosis });
         inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;

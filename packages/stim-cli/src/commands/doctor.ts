@@ -42,7 +42,8 @@ import { NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
 import { budgetLine, inspectBudget, type BudgetReport } from '../budget.ts';
 import { inspectBuildMachines, type BuildMachinesInspection } from '../offload/build-machines.ts';
-import { doctorIo, type GeneratedTickets } from '../offload/tailnet.ts';
+import { doctorIo, keyConfirmer, type GeneratedTickets } from '../offload/tailnet.ts';
+import { confirmInTerminal } from './device-provision.ts';
 import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { configuredMachines, inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
@@ -403,8 +404,11 @@ async function assembleDoctorReport(
   findings.push(...budget.findings);
   const watchmanMemory = withoutUnhandledRejection(inspectWatchmanMemory(env, operation));
   const tickets: GeneratedTickets = new Map();
+  const interactive =
+    !operation && opts.fix === true && !opts.json && process.stdin.isTTY === true && process.stderr.isTTY === true;
+  const confirmKey = keyConfirmer(interactive ? confirmInTerminal : null);
   const deviceHosts = withoutUnhandledRejection(
-    inspectDeviceHostMachines({ fix: opts.fix === true, version, tickets, operation }, io),
+    inspectDeviceHostMachines({ fix: opts.fix === true, version, tickets, operation, confirmKey }, io),
   );
   const nestedWorktrees = await inspectNestedWorktrees(root);
   const watched = withoutUnhandledRejection(watchedCheckouts(nestedWorktrees.map((entry) => entry.checkout)));
@@ -419,6 +423,7 @@ async function assembleDoctorReport(
         version,
         tickets,
         operation,
+        confirmKey,
         check: targetInspectors.length
           ? offloadCheck(root, async () => (await Promise.all(targetInspectors.map((inspect) => inspect()))).flat())
           : null,

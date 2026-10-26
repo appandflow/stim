@@ -30,7 +30,9 @@ Branch on the code, never on the message.`,
   remote-only never runs here and never joins the local queue: it refuses
   with this code when no host could ever take the run, and waits for a host that
   is only full or loaded (see STIM_AT_CAPACITY).
-  Check stim-server and Tailscale there,
+  An unreachable host's message and remedy are the diagnosis stim doctor gives
+  (Tailscale off, Mac offline with last seen, serve route, stim-server), without
+  tailscale ping. Check stim-server and Tailscale there,
   then run stim doctor. Correct --device-type / --runtime for iOS or
   --system-image / --device-profile for Android when the offer names
   an unavailable choice. A session that exists stays recorded even if delivery
@@ -155,7 +157,11 @@ Branch on the code, never on the message.`,
   \`yarn install\`, \`bun install\`, \`npm ci\`), the \`npm run postinstall\`
   it runs when npm's config there sets ignore-scripts, or that same pod ladder. The
   message names the command, quotes its last lines, and nothing is copied: fix
-  the source checkout, then warm again.`,
+  the source checkout, then warm again.
+  start, ios and android also refuse with this code when \`gc --delete\`
+  lightened the worktree and the \`stim worktree warm\` they ran to restore
+  its node_modules and ios/Pods failed. The warm's own lines say why; fix
+  that, then run \`stim worktree warm\` or retry the command.`,
     },
     STIM_BUILD_FAILED: {
       summary: 'xcodebuild or gradle failed; the Android missing-SDK and APK refusals',
@@ -521,6 +527,13 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   Trust, then run the command again. It is a per-developer-certificate tap, not
   a per-build one -- but an uninstall clears it, including the one Stim's own
   signer-conflict retry performs.
+  On a local iOS simulator, a cache-hit app that dyld kills at launch because
+  one part of the app cannot bind a symbol from another part of the same app
+  (for example React.framework against hermesvm.framework) is a damaged build,
+  not a launch problem. Stim removes that cache entry, and the remedy names
+  it. Run the command again to build the app fresh. A cache provider's copy is
+  not removed; add \`--no-build-cache\` to skip it. If the fresh app crashes
+  the same way, the project's own native code is the cause.
   With \`--remote eas\` the remedy names the EAS Simulator session that is
   still running, as for STIM_INSTALL_FAILED.`,
     },
@@ -1358,8 +1371,8 @@ Inspect what remains with gc() before retrying a mutation.
 `,
     },
     STIM_CANCELLED: {
-      summary: 'an ios or android run was interrupted by `stim stop` or Ctrl-C before it finished',
-      body: () => `STIM_CANCELLED  (ios, android; exit 130)
+      summary: 'an ios, android or macos run was interrupted by `stim stop` or Ctrl-C before it finished',
+      body: () => `STIM_CANCELLED  (ios, android, macos; exit 130)
   "The ios run was cancelled by \`stim stop\` (pid <n>) before it finished."
   The run was interrupted: by \`stim stop\`, which cancels a build it leaves
   with nothing to deploy to, or by Ctrl-C. It forwarded the interrupt
@@ -1368,8 +1381,11 @@ Inspect what remains with gc() before retrying a mutation.
   stopped at. An interrupted build stores no artifact, so the next run looks
   up the cache as usual. Stopped between build tools, a run that \`stop\`
   cancelled starts no further build tool and stops before it installs. A
-  second Ctrl-C exits at once, and so does a Ctrl-C with no build tool or
-  SimSlim to stop; those exits print no payload. Run the same command again when you want the
+  Ctrl-C while the run delivers the app to a hosting Mac, or waits for the app
+  to load its bundle or report readiness, ends that work and reports
+  STIM_CANCELLED. A second Ctrl-C exits at once, and so does a Ctrl-C with no
+  build tool, SimSlim, hosted app delivery or launch readiness wait to stop;
+  those exits print no payload. Run the same command again when you want the
   app on a device.`,
     },
     STIM_STOP_BLOCKED: {

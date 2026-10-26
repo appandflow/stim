@@ -1,6 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { getExecutor, resetExecutor } from '../exec.ts';
 
@@ -49,12 +49,24 @@ test('every executor entry point writes one span per child, with secrets in argu
   const text = readFileSync(file, 'utf8');
   expect(text).not.toMatch(/sync-secret|async-secret|shell-secret|spawn-secret|exact-secret/);
   expect(spans()).toMatchObject([
-    { name: 'node', args: { ok: true, argv: [node, '-e', '0', '--', '--api-token', '[redacted]', 'plain-arg'] } },
+    {
+      name: basename(node),
+      args: { ok: true, argv: [node, '-e', '0', '--', '--api-token', '[redacted]', 'plain-arg'] },
+    },
     { args: { argv: [node, '-e', '0', '--', '--password=[redacted]', '***'] } },
-    { name: 'node', args: { command: expect.stringContaining('--token [redacted]') } },
+    { name: basename(node), args: { command: expect.stringContaining('--token [redacted]') } },
     { args: { spawned: true, ok: true, argv: [node, '-e', '0', '--', '--token=[redacted]'] } },
     { args: { ok: false, exit: 3 } },
   ]);
+});
+
+test.skipIf(process.platform === 'win32')('the program name selects the flags that carry a credential', () => {
+  const curl = join(dir, 'curl');
+  writeFileSync(curl, '#!/bin/sh\nexit 0\n');
+  chmodSync(curl, 0o755);
+  getExecutor().runFile(curl, ['-u', 'user:curl-secret', 'https://example.com'], { timeoutMs: 60_000 });
+  expect(readFileSync(file, 'utf8')).not.toContain('curl-secret');
+  expect(spans()).toMatchObject([{ args: { argv: [curl, '-u', '[redacted]', 'https://example.com'] } }]);
 });
 
 test('children running at the same time get separate lanes so their spans do not overlap on one track', async () => {

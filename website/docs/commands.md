@@ -399,7 +399,7 @@ build can compile on a paired remote machine instead: see `remote.build` in
   be combined with `--scheme`, `--configuration`, or `--no-build-cache`.
 - `--no-metro-check` skips the Debug dev-server check and does not start the
   dev server. Hosted Debug iOS refuses this flag with `STIM_BAD_ARG`; it requires
-  the local supervisor's private gateway support.
+  the local supervisor, which carries Metro to the host.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--plan` predicts the next build instead of running it. See
   [Predict the next build](#predict-the-next-build).
@@ -945,7 +945,10 @@ result.
   failed or was cancelled. A record has the project, workspace and branch, the
   scheme or variant, where it ran (and why an offload fell back to this Mac), the cache
   result and key, the time in each phase, the failure code, message and remedy,
-  the simulator or emulator it targeted, and the Stim version. It outlives the
+  the simulator or emulator it targeted, this Mac's load per core when the run
+  started, when the run's owned simulator or emulator boot started and the load
+  per core then (`loadPerCore` and `boot`, absent from older records), and the
+  Stim version. It outlives the
   workspace, works from any directory, stands alone (`--source all` leaves it
   out), and takes the same options as `--source gc`; `--errors` shows only failed
   builds. `stim gc` never removes it.
@@ -1302,7 +1305,7 @@ its git worktree root. The watcher finds running Claude Code sessions in
 `~/.claude/sessions` and Codex threads updated in the last 30 minutes in
 `~/.codex`, at most every 15 seconds, and one-shot `stim status` reads what it
 found for 2 minutes. These are the tools' own internal files, so Stim reads them
-best-effort. `start`, `ios`, `android`, `web`, `reload` and `worktree warm` also
+best-effort. `start`, `ios`, `android`, `web`, `reload`, `logs` and `worktree warm` also
 record the `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` of the shell that ran
 them, which names the session exactly. `title` is the short name the tool keeps
 for the session; Stim reads no prompts or conversation. `openUrl` opens the
@@ -1340,11 +1343,29 @@ nothing runs and `machine` is `null`, it is the fixed estimate the memory
 budget uses, with `memorySource: "estimate"`. `stim guide facts status`
 lists every field.
 
+Status always shows this Mac's load, as a `load 17.6/core (busy at 2)` line and
+in `--json` as `capacity.load`: `cpus`, `loadPerCore` (the 5-minute load
+average divided by `cpus`), `busyAt` (`server.maxLoadPerCore`, the load at
+which automatic placement prefers another machine), `limit` and `state`.
+`state` is `free` under `busyAt`, `busy` at or over it, or `holding` at or
+over `limit`. No setting sets `limit` yet, so it is `null` and `state` is
+never `holding`.
+
+While `concurrency.maxBuilds` or `concurrency.maxDevices` is set, status shows
+how many of those slots are in use and who holds them, as a `builds 1/2` or
+`devices 6/6` line, and in `--json` as `capacity.builds` and
+`capacity.devices`: `max`, `inUse` and `holders`. A build slot's holder names
+the workspace building in it, or the client whose offloaded build this Mac
+runs; a device's holder names the workspace label and device slot that record
+it. `capacity.devices.inUse` is `null`, with `unknown` saying why, when the
+devices could not be listed. With neither cap set, neither field appears.
+
 `--watch` keeps running and prints the status again each time it changes.
 With `--json` it prints one complete payload per line: one immediately, then
 one per change, never two identical payloads in a row. In a watch line, a CPU or memory figure keeps
 its value from the previous line until it moves by 5 percentage points or 16 MB;
 resident memory and process counts follow their owner's row, and `capacity.committedMb` is held on its own, so it can differ from the sum of the environments' `memoryMb`.
+`capacity.load` keeps its value until its `loadPerCore` moves by 1 per core or its `state` changes.
 A change in only a bookkeeping timestamp (each `pullRequest.checkedAt`, `maintenance.lastChecks`, `maintenance.lastPass.startedAt` and `durationMs`, `maintenance.running.startedAt`) prints no line; a line that prints carries the current values.
 It reacts to changes in
 `$STIM_HOME` state and the EAS session ledger, git HEAD, index and ref changes
@@ -1550,7 +1571,7 @@ Each booted simulator and detected emulator also shows who is using it:
 ```
 
 In `--json`, those devices carry
-`activity: { state, driver?, lastActivityAt?, basis }`. `state` is `driven`
+`activity: { state, driver?, lastActivityAt?, basis, unknown? }`, where `unknown` lists the checks a `driven` device could not read. `state` is `driven`
 when a tool holds the device now, `active` when it had activity in the last 10
 minutes, `idle` otherwise, and `unknown` when a claim or driver check could not
 be read. Stim counts as drivers a live agent-device session (its recorded
@@ -1784,6 +1805,12 @@ directory without a readable `workspace.json` is reported and never deleted.
 Nothing deletes a workspace that is in use: a running dev server, a `stim ios`
 or `stim android` run, a live build, or a held tunnel or remote lock.
 
+Unless `maintenance.mode` is `off`, `--delete` also stops each workspace, other than the one it runs in, that has had no real activity for
+[`maintenance.idleStopHours`](./dev-server-and-logs.md#idle-workspace-stop)
+(6 by default), as `stim stop` does: its dev server stops and its owned
+devices shut down, never deleted. The dry run lists those stops in its
+maintenance plan.
+
 `stim status` caches each folder's size and each worktree's pull request under
 `$STIM_HOME/disk-usage` and `$STIM_HOME/pull-requests`. `worktree remove` drops
 the entries of the worktree it removes, but not the size entries of its owned
@@ -1821,12 +1848,16 @@ that `worktree warm` wrote (its `trash.json` has `"kind": "warm"`) holds paths
 removed from a copy of a live worktree, so `--delete` deletes it once its claim
 is free, whether or not the worktree exists. See [remove a worktree](./worktrees.md#remove-a-worktree).
 
-`--delete` also clears the build outputs (`derived-data/`, `gradle-build/`,
-`android-cas/`, `cache-provider/`, `macos/build`, staged `macos/<Product>.app`
-and interrupted-build `macos/staging-*` directories) of every workspace that
-is not in use. A running, building, unverified or hosted macOS app keeps its
-workspace untouched. The workspace keeps its state, logs, devices, ports,
-`macos/runtime.lock` and its claim set; the project's own `.build` stays. See
+`--delete` also lightens every workspace that is not building and ran no
+`stim ios`, `stim android` or `stim macos` in the last 15 minutes, even with
+its dev server running or its simulator booted. It clears the build outputs
+(`derived-data/`, `gradle-build/`, `android-cas/`, `cache-provider/`,
+`macos/build`, staged `macos/<Product>.app` and interrupted-build
+`macos/staging-*` directories) and the project's git-ignored
+`android/app/build`, `android/build`, `android/.gradle` and `.build`, and
+prints the bytes freed per workspace. A running, building, unverified or hosted
+macOS app keeps its workspace untouched. The workspace keeps its state, logs,
+devices, ports, `macos/runtime.lock` and its claim set. See
 [workspace build outputs](./build-caches.md#workspace-build-outputs).
 
 `gc` reports the size of each workspace's logs. The Metro, client and device

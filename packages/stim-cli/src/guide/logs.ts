@@ -123,7 +123,8 @@ serve bounded log queries.
   SecTrust, WebKit, CoreUI) that have nothing to do with your app. The proven
   ones are demoted to info by the collector, and iOS main-thread
   "Synchronous URL loading" performance diagnostics (Expo icons served by
-  Metro raise them) to warn, so a launch does not count them as app errors;
+  Metro raise them) and SwiftUI "Invalid Configuration" faults (the Expo dev
+  launcher raises them for a duplicated server entry) to warn, so a launch does not count them as app errors;
   the scope rule covers the rest.
   The metro stream carries exactly one demotion of its own, and it is Stim's
   doing: the dev-client deep link \`ios\`/\`android\` open to wire the app to
@@ -330,7 +331,15 @@ msg and
   failure         failed or cancelled runs: { code, message, remedy, phase }
   device          { name, runtime? } of the simulator, emulator or device;
                   never its serial or UDID
+  loadPerCore     this machine's 5-minute load average per CPU when the run
+                  started, to one decimal
+  boot            { startedAt, loadPerCore } of the run's first owned
+                  simulator or emulator boot: epoch milliseconds when it
+                  started, once any concurrency.maxDevices wait was over,
+                  and the load per core then. Absent when the run booted
+                  nothing.
   stimVersion     the stim that ran the build
+Records written before these fields existed lack loadPerCore and boot.
 A run that stopped before it had an app to build (a refused flag, a missing
 project) writes no record. Writing the record never changes the run's result.
 
@@ -378,8 +387,9 @@ has pid; spans have ts and dur in microseconds since the epoch. Events:
   command  one span named "stim <command>" with the exit code in args.exit
   exec     one span per child process. args.argv (or args.command for a shell
            command) has the values of secret-looking flags, credentials in
-           URLs and token shapes replaced by [redacted]; args also has cwd,
-           ok, exit and signal
+           URLs and token shapes replaced by [redacted], and the credentials
+           of curl -u and security import -P; other short flags such as -p
+           and -u are kept. args also has cwd, ok, exit and signal
   phase    the build phases of an ios, android or macos run on a
            "phases: <platform> build" track, named as in stats.json and the
            build ledger (prepare, cache-lookup, wait, prebuild, pods, compile,
@@ -433,7 +443,9 @@ WHAT WRITES WHAT
                        and, on Expo, one per dev-client manifest
                        request (manifest_request_started, _finished,
                        _failed: debug level, with platform and requestId;
-                       launch verification reads them as progress)
+                       launch verification reads them as progress), and
+                       an hmr_update debug record, at most once a minute,
+                       when Metro pushes a Fast Refresh change to the app
   client.ndjson        in-app console logs and redboxes -- BARE PROJECTS ONLY.
                        In expo-child and command-child mode everything the
                        dev server prints lands in metro.ndjson with raw: true,
@@ -447,7 +459,8 @@ WHAT WRITES WHAT
                        -- and, on iOS, where every Apple framework running in
                        the app's process also logs. The proven noise sources
                        are recorded at info rather than error (Synchronous
-                       URL loading diagnostics at warn); the rest is why
+                       URL loading diagnostics and SwiftUI Invalid Configuration
+                       faults at warn); the rest is why
                        --errors leaves this source out unless asked. A VERIFIED
                        LAUNCH counts these records and prints one line:
 

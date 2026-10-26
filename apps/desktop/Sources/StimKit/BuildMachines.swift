@@ -538,7 +538,7 @@ public struct MachineReadiness: Equatable, Sendable {
   }()
 }
 
-private func formatLoad(_ value: Double) -> String {
+func formatLoad(_ value: Double) -> String {
   value == value.rounded() ? String(Int(value)) : String(value)
 }
 

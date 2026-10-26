@@ -8,9 +8,11 @@ import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
 import { verifyIosMetroRun, type IosRunCompletion } from './launch.ts';
 import { LAUNCH_BUNDLING, LAUNCH_FATAL } from '../../engine/launch-verify.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
+import type { StimContext } from '@stim-cli/core';
 
 export async function finishHostedIosRun({
   target,
+  operation,
   d,
   artifact,
   root,
@@ -51,6 +53,7 @@ export async function finishHostedIosRun({
   | 'devicePlacement'
 > & {
   target: HostedIosTarget;
+  operation?: StimContext;
   d: IosDeps;
   artifact: PreparedIosArtifact;
   isExpo: boolean;
@@ -138,6 +141,7 @@ export async function finishHostedIosRun({
     let verification;
     try {
       verification = await verifyIosMetroRun({
+        operation,
         root,
         slot,
         appPath: artifact.path,

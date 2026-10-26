@@ -15,6 +15,7 @@ const packageDirs = [
   'ci',
   'transport',
   'transport-tailscale',
+  'transport-local',
   'server',
 ];
 const versionPattern =

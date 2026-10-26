@@ -1,4 +1,4 @@
-import { WATCH_CPU_STEP_PERCENT, WATCH_MEMORY_STEP_MB } from '../status-watch.ts';
+import { WATCH_CPU_STEP_PERCENT, WATCH_LOAD_STEP_PER_CORE, WATCH_MEMORY_STEP_MB } from '../status-watch.ts';
 import type { GuideTopic } from './types.ts';
 
 const lifecycle: GuideTopic = {
@@ -96,7 +96,7 @@ STIM_SUPERVISOR_EXITED, ...) before any build work. Release builds and
 \`--no-metro-check\` neither check nor start the dev server; hosted Debug iOS
 refuses --no-metro-check with STIM_BAD_ARG. \`--remote\`
 with eas or proxy starts it the way \`stim start --remote\` does. A named
-hosting Mac keeps Metro local through a private bridge; see hosted-ios. Step 2 remains useful to warm
+hosting Mac keeps Metro local through links this machine opens; see hosted-ios. Step 2 remains useful to warm
 Metro while other work happens.
 
 Each time Stim boots an owned local simulator or emulator, it mutes it: iOS
@@ -276,7 +276,8 @@ WAITING FOR A CHANGE
   status payload per line: one at once, then one each time the payload
   changes, never two identical ones in a row. In a watch line, a usage
   figure repeats its value in the previous line until it moves by a step: an owner's cpuPercent ${WATCH_CPU_STEP_PERCENT} points, an
-  owner's or environment's memoryMb and capacity.committedMb ${WATCH_MEMORY_STEP_MB} MB. An owner's row
+  owner's or environment's memoryMb and capacity.committedMb ${WATCH_MEMORY_STEP_MB} MB, and
+  capacity.load as a whole until its loadPerCore moves ${WATCH_LOAD_STEP_PER_CORE} per core or its state changes. An owner's row
   changes as a whole, so its residentMb and processes update with it. A change
   in only a bookkeeping timestamp prints no line: each pullRequest.checkedAt,
   maintenance.lastChecks, maintenance.lastPass.startedAt and durationMs, and
@@ -522,8 +523,8 @@ soon as it exists, then delivers one App.apk. The emulator boots headless;
 androidEmulatorApp is ignored with a note.
 
 React Native Debug requires the local Metro supervisor. metro.publicUrl and metro.tunnel
-are ignored with a note. A private tailnet gateway reaches the host loopback
-bridge; the host reverses the client's Metro port into that bridge on its exact
+are ignored with a note. Connections this machine opens to the host carry each
+device connection from the host loopback bridge to local Metro; the host reverses the client's Metro port into that bridge on its exact
 ledger-owned serial and sets debug_http_host to localhost:<clientMetroPort>.
 Each run and stim reload android restores the reverse, including after a host
 adb server restart. Reload broadcasts through the local Metro and never runs
@@ -546,7 +547,7 @@ session probe states; a conflicting local emulator remains visible with a
 warning. A recorded placement keeps the workspace in use and blocks idle stop.
 
 stop and worktree remove wait for device-host.stop, park the host's eligible owned
-emulator within pool.androidParkedMax (delete otherwise), close the gateway and clear placement. stop --json reports
+emulator within pool.androidParkedMax (delete otherwise), close the Metro links and clear placement. stop --json reports
 outcomes.device["android:host:<slot>"]. Forbidden or unknown-session also clears
 placement; an unreachable host keeps it and fails cleanup. A clean host restart
 parks eligible devices; a later reserve by the same client adopts a compatible
@@ -632,8 +633,8 @@ Logcat retains a finite buffer; records already evicted or persisted beyond the
 overlap may be unavailable. An oversized query retries the recent tail and writes
 a device warning naming any dropped interval. Followers share a child-aware log
 claim; install and stop cancel and settle the worker before native operations.
-Stop copies logs before and after the host's final collection and teardown, with
-each client drain bounded to 30 seconds and progress on stderr. Collected logs
+Stop copies logs once, after the host's final collection and teardown, bounded to
+30 seconds with progress on stderr; Ctrl-C cancels the copy and keeps the placement. Collected logs
 remain readable after stop. The host advertises hosted-android-data for Android
 handoff and native logs. Older hosts get a newer stim-server note, use upload
 and show records already copied here.`,
@@ -675,7 +676,8 @@ only full, loaded or short of memory, it waits for one to have room, polling eve
 --wait 0 or the end of the wait refuse with STIM_AT_CAPACITY. When no host can ever take
 the run (none configured, unreachable, declined for another reason such as paused),
 it refuses at once with STIM_HOSTING_REFUSED, naming each skipped host and its reason.
---plan never waits.
+--plan never waits. It prints the same STIM_HOSTING_REFUSED, or a STIM_BAD_ARG naming
+an invalid remote.build or STIM_REMOTE_BUILD.
 Excluding local in remote.devicePoolDisabled has the same effect on auto and remote.
 
 Otherwise Stim asks every approved remote.machines host in parallel, skipping
@@ -751,9 +753,10 @@ sessions.
 
 
 Stim builds or fetches before reserving, records the session immediately, then
-uploads the app on every run. React Native and Expo Debug keep Metro here; the supervisor owns a
-private gateway bound to this machine's Tailscale address, pinned to the host peer
-and protected by a per-session secret. The host exposes only a loopback bridge.
+uploads the app on every run. React Native and Expo Debug keep Metro here; the supervisor keeps
+authenticated connections open to the host, and the host pairs one with each
+connection the simulator makes to its loopback-only bridge. The host never
+connects back to this machine.
 For an Expo dev client the bridge listens on this machine's Metro port, because
 the dev server writes that port into the manifest's bundle URL. When this run
 starts Metro, it asks the host and picks a port free on both Macs, moving the
@@ -761,8 +764,8 @@ recorded port if the host uses it. A running Metro or a metro.port pin on a port
 the host uses refuses before the build: run stim stop, then stim ios --remote
 <machine> without stim start, or pin a port free on both Macs.
 No start --remote is needed; metro.tunnel and metro.publicUrl are ignored.
-Debug requires a running supervisor with private gateway support before reserving
-a simulator. --no-metro-check refuses with STIM_BAD_ARG for hosted Debug runs.
+Debug requires a running supervisor and a host stim-server that support these
+links before reserving a simulator. --no-metro-check refuses with STIM_BAD_ARG for hosted Debug runs.
 If its supervisor is missing or older, run stim stop; stim start, then retry.
 Non-Debug runs skip Metro. Launch is unverified until this workspace's Metro
 provides bundle evidence, or the host proves a live release process. Native Xcode
@@ -775,14 +778,14 @@ hosting Mac, refuses for that slot: run stim stop first.
 Status adds ios.host { machine, session, selected, device: { name, runtime },
 agent, state } per slot. A shutdown local simulator is replaced in status; a
 booted or unknown local simulator stays visible alongside ios.host with a warning.
-The default slot appears only in ios, never in slots[]. No host UDID or gateway secret enters local device state or
+The default slot appears only in ios, never in slots[]. No host UDID enters local device state or
 status. Ready is normal; stopped has a rerun hint; unknown or unreachable is
 unverified. A clean host server restart stops its sessions and retains eligible
 parked devices. A running session left by a crash stays unknown until explicit
 stop; the restarted server never re-attaches to a booted device.
 
 stop and worktree remove wait for the host to stop, park its eligible owned
-simulator within pool.iosParkedMax (delete otherwise), close the gateway and clear placement. stop --json
+simulator within pool.iosParkedMax (delete otherwise), close the Metro links and clear placement. stop --json
 reports each hosted slot under outcomes.device["ios:host:<slot>"], retaining
 local device outcomes and successful siblings when another slot fails. Revoked or
 missing sessions clear placement too. An unreachable host retains placement
@@ -2064,8 +2067,10 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             Waiting prints the count, holder workspace names
                             and elapsed time at once and about every 10s, then
                             the queue position, head workspace name and
-                            $STIM_HOME/device-waits path. Timeout names the
-                            same head and path. Stop cancels a queued run and
+                            $STIM_HOME/device-waits path. Workspaces that
+                            share a project name show the directory that tells
+                            them apart, as in mobile (qa-b-p2). Timeout names
+                            the same head and path. Stop cancels a queued run and
                             releases its ticket without booting its device.
                             Status JSON adds build.waitingFor independently
                             of phase: { kind: "device-slot" | "build-slot",
@@ -2302,7 +2307,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
   Warm registers the app it prepares, so \`stim status\` lists the workspace
   with phase "warming" while it runs and "ready" once it succeeds, until the
-  first start, ios, android, web or reload there or for 2 hours
+  first start, ios, android, web, reload or logs there or for 2 hours
   (\`guide facts status\`). In a monorepo worktree root, that app is the one
   the source checkout has registered.
 
@@ -2330,7 +2335,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   when neither answers it says so and makes no warning.
 
   The app is the one warm prepares: the app the command was invoked from, or,
-  from a monorepo root, the one app registered in the source checkout.
+  from a monorepo root, the one app registered in the source checkout or in
+  the worktree. With no such app, a refresh from the root updates only the
+  repository root and says so on stderr.
   Dependencies install where the repository root's lockfile is and, when the
   app has its own lockfile (a nested package outside the root workspaces),
   there too; a root that has neither installed dependencies nor an install

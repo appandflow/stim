@@ -393,6 +393,51 @@ test('a host that still runs a protocol 1 stim-server is refused with the update
   }
 });
 
+describe('a host that does not answer is refused with the layer doctor names', () => {
+  const silent = { failure: 'Opening handshake has timed out', refused: false, transport: { kind: 'silent' } } as const;
+
+  function tailscale(peer: Record<string, unknown>) {
+    const status = JSON.stringify({
+      BackendState: 'Running',
+      Peer: { nMini: { ID: 'nMini', DNSName: 'mini.tail1.ts.net.', TailscaleIPs: ['100.64.0.7'], ...peer } },
+    });
+    const runFileAsync = vi.fn<() => Promise<string>>(async () => status);
+    setExecutor({ ...getExecutor(), runFileAsync });
+    return runFileAsync;
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  test('an offline peer is named with when it was last seen and the way to wake it', async () => {
+    vi.spyOn(BuildConnection, 'open').mockResolvedValue(silent);
+    tailscale({ Online: false, LastSeen: new Date(Date.now() - 18 * 3_600_000).toISOString() });
+    await expect(connectHost('mini')).rejects.toMatchObject({
+      message: 'mini is offline on Tailscale (last seen 18 h ago).',
+      remedy: expect.stringContaining('Wake mini'),
+    });
+  });
+
+  test('a machine Tailscale no longer lists keeps the transport message', async () => {
+    vi.spyOn(BuildConnection, 'open').mockResolvedValue(silent);
+    tailscale({ DNSName: 'other.tail1.ts.net.' });
+    await expect(connectHost('mini')).rejects.toMatchObject({
+      message: 'mini is unreachable: Opening handshake has timed out. Run stim doctor to see which layer failed.',
+    });
+  });
+
+  test('a host that answers never reads Tailscale status after the connection', async () => {
+    host = await fakeHost();
+    const status = tailscale({});
+    try {
+      const connection = await connectHost('mini');
+      connection.connection.close();
+      expect(status).not.toHaveBeenCalled();
+    } finally {
+      await host.close();
+    }
+  });
+});
+
 describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and codesign run only on macOS)', () => {
   beforeEach(async () => {
     host = await fakeHost();

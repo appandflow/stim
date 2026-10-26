@@ -196,6 +196,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-stim
 
+      - name: Start CoreSimulator
+        continue-on-error: true
+        timeout-minutes: 5
+        run: xcrun simctl list devices > /dev/null
+
       - name: Darwin-gated unit tests (vitest)
         shell: bash
         run: |

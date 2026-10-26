@@ -264,3 +264,36 @@ describe('the Expo dev client manifest request', () => {
     expect(bare.records).toEqual([]);
   });
 });
+
+test('an HMR update Metro pushes over /hot after a file change is recorded, at most once a minute, in the form the supervisor accepts', async () => {
+  const { records, url } = await listen((res) => res.end());
+  const hmrMessages: string[] = [];
+  server.on('upgrade', (_req, socket) => {
+    socket.on('error', () => {});
+    socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n');
+    for (const message of hmrMessages) socket.write(Buffer.from(message));
+    socket.end();
+  });
+  const upgrade = async (path: string) => {
+    const request = get(`${url}${path}`, { headers: { Connection: 'Upgrade', Upgrade: 'websocket' } });
+    const [, socket] = await once(request, 'upgrade');
+    socket.on('error', () => {});
+    socket.destroy();
+  };
+  const [incoming] = await once(get(`${url}/status`), 'response');
+  incoming.resume();
+  await once(incoming, 'end');
+
+  hmrMessages.push(JSON.stringify({ type: 'update-start', body: { isInitialUpdate: true } }));
+  await upgrade('/hot');
+  expect(records).toEqual([]);
+
+  hmrMessages.push(JSON.stringify({ type: 'update-start', body: { isInitialUpdate: false } }));
+  await upgrade('/message');
+  expect(records).toEqual([]);
+  await upgrade('/hot');
+  await upgrade('/hot');
+  expect(records.map((record) => record.event)).toEqual(['hmr_update']);
+  const line = `stim-bundle-response: ${JSON.stringify(records[0])}`;
+  expect(recordFromLine(line, { stream: 'stderr' })).toEqual(records[0]);
+});

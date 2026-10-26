@@ -189,7 +189,10 @@ pick another. When you choose an issue yourself, take the highest priority among
 free issues, and treat an unlabeled issue as `priority: P2`. To claim, comment
 `Claimed: <branch>`, then push the branch to `origin` before implementing
 anything. The open pull request replaces the claim. If you stop without one,
-comment `Released:` and delete the branch.
+comment `Released:` and delete the branch. The `stale-claims` workflow posts
+`Released:` on a claim older than two days with no open pull request or recent
+commit on its branch; it never deletes a branch, so release your own claim when
+you stop.
 
 Implement each valid issue in its own git worktree and branch created from the
 refreshed `origin/main`. Independent issues may run in parallel worktrees. Keep
@@ -434,11 +437,12 @@ outside it moves to its own issue and pull request.
   The host's person lists and stops sessions through
   `device-host.sessions` and `device-host.sessions.stop` on Desktop's Unix
   socket connection; person-side stop uses the existing stop path.
-  A session's Metro endpoint listens only on worker loopback and reaches only the
-  authenticated client's peer address. The client gateway listens only on its own
-  tailnet address, pins the worker peer, requires a fresh secret and forwards only
-  to its verified loopback Metro. Stop and revocation close the bridge and active
-  streams. Keep the recorded worker port on reconnect; refuse an occupied port.
+  A session's Metro endpoint listens only on worker loopback. The worker never
+  connects to the client: each accepted connection rides one idle
+  `device-host.metro.link` connection the session's own client opened and
+  authenticated, and the client forwards it only to its verified loopback Metro.
+  Stop and revocation close the bridge, idle links and active streams. Keep the
+  recorded worker port on reconnect; refuse an occupied port.
   App transfer uses bounded digest chunks, including the manifest itself. The
   worker validates content, contained links, simulator platform, architecture
   and minimum OS before installing on the exact ledger-owned device. Hold the

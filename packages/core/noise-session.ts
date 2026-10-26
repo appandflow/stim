@@ -163,6 +163,9 @@ export interface RawSocket {
   close(code?: number, reason?: string): void;
   terminate(): void;
   ping?(): void;
+  /** Stops and restarts reading from the network, as `ws` 8 does. */
+  pause?(): void;
+  resume?(): void;
   on(event: 'message', listener: (data: unknown, isBinary: boolean) => void): unknown;
   on(event: 'close', listener: (code: number, reason: Buffer) => void): unknown;
   on(event: 'error', listener: (error: Error) => void): unknown;
@@ -292,6 +295,14 @@ export class NoiseSocket extends EventEmitter {
 
   ping(): void {
     this.#raw.ping?.();
+  }
+
+  pause(): void {
+    this.#raw.pause?.();
+  }
+
+  resume(): void {
+    this.#raw.resume?.();
   }
 }
 

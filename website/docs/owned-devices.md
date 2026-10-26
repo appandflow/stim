@@ -789,8 +789,9 @@ its simulator architecture. `--remote-build` independently selects a compatible
 Debug build worker. A named host never falls back: `STIM_HOSTING_REFUSED` names
 unreachable, declined or uncertain placement and its reason.
 
-Metro stays on this machine. Its supervisor runs a private tailnet gateway to the
-host's loopback bridge; no `stim start --remote` is needed. For an Expo dev
+Metro stays on this machine. Its supervisor opens authenticated connections to the
+host that carry each connection the simulator makes to the host's loopback bridge;
+the host never connects back, and no `stim start --remote` is needed. For an Expo dev
 client the bridge listens on this machine's Metro port, because the dev server
 writes that port into the manifest's bundle URL. When the iOS run starts Metro,
 it asks the host first and picks a port free on both Macs, moving the workspace's
@@ -799,8 +800,8 @@ host uses, or a `metro.port` pin the host uses, refuses before the build: run
 `stim stop`, then `stim ios --remote <mac>` without `stim start`, or pin a port
 free on both Macs. `metro.tunnel` and
 `metro.publicUrl` are ignored, and non-Debug runs skip Metro. Hosted Debug runs
-require a running supervisor with private gateway support before reserving a
-simulator; `--no-metro-check` refuses with `STIM_BAD_ARG`. If Metro is missing or
+require a running supervisor and a host stim-server that support these links
+before reserving a simulator; `--no-metro-check` refuses with `STIM_BAD_ARG`. If Metro is missing or
 uses an older supervisor, run `stim stop; stim start`, then retry. Fast Refresh and
 `stim reload ios` use this workspace's Metro. `launched` stays `unverified`
 until bundle evidence, or positive native process evidence for a release run.
@@ -813,7 +814,7 @@ hosting Mac, requires `stim stop` first for that slot.
 `name` and `runtime`, `agent`, and the probed `state`. A shutdown local simulator
 is replaced in status without a warning. A booted or unknown local simulator
 stays visible alongside `ios.host` with a warning; plain status shows both. The
-default slot appears only in `ios`, never in `slots[]`. The host UDID and private gateway never appear
+default slot appears only in `ios`, never in `slots[]`. The host UDID never appears
 in local device fields. Stop and worktree removal wait for the host, park its
 eligible owned simulator within the host's `pool.iosParkedMax` limit (delete
 otherwise), then clear placement. `stop --json` reports
@@ -1028,9 +1029,9 @@ evidence; absent evidence remains `unverified`.
 
 The [private Metro protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#private-hosted-metro)
 routes the hosted iOS app through worker loopback to its client's verified Metro
-over the tailnet. The client gateway accepts only the pinned worker and a
-session secret. Reconnect keeps the worker port while its session owner lives;
-stop and revocation close the streams. No public tunnel or Funnel is needed.
+over connections the client opens and authenticates; the worker never connects
+to the client. Reconnect keeps the worker port while its session owner lives;
+stop and revocation close the links and streams. No public tunnel or Funnel is needed.
 Expo development clients need the forwarded-origin manifest contract described
 in that protocol; older client/CLI versions are not covered by this slice.
 

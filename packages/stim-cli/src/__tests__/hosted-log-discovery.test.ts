@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import { followHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -78,11 +78,20 @@ test.each(['unavailable', 'error'])('discovery repairs a watcher that is %s', as
 
 test.each([false, true])('discovery recovers a late or replaced state directory (late=%s)', async (late) => {
   if (!late) writeWorkspaceState(root, {});
+  const watch = vi.spyOn(fs, 'watch');
+  syncBuiltinESMExports();
+  const stateDirectoryWatches = () =>
+    watch.mock.calls.filter(
+      ([directory], index) =>
+        directory === dirname(workspaceStateFile(root)) && watch.mock.results[index]?.type === 'return',
+    ).length;
   stop = followHostedLogs(root, false);
+  const initialWatches = stateDirectoryWatches();
   if (!late) fs.rmSync(workspaceDir(root), { recursive: true });
   writeWorkspaceState(root, {});
   const afterCreation = stateReads();
-  if (!late) await vi.advanceTimersByTimeAsync(10_000);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(stateDirectoryWatches()).toBeGreaterThan(initialWatches);
   await vi.waitFor(() => expect(stateReads()).toBeGreaterThan(afterCreation), { timeout: 1000 });
 
   writeWorkspaceState(root, { discoveryFixture: 1 });

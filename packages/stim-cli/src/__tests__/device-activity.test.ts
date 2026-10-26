@@ -179,6 +179,18 @@ describe('driver processes', () => {
   });
 });
 
+test('a driven device keeps the probes that failed beside its drivers', () => {
+  const driven = classifyActivity(
+    {
+      drivers: [{ basis: 'agent-device-claim', tool: 'agent-device', pid: 1, since: null }],
+      unknown: ['driver-process'],
+      recency: [],
+    },
+    NOW,
+  );
+  expect(driven).toMatchObject({ state: 'driven', basis: ['agent-device-claim'], unknown: ['driver-process'] });
+});
+
 test('recent activity is active, older activity is idle, and no evidence is idle without a time', () => {
   const recent = classifyActivity(
     { drivers: [], unknown: [], recency: [{ basis: 'device-log', at: NOW - 60_000 }] },

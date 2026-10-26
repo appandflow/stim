@@ -293,6 +293,23 @@ test.each([true, false])(
   },
 );
 
+test('a stop made for another requester records that requester, as status shows it', async () => {
+  const root = tmpRoot;
+  let request: unknown;
+  const { opts } = seams({
+    root,
+    state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' },
+    isAlive: (pid: number) => pid === 4242,
+    requester: { by: 'automatic maintenance (no real activity for 7h)' },
+    killGroup: () => {
+      request = readWorkspaceState(root)?.devServerStopRequest;
+      return false;
+    },
+  });
+  await runStop(opts);
+  expect(request).toMatchObject({ by: 'automatic maintenance (no real activity for 7h)' });
+});
+
 test('unavailable stop-request storage does not prevent signalling a verified supervisor', async () => {
   const root = tmpRoot;
   const area = dirname(workspaceStateFile(root));

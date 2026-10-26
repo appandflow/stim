@@ -481,7 +481,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: true,
     env: 'STIM_ARCHIVE_ENABLED',
     scopedHomeValue: false,
-    description: 'Keep workspace history on removal; false under STIM_HOME unless explicitly enabled',
+    description:
+      "Keep workspace history on removal, and archive a dirty finished worktree's changes before gc removes it; false keeps such worktrees, and is the default under STIM_HOME unless explicitly enabled",
   },
   {
     key: 'archive.maxAgeDays',
@@ -489,7 +490,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 30,
     env: 'STIM_ARCHIVE_MAX_AGE_DAYS',
-    description: 'Days to keep archived workspace records; 0 keeps nothing',
+    description: 'Days to keep archived workspace records and worktree change archives; 0 keeps nothing',
   },
   {
     key: 'archive.maxCount',
@@ -505,7 +506,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 5,
     env: 'STIM_ARCHIVE_MAX_TOTAL_GB',
-    description: 'Total archived bytes in binary GB; 0 keeps no artifacts',
+    description: 'Total archived bytes in binary GB, and separately the worktree change archives; 0 keeps no artifacts',
   },
   {
     key: 'archive.logs.maxAgeDays',
@@ -743,7 +744,16 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 5,
     env: 'STIM_MAINTENANCE_IDLE_CHECK_MINUTES',
     description:
-      'Interval in minutes of the check that shuts down owned simulators and emulators idle for devices.idleShutdownMinutes, also with no dev server running',
+      'Interval in minutes of the check that shuts down owned simulators and emulators idle for devices.idleShutdownMinutes, also with no dev server running, and stops workspaces idle for maintenance.idleStopHours',
+  },
+  {
+    key: 'maintenance.idleStopHours',
+    type: { kind: 'number', minimum: 0 },
+    scopes: EVERY,
+    default: 6,
+    env: 'STIM_MAINTENANCE_IDLE_STOP_HOURS',
+    description:
+      "Hours with no native run, Metro bundle or HMR request, agent-device command, Stim command or live view before automatic maintenance and gc --delete stop a workspace's dev server and shut down its owned simulators and emulators, as stim stop does; device and app log lines do not count; 0 never",
   },
   {
     key: 'maintenance.sweepHours',
@@ -804,7 +814,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 10,
     env: 'STIM_MAINTENANCE_PRESSURE_PROTECT_MINUTES',
     description:
-      'Protection window, in minutes, that replaces maintenance.protectRecentHours at disk pressure levels 2 and 3',
+      'Protection window, in minutes, that replaces maintenance.protectRecentHours at disk pressure levels 2 and 3, except for workspace build outputs and build directories, which level 2 keeps for 15 minutes after the last ios, android or macos run',
   },
   {
     key: 'maintenance.gradleVersionIdleDays',
@@ -822,7 +832,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: true,
     env: 'STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES',
     description:
-      'Remove clean linked worktrees whose branch or pull request finished, under gc.worktreeGraceMinutes, and at disk pressure level 3 clean, pushed ones with no commits of their own',
+      "Remove linked worktrees whose branch or pull request finished, under gc.worktreeGraceMinutes, archiving a dirty one's uncommitted files first, and clean, pushed ones with no commits of their own once idle",
   },
   {
     key: 'maintenance.removeIdleWorktrees',
@@ -950,11 +960,19 @@ export const SETTINGS: readonly SettingDefinition[] = [
       "Whether a machine approved for builds or device hosting here may update this machine's stim-server service to that machine's own stim-server build; releases from npm need no setting",
   },
   {
+    key: 'server.lanAddresses',
+    type: { kind: 'strings' },
+    scopes: MACHINE,
+    default: [],
+    description:
+      "IPv4 addresses or network interface names (such as en0) on which stim-server also accepts machines and phones on the local network, without Tailscale, on its own port. Empty listens on no local network address. Wildcard addresses are refused. Connections there run protocol 2's Noise authentication and encryption, without TLS",
+  },
+  {
     key: 'remote.machines',
     type: { kind: 'strings' },
     scopes: MACHINE,
     description:
-      'Tailscale names of the remote machines this machine may build on and host owned simulators, emulators and macOS apps on, each optionally with :<port> of its tailscale serve route (default 7443). The order is the placement priority: each workload goes to the first machine with room and a load under its own limit. What each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
+      'The remote machines this machine may build on and host owned simulators, emulators and macOS apps on: a Tailscale name, optionally with :<port> of its tailscale serve route (default 7443), or local: and a host name or IPv4 address on the local network, optionally with :<port> of its stim-server (default 7787), whose server key doctor --fix pins after a person confirms its fingerprint. The order is the placement priority: each workload goes to the first machine with room and a load under its own limit. What each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
   },
   {
     key: 'remote.buildPoolDisabled',

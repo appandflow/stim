@@ -8,6 +8,7 @@ import {
   buildMachinesLock,
   cannotHost,
   isJsonObject,
+  localEndpoint,
   MACHINE_CREDENTIALS_VERSION,
   placementWord,
   readBuildMachines,
@@ -20,7 +21,12 @@ import { withDirLock } from '../dir-lock.ts';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import { configuredMachines } from '../device-host/machines.ts';
 import { readHostPermissions } from './access-ticket.ts';
-import { diagnosisFinding, notOnTailnetDiagnosis } from './diagnosis.ts';
+import {
+  diagnoseLocalUnreachable,
+  diagnosisFinding,
+  notOnTailnetDiagnosis,
+  unconfirmedKeyFinding,
+} from './diagnosis.ts';
 import {
   diagnoseOutcome,
   diagnoseTailscale,
@@ -32,6 +38,7 @@ import {
   realIo,
   setupRemedy,
   type GeneratedTickets,
+  type KeyConfirmer,
   type TailnetMachineIo,
 } from './tailnet.ts';
 export { resolveEndpoint, type Endpoint } from './tailnet.ts';
@@ -85,6 +92,7 @@ interface BuildMachineReport {
     | 'tailscale-off'
     | 'not-on-tailnet'
     | 'key-changed'
+    | 'key-unconfirmed'
     | 'not-asked'
     | 'pending'
     | 'approved'
@@ -94,6 +102,8 @@ interface BuildMachineReport {
     | 'unreachable';
   diagnosis?: RemoteDiagnosis;
   dnsName?: string;
+  /** For `key-unconfirmed`: the fingerprint of the key the machine answered with, for a person to compare. */
+  fingerprint?: string;
   deviceId?: string;
   requestedAt?: string;
   expiresAt?: string;
@@ -124,6 +134,9 @@ function note(title: string, detail: string, fix: string | null = null): Finding
 }
 
 type Inspected = { report: BuildMachineReport; finding: Finding | null };
+
+/** `tailscale status --json`, or why Tailscale cannot reach the tailnet entries; `local:` entries need neither. */
+type TailnetView = { status: Record<string, unknown> } | { off: RemoteDiagnosis };
 
 const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   unreachable: 'does not answer a build offer',
@@ -262,7 +275,7 @@ function offloadFindings(
 
 async function inspectMachine(
   entry: string,
-  status: Record<string, unknown>,
+  tailnet: TailnetView,
   deviceName: string,
   fix: boolean,
   version: string,
@@ -270,15 +283,23 @@ async function inspectMachine(
   io: BuildMachineIo,
   check: OffloadCheck | null,
   operation?: StimContext,
+  confirmKey?: KeyConfirmer,
 ): Promise<Inspected & { extra?: Finding[] }> {
   const parsed = parseMachine(entry);
   if (!parsed) {
     return {
       report: { machine: entry, state: 'invalid' },
-      finding: note(`Remote machine ${entry} is not a tailnet name`, 'Expected `name` or `name:port`.'),
+      finding: note(
+        `Remote machine ${entry} is not a tailnet name or local: address`,
+        'Expected `name`, `name:port`, `local:<host>` or `local:<host>:port`.',
+      ),
     };
   }
-  const peer = findPeer(status, parsed.name);
+  const local = parsed.transport === 'local';
+  if (!local && 'off' in tailnet)
+    return { report: { machine: entry, state: 'tailscale-off', diagnosis: tailnet.off }, finding: null };
+  const status = 'status' in tailnet ? tailnet.status : {};
+  const peer = local ? null : findPeer(status, parsed.name);
   if (peer === 'missing' || peer === 'ambiguous') {
     const diagnosis = notOnTailnetDiagnosis(entry, peer === 'ambiguous');
     return {
@@ -286,6 +307,8 @@ async function inspectMachine(
       finding: diagnosisFinding('build-machine', entry, diagnosis),
     };
   }
+  const target = peer ? endpoint(peer, parsed.port) : localEndpoint(parsed.name, parsed.port);
+  const address = peer?.dnsName ?? parsed.name;
   const credential = readBuildMachines().find((each) => each.machine === entry);
   const other = () => {
     try {
@@ -300,8 +323,8 @@ async function inspectMachine(
   const outcome = await reachMachine({
     machine: entry,
     access: 'build',
-    endpoint: endpoint(peer, parsed.port),
-    address: peer.dnsName,
+    endpoint: target,
+    address,
     credential,
     other,
     persist,
@@ -311,8 +334,9 @@ async function inspectMachine(
     serverVersion: version,
     io,
     tickets,
+    ...(local ? { confirmKey: (serverKey: string) => confirmKey?.(entry, serverKey) ?? Promise.resolve(false) } : {}),
   });
-  const known = { machine: entry, dnsName: peer.dnsName };
+  const known = { machine: entry, ...(peer ? { dnsName: peer.dnsName } : {}) };
   reportSignal(operation)?.throwIfAborted();
   if (outcome.state !== 'not-asked' && outcome.credential) {
     const next = outcome.credential;
@@ -342,9 +366,14 @@ async function inspectMachine(
         report: { ...paired, state: 'key-changed' },
         finding: note(
           `Remote machine ${entry} answered with a different server key`,
-          `${peer.dnsName} did not prove it holds the stim-server key this machine pinned at approval. Stim does not connect to it.`,
+          `${address} did not prove it holds the stim-server key this machine pinned at approval. Stim does not connect to it.`,
           `If that machine or its Stim home was replaced, remove ${entry} from remote.machines, run \`stim doctor --fix\` to forget the old pairing, then add it back and run \`stim doctor --fix\` again.`,
         ),
+      };
+    case 'unconfirmed':
+      return {
+        report: { ...paired, state: 'key-unconfirmed', fingerprint: outcome.fingerprint },
+        finding: unconfirmedKeyFinding('build-machine', entry, outcome.fingerprint),
       };
     case 'pending':
       return {
@@ -392,14 +421,20 @@ async function inspectMachine(
       };
     }
     case 'unreachable': {
-      const diagnosis = await diagnoseOutcome(io, {
+      const failure = {
         entry,
-        peer,
         port: parsed.port,
-        target: endpoint(peer, parsed.port),
+        target,
         reason: outcome.reason,
         transport: outcome.transport,
-      });
+      };
+      const startup =
+        !peer && outcome.transport?.kind === 'http' && outcome.transport.status === 503
+          ? await io.startup?.(target)
+          : null;
+      const diagnosis = peer
+        ? await diagnoseOutcome(io, { ...failure, peer })
+        : diagnoseLocalUnreachable({ ...failure, startup });
       return {
         report: { ...paired, state: 'unreachable', diagnosis },
         finding: diagnosisFinding('build-machine', entry, diagnosis),
@@ -440,12 +475,14 @@ export async function inspectBuildMachines(
     version = '<version>',
     tickets = new Map(),
     operation,
+    confirmKey,
   }: {
     fix: boolean;
     check?: OffloadCheck | null;
     version?: string;
     tickets?: GeneratedTickets;
     operation?: StimContext;
+    confirmKey?: KeyConfirmer;
   },
   io: BuildMachineIo = realIo,
   entries: string[] | null = configuredMachines(),
@@ -467,30 +504,33 @@ export async function inspectBuildMachines(
     await updateCredentials((credentials) => credentials.filter((each) => !unnamed(each)), operation);
   }
   if (entries.length === 0) return { findings: [], machines: [] };
-  const status = await io.status();
-  if (!isJsonObject(status)) {
-    const diagnosis = await diagnoseTailscale(io);
-    return {
-      findings: [
-        note(
-          'Remote machines are unreachable',
-          `remote.machines names remote machines. ${diagnosis.message}`,
-          diagnosis.remedy,
-        ),
-      ],
-      machines: entries.map((machine) => ({ machine, state: 'tailscale-off', diagnosis })),
-    };
-  }
-  const self = isJsonObject(status.Self) ? status.Self : {};
+  const tailnet = entries.some((entry) => parseMachine(entry)?.transport !== 'local');
+  const read = tailnet ? await io.status() : null;
+  const view: TailnetView = isJsonObject(read)
+    ? { status: read }
+    : tailnet
+      ? { off: await diagnoseTailscale(io) }
+      : { status: {} };
+  const inspection: BuildMachinesInspection = { findings: [], machines: [] };
+  if ('off' in view)
+    inspection.findings.push(
+      note(
+        'Remote machines are unreachable',
+        `remote.machines names remote machines. ${view.off.message}`,
+        view.off.remedy,
+      ),
+    );
+  const self = 'status' in view && isJsonObject(view.status.Self) ? view.status.Self : {};
   const raw = typeof self.HostName === 'string' && self.HostName ? self.HostName : hostname();
   const deviceName =
     raw
       .replace(/[\p{Cc}\p{Cf}]/gu, '')
       .trim()
       .slice(0, 64) || 'Mac';
-  const inspection: BuildMachinesInspection = { findings: [], machines: [] };
   const inspected = await Promise.all(
-    entries.map((entry) => inspectMachine(entry, status, deviceName, fix, version, tickets, io, check, operation)),
+    entries.map((entry) =>
+      inspectMachine(entry, view, deviceName, fix, version, tickets, io, check, operation, confirmKey),
+    ),
   );
   for (const { report, finding, extra = [] } of inspected) {
     inspection.machines.push(report);

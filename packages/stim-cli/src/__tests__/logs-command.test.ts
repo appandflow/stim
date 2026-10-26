@@ -27,7 +27,8 @@ import logsCommand, {
 } from '../commands/logs.ts';
 import { getConfigPath, upsertProject } from '../workspace/config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { captureProcessIdentity, inspectProcessIdentity } from '../process-identity.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
 
@@ -267,6 +268,13 @@ describe('logs command', () => {
     expect(out.length).toBe(2);
     expect(out[0]).toMatch(/ info  metro  bundling$/);
     expect(out[1]).toMatch(/ warn  client deprecated$/);
+  });
+
+  test('reading workspace logs records workspace use, so idle stop counts it as a Stim command', async () => {
+    writeLog('metro.ndjson', [{ ts: 1, src: 'metro', level: 'info', msg: 'bundling' }]);
+    const before = Date.now();
+    await run({});
+    expect(Date.parse(String(readWorkspaceState(project)?.lastUsedAt))).toBeGreaterThanOrEqual(before);
   });
 
   test.each([false, true])('logs remain readable with an unreadable hosted slot in JSON mode %s', async (json) => {
@@ -1033,15 +1041,6 @@ describe.skipIf(process.platform === 'win32')(
       }
     }
 
-    function alive(pid: number): boolean {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    }
-
     test('exits when stdout closes and no record arrives', async () => {
       const proc = spawn(process.execPath, args, { cwd: project, env: env(), stdio: ['ignore', 'pipe', 'ignore'] });
       child = proc;
@@ -1071,12 +1070,15 @@ describe.skipIf(process.platform === 'win32')(
       middleman.stdout!.on('data', (chunk: Buffer) => (out += chunk.toString()));
       await until(() => out.includes('\n'), 20_000);
       const follower = Number(out.trim());
+      const captured = captureProcessIdentity(follower);
+      assert(captured.ok);
+      const identity = { pid: follower, processToken: captured.token };
       middleman.kill('SIGKILL');
       try {
-        await until(() => !alive(follower), 6000);
-        expect(alive(follower)).toBe(false);
+        await until(() => inspectProcessIdentity(identity) !== 'same', 6000);
+        expect(inspectProcessIdentity(identity)).not.toBe('same');
       } finally {
-        if (alive(follower)) process.kill(follower, 'SIGKILL');
+        if (inspectProcessIdentity(identity) === 'same') process.kill(follower, 'SIGKILL');
       }
     }, 30_000);
   },

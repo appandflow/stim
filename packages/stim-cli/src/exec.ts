@@ -680,7 +680,7 @@ interface ChildSpan {
 
 function fileSpan(file: string, args: readonly string[] | undefined, opts: ExecOptions): ChildSpan {
   const program = basename(file);
-  const argv = redactArgv(args ?? [], opts.redact);
+  const argv = redactArgv(args ?? [], opts.redact, file);
   const first = argv[0];
   return {
     name: first && /^[a-z][a-z0-9-]{1,23}$/.test(first) ? `${program} ${first}` : program,
@@ -793,9 +793,11 @@ const derivedAsync = new WeakSet<object>();
 
 /**
  * @internal Test seam that swaps the process executor. A mock without the async methods, or one spread from another
- * mock, answers `runFileAsync` from its own `runFile` and `runFileQuietAsync` from its own `runFileQuiet`.
+ * mock, answers `runFileAsync` from its own `runFile` and `runFileQuietAsync` from its own `runFileQuiet`. A mock
+ * without `findExecutable` finds nothing on PATH.
  */
 export function setExecutor(e: MockExecutor): void {
+  e.findExecutable ??= () => null;
   if (e.runFile && (!e.runFileAsync || derivedAsync.has(e.runFileAsync))) {
     e.runFileAsync = async (...args: Parameters<Executor['runFile']>) => {
       if (!e.runFile) throw new Error('the mock executor has no runFile');

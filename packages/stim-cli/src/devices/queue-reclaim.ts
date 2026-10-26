@@ -1,8 +1,8 @@
 import { DEVICE_RECLAIM_REASON } from '@stim-cli/core/state';
 import { realpathSync } from 'node:fs';
-import { basename } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig } from '../workspace/config.ts';
+import { workspaceDisplayLabel } from '../workspace/display-label.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import {
   dueIdleDevices,
@@ -32,7 +32,7 @@ export async function reclaimIdleDevice(
     const candidate = candidates.find(({ device }) => !skipped.has(`${device.kind}:${device.id}`));
     if (!candidate) return 0;
     const { device, idleForMs } = candidate;
-    const label = loadConfig()?.projects[device.project]?.label || basename(device.project);
+    const label = workspaceDisplayLabel(device.project, loadConfig());
     const log = (event: IdleShutdownEvent) => {
       writeIdleShutdownEvent(device.project, event);
       if (event.level === 'warn') out(`${'device'.padEnd(11)} ${event.msg}`);

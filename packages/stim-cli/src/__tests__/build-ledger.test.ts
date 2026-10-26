@@ -88,6 +88,8 @@ describe('buildLedgerRecord', () => {
     });
     expect(record.failure).toBeUndefined();
     expect(record.offloadPhases).toBeUndefined();
+    expect(record).not.toHaveProperty('loadPerCore');
+    expect(record).not.toHaveProperty('boot');
     expect(record.msg).toBe('ios build succeeded here in 1m30s (miss)');
   });
 
@@ -265,26 +267,30 @@ describe('the ledger file', () => {
 });
 
 describe('recordFinishedBuild', () => {
-  test('writes one record with the run phases, and keeps ledger-only fields out of the workspace state', () => {
+  test('writes one record with the run phases, the load at start and its first boot, and keeps ledger-only fields out of the workspace state', () => {
     const root = join(home, 'app');
     mkdirSync(root, { recursive: true });
     const attempt = tryAcquireClaim({ root: join(home, 'native-run.lock'), mode: 'exclusive', label: 'lock' });
     if (!attempt.acquired) throw new Error('claim not acquired');
     let now = T0;
+    const loads = [3.2, 7.5, 9.9];
     const progress = startBuildProgress({
       root,
       platform: 'ios',
       slot: 'default',
       claim: attempt.acquired,
       now: () => now,
+      load: () => loads.shift() ?? 0,
     });
     now += 2_000;
+    progress.bootStarted();
     progress.step('compile');
     progress.place({ host: 'mini', phase: 'sync' });
     now += 3_000;
     progress.place({ host: 'mini', phase: 'build' });
     now += 40_000;
     progress.place(null);
+    progress.bootStarted();
     progress.step('install');
     now += 1_000;
     recordFinishedBuild(
@@ -313,6 +319,8 @@ describe('recordFinishedBuild', () => {
       offloadPhases: { sync: 3_000, build: 40_000 },
       phases: { prepare: 2_000, compile: 43_000, install: 1_000 },
       outcome: 'succeeded',
+      loadPerCore: 3.2,
+      boot: { startedAt: T0 + 2_000, loadPerCore: 7.5 },
     });
     expect(readFileSync(buildLedgerFile(), 'utf-8').split('\n').filter(Boolean)).toHaveLength(1);
   });

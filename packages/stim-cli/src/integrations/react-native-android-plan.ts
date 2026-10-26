@@ -283,6 +283,12 @@ export async function planReactNativeAndroid(
           }
         : {}),
     });
+    if (hostedPlan.kind === 'refused')
+      return refuse({
+        code: hostedPlan.code,
+        message: hostedPlan.message,
+        remedy: hostedPlan.remedy,
+      });
     if (hostedPlan.kind === 'unknown') {
       return refuse({
         code: 'STIM_BAD_ARG',

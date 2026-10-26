@@ -26,12 +26,11 @@ import { hostedMetroPortProbe, iosAgentRemoteConfig } from '../device-host/hoste
 import { readHostedIos, writeHostedNative } from '../device-host/ios-state.ts';
 import { applyHostedIosProbe } from '../device-host/hosted-ios-status.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
-import { gatewayAddresses, clearHostedMetro } from '../device-host/metro-gateway.ts';
-import { reconcileHostedMetro, watchHostedMetro } from '../supervisor/hosted-metro.ts';
+import { reconcileHostedMetro } from '../supervisor/hosted-metro.ts';
 import { getConfigPath, getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { parseLogStreamLine } from '../collector/ios.ts';
-import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
+import { pullHostedNativeLogs, readHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { followHostedMacosLogs, followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../engine/slot-launch.ts';
@@ -257,7 +256,7 @@ async function deliver(
       reserved: (value) => writeHostedIos(root, slot, value),
       note: () => {},
       enterPhase,
-      ...(mode === 'process' ? {} : { metro: async () => ({ gatewayPort: 8111, secret: 'a'.repeat(64) }) }),
+      ...(mode === 'process' ? {} : { metro: async () => {} }),
     });
   } finally {
     target.host.connection.close();
@@ -442,17 +441,11 @@ test('an unknown or unreachable owner refuses replacement, and an unreachable st
   expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
 });
 
-test.each(['unknown-session', 'forbidden'])('stop clears %s placement and its gateway request', async (code) => {
+test.each(['unknown-session', 'forbidden'])('stop clears %s placement and its Metro request', async (code) => {
   writeHostedIos(root, 'tablet', placement());
   writeWorkspaceState(root, {
     hostedMetroRequests: {
-      [sessionId]: {
-        id: 'request',
-        machine: 'mini',
-        address: '100.64.0.2',
-        peer: '100.64.0.7',
-        secret: 'a'.repeat(64),
-      },
+      [sessionId]: { id: 'request', machine: 'mini' },
     },
   });
   errorMethod = 'device-host.stop';
@@ -523,71 +516,17 @@ test('reload uses client Metro for a hosted session without native process or si
   expect(reload).toHaveBeenCalledWith(8082, { role: 'ios', appId: 'dev.fixture' });
 });
 
-test('gateway reconciliation closes changed or removed sessions and opens only new requests', () => {
-  const a = { id: 'a', machine: 'mini', address: '100.64.0.2', peer: '100.64.0.7', secret: 'a'.repeat(64) };
+test('link reconciliation closes changed or removed sessions and opens only new requests', () => {
+  const a = { id: 'a', machine: 'mini' };
   expect(
     reconcileHostedMetro({ keep: a, change: { ...a, id: 'b' }, add: a }, { keep: a, change: a, remove: a }),
   ).toEqual({ close: ['change', 'remove'], open: ['change', 'add'] });
 });
 
-test('gateway addresses use Self and the named peer, refusing a name that resolves to no single peer', () => {
-  const status = {
-    Self: { TailscaleIPs: ['100.64.0.2'] },
-    Peer: { mini: { ID: 'nMini', DNSName: 'mini.tail.ts.net.', TailscaleIPs: ['100.64.0.7'] } },
-  };
-  expect(gatewayAddresses(credential, status)).toEqual({ address: '100.64.0.2', peer: '100.64.0.7' });
-  expect(() => gatewayAddresses({ ...credential, machine: 'nope' }, status)).toThrow('one tailnet peer');
-  expect(() => gatewayAddresses(credential, { ...status, Self: {} })).toThrow('no Tailscale address');
-});
-
-test.skipIf(!loopbackAvailable)(
-  'the supervisor binds and recreates a recorded gateway port, then closes it when requested',
-  async () => {
-    const request = { id: 'fixture', machine: 'mini', address: '127.0.0.1', peer: '127.0.0.1', secret: 'a'.repeat(64) };
-    writeHostedIos(root, 'default', placement());
-    writeWorkspaceState(root, { supervisor: { processToken: 'first' }, hostedMetroRequests: { [sessionId]: request } });
-    const awaitPort = async (token: string) => {
-      await vi.waitFor(() =>
-        expect(
-          (readWorkspaceState(root)?.hostedMetroGateways as Record<string, { processToken: string }>)?.[sessionId]
-            ?.processToken,
-        ).toBe(token),
-      );
-      return (readWorkspaceState(root)?.hostedMetroGateways as Record<string, { port: number }> | undefined)?.[
-        sessionId
-      ]?.port;
-    };
-    const close = watchHostedMetro(root, 8082, 'first');
-    const port = await awaitPort('first');
-    await close();
-    writeWorkspaceState(root, { supervisor: { processToken: 'second' } });
-    const closeAgain = watchHostedMetro(root, 8082, 'second');
-    try {
-      expect(await awaitPort('second')).toBe(port);
-      clearHostedMetro(root, sessionId);
-      await vi.waitFor(() => expect(Object.keys(readWorkspaceState(root)?.hostedMetroGateways ?? {})).toEqual([]));
-      expect(statSync(workspaceStateFile(root)).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
-      expect(readFileSync(workspaceStateFile(root), 'utf8').includes('fixture-token')).toBe(false);
-    } finally {
-      await closeAgain();
-    }
-  },
-);
-
 test('a ready sticky session refuses a different runtime instead of ignoring it or creating a second device', async () => {
   writeHostedIos(root, 'default', placement());
   await expect(prepareHostedIos('mini', { runtime: '26.5' }, placement())).rejects.toThrow('run stim stop first');
   expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
-});
-
-test('host refusal messages cannot expose the gateway secret', async () => {
-  errorMethod = 'device-host.app.offer';
-  errorMessage = `failed with ${'a'.repeat(64)}`;
-  const error = await deliver().catch((refusal: Error) => refusal);
-  expect(error).toBeInstanceOf(Error);
-  const message = (error as Error).message;
-  expect(message).toContain('[redacted]');
-  expect(message.includes('a'.repeat(64))).toBe(false);
 });
 
 test('stop retains an unresolved slot but still stops the sibling session', async () => {
@@ -619,6 +558,43 @@ test('cancelling a hosted stop preserves both placements and never stops the sib
   expect(readHostedIos(root)).toEqual({ default: placement(), tablet: sibling });
   expect(methods.filter((entry) => entry.method === 'device-host.stop')).toHaveLength(1);
   expect(fixtureConnection.close).toHaveBeenCalled();
+});
+
+test('stop copies the final native logs once, after the host has stopped the session', async () => {
+  writeHostedIos(root, 'default', placement());
+  await stopHostedIos(root);
+  expect(
+    methods
+      .map((entry) => entry.method)
+      .filter((method) => method === 'device-host.stop' || method === 'device-host.logs.query'),
+  ).toEqual(['device-host.stop', 'device-host.logs.query']);
+});
+
+test('cancelling stim stop during the final log copy keeps the placement, and a rerun copies each record once', async () => {
+  writeHostedIos(root, 'default', placement());
+  logRecords = [1, 2, 3, 4, 5].map((ts) => ({ ts, src: 'device', level: 'info', msg: `native ${ts}` }));
+  const controller = new AbortController();
+  const cancelled = new Error('cancel stim stop');
+  const request = fixtureConnection.request.bind(fixtureConnection);
+  fixtureConnection.request = async (...args) => {
+    const result = await request(...args);
+    if (args[0] === 'device-host.logs.query') controller.abort(cancelled);
+    return result;
+  };
+
+  await expect(runStop({ root, report: () => {}, operation: testContext({ signal: controller.signal }) })).rejects.toBe(
+    cancelled,
+  );
+  expect(readHostedIos(root)).toEqual({ default: placement() });
+  expect(readHostedNativeLogs(root, 'ios', 'default')).toEqual([]);
+
+  fixtureConnection.request = request;
+  const result = await runStop({ root, report: () => {} });
+  expect(result.ok).toBe(true);
+  expect(readHostedIos(root)).toEqual({});
+  expect(readHostedNativeLogs(root, 'ios', 'default').map((record) => record.msg)).toEqual(
+    logRecords.map((record) => record.msg),
+  );
 });
 
 test.each([false, true])('workspace removal preserves an unreachable hosting owner: %s', async (unreachable) => {
@@ -767,11 +743,11 @@ test.each(['missing', 'unreachable'])('stop uses the %s remedy and reports sibli
   );
 });
 
-test('replacing a recorded session removes its old gateway request atomically', () => {
+test('replacing a recorded session removes its old Metro request atomically', () => {
   writeHostedIos(root, 'default', placement());
   writeWorkspaceState(root, {
     hostedMetroRequests: {
-      [sessionId]: { id: 'old', machine: 'mini', address: '100.64.0.2', peer: '100.64.0.7', secret: 'a'.repeat(64) },
+      [sessionId]: { id: 'old', machine: 'mini' },
     },
   });
   writeHostedIos(root, 'default', { ...placement(), session: '34567890-1234-1234-1234-123456789abc' });
@@ -1001,7 +977,7 @@ test.each(['same-server', 'other-server', 'older-host', 'refused'])(
   },
 );
 
-test('hosted iOS native errors are paged into the workspace once per slot and pulled before stop', async () => {
+test('hosted iOS native errors are paged into the workspace once per slot and pulled after stop', async () => {
   writeHostedIos(root, 'tablet', placement());
   logRecords = [1, 2, 3].map((ts) => ({ ts, src: 'device', level: ts === 3 ? 'error' : 'info', msg: `native ${ts}` }));
   const target = await prepareHostedIos('mini', {}, placement());
@@ -1039,7 +1015,7 @@ test('hosted iOS native errors are paged into the workspace once per slot and pu
   );
   methods = [];
   await stopHostedIos(root, 'tablet');
-  expect(methods.map((entry) => entry.method).indexOf('device-host.logs.query')).toBeLessThan(
+  expect(methods.map((entry) => entry.method).indexOf('device-host.logs.query')).toBeGreaterThan(
     methods.map((entry) => entry.method).indexOf('device-host.stop'),
   );
   const finalLogs = readFileSync(join(workspaceLogsDir(root), 'ios.tablet-host.ndjson'), 'utf8');
@@ -1284,7 +1260,7 @@ test('a timed-out handoff retries busy offers within the upload fallback', async
         selectors: {},
         reserved: (value) => writeHostedIos(root, 'default', value),
         note,
-        metro: async () => ({ gatewayPort: 8111, secret: 'a'.repeat(64) }),
+        metro: async () => {},
         handoff: { serverKey: target.host.credential.serverKey!, token: 'a'.repeat(64), sha256: 'b'.repeat(64) },
       }),
     ).resolves.toHaveProperty('launched', true);
@@ -1621,13 +1597,7 @@ test.each([true, 'unverified'] as const)(
     writeHostedIos(root, 'default', placement());
     writeWorkspaceState(root, {
       hostedMetroRequests: {
-        [sessionId]: {
-          id: sessionId,
-          machine: 'mini',
-          address: '100.64.0.2',
-          peer: '100.64.0.7',
-          secret: 'a'.repeat(64),
-        },
+        [sessionId]: { id: sessionId, machine: 'mini' },
       },
     });
     const run = await deliver(false, 'default', 'process');

@@ -1,6 +1,6 @@
 {
   "name": "@stim-cli/metro",
-  "version": "1.26.0",
+  "version": "1.28.0",
   "description": "Metro integration for Stim: shared transforms across worktrees and structured logs.",
   "license": "MIT",
   "repository": {

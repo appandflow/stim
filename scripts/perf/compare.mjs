@@ -7,11 +7,12 @@ import { parseArgs } from 'node:util';
 import { DEFAULTS, compareRuns, formatComparison, groupByMachine } from './lib.mjs';
 
 const USAGE = `usage: node scripts/perf/compare.mjs [--data <perf-data checkout>] [--machine <id>] [--scenario <name>]
-         [--threshold 0.1] [--min-delta-ms 250] [--max-load-diff 20] [--json]
+         [--threshold 0.1] [--min-delta-ms 250] [--max-load 80] [--max-load-diff 20] [--json]
 
 Compares, per machine, the latest run on the perf-data branch with the run before it. A scenario is flagged
-REGRESSION when its median wall time grows by more than --threshold and --min-delta-ms. Runs taken under very
-different load are not compared. Without --data it clones origin's perf-data branch.`;
+REGRESSION when its median wall time grows by more than --threshold and --min-delta-ms, and by more than the larger
+of the two runs' repetition ranges. A flagged row with a repetition above --max-load is marked noisy. Runs taken
+under very different load are not compared. Without --data it clones origin's perf-data branch.`;
 
 const { values } = parseArgs({
   options: {
@@ -20,6 +21,7 @@ const { values } = parseArgs({
     scenario: { type: 'string' },
     threshold: { type: 'string', default: String(DEFAULTS.threshold) },
     'min-delta-ms': { type: 'string', default: String(DEFAULTS.minDeltaMs) },
+    'max-load': { type: 'string', default: String(DEFAULTS.highLoad) },
     'max-load-diff': { type: 'string', default: String(DEFAULTS.maxLoadDiff) },
     json: { type: 'boolean', default: false },
     help: { type: 'boolean', default: false },
@@ -62,6 +64,7 @@ try {
   const options = {
     threshold: Number(values.threshold),
     minDeltaMs: Number(values['min-delta-ms']),
+    highLoad: Number(values['max-load']),
     maxLoadDiff: Number(values['max-load-diff']),
   };
   const results = [];

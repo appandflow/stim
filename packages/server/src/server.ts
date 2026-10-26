@@ -6,12 +6,12 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http';
-import { connect as connectSocket, type AddressInfo, type Socket } from 'node:net';
+import { connect as connectSocket, isIP, type AddressInfo, type Socket } from 'node:net';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { configDir } from '@stim-cli/core';
+import { configDir, type MetroLink } from '@stim-cli/core';
 import {
   archiveDir,
   serverLocalSocket,
@@ -135,6 +135,7 @@ import {
   type PlatformBuildOptions,
   type Methods,
   type RequestId,
+  type MetroLinkOpenEvent,
   type ServerMessage,
   type VideoCodec,
 } from './protocol.ts';
@@ -275,6 +276,12 @@ export interface ServerOptions {
   authTimeoutMs?: number;
   maxAuthFailures?: number;
   failureWindowMs?: number;
+  /** Unauthenticated connections each network listener holds at once, overall and per source address. */
+  pendingConnections?: { max: number; perPeer: number };
+  /** First contacts naming an unknown secret that one address may make per failure window. */
+  maxUnknownSecrets?: number;
+  /** How long a connection to a network address has to send its request headers. */
+  headersTimeoutMs?: number;
   requestLog?: RequestLog;
   logLimits?: Partial<LogLimits>;
   commandLimits?: Partial<CommandLimits>;
@@ -346,6 +353,8 @@ interface ServerHealth {
   nativeViewerOpened: boolean;
   /** Present and true when the server serves this machine only, so a paired phone or another machine cannot connect. */
   loopbackOnly?: true;
+  /** The local network addresses the server listens on now, from `server.lanAddresses`; absent when there are none. */
+  lan?: { addresses: string[]; port: number };
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -389,8 +398,12 @@ const LOCAL_DEVICE: PairedDevice = {
 
 type ServerSocket = WebSocket | NoiseSocket;
 const CLOSE_AUTH_TIMEOUT = 4408;
+const CLOSE_METRO_RESET = 4410;
+const METRO_LINK_PING_MS = 15_000;
+const METRO_END_MS = 30_000;
 const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
+const METRO_LINK_BUFFERED_BYTES = 1024 * 1024;
 const MAX_SUBSCRIPTIONS = 32;
 
 const archiveCursor = (archive: ArchivedWorkspace) => `${archive.removedAt}|${archive.id}`;
@@ -900,22 +913,45 @@ function serverTransports(options: ServerOptions): { transports: Transport[]; ta
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 /**
- * Whether a WebSocket upgrade comes from a web page. Browsers send `Sec-Fetch-Site` and the page's own `Origin`.
- * React Native derives `Origin` from the ws URL, so an app's `Origin` names the requested host: over `http:` on loopback,
- * and `https:` through `tailscale serve`. SocketRocket omits the brackets of an IPv6 origin, so an iOS app on
- * `ws://[::1]` is refused.
+ * How a connection reached the server: from this machine on loopback, from a tailnet peer through `tailscale serve`
+ * (loopback with `X-Forwarded-For`), or straight to one of the server's own network addresses.
  */
-export function upgradeFromWebPage(headers: IncomingHttpHeaders, local: boolean): boolean {
+type Arrival = 'local' | 'proxied' | 'direct';
+
+function arrival(request: IncomingMessage): Arrival {
+  if (!isLoopback(request.socket.remoteAddress)) return 'direct';
+  return peerAddress(request) === null ? 'local' : 'proxied';
+}
+
+/**
+ * Whether a WebSocket upgrade comes from a web page. Browsers send `Sec-Fetch-Site` and the page's own `Origin`.
+ * React Native derives `Origin` from the ws URL, so an app's `Origin` names the requested host: over `http:` on loopback
+ * and on a local network address, and `https:` through `tailscale serve`. A DNS-rebound page names a host name, so on
+ * loopback the host must be a loopback name and on a network address an IP literal. SocketRocket omits the brackets of
+ * an IPv6 origin, so an iOS app on `ws://[::1]` is refused.
+ */
+export function upgradeFromWebPage(headers: IncomingHttpHeaders, via: Arrival): boolean {
   if (headers['sec-fetch-site'] !== undefined) return true;
   if (headers.origin === undefined) return false;
-  const scheme = local ? 'http:' : 'https:';
+  const scheme = via === 'proxied' ? 'https:' : 'http:';
   try {
     const own = new URL(`${scheme}//${headers.host ?? ''}`);
-    return new URL(headers.origin).origin !== own.origin || (local && !LOOPBACK_HOSTS.has(own.hostname));
+    if (new URL(headers.origin).origin !== own.origin) return true;
+    if (via === 'local') return !LOOPBACK_HOSTS.has(own.hostname);
+    return via === 'direct' && isIP(own.hostname.replace(/^\[|\]$/g, '')) === 0;
   } catch {
     return true;
   }
 }
+
+const MAX_PENDING_CONNECTIONS = 64;
+const MAX_PENDING_PER_PEER = 16;
+/** First contacts naming a secret this server does not hold, per address and minute, before it turns the address away. */
+const MAX_UNKNOWN_SECRETS = 60;
+const HEADERS_TIMEOUT_MS = 10_000;
+
+/** How many peers a failure limiter remembers; past it, the peer seen longest ago is forgotten first. */
+const MAX_LIMITED_PEERS = 4096;
 
 class FailureLimiter {
   private readonly failures = new Map<string, number[]>();
@@ -939,7 +975,48 @@ class FailureLimiter {
   }
 
   record(key: string, now: number = Date.now()): void {
-    this.failures.set(key, [...this.recent(key, now), now]);
+    const kept = this.recent(key, now);
+    this.failures.delete(key);
+    const oldest = this.failures.keys().next();
+    if (this.failures.size >= MAX_LIMITED_PEERS && !oldest.done) this.failures.delete(oldest.value);
+    this.failures.set(key, [...kept, now]);
+  }
+}
+
+/**
+ * Connections to one network listener that have not authenticated yet, bounded overall and per source address, so a
+ * peer cannot hold the server's sockets open without a key, and a flood on one listener leaves the others alone.
+ * Loopback connections, which include every `tailscale serve` peer, are not counted.
+ */
+class PendingConnections {
+  private readonly peers = new Map<Socket, string>();
+  private readonly counts = new Map<string, number>();
+  private readonly max: number;
+  private readonly perPeer: number;
+
+  constructor(max: number, perPeer: number) {
+    this.max = max;
+    this.perPeer = perPeer;
+  }
+
+  admit(socket: Socket): boolean {
+    const peer = socket.remoteAddress ?? '';
+    const count = this.counts.get(peer) ?? 0;
+    if (this.peers.size >= this.max || count >= this.perPeer) return false;
+    this.peers.set(socket, peer);
+    this.counts.set(peer, count + 1);
+    socket.once('close', () => this.settle(socket));
+    return true;
+  }
+
+  /** The socket authenticated, or closed: it no longer counts. */
+  settle(socket: Socket): void {
+    const peer = this.peers.get(socket);
+    if (peer === undefined) return;
+    this.peers.delete(socket);
+    const left = (this.counts.get(peer) ?? 1) - 1;
+    if (left > 0) this.counts.set(peer, left);
+    else this.counts.delete(peer);
   }
 }
 
@@ -1120,6 +1197,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const requestLog = options.requestLog ?? createRequestLog();
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
+  const unknownSecrets = new FailureLimiter(
+    options.maxUnknownSecrets ?? MAX_UNKNOWN_SECRETS,
+    options.failureWindowMs ?? 60_000,
+  );
+  const pendingPools = new WeakMap<Socket, PendingConnections>();
   const feeds = new FeedPool(options.stimCli, options.env);
   const statusFeed = new StatusFeed({
     worker: join(dirname(options.stimCli), 'status-worker.mjs'),
@@ -1577,6 +1659,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     trackers.set(socket, tracker);
     let runId: string | null = null;
     let buildSession: BuildSession | null = null;
+    let metroLink: MetroLink | null = null;
+    let metroStream: Socket | null = null;
+    let metroPing: NodeJS.Timeout | undefined;
     let queue = Promise.resolve();
     let archiveReads = Promise.resolve();
     const relay = new HostedRelay(
@@ -4088,7 +4173,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
-    function handleBinary(frame: Buffer): void {
+    function handleBinary(frame: Buffer): Promise<void> | void {
+      if (metroStream) {
+        const stream = metroStream;
+        if (stream.destroyed || stream.write(frame)) return;
+        socket.pause();
+        return new Promise<void>((resolve) => {
+          const resume = () => {
+            stream.off('drain', resume);
+            stream.off('close', resume);
+            socket.resume();
+            resolve();
+          };
+          stream.on('drain', resume);
+          stream.on('close', resume);
+        });
+      }
       if (socket.readyState !== socket.OPEN) return;
       if (!device || !buildSession) {
         return void socket.close(CLOSE_BAD_REQUEST, 'unexpected binary frame');
@@ -4097,7 +4197,44 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (refused) socket.close(CLOSE_BAD_REQUEST, refused.slice(0, 120));
     }
 
+    function linkMetro(id: RequestId, raw: unknown, session: PairedDevice): void {
+      if (metroLink || metroStream) return error(id, 'bad-request', 'This connection already links Metro.');
+      const link: MetroLink = {
+        open: (stream) => {
+          if (socket.readyState !== socket.OPEN) return false;
+          clearInterval(metroPing);
+          metroLink = null;
+          metroStream = stream;
+          stream.once('close', (hadError) => socket.close(hadError ? CLOSE_METRO_RESET : 1000));
+          stream.on('data', (chunk: Buffer) => {
+            socket.send(chunk, { binary: true }, () => {
+              if (stream.isPaused() && socket.bufferedAmount < METRO_LINK_BUFFERED_BYTES) stream.resume();
+            });
+            if (socket.bufferedAmount >= METRO_LINK_BUFFERED_BYTES) stream.pause();
+          });
+          send(socket, JSON.stringify({ event: 'device-host.metro.link.open' } satisfies MetroLinkOpenEvent));
+          stream.resume();
+          return true;
+        },
+        close: () => socket.close(1000),
+      };
+      const answer = hostedDevices.metroLink(session.id, raw, link);
+      if ('error' in answer) return send(socket, { id, error: answer.error });
+      send(socket, { id, result: answer.result });
+      if (metroStream) return;
+      metroLink = link;
+      let heard = true;
+      socket.on('pong', () => (heard = true));
+      metroPing = setInterval(() => {
+        if (!heard) return void socket.terminate();
+        heard = false;
+        socket.ping();
+      }, METRO_LINK_PING_MS);
+      metroPing.unref();
+    }
+
     async function hostedMethod(id: RequestId, method: string, raw: unknown, session: PairedDevice): Promise<void> {
+      if (method === 'device-host.metro.link') return linkMetro(id, raw, session);
       const params = isJsonObject(raw) ? raw : {};
       if (method === 'device-host.frames.subscribe' || method === 'device-host.control.begin') {
         if (typeof params.session !== 'string') return error(id, 'bad-request', 'A hosted session is required.');
@@ -4179,7 +4316,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                           : method === 'device-host.logs.query'
                             ? await hostedDevices.logsQuery(session.id, raw)
                             : method === 'device-host.metro.open'
-                              ? await hostedDevices.metroOpen(session.id, raw, peer)
+                              ? await hostedDevices.metroOpen(session.id, raw)
                               : method === 'device-host.metro.ports'
                                 ? await hostedDevices.metroPorts(session.id, raw)
                                 : await hostedDevices.metroClose(session.id, raw);
@@ -4375,6 +4512,24 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       queue = queue.then(() => handle(raw)).catch(() => socket.close(1011, 'internal error'));
     });
     socket.on('close', (code) => {
+      clearInterval(metroPing);
+      if (metroLink) hostedDevices.metroUnlink(metroLink);
+      const stream = metroStream;
+      if (stream && code === 1000 && !stream.destroyed) {
+        queue = queue.then(() => void stream.end());
+        let ending: NodeJS.Timeout | undefined;
+        const arm = () => {
+          clearTimeout(ending);
+          ending = setTimeout(() => stream.destroy(), METRO_END_MS);
+          ending.unref();
+        };
+        arm();
+        stream.on('drain', arm);
+        stream.once('close', () => {
+          clearTimeout(ending);
+          stream.off('drain', arm);
+        });
+      } else if (stream && !stream.destroyed) stream.resetAndDestroy();
       relay.close();
       relays.delete(socket);
       clearTimeout(timer);
@@ -4409,11 +4564,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
-    if (upgradeFromWebPage(request.headers, peer === null)) {
+    if (upgradeFromWebPage(request.headers, arrival(request))) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
-    if (limiter.blocked(peer ?? 'local')) {
+    if (limiter.blocked(peer ?? 'local') || unknownSecrets.blocked(peer ?? 'local')) {
       socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
@@ -4445,10 +4600,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const limitKey = peer ?? 'local';
     /**
      * `unknown-secret` is not a failure: a requester polls with its setup ticket until `stim-server setup` stores it,
-     * and a 16-byte lookup reveals nothing without the PSK.
+     * and a 16-byte lookup reveals nothing without the PSK. It has its own, far higher, limit per address.
      */
     const refuse = (code: string) => {
-      if (code !== 'unknown-secret') limiter.record(limitKey);
+      (code === 'unknown-secret' ? unknownSecrets : limiter).record(limitKey);
       if (ws.readyState === ws.OPEN) ws.close(CLOSE_REFUSED, code);
     };
     try {
@@ -4465,7 +4620,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         timeoutMs: authTimeoutMs,
       });
     } catch (error) {
-      if (!(error instanceof HandshakeRefusal && error.code === 'unknown-secret')) limiter.record(limitKey);
+      (error instanceof HandshakeRefusal && error.code === 'unknown-secret' ? unknownSecrets : limiter).record(
+        limitKey,
+      );
       return;
     }
     const publicKey = accepted.clientKey.toString('base64url');
@@ -4488,6 +4645,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
     }
     if (ws.readyState !== ws.OPEN) return;
+    pendingPools.get(request.socket)?.settle(request.socket);
     const host = records['device-host'];
     if (host) {
       const node = peer ? await peerNode(request, peer) : null;
@@ -4519,6 +4677,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     protocol: PROTOCOL_VERSION,
     stimHome: configDir(),
   } as const;
+  const lanHealth = (): Pick<ServerHealth, 'lan'> => {
+    const wanted = new Set(
+      transports
+        .filter((transport) => transport.id === 'local')
+        .flatMap((transport) => transport.bindAddresses?.() ?? []),
+    );
+    const bound = addresses.filter(({ host }) => wanted.has(host));
+    const [first] = bound;
+    return first ? { lan: { addresses: bound.map(({ host }) => host), port: first.port } } : {};
+  };
   const answerHealth = async (response: ServerResponse) => {
     const { state } = tailscale.snapshot();
     const route =
@@ -4534,6 +4702,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       route,
       nativeViewerOpened,
       ...(options.loopbackOnly ? { loopbackOnly: true as const } : {}),
+      ...lanHealth(),
     };
     response
       .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
@@ -4590,7 +4759,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (failures.length) throw new AggregateError(failures, 'Server resources did not close cleanly.');
   };
   async function listenOn(host: string): Promise<void> {
-    const server = createServer((request, response) => {
+    const network = !isLoopback(host);
+    const headersTimeout = options.headersTimeoutMs ?? HEADERS_TIMEOUT_MS;
+    const limits = network
+      ? {
+          headersTimeout,
+          requestTimeout: headersTimeout * 3,
+          connectionsCheckingInterval: Math.min(1000, headersTimeout),
+        }
+      : {};
+    const pending = network
+      ? new PendingConnections(
+          options.pendingConnections?.max ?? MAX_PENDING_CONNECTIONS,
+          options.pendingConnections?.perPeer ?? MAX_PENDING_PER_PEER,
+        )
+      : null;
+    const server = createServer(limits, (request, response) => {
       if (options.loopbackOnly && peerAddress(request) !== null) {
         response.writeHead(403, { 'content-type': 'text/plain' }).end('This stim-server serves this machine only.\n');
         return;
@@ -4625,6 +4809,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return;
       }
       const agent = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/.exec(request.url ?? '');
+      if (agent && arrival(request) === 'direct') {
+        response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
+        return;
+      }
       if (agent && startup.state !== 'ready') {
         response.writeHead(503, { 'content-type': 'text/plain' }).end('stim-server is not ready.\n');
         return;
@@ -4641,6 +4829,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     server.on('upgrade', upgrade);
     const sockets = new Set<Socket>();
     server.on('connection', (socket) => {
+      if (pending) {
+        if (!pending.admit(socket)) return void socket.destroy();
+        pendingPools.set(socket, pending);
+        socket.setTimeout(headersTimeout, () => socket.destroy());
+      }
       sockets.add(socket);
       socket.once('close', () => sockets.delete(socket));
     });

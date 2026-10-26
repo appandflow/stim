@@ -19,6 +19,8 @@ import { plan, type MaintenancePlan } from './plan.ts';
 import { maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { planSweep, planWorktrees } from './sweep.ts';
 import { planIdleShutdown } from './devices.ts';
+import { cachedDeviceActivity, cachedDeviceActivityAsync } from './activity.ts';
+import { planIdleStop } from './idle-stop.ts';
 import { planPressureLevels } from './levels.ts';
 import { diskPressureLevel, lowestFree } from './pressure.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
@@ -45,6 +47,7 @@ export async function plannedMaintenance(
     worktrees = false,
     idle = false,
     refresh = true,
+    background = false,
     operation,
   }: {
     devices?: boolean;
@@ -52,6 +55,7 @@ export async function plannedMaintenance(
     worktrees?: boolean;
     idle?: boolean;
     refresh?: boolean;
+    background?: boolean;
     operation?: StimContext;
   } = {},
 ): Promise<PlannedMaintenance> {
@@ -137,7 +141,8 @@ export async function plannedMaintenance(
           (entry) =>
             entry.kind === action.kind &&
             entry.target === action.target &&
-            (entry.level === action.level || action.kind === 'would-delete-devices'),
+            (entry.level === action.level || action.kind === 'would-delete-devices') &&
+            (action.check !== 'idle' || entry.check === 'idle'),
         )
       )
         result.actions.push(action);
@@ -160,7 +165,28 @@ export async function plannedMaintenance(
     merge(planned);
     result.worktreeSweep = planned.sweep;
   }
-  if (idle && devices) merge(planIdleShutdown({ protectedRoot: root, now: Date.now(), env }));
+  if (idle && devices) {
+    merge(planIdleShutdown({ protectedRoot: root, now: Date.now(), env }));
+    const now = Date.now();
+    try {
+      merge(
+        await planIdleStop({
+          protectedRoot: background ? '' : root,
+          now,
+          env,
+          operation,
+          devices: operation
+            ? cachedDeviceActivityAsync(now, env, operation.signal, operation)
+            : cachedDeviceActivity(now),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
+      result.blocked.push(`idle stop could not be planned: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   if (pressure) {
     const level = diskPressureLevel(lowestFree(pressure.disk), budget, settings);
     const pressured = await planPressureLevels(level, {

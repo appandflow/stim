@@ -134,7 +134,8 @@ It checks the branch's upstream, fetches changes when needed, and fast-forwards
 moved: the lockfile's own install command where the lockfile lives (the
 repository root in a monorepo, and the app too when it has a lockfile of its
 own; a root that was never installed is left alone), and `pod install` for the app. The app is the one you ran the command
-from or, from the monorepo root, the one app registered in the source checkout.
+from or, from the monorepo root, the one app registered in the source checkout or in the worktree.
+With no such app, a refresh from the root updates only the repository root and says so.
 In an npm project a change to `patches/` counts as a dependency change. When npm's config sets
 `ignore-scripts` and the project's `package.json` defines `postinstall`
 (patch-package, usually), the refresh runs `npm run postinstall` after `npm ci`;
@@ -305,8 +306,11 @@ reclaims only the project at or above that folder, with the projects nested unde
 even with `--force` (`STIM_WORKTREE_SERVICE`): deleting the folder would delete
 the running server's code. Reinstall the service from another build with
 `stim-server service install`, or remove it with `stim-server service uninstall`,
-then retry. Stim does not detect other processes whose working directory is in
-the worktree.
+then retry. It also refuses, even with `--force`, a worktree that holds the
+running `stim` or the `stim` on your PATH, after resolving symlinks, so a
+`pnpm exec stim` or `npx stim` that resolves into the worktree's own
+`node_modules` cannot remove it; run the global `stim` instead. Stim does not
+detect other processes whose working directory is in the worktree.
 
 Windows cannot delete a directory another process holds open. The adb server
 inherits the working directory of the adb client that starts it, and the
@@ -351,11 +355,14 @@ the default branch, or when its pull request was merged or closed, and plain
 removes a worktree that is idle: no Stim command has used it for
 `--older-than` days, or 7 days without that option. Either way, gc keeps a
 worktree that is the source checkout, bare, locked, holds another worktree
-(`stim worktree remove` refuses that too), in use, dirty (untracked
-files count, except watchman's `.watchman-cookie-*` files), unpushed, or has
-initialized submodules. In use includes a running dev server, a Stim run or live build, a booted owned simulator or
-emulator, and a held device lease; a device left booted keeps the worktree
-until `stim stop` or `stim gc --idle` shuts it down. With `--delete`, gc runs
+(`stim worktree remove` refuses that too), in use, unpushed, or has
+initialized submodules. A dirty worktree (untracked files count, except
+watchman's `.watchman-cookie-*` files) is kept unless it is finished, in which
+case gc archives its uncommitted files first (see below). In use includes a
+running dev server, a Stim run or live build, a booted owned simulator or
+emulator, a held device lease, and a worktree that holds the running `stim`
+or the `stim` on your PATH; a device left booted keeps the worktree until
+`stim stop` or `stim gc --idle` shuts it down. With `--delete`, gc runs
 `stim worktree remove` without `--force` on each removable worktree. That
 command checks the worktree again before removing it, parks or shuts down its
 devices, and handles branches as it does when you run it yourself. A worktree that fails is
@@ -364,7 +371,7 @@ reported and the others still run. A worktree removed with
 plain `gc --delete` removes those.
 
 Each worktree line shows its in-tree build state: the size of `node_modules`,
-`ios/Pods`, `ios/build`, `android/app/build`, `.build` and the other
+`ios/Pods`, `android/app/build`, `.build` and the other
 directories automatic maintenance clears, plus a project-local `.pnpm-store`.
 A directory directly under a repository's `.worktrees/` that
 `git worktree list` no longer shows, and that no other repository claims, is listed with its size and the `rm -rf`
@@ -397,18 +404,57 @@ squash or rebase merge whose remote branch was deleted and pruned locally, the
 branch's commits exist only locally; gc still removes the worktree, because
 their change is on the default branch, and keeps the branch.
 
-A clean, pushed worktree with no commits of its own beyond the default branch
-holds nothing git would lose, but looks just like a worktree created a minute
-ago, so plain `gc --delete` keeps it. `--worktrees` removes it once it is idle:
-by its last Stim use when one is recorded, else by its git and Stim activity
-(the same sources as the grace period below) being older than `--older-than`
-days. Automatic maintenance removes it the same way in its daily age sweep,
-after `maintenance.olderThanDays`, only with `maintenance.removeIdleWorktrees`
-(off by default), and at disk pressure level 3 once
-that activity is older than `maintenance.pressureProtectMinutes`, and never
-sooner than 5 minutes after it, even when that setting is 0. Before
+A clean, pushed worktree with no commits of its own beyond the default branch,
+such as a detached baseline or bench checkout of `main` or an abandoned branch
+that never got a commit, holds nothing git would lose. `gc --delete` and the
+maintenance worktree check remove it once its git and Stim activity (the same
+sources as the grace period below) is older than both `gc.worktreeGraceMinutes`
+and `maintenance.protectRecentHours`, 2 hours by default, unless it has an open
+pull request. At disk pressure level 3 the window is
+`maintenance.pressureProtectMinutes`, and never shorter than 5 minutes. Before
 removing it, gc checks again that its HEAD did not move and that it is still
-idle.
+idle. A program Stim does not track, such as a benchmark started from that
+checkout, does not keep it; lock such a checkout with `git worktree lock`.
+
+A finished worktree that is dirty only because of uncommitted or untracked
+files, such as a scratch file an agent left behind, is archived, then removed,
+by `gc --delete` and the maintenance worktree check. Stim saves
+`git diff --binary HEAD` as `tracked.patch` and the untracked files git does not
+ignore as `untracked.tar`, with a `manifest.json` naming the branch, HEAD, pull
+request and files, under
+`$STIM_HOME/archive/worktrees/<repository>/<branch-or-dir>-<timestamp>/`.
+Ignored files such as `node_modules` and build output are not saved. It checks
+the patch with `git apply --check -R`, checks the tarball lists every file, and
+checks again just before git removes the worktree that no archived file
+changed; any failure keeps the worktree. It also keeps the worktree when the
+archive would leave less free disk than `budget.hardFloorDiskGb`, and disk
+pressure level 3 never archives. Archives are private to your user but not
+redacted: an untracked `.env` file that git does not ignore is saved with the
+rest, so set `archive.enabled false` for a sensitive repository. A `git status`
+or editor refresh that rewrites the index counts as activity and restarts the
+grace period. The removal line and the gc and
+maintenance logs name the archive and the commands that restore it. When the
+default branch does not contain HEAD, as after a squash merge, `head.bundle`
+holds the missing commits, so the restore works after the branch is deleted:
+
+```sh
+git -C <repository> bundle unbundle <archive>/head.bundle
+git -C <repository> worktree add --detach <path> <HEAD>
+git -C <path> apply <archive>/tracked.patch
+tar -xf <archive>/untracked.tar -C <path>
+```
+
+Worktree archives follow `archive.maxAgeDays` and `archive.maxTotalGb`. Archive
+retention, which runs around each new archive and after each worktree removal
+that archives its workspace, deletes the expired ones. A new archive that would
+not fit beside the others under the cap keeps its worktree instead, so the
+oldest go for size only after you lower the cap, and an archive whose removal is
+still running is never deleted. With `archive.enabled false`, for the worktree or
+a project registered inside it, or
+either limit at 0, dirty worktrees are kept as before. A worktree whose staged
+version of a file differs from its working tree is kept too, because the patch
+holds only the working tree. `stim worktree remove` itself never archives; it
+refuses uncommitted work unless you pass `--force`.
 
 `gc --delete` and the maintenance worktree check also ask GitHub, with one `gh api graphql` query per repository that
 looks up the 20 newest pull requests of each worktree's branch, as
@@ -450,7 +496,8 @@ checks only for uncommitted and unpushed work.
 gc also waits out a grace period, 2 hours by default, before it removes a
 finished worktree. The period starts at the worktree's latest activity: a
 change to its git index, HEAD or reflog, a Stim state or log write, or the
-merge of its branch into the default branch or of its pull request. An agent that just merged its
+merge of its branch into the default branch or of its pull request, and, for a
+dirty worktree it would archive, a change to one of its uncommitted files. An agent that just merged its
 pull request still has time to run `stim stop` and `stim worktree remove`
 itself. gc reports such a worktree as kept with the reason `recent-activity`
 and the time it becomes removable (`eligibleAt` in `--json`). When gc cannot

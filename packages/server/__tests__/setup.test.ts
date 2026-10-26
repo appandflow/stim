@@ -107,6 +107,8 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
       return false;
     },
     preflight: async () => ({ dnsName: 'worker.ts.net' }),
+    fingerprint: () => 'server-fingerprint',
+    firewall: async () => null,
     claim: setupClaim,
     write: (hash, journal) => {
       writeSetupJournal(hash, journal);
@@ -439,6 +441,69 @@ test('Funnel refuses before approval and records the off command', async () => {
     state: 'failed',
     fix: 'tailscale funnel --https=7443 off',
   });
+});
+
+test('a worker without Tailscale sets up on the local network, prints its key fingerprint and warns about the firewall', async () => {
+  const noRoute = async () => {
+    throw new Error('a local network setup must not touch tailscale serve');
+  };
+  const reused = fixture().deps.health;
+  const f = fixture({
+    preflight: async () => ({ dnsName: null, lan: true }),
+    health: async (port) => {
+      const found = await reused(port);
+      return found && { ...found, lan: { addresses: ['10.0.0.92'], port: 7787 } };
+    },
+    firewall: async () => true,
+    route: noRoute,
+    prepareRoute: noRoute,
+    createRoute: noRoute,
+  });
+  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
+  const output = JSON.parse(f.stdout.join('\n'));
+  expect(output).toMatchObject({
+    ok: true,
+    route: { state: 'local-network', dnsName: null },
+    lan: ['ws://10.0.0.92:7787'],
+    fingerprint: 'server-fingerprint',
+    granted: [{ capability: 'build', id: 'build-id' }],
+  });
+  expect(output.warnings).toEqual([expect.stringMatching(/^The macOS firewall is on: when macOS asks whether \/node/)]);
+  expect(
+    f.snapshots.some((j) =>
+      j.steps.some((s) => s.id === 'approve' && s.detail?.includes('server key fingerprint, server-fingerprint')),
+    ),
+  ).toBe(true);
+});
+
+test('a local network setup whose server listens on no local address refuses before storing the ticket', async () => {
+  const f = fixture({ preflight: async () => ({ dnsName: null, lan: true }) });
+  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(1);
+  expect(f.stored).toEqual([]);
+  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'lan')).toMatchObject({
+    state: 'failed',
+    detail: expect.stringContaining('server.lanAddresses'),
+  });
+});
+
+test('a worker with Tailscale and a local network listener checks both, so tailnet clients keep their route', async () => {
+  const reused = fixture().deps.health;
+  const f = fixture({
+    preflight: async () => ({ dnsName: 'worker.ts.net', lan: true }),
+    health: async (port) => {
+      const found = await reused(port);
+      return found && { ...found, lan: { addresses: ['10.0.0.92'], port: 7787 } };
+    },
+  });
+  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
+  expect(JSON.parse(f.stdout.join('\n'))).toMatchObject({
+    route: { state: 'routed', dnsName: 'worker.ts.net', port: 7447 },
+    lan: ['ws://10.0.0.92:7787'],
+  });
+  expect(readSetupJournal(options.journal)?.steps.filter((s) => s.id === 'lan' || s.id === 'route')).toEqual([
+    expect.objectContaining({ id: 'lan', state: 'ok' }),
+    expect.objectContaining({ id: 'route', state: 'ok' }),
+  ]);
 });
 
 test('journals precede server work, include every completed step, and JSON stdout holds only the final payload', async () => {

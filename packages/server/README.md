@@ -42,7 +42,7 @@ serving command: see [Run as a service](#run-as-a-service). When serving, a bare
 `pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
 `from` (where it paired from, as a label only), `keyFingerprint`, `pairedAt`,
-`lastSeenAt` and `capabilities`, followed by the [build clients](#build-access)
+`lastSeenAt` (refreshed by a hello at most once a minute) and `capabilities`, followed by the [build clients](#build-access)
 and [device-host clients](#device-host-approval). The plain listing shows
 `from` and the first 12 characters of the key fingerprint.
 `log --json` prints `{ "actions": [...] }`, the records described under
@@ -470,8 +470,9 @@ connection itself with a Noise handshake (see [Pairing](#pairing)), so
 Tailscale's identity of a peer only labels it. You need Tailscale on the Mac and on the phone, in the
 same tailnet or with the Mac shared to the phone's user.
 
-`stim-server` listens only on `127.0.0.1` and on the machine's Tailscale
-addresses, never on every interface. It re-reads the Tailscale state in the
+`stim-server` listens only on `127.0.0.1`, on the machine's Tailscale
+addresses and on the local network addresses `server.lanAddresses` names (see
+[Local network](#local-network)), never on every interface. It re-reads the Tailscale state in the
 background, so a server that started before Tailscale was up, or while it did
 not answer, starts listening on the Tailscale addresses once it runs, and stops
 when it goes away. In Stim Desktop, the Pair a Phone wizard (Settings > Phones) creates and
@@ -509,6 +510,38 @@ through Funnel. Only the fixed `tailscale serve --bg --https=<free port>
 http://127.0.0.1:<server port>` invocation runs, followed by route verification.
 No LaunchAgent or Funnel configuration is created. Failure output remains
 available for an explicit retry, including Tailscale's HTTPS approval link.
+
+## Local network
+
+Without Tailscale, `stim-server` also serves machines and phones on the same
+local network through `@stim-cli/transport-local`, on the private IPv4
+addresses the machine setting `server.lanAddresses` names: network interface
+names such as `en0`, or addresses. The setting is empty by default, which
+listens on no local network address, and wildcard (`0.0.0.0`), loopback, public
+and IPv6 addresses are refused; the log names each entry it cannot use. The
+server re-reads the setting and the interfaces every few seconds, so a change or
+a new DHCP lease applies without a restart, and the local `/health` reports the
+addresses it listens on as `lan: { addresses, port }`.
+
+A local network connection is plain WebSocket on the server's own port. Every
+connection runs the Noise handshake before any request, so it needs no TLS and
+the address never identifies a client. Before a client authenticates, each
+network listener holds at most 64 connections, 16 from one address; it closes a
+connection that sends no request within 10 seconds or does not finish the
+handshake within 5, and turns an address away for a minute after 5 failed
+handshakes or 60 first contacts naming a pairing token or setup ticket it does
+not hold. `/health` tells a peer only the version, and `/setup/<journal>`
+serves only setup progress, never a secret. Prefer addresses to interface names
+on a machine that moves between networks: an interface name follows it onto
+any private network it joins.
+
+When `server.lanAddresses` is set, `stim-server setup` waits up to 15 seconds for the local network
+listener, and skips the tailnet route only when Tailscale is not running. It prints its endpoints and this server's key fingerprint, and warns when
+the macOS application firewall is on, since other machines cannot connect until
+a person allows stim-server's `node` there. Setup never changes the firewall.
+The requesting machine pins the worker's key only after a person confirms that
+fingerprint in `stim doctor --fix`. `stim-server pair` uses the first local
+network address as the pairing endpoint when Tailscale is not running.
 
 ## Pairing
 
@@ -1136,18 +1169,35 @@ app is running. Automatic CLI placement remains a follow-up in [#2403](https://g
 
 ### Private hosted Metro
 
-The client keeps its verified workspace Metro on loopback. It creates a
-`createMetroGateway` from `@stim-cli/core`, binds it only to its own Tailscale
-address, and supplies the pinned worker's literal tailnet address, local Metro
-port and a fresh 32-byte secret encoded as 64 lowercase hex characters. The
-gateway accepts only that worker address and authenticates each connection
-before forwarding to the fixed local Metro port. It never targets a client
-supplied URL. Close the gateway when its session ends.
+The client keeps its verified workspace Metro on loopback, and the worker never
+connects to the client. On its own approved `device-host` connections, the
+client calls `device-host.metro.link` with `{session}`. The server answers `{}`
+and holds that connection as an idle link of the session; it refuses a session
+that is not this client's ready iOS or Android session and a second link on the
+same connection. A session holds at most 16 idle links: a new one closes the
+oldest, so links whose client vanished without closing them cannot crowd out
+live ones. The server pings each idle link every 15 seconds and ends one that
+missed the previous pong. A link carrying a stream is not checked this way,
+since backpressure can hold its pongs; it ends when either side closes it or
+its TCP connection fails. The feature `hosted-metro-link` advertises it.
 
-Call `device-host.metro.open` with `{session, gatewayPort, secret, clientMetroPort?}` on the
-approved hosted connection. The server connects only to that connection's
-authenticated tailnet peer and returns `{port}` for the worker's loopback
-endpoint. `clientMetroPort` is required for Android and validated as an integer
+Call `device-host.metro.open` with `{session, clientMetroPort?}` on the approved
+hosted connection; it returns `{port}` for the worker's loopback endpoint. A
+request that still carries the retired `gatewayPort` or `secret` comes from a
+client that predates links and is refused with `protocol-unsupported`, naming
+the client update. For each connection the hosted device makes to that
+endpoint, the server takes the newest idle link, waiting up to 10 seconds for
+one, sends it the event `device-host.metro.link.open`, and then carries that
+one TCP stream as binary frames in both directions with backpressure. A clean
+end on either side closes the link connection with code 1000, and the other side
+ends its socket after writing what it already received, on the server as
+long as the device keeps reading within 30 seconds. A device or Metro connection that fails or resets closes the link
+with 4410, and the other side resets its socket too. The client forwards a link only to its fixed loopback
+Metro port, never to a client supplied URL, and opens a replacement link for
+each one the server opens. Client frames stay within the 64 KiB client message
+limit.
+
+`clientMetroPort` is required for Android and validated as an integer
 from 1 through 65535. The session records it alongside the bridge port. Android
 development installation reverses `tcp:<clientMetroPort>` to `tcp:<port>` on
 the exact ledger-owned serial and sets `debug_http_host` to
@@ -1156,10 +1206,9 @@ a fixed reverse worker under its child-aware claim, serialized with install
 and stop, so a client reload restores the mapping after a host adb server
 restart. The worker never restarts the shared adb server. iOS development
 installation uses the bridge port for `RCT_jsLocation` and,
-when offered, the Expo development-client deep link. HTTP and WebSocket bytes
-stream over WireGuard with socket backpressure; no public tunnel, Funnel or
-Tailscale serve configuration change is needed. The 64 KiB server message
-limit remains unchanged.
+when offered, the Expo development-client deep link. No public tunnel, Funnel
+or Tailscale serve configuration change is needed, and the worker needs no
+network path to the client.
 
 An approved client calls `device-host.metro.ports` with `{ports}`, at most 256
 of them, before it starts Metro for an iOS Expo dev client, and the host
@@ -1169,9 +1218,9 @@ apart from the client's own dev-client bridges. The feature
 
 Replaying the same open request keeps the port. Client disconnection leaves
 the bridge available for the same session while its server owner lives. Call
-`device-host.metro.close` to replace a gateway, then reopen on the same port;
+`device-host.metro.close` to change the client Metro port, then reopen on the same port;
 an occupied port refuses rather than sending the app to another listener.
-Closing a bridge interrupts its active streams. Stop, revocation and server
+Closing a bridge closes its idle links and interrupts its active streams. Stop, revocation and server
 shutdown close its sockets before device retirement. After a server owner
 disappears, the retained session requires explicit stop, as app delivery does.
 

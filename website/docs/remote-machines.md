@@ -8,7 +8,9 @@ import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
-A **remote machine** is another machine on your tailnet that Stim can use in two ways.
+A **remote machine** is another machine on your tailnet, or on your local
+network (see [Local network, without Tailscale](#local-network-without-tailscale)),
+that Stim can use in two ways.
 It can compile your app and return the artifact; the app still runs on this
 machine's device unless you select a remote target. It can also host an owned
 simulator or emulator and run your app there. One list, `remote.machines`,
@@ -132,8 +134,8 @@ Desktop control connection. Stop uses the existing cleanup path; remote
 clients keep their own-session-only `device-host.stop` access.
 
 The host boots its owned simulator headless. Debug keeps Metro on this machine
-and connects it through a private tailnet bridge; no `stim start --remote` is
-needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.
+and carries it over connections this machine opens to the host, so the host
+never needs to reach this machine; no `stim start --remote` is needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.
 `--remote-build` independently selects a compatible worker for a Debug cache
 miss. Named hosting has no local fallback. Stop the slot with `stim stop` before
 moving it between local and hosted devices or between hosts.
@@ -254,7 +256,7 @@ use `--remote auto`, which skips it.
 
 The owned emulator boots headless and is parked on stop within the host's
 `pool.androidParkedMax` limit, or deleted when ineligible. Debug keeps Metro
-here through a private tailnet bridge; `metro.publicUrl`, `metro.tunnel` and
+here over connections this machine opens to the host; `metro.publicUrl`, `metro.tunnel` and
 `androidEmulatorApp` are ignored. Each run and reload restores the host's adb
 reverse, including after an adb server restart. Release variants skip Metro.
 Status reports `android.host` per slot with a profile and API name, keeping the
@@ -318,7 +320,7 @@ next collection can retry. A crash before any PID was observed,
 evicted logcat entries and entries persisted beyond the five-second overlap may
 be unavailable. Collection has a bounded output and time budget; an oversized
 query retries the recent tail and records any dropped interval. Stop copies logs
-before and after the host's final collection and retains them locally after
+once, after the host's final collection, and retains them locally after
 emulator parking or deletion. Older hosts without `hosted-android-data` get an update note,
 use uploads and show logs already copied here.
 
@@ -337,8 +339,9 @@ worker machine need Java and the Android SDK. Device and Release/non-Debug build
 EAS/proxy runs, Android CAS compiler-cache builds, and iOS/Android runs with
 artifact caching disabled in settings do not offload.
 
-Both machines need Tailscale running on the same tailnet and Node 22.12.0 or
-later. Sign in to a GUI login session on a worker Mac to run setup and
+Both machines need Node 22.12.0 or later, and either Tailscale running on the
+same tailnet or a shared local network (see
+[Local network, without Tailscale](#local-network-without-tailscale)). Sign in to a GUI login session on a worker Mac to run setup and
 answer its permission prompts. A reused server must speak protocol 2 (stim-server 1.21.0 or later).
 Setup refuses an older Desktop-run server with an update remedy and never
 downgrades a newer server.
@@ -363,7 +366,9 @@ when its default JDK is another one, so no restart is needed, and the fix for a
 missing major is the install command for the worker's OS (for example
 `brew install --cask zulu@17`). Gradle, AGP and Kotlin support only some JDK
 majors and the build cache and artifacts assume one JDK, so a nearby major does
-not count. Also, the worker needs the project's NDK, build-tools and
+not count. The worker also needs the package manager of the project's lockfile
+(`pnpm`, `yarn` or `npm`) on the `PATH` of its stim-server service. Also, the
+worker needs the project's NDK, build-tools and
 compile SDK, or the Android SDK licenses accepted so Gradle downloads what is
 missing on the first build there (the NDK is about 1-2 GB). The project can
 turn that download off with `android.builder.sdkDownload=false` in
@@ -665,12 +670,84 @@ still apply. Setup also accepts `--no-wait` for its managed-service update.
 
 An x86_64 Linux machine can take this machine's offloaded Android debug
 builds. It cannot build for iOS or macOS, and it cannot host simulators or
-emulators. On the Linux machine:
+emulators for Stim. The commands below target Ubuntu 22.04 and 24.04.
 
-1. Install Node 22.12.0 or later, Tailscale signed in to the same tailnet,
-   JDK 17 and the Android SDK with the project's NDK, build-tools and compile
-   SDK. The service finds the SDK in `~/Android/Sdk`; pin any other location
-   below.
+#### Quick path
+
+On the Linux machine, as the user that will own the service (not root), run
+[`scripts/linux-worker/setup.sh`](https://github.com/appandflow/stim/blob/main/scripts/linux-worker/setup.sh)
+from a checkout of this repository, or download that file. It needs `sudo`, and
+it is safe to run again (a rerun restarts the server, which stops a build
+that is running on it):
+
+```bash
+scripts/linux-worker/setup.sh --hostname stim-linux-worker
+```
+
+It installs or verifies:
+
+- Node 22.12.0 or later, with Corepack enabled for `pnpm` and `yarn`, so the
+  worker runs the package manager version in the app's `packageManager` field
+  (a project without that field gets Corepack's default version, which can
+  refuse `--frozen-lockfile`);
+- JDK 17;
+- the Android command-line tools in `~/Android/Sdk`, with `platform-tools`,
+  `platforms;android-37.0`, `build-tools;37.0.0`, `ndk;27.1.12297006` and
+  `cmake;3.22.1`. Name other `sdkmanager` packages as arguments to replace the
+  last four; the script accepts the Android SDK licenses;
+- Tailscale from the official package repository. It runs `tailscale up`, which
+  prints a login URL: open it in a browser to sign the machine in to your
+  tailnet. The script never takes an auth key. It then runs
+  `tailscale set --operator=$USER`;
+- `@stim-cli/server` (`--server-version <version>`, default `latest`), a
+  `loginctl enable-linger`, and the systemd user service from
+  `stim-server service install --serve` with `JAVA_HOME` and `ANDROID_HOME`.
+
+Add `--emulator` to also put your user in the `kvm` group and install the
+Android emulator package and an x86_64 API 36 system image (see
+[Emulators and memory](#emulators-and-memory)). `--no-tailscale` and
+`--no-service` skip those steps, for a container or an image build.
+
+When it finishes it prints the steps for your main machine, which are the same
+as step 4 of the manual path below.
+
+#### Manual path
+
+1. Install what the build needs:
+
+   - **Node 22.12.0 or later.** On Ubuntu, install it from
+     [NodeSource](https://github.com/nodesource/distributions) or use nvm.
+   - **The package manager of the app's lockfile**, on the `PATH` of the
+     service: `pnpm` for a `pnpm-lock.yaml`, `yarn` for `yarn.lock`, and npm
+     comes with Node. The worker runs `pnpm install --frozen-lockfile` (or the
+     yarn or npm equivalent), and without the tool the build is refused with
+     `deps-failed: spawn pnpm ENOENT`. Corepack, which ships with Node 22,
+     provides the version the project pins:
+     `sudo corepack enable pnpm yarn` (without `sudo` when Node is under your
+     home, as with nvm).
+   - **Tailscale**, signed in to the same tailnet.
+   - **JDK 17**: `sudo apt install openjdk-17-jdk-headless`.
+   - **The Android SDK**, in `~/Android/Sdk` (the service finds it there; pin
+     another location with `ANDROID_HOME` below). Install the command-line
+     tools from the
+     [Android Studio downloads page](https://developer.android.com/studio#command-line-tools-only)
+     into `~/Android/Sdk/cmdline-tools/latest`, accept the licenses, and
+     install the packages the app names:
+
+     ```bash
+     export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+     yes | ~/Android/Sdk/cmdline-tools/latest/bin/sdkmanager --licenses
+     ~/Android/Sdk/cmdline-tools/latest/bin/sdkmanager "platform-tools" \
+       "platforms;android-37.0" "build-tools;37.0.0" \
+       "ndk;27.1.12297006" "cmake;3.22.1"
+     ```
+
+     These are the packages for `apps/mobile` in this repository (React
+     Native 0.88). The platform package is `android-37.0`, not `android-37`.
+     For another app, read `compileSdk`, `buildTools` and `ndkVersion` from
+     `node_modules/react-native/gradle/libs.versions.toml`, or let Gradle
+     download what is missing on the first build (the NDK is 1-2 GB).
+
 2. Let your user run `tailscale serve`, and keep your services running after
    you log out:
 
@@ -680,10 +757,12 @@ emulators. On the Linux machine:
    ```
 
 3. Install the server globally (the service records its paths, so not from an
-   npx cache) and run it as a systemd user service with a tailnet-only route:
+   npx cache) and run it as a systemd user service with a tailnet-only route.
+   With NodeSource Node the global prefix is `/usr`, so `npm install --global`
+   needs `sudo`; with nvm it does not:
 
    ```bash
-   npm install --global @stim-cli/server@latest
+   sudo npm install --global @stim-cli/server@latest
    stim-server service install --serve \
      --env JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
      --env ANDROID_HOME=$HOME/Android/Sdk
@@ -695,15 +774,125 @@ emulators. On the Linux machine:
    `service rollback` work as on a Mac, and an approved client can update the
    server remotely.
 
-4. On your main machine, add it to `remote.machines` and run
-   `stim doctor --fix` as above. Run the setup command it prints on the Linux
-   machine, or the one the Desktop wizard generates; both carry `--build` only. Setup on
-   Linux refuses `--device-host` and skips Stim Host and the permission steps.
-   `stim doctor --fix` does not ask a machine that Tailscale reports as running
-   an OS other than macOS for device-host access, since it can never grant it.
+4. On your main machine, add the machine to `remote.machines`, which takes a
+   JSON array of tailnet names, and run `stim doctor --fix`:
+
+   ```bash
+   stim settings set remote.machines '["stim-linux-worker"]'
+   stim doctor --fix
+   ```
+
+   Doctor prints a setup command with a one-time ticket. Run it on the Linux
+   machine (add `--yes` over a non-interactive SSH session), then run
+   `stim doctor --fix` again so the client finishes the pairing. Both carry
+   `--build` only. Setup on Linux refuses `--device-host` and skips Stim Host
+   and the permission steps. `stim doctor --fix` does not ask a machine that
+   Tailscale reports as running an OS other than macOS for device-host access,
+   since it can never grant it.
+
+5. Try a build:
+
+   ```bash
+   stim android --remote-build stim-linux-worker --no-build-cache
+   ```
 
 `stim doctor` on the main machine rates a Linux machine for Android only, so a
 project with iOS too still reports it offloadable for Android builds.
+
+#### Emulators and memory
+
+Stim does not host emulators on a Linux worker. If you run one there yourself
+(outside Stim, for example to check an APK):
+
+- The emulator needs `/dev/kvm`, which is `root:kvm 0660`. Add your user to the
+  group with `sudo usermod -aG kvm $USER` and log in again; `emulator
+-accel-check` then reports KVM as usable. On a cloud VM, pick an instance
+  type with nested virtualization.
+- It needs an x86_64 build. An offloaded build targets the ABI of the emulator
+  on the client, which is `arm64-v8a` on an Apple Silicon Mac. An arm64-only
+  APK installs on an x86_64 emulator through translation but crashes when it
+  loads its native libraries. `stim android` builds the ABI of its own device;
+  for an emulator on the worker, run Gradle there yourself with
+  `-PreactNativeArchitectures=x86_64`.
+- On Ubuntu 24.04 with emulator 37.2, an API 36 `google_apis` x86_64 image
+  booted and stayed up; an API 37 image rebooted every 20 seconds. The
+  emulator API level does not have to match the app's `compileSdk`.
+
+A build and an emulator together need memory. A 16 GB machine ran out of it
+with one emulator (3.3 to 3.7 GB resident for a 2 GB guest) next to a warm
+Gradle daemon (4 GB or more), and the kernel stopped the daemon and restarted
+`stim-server`. Use 32 GB, or stop the daemon (`./gradlew --stop`) before
+starting an emulator.
+
+### Local network, without Tailscale
+
+A worker on the same local network as this machine can take its builds without
+Tailscale. Name it in `remote.machines` as `local:` and its private IPv4 address
+or host name, with an optional stim-server port (default 7787). Every connection
+runs Stim's own authenticated, encrypted handshake, so it travels as plain
+WebSocket without TLS.
+
+On the worker, first choose where stim-server listens. `server.lanAddresses`
+takes network interface names, such as `en0`, or private IPv4 addresses. It is
+empty by default, which listens on no local network address, and refuses
+`0.0.0.0`, loopback, public and IPv6 addresses. A running server applies a
+change within a few seconds. An interface name follows the interface onto any
+private network it joins, such as a coffee shop's, so on a laptop or any machine
+that moves between networks, name its address instead; use an interface name
+only on a worker that stays on one network:
+
+<StimTabs code={`stim settings set server.lanAddresses '["10.0.0.92"]'`} />
+
+On this machine, add the worker and ask for access:
+
+<StimTabs
+code={`stim settings set remote.machines '["local:10.0.0.92"]'
+stim doctor --fix`}
+/>
+
+On the worker, run the `stim-server setup` command doctor printed; on a Linux or
+Windows worker, which takes builds only, leave out `--device-host`. Setup checks
+that stim-server listens on the local network, and skips the tailnet route when
+Tailscale is not running there. It prints the endpoints and the worker's
+**server key fingerprint**, and waits for this machine.
+
+Then run `stim doctor --fix` again on this machine, **in a terminal**. It shows
+the fingerprint the worker answered with and asks whether it matches the one
+setup printed. Answer `y` only when it does. Stim pins the worker's key only
+then, and every later connection must prove that key. Until a person confirms,
+`stim doctor` reports the machine as `key-unconfirmed` and Stim does not use it.
+Stim never answers this question for you, and neither should an agent.
+
+Nothing on a local network vouches for a machine the way a tailnet does: an
+address can be taken over. The setup ticket already keeps a machine without it
+from completing the handshake, and the fingerprint check also catches a ticket
+that reached the wrong machine. When the fingerprints differ, do not confirm;
+check the address in `remote.machines`.
+
+The setup command doctor prints carries the ticket in `STIM_SETUP_TICKET`, and
+the ticket is a credential: once setup stores it, the first machine to spend it
+gets the approval. On a tailnet that machine also had to be in your tailnet; on
+a local network it only needs the ticket and a route to the worker. Copy the
+command only to the worker. Afterward, `stim-server devices` on the worker lists
+the address each approved machine connected from; the name in setup's approval
+line is the one the requesting machine chose. The ticket also lands in
+the worker's shell history; it stops working when it expires, within two hours.
+
+On a Mac with the macOS firewall on, setup warns that macOS asks whether the
+stim-server's `node` may accept incoming connections. Choose **Allow**, or allow
+it in **System Settings > Network > Firewall > Options**; other machines cannot
+connect until then. The question appears in the worker's logged-in session, so
+answer it there. Setup never changes the firewall. On Linux, allow TCP port 7787
+from your local network in the firewall you use, for example
+`sudo ufw allow from 192.168.1.0/24 to any port 7787 proto tcp`. A Linux worker
+set up with `scripts/linux-worker/setup.sh --no-tailscale` takes the same
+`server.lanAddresses` setting.
+
+Offloaded builds and hosted Debug and Release runs on a simulator or emulator
+work over the local network. Agent control of hosted apps needs a tailnet
+machine. `stim-server pair` puts the worker's local network
+endpoint in the phone pairing code when Tailscale is not running there and
+`server.lanAddresses` is set.
 
 ### Windows worker
 
@@ -846,6 +1035,18 @@ secrets: Stim assumes every paired Mac belongs to the same person. Nothing under
 neither is build output the fingerprint ignores, such as `ios/Pods` or
 `android/build`.
 
+A worker on the local network listens only on the private addresses
+`server.lanAddresses` names. Before a client authenticates, it answers only the
+handshake, its version on `/health`, and setup journals named by a ticket. A
+setup journal, at `/setup/<journal>`, shows setup's progress, such as its steps,
+endpoints and grant ids, but never a ticket or secret, and its name derives from
+the ticket, so a peer cannot guess it. Each listening address holds at most 64
+unauthenticated connections, 16 from one address, closes one that sends no
+request within 10 seconds or does not finish the handshake within 5, and turns
+an address away for a minute after 5 failed handshakes or 60 first contacts
+naming a ticket it does not hold. An address never authenticates anyone or names
+a client's records.
+
 Build approval permits the client's project code, including config plugins,
 CocoaPods hooks, Xcode script phases and Gradle plugins, to run as the server
 user. It is not a sandbox for untrusted projects. Approved build or device-host
@@ -896,7 +1097,15 @@ app still shows its short label.
 |                       | `server-not-ready`                  | The route answers 503: stim-server runs but does not serve. The message gives the cause when the server reports one, such as a Stim home it cannot read because its disk stopped answering. | Check the disk that holds the Stim home on that Mac; stim-server serves again by itself once it answers. `stim-server service status` there shows the exact reason. |
 |                       | `server-no-answer`                  | `tailscale ping` reaches the Mac, but the serve route and stim-server sent no reply in time: stim-server may be starting, stalled or restarting.                                            | On that Mac, run `stim-server service status`; it reports a restart loop or a Stim home it is still reading, and the log file to read.                              |
 |                       | `connect-failed`                    | The connection failed in a way none of the other codes names.                                                                                                                               | On that Mac, run `stim-server service status`.                                                                                                                      |
+| Local network         | `lan-not-listening`                 | The worker answers, but nothing accepts connections on its stim-server port.                                                                                                                | On that machine, run `stim-server service status` and check `server.lanAddresses`; the server log names each entry it cannot use.                                   |
+|                       | `lan-no-answer`                     | Nothing answered the connection.                                                                                                                                                            | Check that the machine is awake and on this network, and that its firewall allows stim-server's `node`.                                                             |
 | Compatibility         | `server-outdated`                   | stim-server speaks an older protocol.                                                                                                                                                       | Run the update command the finding prints.                                                                                                                          |
+
+`stim ios|android|macos --remote` prints the same message and remedy when the
+machine does not connect, for example `mini is offline on Tailscale (last seen
+18 h ago)`. It reads `tailscale status` only after the connection failed, and
+skips doctor's `tailscale ping`, so a silent connection reads `peer-offline` or
+`peer-no-answer` and never `server-no-answer`.
 
 A machine that answers outranks Tailscale's own online flag, which can lag a
 reachable Mac. Approval states (`pending`, `revoked`, `lapsed`, `key-changed`)

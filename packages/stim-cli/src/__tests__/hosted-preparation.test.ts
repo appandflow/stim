@@ -25,6 +25,9 @@ import {
 import { placeHostedMacos } from '../device-host/hosted-macos.ts';
 import { placeHostedNative, prepareHostedNative } from '../device-host/hosted-native.ts';
 import { BuildConnection } from '../offload/client.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
 
 const run = vi.hoisted((): { signal?: AbortSignal } => ({}));
 vi.mock('../engine/native-run.ts', async (original) => ({
@@ -289,6 +292,40 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     await vi.advanceTimersByTimeAsync(0);
     expect(outcome).toContain('hosted app installation was cancelled');
   });
+
+  test.skipIf(platform === 'macos')(
+    'Ctrl-C while the app is delivered drains the run and closes the host connection',
+    async () => {
+      readyAt = 0;
+      const runAbort = new AbortController();
+      run.signal = runAbort.signal;
+      const context = testContext();
+      const request = host.connection.request.bind(host.connection);
+      let release: ((reply: Awaited<ReturnType<typeof request>>) => void) | undefined;
+      host.connection.request = (method, params) =>
+        method === 'device-host.app.offer'
+          ? new Promise((resolve) => {
+              release = resolve;
+            })
+          : request(method, params);
+      host.connection.close = vi.fn<() => void>(() =>
+        release?.({ error: { code: 'closed', message: 'the connection was closed by this client' } }),
+      );
+      let outcome: string | undefined;
+      void withAmbientContext(context, place).then(
+        () => (outcome = 'placed'),
+        (error: unknown) => (outcome = String(error)),
+      );
+      await vi.advanceTimersByTimeAsync(10 * POLL_MS);
+      expect(release).toBeDefined();
+      expect(outcome).toBeUndefined();
+      runAbort.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(operationState(context).draining).toBe(true);
+      expect(host.connection.close).toHaveBeenCalled();
+      expect(outcome).toContain('closed by this client');
+    },
+  );
 
   test('refuses a preparation the host stopped with its notice and no reconcile remedy', async () => {
     pendingState = 'stopped';

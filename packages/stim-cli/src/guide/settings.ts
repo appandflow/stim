@@ -631,6 +631,8 @@ floors below; report measures and plans and deletes nothing; off disables it.
 STIM_HOME and CI make the mode off unless STIM_MAINTENANCE is set.
 maintenance.keep is a project setting: pin a workspace so a pass never clears
 its build outputs or removes its worktree.
+maintenance.idleStopHours takes machine or project layers, so one workspace can
+stop sooner, later or never.
 See \`guide cleanup\` for checks, plans and log paths.
 
 ${SETTINGS.filter((setting) => setting.key.startsWith('maintenance.') || /^caches\..*MaxGb$/.test(setting.key))
@@ -805,6 +807,38 @@ machine a \`priority\` in its JSON:
 A host reports its own load limit in its device offer; a stim-server older than
 that does not, and this machine's \`server.maxLoadPerCore\` stands in for it.
 
+REMOTE MACHINES ON THE LOCAL NETWORK
+A machine on the same local network, without Tailscale, is named
+\`local:<host>\`: its private IPv4 address or host name, with an optional
+stim-server port (default 7787). On the worker, a person first chooses where
+stim-server listens with the machine setting \`server.lanAddresses\`, a list of
+network interface names or private IPv4 addresses. It defaults to [], which
+listens on no local network address; wildcard, loopback, public and IPv6
+addresses are refused, and the running server applies a change within seconds.
+An interface name follows the interface onto whatever private network it
+joins, so name the address on a machine that moves between networks, and an
+interface only on a worker that stays put. Then the person runs the setup
+command \`stim doctor --fix\` prints here:
+
+  stim settings set server.lanAddresses '["10.0.0.92"]'     # on the worker
+  stim settings set remote.machines '["local:10.0.0.92"]'   # on this machine
+  stim doctor --fix
+
+Every connection runs Stim's Noise handshake, so plain WebSocket carries it
+without TLS, and the address never identifies anyone. Nothing on a local network
+vouches for the worker's key, so \`stim-server setup\` prints the worker's server
+key fingerprint and \`stim doctor --fix\`, run by a person in a terminal, shows
+the fingerprint the worker answered with and pins the key only after they
+confirm it matches. Until then the entry reports key-unconfirmed and is not
+used. Agents never answer that question. The printed setup command carries the
+ticket, which is a credential: whoever spends it first, after setup stores it,
+gets the approval, and on a local network that takes only the ticket and a
+route to the worker, not tailnet membership. Agents show it only to the user.
+Offloaded builds and hosted Debug and
+Release runs work there; agent control of hosted apps needs a tailnet machine.
+\`stim-server pair\` puts \`ws://<address>:<port>\` in the phone pairing code
+when Tailscale is not running and \`server.lanAddresses\` is set.
+
 Automatic membership is separate from approval. In Desktop Settings > Remote
 Machines, use Builds enabled and Simulators enabled for this machine or a
 configured remote. The equivalent machine settings list the excluded members;
@@ -943,7 +977,8 @@ stim-server too old to report one needs the same Stim build as this machine.
 \`remote.build\` (machine scope, default auto) selects placement for
 \`ios\`, \`android\` and \`macos\`. \`--remote-build <local|auto|remote|remote-only|name>\`
 overrides STIM_REMOTE_BUILD, which overrides the setting. A blank environment
-value is unset. Trimmed placement words are case-insensitive. Machine names match
+value is unset. \`doctor\` flags an invalid value in the machine config or in
+STIM_REMOTE_BUILD before a build refuses on it. Trimmed placement words are case-insensitive. Machine names match
 configured names case-insensitively, with port 7443 when omitted; reports use
 the configured entry.
 
@@ -957,6 +992,13 @@ the configured entry.
                it refuses with STIM_OFFLOAD_REFUSED
   name         requires a matching entry in remote.machines, already paired and
                approved for builds; ignores this machine's load/slot gating
+
+\`remote.buildMode\` and STIM_REMOTE_BUILD_MODE were removed and are no longer read.
+\`doctor\` and \`stim settings\` report any left in a config file or the environment,
+\`stim settings set remote.buildMode\` refuses with the \`remote.build\` command that
+replaces it (auto stays auto, force becomes remote, off becomes local), and
+\`stim settings unset remote.buildMode\` removes the leftover key from every layer
+that has it (--scope limits it to one).
 
 A name never prompts for pairing, tries another remote machine or falls back here.
 remote-only refuses instead of building here for a build that cannot leave this
@@ -1037,7 +1079,8 @@ the ones it offloaded.
 \`server.maxLoadPerCore\` (default 2) is also the busy threshold for
 automatic iOS, Android and macOS placement. It is the load per core at which a
 machine counts as saturated: each machine applies its own value, and a remote
-machine past it is skipped like a full one.
+machine past it is skipped like a full one. \`stim status\` shows this machine's
+load per core against it, as \`capacity.load\` in JSON.
 
 Device, Release and
 \`--remote eas|proxy\` builds, Android builds with the Apple Clang CAS compiler cache,
@@ -1234,7 +1277,7 @@ scope, so it needs no --scope. Run it from the workspace:
 
 \`stim status --json\` then reports hidden: true on that environment, and
 clients that read it list the workspace under Hidden. The next start, ios,
-android, web, macos, reload or worktree warm in the workspace clears it, so
+android, web, macos, reload, logs or worktree warm in the workspace clears it, so
 a workspace in use is never hidden. \`worktree remove\` drops it with the
 workspace.
 
@@ -1248,6 +1291,9 @@ be setup steps are supplied by Stim on the command lines it composes itself:
                SWIFT_OTHER_PREFIX_MAPPINGS on a Swift 6.4+ toolchain -- so no
                Podfile post_install block (Xcode 26+ only, and skipped when the
                project configured ccache, which defeats it)
+               Debug builds for the iOS simulator also get
+               DEBUG_INFORMATION_FORMAT=dwarf, which skips the dSYM bundle;
+               Release and device builds keep the project's setting
   gradlew      --build-cache -- so no org.gradle.caching=true in a committed
                gradle.properties. Debug builds add
                -PreactNativeArchitectures=<target ABI> when the owned

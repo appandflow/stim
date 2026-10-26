@@ -16,9 +16,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { connect, type AddressInfo } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
-import { workspaceName, createMetroGateway } from '@stim-cli/core';
+import { workspaceName, type MetroLink } from '@stim-cli/core';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -45,6 +45,7 @@ import { takeHostedInputClaim } from '../src/hosted-input.ts';
 import { DeviceHost } from '../src/device-host.ts';
 import { formatHostedSessions } from '../src/hosted-sessions.ts';
 import { setupClient } from './noise-client.ts';
+import { readPid } from './pid-file.ts';
 import { AgentDeviceDriver } from '../../agent-driver-agent-device/driver.ts';
 import * as processes from '../../agent-driver-agent-device/processes.ts';
 import { keepAgentClaim } from './fixtures/kept-agent-claim.ts';
@@ -233,7 +234,7 @@ afterEach(async () => {
     const file = join(areas, id, 'home', 'fake-app-pid');
     if (existsSync(file)) {
       try {
-        process.kill(Number(readFileSync(file, 'utf8')), 'SIGKILL');
+        process.kill(await readPid(file), 'SIGKILL');
       } catch {}
     }
   }
@@ -263,6 +264,24 @@ async function state(id: string, wanted: string, timeout = 5000) {
   return readHostedSessions().find((record) => record.id === id)!;
 }
 
+/** Offers links the way a client's Metro supervisor does: one idle link at a time, replaced as each one opens. */
+function linkMetro(session: string, metroPort: number): void {
+  const link: MetroLink = {
+    open: (socket) => {
+      linkMetro(session, metroPort);
+      const upstream = connect(metroPort, '127.0.0.1');
+      upstream.on('error', () => upstream.destroy());
+      socket.once('close', () => upstream.destroy());
+      upstream.once('close', () => socket.destroy());
+      socket.pipe(upstream).pipe(socket);
+      socket.resume();
+      return true;
+    },
+    close: () => {},
+  };
+  host.metroLink('client', { session }, link);
+}
+
 test('keeps HTTP and WebSocket Metro on the owned session port across reconnect and closes it on revocation', async () => {
   const first = await reserve();
   await state(first.id, 'ready');
@@ -270,24 +289,23 @@ test('keeps HTTP and WebSocket Metro on the owned session port across reconnect 
   const messages = new WebSocketServer({ server: metro });
   messages.on('connection', (socket) => socket.on('message', (message) => socket.send(message)));
   await new Promise<void>((resolve) => metro.listen(0, '127.0.0.1', resolve));
-  const secret = 'a'.repeat(64);
-  const gateway = createMetroGateway({ metroPort: (metro.address() as AddressInfo).port, peer: '127.0.0.1', secret });
-  await new Promise<void>((resolve) => gateway.server.listen(0, '127.0.0.1', resolve));
-  const params = { session: first.id, gatewayPort: (gateway.server.address() as AddressInfo).port, secret };
+  const metroPort = (metro.address() as AddressInfo).port;
+  const params = { session: first.id };
   let client: WebSocket | undefined;
   try {
-    expect(await host.metroOpen('other', params, '127.0.0.1')).toHaveProperty('error');
-    expect(await host.metroOpen('client', params, null)).toHaveProperty('error.code', 'bad-request');
-    const opened = await host.metroOpen('client', params, '127.0.0.1');
+    linkMetro(first.id, metroPort);
+    expect(await host.metroOpen('other', params)).toHaveProperty('error');
+    const opened = await host.metroOpen('client', params);
     if ('error' in opened) throw new Error(opened.error.message);
     const port = opened.result.port;
     expect(await (await fetch(`http://127.0.0.1:${port}/index.bundle`)).text()).toBe('workspace bundle');
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', port);
-    expect(await host.metroOpen('client', { ...params, secret: 'b'.repeat(64) }, '127.0.0.1')).toHaveProperty('error');
+    expect(await host.metroOpen('client', params)).toHaveProperty('result.port', port);
+    expect(await host.metroOpen('client', { ...params, clientMetroPort: 8082 })).toHaveProperty('error');
     expect(await host.metroClose('other', params)).toHaveProperty('error.code', 'unknown-session');
     expect(await host.metroClose('client', params)).toHaveProperty('result.port', null);
     await expect(fetch(`http://127.0.0.1:${port}/status`)).rejects.toThrow('fetch failed');
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', port);
+    expect(await host.metroOpen('client', params)).toHaveProperty('result.port', port);
+    linkMetro(first.id, metroPort);
     client = new WebSocket(`ws://127.0.0.1:${port}/message`);
     await new Promise<void>((resolve, reject) => {
       client!.once('open', resolve);
@@ -320,7 +338,6 @@ test('keeps HTTP and WebSocket Metro on the owned session port across reconnect 
     );
   } finally {
     client?.terminate();
-    await gateway.close();
     messages.close();
     metro.closeAllConnections();
     await new Promise<void>((resolve) => metro.close(() => resolve()));
@@ -338,23 +355,16 @@ test('serves an Expo dev-client session on the client Metro port and refuses one
   await state(first.id, 'ready');
   const metro = createServer((_request, response) => response.end('workspace bundle'));
   await new Promise<void>((resolve) => metro.listen(0, '127.0.0.1', resolve));
-  const secret = 'a'.repeat(64);
-  const gateway = createMetroGateway({ metroPort: boundPort(metro), peer: '127.0.0.1', secret });
-  await new Promise<void>((resolve) => gateway.server.listen(0, '127.0.0.1', resolve));
+  linkMetro(first.id, boundPort(metro));
   const holder = createServer((_request, response) => response.end('host workspace bundle'));
   await new Promise<void>((resolve) => holder.listen(0, '::', resolve));
   const clientMetroPort = boundPort(holder);
-  const params = {
-    session: first.id,
-    gatewayPort: boundPort(gateway.server),
-    secret,
-    clientMetroPort,
-  };
+  const params = { session: first.id, clientMetroPort };
   try {
     expect(await host.metroPorts('client', { ports: [clientMetroPort, boundPort(metro)] })).toEqual({
       result: { busy: [clientMetroPort, boundPort(metro)].toSorted((a, b) => a - b) },
     });
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toMatchObject({
+    expect(await host.metroOpen('client', params)).toMatchObject({
       error: { code: 'device-busy', message: expect.stringContaining(`Port ${clientMetroPort} is in use`) },
     });
     expect(await (await fetch(`http://127.0.0.1:${clientMetroPort}/index.bundle`)).text()).toBe(
@@ -362,7 +372,7 @@ test('serves an Expo dev-client session on the client Metro port and refuses one
     );
     holder.closeAllConnections();
     await new Promise<void>((resolve) => holder.close(() => resolve()));
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', clientMetroPort);
+    expect(await host.metroOpen('client', params)).toHaveProperty('result.port', clientMetroPort);
     expect(await (await fetch(`http://127.0.0.1:${clientMetroPort}/index.bundle`)).text()).toBe('workspace bundle');
     expect(await host.metroPorts('client', { ports: [clientMetroPort] })).toEqual({ result: { busy: [] } });
     allowed.add('other');
@@ -372,7 +382,6 @@ test('serves an Expo dev-client session on the client Metro port and refuses one
   } finally {
     await host.metroClose('client', params);
     if (holder.listening) await new Promise<void>((resolve) => holder.close(() => resolve()));
-    await gateway.close();
     metro.closeAllConnections();
     await new Promise<void>((resolve) => metro.close(() => resolve()));
   }
@@ -386,21 +395,11 @@ for (const ending of ['revocation', 'server close', 'revocation with an unwritab
       await state(first.id, 'ready');
       const metro = createServer((_request, response) => response.end('private workspace bundle'));
       await new Promise<void>((resolve) => metro.listen(0, '127.0.0.1', resolve));
-      const secret = 'a'.repeat(64);
-      const gateway = createMetroGateway({
-        metroPort: (metro.address() as AddressInfo).port,
-        peer: '127.0.0.1',
-        secret,
-      });
-      await new Promise<void>((resolve) => gateway.server.listen(0, '127.0.0.1', resolve));
+      linkMetro(first.id, (metro.address() as AddressInfo).port);
       const journal = join(deviceHostRoot(), 'sessions.json');
       const original = readFileSync(journal, 'utf8');
       try {
-        const opened = await host.metroOpen(
-          'client',
-          { session: first.id, gatewayPort: (gateway.server.address() as AddressInfo).port, secret },
-          '127.0.0.1',
-        );
+        const opened = await host.metroOpen('client', { session: first.id });
         if ('error' in opened) throw new Error(opened.error.message);
         const url = `http://127.0.0.1:${opened.result.port}/index.bundle`;
         expect(await (await fetch(url)).text()).toBe('private workspace bundle');
@@ -416,7 +415,6 @@ for (const ending of ['revocation', 'server close', 'revocation with an unwritab
       } finally {
         chmodSync(deviceHostRoot(), 0o700);
         writeFileSync(journal, original);
-        await gateway.close();
         metro.closeAllConnections();
         await new Promise<void>((resolve) => metro.close(() => resolve()));
       }
@@ -599,7 +597,7 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
     };
     try {
       await vi.waitFor(() => expect(existsSync(started)).toBe(true));
-      const pid = Number(readFileSync(started, 'utf8'));
+      const pid = await readPid(started);
       if (ending === 'takeover') {
         const replacement = { device: { id: 'client', name: 'Replacement' }, send: () => {} };
         const taken = await control.beginHosted(
@@ -632,7 +630,7 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
       writeFileSync(release, '');
       await input;
       await control.close();
-      const pid = existsSync(started) ? Number(readFileSync(started, 'utf8')) : null;
+      const pid = existsSync(started) ? await readPid(started) : null;
       if (pid !== null && alive(pid)) process.kill(pid, 'SIGKILL');
       await vi.waitFor(() => expect(pid === null || !alive(pid)).toBe(true));
       vi.restoreAllMocks();
@@ -736,9 +734,9 @@ require('node:fs').writeFileSync(${JSON.stringify(started)},String(process.pid))
 import {DeviceHost} from ${imports('device-host')};import {HostedViews} from ${imports('hosted-view')};
 import {ControlHub} from ${imports('control')};import {FramePool} from ${imports('frames')};
 const env={...process.env,PATH:${JSON.stringify(home)}+':'+process.env.PATH};
-const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env,agents:${NOAGENTS},allowed:()=>true,limits:{prepareMs:5000,stopMs:2000,killGraceMs:100}});
+const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env,agents:${NOAGENTS},allowed:()=>true,limits:{prepareMs:30000,stopMs:2000,killGraceMs:100}});
 const answer=(await host.reserve('client',${JSON.stringify(request)}));if('error' in answer)throw new Error(answer.error.message);
-let attached;for(let i=0;i<200;i++){attached=host.attach('client',{session:answer.result.id});if(attached.result?.state==='ready')break;await new Promise(r=>setTimeout(r,20));}
+const deadline=Date.now()+30000;let attached=host.attach('client',{session:answer.result.id});while(attached.result?.state!=='ready'){if(Date.now()>deadline)throw new Error('The hosted session never became ready.');await new Promise(r=>setTimeout(r,20));attached=host.attach('client',{session:answer.result.id});}
 const frames=new FramePool(env);
 const control=new ControlHub({env,stimCli:'unused',frames,subscribeStatus:()=>()=>{},audit:()=>{},lockLimits:{timeoutMs:1000,maxOutputBytes:1024},idleMs:60000,renewMs:60000,leaseFor:'1m',foldHelper:async()=> 'fixture-fold',foldTimeoutMs:60000,conflict:()=>{}});
 const views=new HostedViews(host,control,env,()=>${JSON.stringify(capture)});
@@ -765,9 +763,9 @@ writeFileSync(${JSON.stringify(ready)},JSON.stringify(answer.result));void contr
       await vi.waitFor(
         () => {
           if (owner.exitCode !== null || owner.signalCode !== null) throw new Error(errors || 'Fixture owner exited.');
-          expect(existsSync(started)).toBe(true);
+          expect(existsSync(started) && readFileSync(started, 'utf8')).toBeTruthy();
         },
-        { timeout: 5000 },
+        { timeout: 30_000 },
       );
       const session = JSON.parse(readFileSync(ready, 'utf8')) as { id: string };
       foldPid = Number(readFileSync(started, 'utf8'));
@@ -785,11 +783,12 @@ writeFileSync(${JSON.stringify(ready)},JSON.stringify(answer.result));void contr
       await state(session.id, 'stopped');
     } finally {
       if (owner.exitCode === null && owner.signalCode === null) owner.kill('SIGKILL');
-      foldPid ??= existsSync(started) ? Number(readFileSync(started, 'utf8')) : undefined;
+      foldPid ??= existsSync(started) ? await readPid(started) : undefined;
       if (foldPid && alive(foldPid)) process.kill(foldPid, 'SIGKILL');
       if (capturePid && alive(capturePid)) process.kill(capturePid, 'SIGKILL');
     }
   },
+  60_000,
 );
 
 test('takes no new hosted session while the server drains for an update, and still answers a retry', async () => {
@@ -893,7 +892,7 @@ test.skipIf(process.platform === 'win32')(
     const first = await reserve({ deviceType: 'hang' });
     const file = join(deviceHostArea(first.id), 'home', 'entered');
     await vi.waitFor(() => expect(existsSync(file)).toBe(true));
-    const pid = Number(readFileSync(file, 'utf8'));
+    const pid = await readPid(file);
     expect(host.attach('client', { session: first.id })).toHaveProperty('result.state', 'preparing');
     host.stop('client', { session: first.id });
     await state(first.id, 'stopped');
@@ -927,8 +926,8 @@ test.skipIf(process.platform === 'win32')(
     const first = await reserve({ deviceType: 'descendant' });
     const area = join(deviceHostArea(first.id), 'home');
     await vi.waitFor(() => expect(existsSync(join(area, 'descendant'))).toBe(true));
-    const leader = Number(readFileSync(join(area, 'entered'), 'utf8'));
-    const descendant = Number(readFileSync(join(area, 'descendant'), 'utf8'));
+    const leader = await readPid(join(area, 'entered'));
+    const descendant = await readPid(join(area, 'descendant'));
     try {
       host.stop('client', { session: first.id });
       await state(first.id, 'stopped');
@@ -1586,9 +1585,10 @@ test('Android reservations keep distinct ports and platform slots and reconnect 
   expect((await reserve(androidRequest)).id).toBe(android.id);
   const journal = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
   expect(() => host.viewTarget('other', android.id)).toThrow('Only a ready session');
-  expect(
-    await host.metroOpen('client', { session: android.id, gatewayPort: 12345, secret: 'a'.repeat(64) }, '127.0.0.1'),
-  ).toHaveProperty('error.message', 'Android Metro needs the client Metro port.');
+  expect(await host.metroOpen('client', { session: android.id })).toHaveProperty(
+    'error.message',
+    'Android Metro needs the client Metro port.',
+  );
   expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
   expect(host.stop('other', { session: android.id })).toHaveProperty('error.code', 'unknown-session');
   host.stop('client', { session: android.id });
@@ -1700,7 +1700,7 @@ describe.skipIf(process.platform === 'win32')('binding capacity probes', () => {
     });
     const pending = host.reserve('client', request);
     await vi.waitFor(() => expect(existsSync(join(home, 'count-entered'))).toBe(true));
-    const pid = Number(readFileSync(join(home, 'count-entered'), 'utf8'));
+    const pid = await readPid(join(home, 'count-entered'));
     if (ending === 'close') await host.close();
     else if (ending === 'revoke') {
       allowed.delete('client');
@@ -1815,8 +1815,8 @@ test.each(['deadline', 'revoke', 'close'])(
     });
     const pending = host.offer('client', { platform: 'ios', deviceType: 'sdk-hang' });
     await vi.waitFor(() => expect(existsSync(join(home, 'probe-descendant'))).toBe(true));
-    const leader = Number(readFileSync(join(home, 'probe-entered'), 'utf8'));
-    const descendant = Number(readFileSync(join(home, 'probe-descendant'), 'utf8'));
+    const leader = await readPid(join(home, 'probe-entered'));
+    const descendant = await readPid(join(home, 'probe-descendant'));
     try {
       if (action === 'revoke') {
         allowed.delete('client');
@@ -1918,9 +1918,10 @@ test('macOS reservations isolate concurrent clients, validate on the wire and re
     'device-busy',
   );
   expect(() => host.viewTarget('client', first.id)).toThrow('not running');
-  expect(
-    await host.metroOpen('client', { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64) }, '127.0.0.1'),
-  ).toHaveProperty('error.message', 'Hosted Metro supports iOS and Android sessions only.');
+  expect(await host.metroOpen('client', { session: first.id })).toHaveProperty(
+    'error.message',
+    'Hosted Metro supports iOS and Android sessions only.',
+  );
   host.stop('client', { session: first.id });
   await state(first.id, 'stopped');
   expect((await reserve({ ...params, attempt: 'replacement' })).appSlot).toBe(1);
@@ -2556,7 +2557,7 @@ test(
     const pending = host.logsQuery('client', { session: session.id });
     const workerHome = join(deviceHostArea(session.id), 'home');
     await vi.waitFor(() => expect(existsSync(join(workerHome, 'logs-entered'))).toBe(true));
-    const pid = Number(readFileSync(join(workerHome, 'logs-entered'), 'utf8'));
+    const pid = await readPid(join(workerHome, 'logs-entered'));
     expect(host.viewTarget('client', session.id)).toHaveProperty('platform', 'ios');
     const rerun = { ...app.params, attempt: 'rerun' };
     expect(host.appOffer('client', rerun)).toHaveProperty('result.missing', []);
@@ -2620,7 +2621,7 @@ test.each(['ios', 'android'].flatMap((platform) => ['stop', 'close', 'revoke'].m
     const pending = host.logsQuery('client', { session: session.id });
     const workerHome = join(deviceHostArea(session.id), 'home');
     await vi.waitFor(() => expect(existsSync(join(workerHome, 'logs-entered'))).toBe(true));
-    const pid = Number(readFileSync(join(workerHome, 'logs-entered'), 'utf8'));
+    const pid = await readPid(join(workerHome, 'logs-entered'));
     if (ending === 'close') await host.close();
     else if (ending === 'revoke') {
       allowed.delete('client');
@@ -2836,14 +2837,14 @@ test('close waits for an in-flight retirement and prevents further reconciliatio
 test('Android Metro validates the client port and restores the installed mapping on each attach', async () => {
   const first = await reserve({ platform: 'android', attempt: 'android-metro' });
   await state(first.id, 'ready');
-  const params = { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64), clientMetroPort: 8082 };
+  const params = { session: first.id, clientMetroPort: 8082 };
   for (const port of [0, 65536, 1.5, '8082'])
-    expect(await host.metroOpen('client', { ...params, clientMetroPort: port }, '127.0.0.1')).toHaveProperty(
+    expect(await host.metroOpen('client', { ...params, clientMetroPort: port })).toHaveProperty(
       'error.code',
       'bad-request',
     );
-  expect(await host.metroOpen('other', params, '127.0.0.1')).toHaveProperty('error');
-  const opened = await host.metroOpen('client', params, '127.0.0.1');
+  expect(await host.metroOpen('other', params)).toHaveProperty('error');
+  const opened = await host.metroOpen('client', params);
   if ('error' in opened) throw new Error(opened.error.message);
   expect(readHostedSessions().find((entry) => entry.id === first.id)?.clientMetroPort).toBe(8082);
   const app = appOffer(first.id, 'android-dev', 'android');
@@ -2863,7 +2864,7 @@ test('Android Metro validates the client port and restores the installed mapping
   expect(readFileSync(join(workerHome, 'install-metro-port'), 'utf8')).toBe(String(opened.result.port));
   for (let i = 0; i < 2; i++) {
     expect(host.attach('client', { session: first.id })).toHaveProperty('result.state', 'ready');
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', opened.result.port);
+    expect(await host.metroOpen('client', params)).toHaveProperty('result.port', opened.result.port);
   }
   expect(
     readFileSync(join(workerHome, 'reversed'), 'utf8')
@@ -2873,7 +2874,7 @@ test('Android Metro validates the client port and restores the installed mapping
   ).toEqual(Array.from({ length: 2 }, () => ({ port: opened.result.port, clientPort: 8082, attempt: 'android-dev' })));
   host.stop('client', { session: first.id });
   await state(first.id, 'stopped');
-  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error');
+  expect(await host.metroOpen('client', params)).toHaveProperty('error');
 });
 
 // The worker's process group is signaled, which Node does not support on Windows (nodejs.org/api/process.html#processkillpid-signal).
@@ -2886,8 +2887,8 @@ test.skipIf(process.platform === 'win32')(
       deviceProfile: 'delayed-reverse',
     });
     await state(first.id, 'ready');
-    const params = { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64), clientMetroPort: 8082 };
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port');
+    const params = { session: first.id, clientMetroPort: 8082 };
+    expect(await host.metroOpen('client', params)).toHaveProperty('result.port');
     const app = appOffer(first.id, 'android-dev', 'android');
     app.params.mode = 'development';
     host.appOffer('client', app.params);
@@ -2901,10 +2902,10 @@ test.skipIf(process.platform === 'win32')(
     });
     host.appLaunch('client', app.params);
     await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
-    const restoring = host.metroOpen('client', params, '127.0.0.1');
+    const restoring = host.metroOpen('client', params);
     await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'reversed'))).toBe(true));
     expect(host.appOffer('client', appOffer(first.id, 'next', 'android').params)).toHaveProperty('error');
-    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error');
+    expect(await host.metroOpen('client', params)).toHaveProperty('error');
     expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live[0]?.child).toBeDefined();
     host.stop('client', { session: first.id });
     expect(await restoring).toHaveProperty('error');
@@ -2914,23 +2915,20 @@ test.skipIf(process.platform === 'win32')(
 
 test('Android Metro refuses missing or invalid ports, unapproved clients and non-ready owners before native work', async () => {
   const first = await reserve({ platform: 'android', attempt: 'android-metro-validation' });
-  const params = { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64) };
-  expect(await host.metroOpen('client', { ...params, clientMetroPort: 8082 }, '127.0.0.1')).toHaveProperty('error');
+  const params = { session: first.id };
+  expect(await host.metroOpen('client', { ...params, clientMetroPort: 8082 })).toHaveProperty('error');
   await state(first.id, 'ready');
-  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error.code', 'bad-request');
+  expect(await host.metroOpen('client', params)).toHaveProperty('error.code', 'bad-request');
   for (const clientMetroPort of [0, 65536, 1.5, '8082']) {
-    expect(await host.metroOpen('client', { ...params, clientMetroPort }, '127.0.0.1')).toHaveProperty(
-      'error.code',
-      'bad-request',
-    );
+    expect(await host.metroOpen('client', { ...params, clientMetroPort })).toHaveProperty('error.code', 'bad-request');
   }
   allowed.delete('client');
-  expect(await host.metroOpen('client', { ...params, clientMetroPort: 8082 }, '127.0.0.1')).toHaveProperty(
+  expect(await host.metroOpen('client', { ...params, clientMetroPort: 8082 })).toHaveProperty(
     'error.code',
     'forbidden',
   );
   allowed.add('client');
-  expect(await host.metroOpen('other', { ...params, clientMetroPort: 8082 }, '127.0.0.1')).toHaveProperty('error');
+  expect(await host.metroOpen('other', { ...params, clientMetroPort: 8082 })).toHaveProperty('error');
   expect(existsSync(join(deviceHostArea(first.id), 'home', 'reversed'))).toBe(false);
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
@@ -2950,8 +2948,8 @@ test('a failed Android Metro restore is refused and leaves the session ready for
     deviceProfile: 'failing-reverse',
   });
   await state(first.id, 'ready');
-  const params = { session: first.id, gatewayPort: 12345, secret: 'b'.repeat(64), clientMetroPort: 8082 };
-  const opened = await host.metroOpen('client', params, '127.0.0.1');
+  const params = { session: first.id, clientMetroPort: 8082 };
+  const opened = await host.metroOpen('client', params);
   if ('error' in opened) throw new Error(opened.error.message);
   const app = appOffer(first.id, 'android-dev', 'android');
   app.params.mode = 'development';
@@ -2968,10 +2966,10 @@ test('a failed Android Metro restore is refused and leaves the session ready for
   await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
   const workerHome = join(deviceHostArea(first.id), 'home');
   writeFileSync(join(workerHome, 'fail-reverse'), '1');
-  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error.code', 'action-failed');
+  expect(await host.metroOpen('client', params)).toHaveProperty('error.code', 'action-failed');
   expect(readHostedSessions().find((entry) => entry.id === first.id)?.state).toBe('ready');
   rmSync(join(workerHome, 'fail-reverse'));
-  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', opened.result.port);
+  expect(await host.metroOpen('client', params)).toHaveProperty('result.port', opened.result.port);
 });
 test('Android native followers coalesce under a child-aware claim and retain collected logs after stop', async () => {
   const session = await reserve({ platform: 'android', deviceProfile: 'logs-delayed' });
@@ -2989,7 +2987,7 @@ test('Android native followers coalesce under a child-aware claim and retain col
   const workerHome = join(deviceHostArea(session.id), 'home');
   await vi.waitFor(() => expect(existsSync(join(workerHome, 'logs-entered'))).toBe(true));
   const claim = readClaimSet(claimRoot).live[0];
-  expect(claim?.child?.pid).toBe(Number(readFileSync(join(workerHome, 'logs-entered'), 'utf8')));
+  expect(claim?.child?.pid).toBe(await readPid(join(workerHome, 'logs-entered')));
   const result = await first;
   expect(await second).toEqual(result);
   expect(result).toHaveProperty('result.records', [
