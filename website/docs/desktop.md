@@ -282,7 +282,8 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   until it next boots. Media sound changes music and video volume only; alarms
   and ringtones keep their Android settings. It needs Android 15 or later; on
   older images startup warns that it could not mute the emulator. Your Mac's
-  volume, hosted devices and physical phones are unchanged.
+  volume and physical phones are unchanged. Hosted simulators and emulators are
+  muted when the host boots them, but the Sound toggles do not reach them.
 - **Logs.** Separate Metro and App / native inspector sections open the same
   viewer with their source filters selected. Filters remain editable; repeated
   errors are grouped. **Build output > Readable** simplifies Xcode output; **Raw** restores

@@ -9,6 +9,7 @@ import {
   type HostedAndroidChoice,
   type HostedDeviceSelectors,
 } from '@stim-cli/core/state';
+import { muteBootedEmulator } from '../engine/device-android.ts';
 import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
 import {
@@ -35,7 +36,7 @@ import {
 import { forgetCreatedDeviceAsync } from '../devices/created-devices.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { ensureConfig, loadConfig, withConfigLockAsync } from '../workspace/config.ts';
-import type { HostedWorkerResult } from './worker.ts';
+import { hostedNotify, type HostedWorkerResult } from './worker.ts';
 import { removeHostedAppData } from './app.ts';
 import { installHostedAndroidApp, restoreHostedAndroidMetro } from './android-app.ts';
 
@@ -134,6 +135,7 @@ export async function runHostedAndroidDevice(
         androidDeviceAbi(selected.serial) !== selected.architecture
       )
         throw new Error('Hosted Android boot could not be verified for its exact owned AVD.');
+      await muteBootedEmulator(selected.serial, selected.avdName, hostedNotify);
       return { state: 'ready', device: selected };
     }
     device = readHostedDevice(home, 'android');
@@ -193,6 +195,7 @@ export async function runHostedAndroidDevice(
         throw new Error('Hosted Android boot could not be verified for its exact owned AVD.');
       await resetAdoptedAvd(device.avdName, device.serial, '');
       removeHostedAppData(home, { keepBlobs: true });
+      await muteBootedEmulator(device.serial, device.avdName, hostedNotify);
       return { state: 'ready', device };
     }
     if (mode === 'park') {

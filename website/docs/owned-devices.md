@@ -341,8 +341,9 @@ rerun on the same boot with an unchanged profile skips SimSlim entirely. A manua
 profile changes. A running
 simulator is slimmed on the next `stim ios`, without a boot first, and Stim mutes
 it again after that reboot. A parked simulator is slimmed when Stim adopts it.
-Hosted simulators on a named Mac are never changed. If `simslim` is not
-installed, `doctor` reports it and `stim ios` boots without it.
+Hosted simulators on a named Mac are muted like local ones but never slimmed.
+If `simslim` is not installed, `doctor` reports it and `stim ios` boots without
+it.
 
 Each boot of an owned iOS simulator writes `ios_boot` records to the workspace's
 device log: boot requested (adopted, created, existing or restart), bootstatus
