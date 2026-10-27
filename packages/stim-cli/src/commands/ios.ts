@@ -826,7 +826,7 @@ async function runIos(
       if (capacity) {
         if (capacity.code === 'STIM_AT_CAPACITY') {
           d.recordCapacityRefusal(
-            { platform: PLATFORM, max: limits.maxDevices, workspace: workspaceId(root) },
+            { platform: PLATFORM, max: capacity.max ?? limits.maxDevices, workspace: workspaceId(root) },
             d.now(),
           );
         }

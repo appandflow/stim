@@ -619,7 +619,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 0,
     env: 'STIM_MAX_ANDROID_DEVICES',
-    description: 'Booted owned Android emulators, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
+    description:
+      'Booted owned Android emulators, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
   },
   {
     key: 'concurrency.maxMacosApps',

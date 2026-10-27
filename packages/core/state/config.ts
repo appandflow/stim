@@ -120,7 +120,9 @@ export function getConcurrencyLimits({ env = ambientEnv() }: { env?: NodeJS.Proc
   };
 }
 
-export function getPlatformDeviceLimits({ env = ambientEnv() }: { env?: NodeJS.ProcessEnv } = {}): PlatformDeviceLimits {
+export function getPlatformDeviceLimits({
+  env = ambientEnv(),
+}: { env?: NodeJS.ProcessEnv } = {}): PlatformDeviceLimits {
   const c = loadConfig()?.concurrency || {};
   return {
     ios: resolveLimit(env.STIM_MAX_IOS_DEVICES, c.maxIosDevices),

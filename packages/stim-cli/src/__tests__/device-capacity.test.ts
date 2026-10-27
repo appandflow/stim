@@ -310,6 +310,86 @@ test('an already booted owned simulator bypasses a live queue even above the cap
   }
 });
 
+describe('per-platform device caps', () => {
+  const sim = (udid: string) => makeIosSim({ udid, name: `stim-${udid}`, state: 'Booted' });
+  const admit = (platform: string, policy: Partial<Parameters<typeof withDeviceBootAdmission>[2]>) =>
+    withDeviceBootAdmission({ platform, key: 'new' }, async () => 'booted', {
+      root,
+      sources: empty,
+      noWait: true,
+      ...policy,
+    });
+
+  test('a full per-platform cap refuses that platform with its setting, count and cap, and admits the other platform', async () => {
+    const sources = { ...empty, sims: [sim('a')] };
+    await expect(admit('ios', { max: 0, platformMax: { ios: 1 }, sources })).rejects.toMatchObject({
+      code: 'STIM_AT_CAPACITY',
+      message:
+        '1 Stim iOS simulator(s) are already booted and concurrency.maxIosDevices is 1, so booting another would exceed the cap.',
+      remedy: 'stop an environment (stim stop) or raise concurrency.maxIosDevices',
+    });
+    await expect(admit('android', { max: 0, platformMax: { ios: 1 }, sources })).resolves.toBe('booted');
+  });
+
+  test('a boot must fit both its platform cap and the shared cap, and the refusal names the one that is full', async () => {
+    const sources = { ...empty, sims: [sim('a'), sim('b')] };
+    await expect(admit('android', { max: 2, platformMax: { android: 5 }, sources })).rejects.toMatchObject({
+      message: expect.stringContaining('concurrency.maxDevices is 2'),
+    });
+    await expect(admit('ios', { max: 9, platformMax: { ios: 2 }, sources })).rejects.toMatchObject({
+      message: expect.stringContaining('concurrency.maxIosDevices is 2'),
+    });
+    await expect(admit('ios', { max: 3, platformMax: { ios: 3 }, sources })).resolves.toBe('booted');
+  });
+
+  test('a waiter held back only by its own platform cap does not block a waiter of another platform', async () => {
+    const head = takeTicket({ platform: 'ios', sequence: 1 });
+    try {
+      const sources = { ...empty, sims: [sim('a')] };
+      await expect(admit('android', { max: 0, platformMax: { ios: 1, android: 1 }, sources })).resolves.toBe('booted');
+    } finally {
+      releaseClaim(head);
+    }
+  });
+
+  test('a waiter ahead that is not held back by a platform cap still blocks the queue behind it', async () => {
+    const head = takeTicket({ platform: 'android', sequence: 1 });
+    try {
+      const sources = { ...empty, sims: [sim('a')] };
+      await expect(admit('ios', { max: 0, platformMax: { ios: 2, android: 1 }, sources })).rejects.toMatchObject({
+        message: expect.stringContaining('another run is ahead in the device slot queue'),
+      });
+    } finally {
+      releaseClaim(head);
+    }
+  });
+
+  test('queue reclaim for a full platform cap only reclaims devices of that platform', async () => {
+    let clock = Date.now();
+    await expect(
+      admit('ios', {
+        max: 0,
+        platformMax: { ios: 1 },
+        sources: { ...empty, sims: [sim('a')] },
+        noWait: false,
+        waitMs: 1000,
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+    expect(reclaimIdleDevice).toHaveBeenCalledWith(
+      root,
+      expect.any(Number),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Set),
+      'ios',
+    );
+  });
+});
+
 test('a timed-out wait reports elapsed time and count, records both events, and releases its ticket', async () => {
   let now = Date.now();
   const lines: string[] = [];
