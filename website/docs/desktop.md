@@ -183,9 +183,10 @@ prompt shows only while it is the current step. The step lists only workspace
 issues that block it, as a sentence with its fix below; Finish and Delete hide
 the warnings that stopping the workspaces causes.
 
-Progress stays in this app's preferences. Closing the panel preserves it;
-Help reopens it. At launch an unfinished tutorial resumes when Stim still lists
-its path, and an archived tour opens at Delete the Test App. Every step has
+Progress stays in this app's preferences. Closing the panel preserves it and
+keeps the tutorial closed at later launches; Help > Stim Tutorial, the Discover page and the
+tutorial tip reopen it where you left off. An unfinished tutorial you have not closed
+resumes at launch when Stim still lists its path, and an archived tour opens at Delete the Test App. Every step has
 **Skip step**, which moves on without waiting for a signal. It records the step as
 done when its checks are all ticked or Desktop detected it, and as skipped
 otherwise. Steps Desktop detects move on by themselves; the first step explains this. The bottom-left **Restart Tutorial** control is the only restart button on the summary screen, which starts over at Get the Test App as on a

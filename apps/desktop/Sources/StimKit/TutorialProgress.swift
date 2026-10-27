@@ -146,6 +146,8 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
   public var phonePairedAtStart: Bool?
   /// Whether a tutorial worktree was still listed when Delete became the current step.
   public var worktreesAtDelete: Bool?
+  /// Whether the person closed the tutorial panel before finishing; a launch then leaves it closed.
+  public var dismissed: Bool?
   public var stats: TutorialStats?
 
   public init(
@@ -161,6 +163,9 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
   }
 
   public var trackedPaths: [String] { [tourPath, secondPath].compactMap { $0 } }
+
+  /// Whether a launch opens the tutorial by itself: it is unfinished and the person has not closed it.
+  public var reopensAtLaunch: Bool { step != "done" && dismissed != true }
 
   public func latestArchive(in archives: [ArchivedWorkspace]) -> ArchivedWorkspace? {
     ArchivedWorkspace.newestFirst(
@@ -331,6 +336,10 @@ public struct TutorialProgress: Sendable {
       self.record = record
       advance(now)
     }
+  }
+
+  public mutating func setDismissed(_ dismissed: Bool) {
+    record?.dismissed = dismissed ? true : nil
   }
 
   public mutating func copiedRunPrompt(now: Date) {
