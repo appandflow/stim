@@ -214,11 +214,17 @@ show refusals for removals started from its own workspace actions.
 
 :::note[Phone app feature flag]
 Stim Desktop hides everything about the phone app unless the **Phone app**
-feature flag is on: the Phones page, **Serve to phones**, pairing, the phone
+feature flag is on: the Paired Devices page, **Serve to phones**, pairing, the phone
 steps of the setup guide and tutorial, and phone suggestions. Turn it on in
 **Settings > Advanced > Feature flags**. A Mac that already serves phones or has
 a paired phone starts with it on. Turning the flag off revokes no pairings;
 Desktop's own `stim-server` then listens on loopback only.
+:::
+
+:::note[Paired machines feature flag]
+**Settings > Paired Machines**, where this Mac pairs with another machine's
+`stim-server`, appears only while the **Paired machines** feature flag is on
+(**Settings > Advanced > Feature flags**). It is off by default.
 :::
 
 Desktop runs its own `stim-server` whenever it is open, on loopback only (it refuses
@@ -650,7 +656,7 @@ stim ios`}
    shows in the app instead of a separate Simulator window.
 2. Click a device to open its viewer. **Take over** lets you use it; Escape
    gives it back.
-3. To use the phone app, open **Stim > Settings > Phones** and choose **Pair a
+3. To use the phone app, open **Stim > Settings > Paired Devices** and choose **Pair a
    Phone…**. The wizard checks Tailscale, turns on serving, sets up a private
    tailnet route, shows a code and waits for the phone. Setup keeps existing
    Tailscale routes and never enables Funnel. If Tailscale asks to enable HTTPS,
@@ -666,6 +672,31 @@ fails, the phone keeps the error visible until **Retry** or manual entry is
 chosen.
 
 See [Phone app](./phone-app.md) for installation, pairing, notifications and access.
+
+### Pair with another machine
+
+Desktop can pair with the `stim-server` of another machine on your tailnet, such as
+a Linux server where an agent starts workspaces, the same way a phone does. With
+the **Paired machines** flag on:
+
+1. On that machine, run `stim-server pair`. Add `--json` if you like; Desktop reads either form.
+2. In **Stim > Settings > Paired Machines**, choose **Pair with a Machine…** and paste everything
+   the command printed. The sheet shows the machine's name, endpoint and the fingerprint of its key.
+   Desktop pairs only with the machine whose key has that fingerprint. It accepts a
+   `wss://` endpoint on a `.ts.net` name, or `ws://` to a Tailscale address.
+3. The code works once, for 5 minutes. A pairing made from `stim-server pair` can only read.
+
+**Forget** deletes this Mac's key for the machine from the macOS Keychain, so the machine's
+record can never connect again, but it does not remove that record. Run
+`stim-server devices revoke <id>` on the machine for that. Desktop shows the command
+after Forget, or `stim-server devices` to find this Mac's record when the machine never told it the id. A key that changes on the machine is never accepted again: forget the
+pairing and pair again. A build of Desktop without the Keychain entitlement, such as a development
+copy, keeps pairings only until it quits and says so in the sheet.
+
+A pairing lets this Mac see everything the machine's server shows a phone: workspace paths,
+status and logs, changed and untracked text files including `.env` files that
+Git does not ignore, the doctor report, and the live screens of every local and hosted
+device there. Pair only with machines you own.
 
 On the hosting Mac, **Stim > Settings > Remote Machines > Running here**, below
 **Macs Using This Mac**, lists the simulators, emulators and apps approved Macs run

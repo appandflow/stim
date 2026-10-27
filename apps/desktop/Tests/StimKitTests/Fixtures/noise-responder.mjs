@@ -1,9 +1,10 @@
-// usage: node noise-responder.mjs <server runtime directory> <pairing token>
+// usage: node noise-responder.mjs <server runtime directory> <pairing token> [hold]
+// With "hold" the socket stays open after message 3, so no reply to hello ever comes.
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const [runtime, token] = process.argv.slice(2);
+const [runtime, token, mode] = process.argv.slice(2);
 const modules = join(runtime, 'node_modules');
 const { WebSocketServer } = createRequire(join(modules, 'index.js'))('ws');
 const core = (file) => import(pathToFileURL(join(modules, '@stim-cli/core/dist', file)).href);
@@ -27,7 +28,7 @@ server.on('connection', (socket) => {
       return;
     }
     console.log(JSON.stringify({ message3: true, payload: accepted.payload.toString('utf8') }));
-    accepted.socket.close(1000, 'done');
+    if (mode !== 'hold') accepted.socket.close(1000, 'done');
   });
 });
 server.on('listening', () => {
