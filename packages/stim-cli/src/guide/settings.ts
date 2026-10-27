@@ -1163,7 +1163,10 @@ worker's default: its offer lists \`jdks\`, and a build sent with the build-jdk
 feature runs with JAVA_HOME at the one of that major. A major no installed JDK
 has gets the install command for the worker's OS as doctor's fix. A nearby major
 never counts (Gradle, AGP and Kotlin support and the shared build cache assume
-one JDK). Also, its Android SDK must hold the NDK, build-tools and
+one JDK). A client with no JDK sends no major, so the worker's default JDK is
+the build's JDK and doctor notes it; with no Android SDK either, \`stim android
+--remote <machine> --remote-build <machine>\` runs the app on that machine's
+hosted emulator. Also, its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in
 gradle/libs.versions.toml; Gradle and AGP come from the synced project. A
 package the SDK lacks is a note, not a blocker, when its offer reports the SDK
