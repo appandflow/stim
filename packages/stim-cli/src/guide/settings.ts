@@ -217,7 +217,9 @@ KEYS STIM READS
                         \`--system-image\` names, else
                         system-images;android-36;google_apis;<host ABI>, with
                         the SDK's own \`sdkmanager --install\` before it
-                        creates the owned AVD. It installs only images for
+                        creates the owned AVD; a slot whose owned AVD
+                        finished a boot keeps it and installs nothing. It
+                        installs only images for
                         this machine's ABI, never accepts an SDK license (an
                         unaccepted one refuses and names \`sdkmanager
                         --licenses\`), needs 8 GB free on the SDK volume and

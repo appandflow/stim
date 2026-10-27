@@ -187,6 +187,8 @@ before it creates the owned emulator: the image `--system-image` or
 It runs the SDK's own `cmdline-tools/latest/bin/sdkmanager --install` and prints
 an `image` line while it downloads (about 2 GB).
 
+- A slot whose owned emulator already finished a boot keeps that emulator and
+  installs nothing.
 - It installs only images for this machine's ABI.
 - It never accepts an SDK license. With unaccepted licenses it refuses and names
   the `sdkmanager --licenses` command to run.

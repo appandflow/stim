@@ -627,8 +627,8 @@ function avdSetupFailure(
 
 function slotKeepsAvd(root: string, slot: string): boolean {
   const android = deviceSlotPlatforms(getProject(root), slot)?.android;
-  if (!android?.avdName || android.setupIncomplete || android.bootPending) return false;
-  return android.owned ? Boolean(ownedAvdDirectory(android.avdName)) : true;
+  if (!android?.owned || !android.avdName || android.setupIncomplete || android.bootPending) return false;
+  return Boolean(ownedAvdDirectory(android.avdName));
 }
 
 async function localRunRefusal(

@@ -6515,19 +6515,38 @@ describe('the emulator system-image flag', () => {
     expect(h.calls.ensureDevice.length).toBe(0);
   });
 
-  test('a slot that keeps its booted emulator never downloads an image it would not use', async () => {
-    upsertProject(root, { platforms: { android: { avdName: 'Pixel_User', owned: false } } });
-    let asked = 0;
-    const h = harness({
-      systemImage: `system-images;android-99;google_apis;${hostSystemImageArch()}`,
-      ensureImage: async () => {
-        asked += 1;
-        return { ok: true as const, installed: true };
-      },
-    });
-    await h.run();
-    expect(asked).toBe(0);
-  });
+  test.each([
+    { bootPending: false, avdOnDisk: true, installs: false },
+    { bootPending: true, avdOnDisk: true, installs: true },
+    { bootPending: false, avdOnDisk: false, installs: true },
+  ])(
+    'an owned emulator that finished a boot and still exists skips the image install (%j)',
+    async ({ bootPending, avdOnDisk, installs }) => {
+      const avds = join(root, 'avds');
+      const previous = process.env.ANDROID_AVD_HOME;
+      process.env.ANDROID_AVD_HOME = avds;
+      try {
+        if (avdOnDisk) {
+          mkdirSync(join(avds, 'stim-kept.avd'), { recursive: true });
+          writeFileSync(join(avds, 'stim-kept.ini'), `path=${join(avds, 'stim-kept.avd')}\n`);
+        }
+        upsertProject(root, { platforms: { android: { avdName: 'stim-kept', owned: true, bootPending } } });
+        let asked = 0;
+        const h = harness({
+          systemImage: `system-images;android-99;google_apis;${hostSystemImageArch()}`,
+          ensureImage: async () => {
+            asked += 1;
+            return { ok: true as const, installed: false };
+          },
+        });
+        await h.run();
+        expect(asked).toBe(installs ? 1 : 0);
+      } finally {
+        if (previous === undefined) delete process.env.ANDROID_AVD_HOME;
+        else process.env.ANDROID_AVD_HOME = previous;
+      }
+    },
+  );
 
   test('a failed image install refuses before any device is created', async () => {
     const h = harness({

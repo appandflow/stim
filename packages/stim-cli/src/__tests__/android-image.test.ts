@@ -3,10 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { readCreatedDevices } from '@stim-cli/core/state';
-import { decideSystemImage, installSystemImage } from '../devices/android-image.ts';
+import { decideSystemImage, ensureSystemImage, installSystemImage } from '../devices/android-image.ts';
+import { hostSystemImageArch } from '../devices/android.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 
 const ARM = 'system-images;android-36;google_apis;arm64-v8a';
+const HOST = `system-images;android-36;google_apis;${hostSystemImageArch()}`;
 const tmpFree = statfsSync(tmpdir());
 const roomToInstall = tmpFree.bavail * tmpFree.bsize >= 9 * 1024 ** 3;
 let root: string;
@@ -62,7 +64,7 @@ test('an image that is not installed is installed only for the host ABI and only
 });
 
 test.skipIf(!roomToInstall)(
-  'two concurrent requests for one SDK run sdkmanager once and record the image as Stim-installed',
+  'two concurrent runs for one SDK run sdkmanager once, both report the image as newly installed, and it is recorded once',
   async () => {
     const calls: string[][] = [];
     const stdin: unknown[] = [];
@@ -71,19 +73,20 @@ test.skipIf(!roomToInstall)(
         calls.push(args);
         stdin.push(options.input);
         await new Promise((resolve) => setTimeout(resolve, 2500));
-        mkdirSync(join(sdk, 'system-images', 'android-36', 'google_apis', 'arm64-v8a'), { recursive: true });
+        mkdirSync(join(sdk, 'system-images', 'android-36', 'google_apis', hostSystemImageArch()), { recursive: true });
         return 'done';
       },
     });
-    const results = await Promise.all([
-      installSystemImage({ pkg: ARM, env, note: () => {} }),
-      installSystemImage({ pkg: ARM, env, note: () => {} }),
-    ]);
-    expect(calls).toEqual([[`--sdk_root=${sdk}`, '--install', ARM]]);
+    const run = () => ensureSystemImage({ requested: HOST, policy: 'auto', env, note: () => {} });
+    const results = await Promise.all([run(), run()]);
+    expect(calls).toEqual([[`--sdk_root=${sdk}`, '--install', HOST]]);
     expect(stdin).toEqual(['n\n']);
-    expect(results.map((result) => result.ok && result.installed).toSorted()).toEqual([false, true]);
+    expect(results).toEqual([
+      { ok: true, installed: true },
+      { ok: true, installed: true },
+    ]);
     expect([...readCreatedDevices().systemImages]).toEqual([
-      join(sdk, 'system-images', 'android-36', 'google_apis', 'arm64-v8a'),
+      join(sdk, 'system-images', 'android-36', 'google_apis', hostSystemImageArch()),
     ]);
   },
 );
