@@ -698,6 +698,35 @@ describe('pickOffer for Android', () => {
     });
   });
 
+  describe('a client without a JDK', () => {
+    const noJdk: BuildTarget = { ...ANDROID, local: { ...ANDROID.local, jdk: null } };
+    const pickNoJdk = (each: BuildOffer) =>
+      pickOffer({ selected: 'remote', here: IDLE, target: noJdk, offers: [{ machine: 'mac0', offer: each }] })
+        .order[0] ?? null;
+
+    it("takes the worker's JDK, whatever its major, as the build's JDK and says so", () => {
+      const worker = offer({ toolchain: { jdk: '21', jdks: ['21'] } });
+      expect(pickNoJdk(worker)).toBe(0);
+      expect(offerProblems(worker, noJdk)).toEqual([]);
+      expect(toolchainNotes(noJdk, worker.toolchain)).toEqual([
+        { code: 'jdk', reason: 'this machine has no JDK, so the build runs on JDK 21 there' },
+      ]);
+    });
+
+    it('still refuses a worker without a default JDK, with the install command of its OS', () => {
+      const worker = offer({ toolchain: { jdk: null, jdks: ['17'], os: 'linux' } });
+      expect(pickNoJdk(worker)).toBeNull();
+      expect(offerProblems(worker, noJdk)).toEqual([
+        {
+          code: 'jdk',
+          reason: 'no JDK there',
+          commands: ['sudo apt install openjdk-17-jdk-headless'],
+          lead: 'install JDK 17; Stim uses it automatically, no restart needed',
+        },
+      ]);
+    });
+  });
+
   describe('a package the worker lacks', () => {
     const missingNdk = { androidSdk: { ...SDK, ndk: ['27.0.12077973'] } };
 
