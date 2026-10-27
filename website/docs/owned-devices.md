@@ -955,8 +955,8 @@ which the client downloads, rather than arbitrary host destinations.
 
 `agent-device record start [path] --remote-config <file>` records the simulator, and
 `record stop` downloads the video to that path, or `./recording-<time>.mp4`, on
-your machine. The hosting Mac writes the recording only in the session's private
-agent-device state and deletes the files after the download, on `stim stop` or
+your machine. The hosting Mac writes the recording only in a private directory
+for the session in its temporary directory and deletes the files after the download, on `stim stop` or
 session teardown and when the session's daemon restarts. One recording runs per
 session; a second `record start`, a host output path, `record` inside `batch` and
 a `record stop` from another agent-device session are refused. The host stops a

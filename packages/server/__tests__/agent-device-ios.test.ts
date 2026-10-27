@@ -1,8 +1,17 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
@@ -798,13 +807,15 @@ const recordStart = (output?: string) => ({
 
 const forwardedRecord = () => JSON.parse(fixture.calls.at(-1)?.body ?? '{}');
 
-test('writes a recording only in the session state, one at a time, and removes it on stop', async () => {
+test('writes a recording only in a private temp directory, one at a time, and removes it on stop and start', async () => {
   await start();
   const remote = await rpc(recordStart('/tmp/agent-device-recording-1793117267701-ab12cd.mov'));
   expect(remote.status).toBe(200);
   const started = forwardedRecord().params;
   const output = started.positionals[1];
-  expect(output.startsWith(join(home, 'agent', 'recordings') + '/')).toBe(true);
+  const recordings = dirname(dirname(output));
+  expect(relative(home, output).startsWith('..')).toBe(true);
+  expect(relative(tmpdir(), output).startsWith('..')).toBe(false);
   expect(output.endsWith('/recording.mov')).toBe(true);
   expect(started.flags).toEqual({ platform: 'ios', udid: UDID, fps: 30 });
   expect(started.meta.clientArtifactPaths).toEqual({ outPath: '/client/clip.mov' });
@@ -823,7 +834,11 @@ test('writes a recording only in the session state, one at a time, and removes i
   expect(forwardedRecord().params.meta.clientArtifactPaths).toEqual({ outPath: '/client/clip.mp4' });
 
   await driver.stop();
-  expect(existsSync(join(home, 'agent', 'recordings'))).toBe(false);
+  expect(existsSync(recordings)).toBe(false);
+
+  mkdirSync(join(recordings, 'left-by-a-crash'), { recursive: true });
+  await start();
+  expect(existsSync(recordings)).toBe(false);
 });
 
 test('overlapping starts run only one recording', async () => {
@@ -837,7 +852,7 @@ test('a start the daemon refuses leaves no recording behind', async () => {
   await start();
   fixture.recordError = { code: 'COMMAND_FAILED', message: 'recorder failed to start' };
   expect((await rpc(recordStart())).status).toBe(200);
-  expect(readdirSync(join(home, 'agent', 'recordings'))).toEqual([]);
+  expect(readdirSync(dirname(dirname(forwardedRecord().params.positionals[1])))).toEqual([]);
   fixture.recordError = { code: '', message: '' };
   expect((await rpc(recordStart())).status).toBe(200);
 });
