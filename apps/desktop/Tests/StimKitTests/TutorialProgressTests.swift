@@ -236,6 +236,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
     TutorialInput(environment: try environment("02-after-ios1"), now: afterBuild, record: relaunched))
   #expect(result.currentStep == "parallel")
   #expect(state("build", in: result).state == .done)
+  #expect(result.record.dismissed == true)
 
   resumed.setDismissed(false)
   #expect(try #require(resumed.record).reopensAtLaunch)

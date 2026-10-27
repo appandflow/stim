@@ -386,5 +386,27 @@
       XCTAssertTrue(model.isOpen)
       XCTAssertEqual(model.snapshot?.currentStep, "begin")
     }
+
+    @MainActor func testClosedUnfinishedTutorialStaysClosedAtLaunchUntilOpened() throws {
+      let defaults = isolatedDefaults()
+      TutorialRecordStore(defaults).record = TutorialRecord(version: 2, startedAt: Date(), step: "begin")
+      let model = TutorialModel(defaults: defaults, cloneBase: "/nonexistent/stim-tutorial")
+      model.update(workspaces: [], archived: [], sheetOpen: false)
+      XCTAssertTrue(model.isOpen)
+      model.close()
+      XCTAssertEqual(TutorialRecordStore(defaults).record?.dismissed, true)
+
+      let relaunched = TutorialModel(defaults: defaults, cloneBase: "/nonexistent/stim-tutorial")
+      relaunched.update(workspaces: [], archived: [], sheetOpen: false)
+      relaunched.update(workspaces: [], archived: [], sheetOpen: false)
+      XCTAssertFalse(relaunched.isOpen)
+      XCTAssertEqual(relaunched.snapshot?.currentStep, "begin")
+      XCTAssertEqual(TutorialRecordStore(defaults).record?.dismissed, true)
+
+      relaunched.open()
+      XCTAssertTrue(relaunched.isOpen)
+      XCTAssertEqual(relaunched.snapshot?.currentStep, "begin")
+      XCTAssertNil(TutorialRecordStore(defaults).record?.dismissed)
+    }
   }
 #endif
