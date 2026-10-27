@@ -15,7 +15,7 @@ public enum DeviceTool: Sendable, Equatable {
   case network(enabled: Bool)
 
   /// The `stim` release that added `stim device location|permission|push|network`.
-  public static let minimumCLIVersion = "1.31.0"
+  public static let minimumCLIVersion = "1.30.0"
 
   public static let iosServices = [
     "calendar", "contacts", "contacts-limited", "location", "location-always", "media-library", "microphone",
