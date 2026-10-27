@@ -113,7 +113,7 @@ export async function prepareHostedNative(
           host,
           await attach(host, recorded.session, undefined, platform),
           ['preparing'],
-          PREPARE_TIMEOUT_MS,
+          platform === 'android' ? PREPARE_TIMEOUT_MS + IMAGE_INSTALL_TIMEOUT_MS : PREPARE_TIMEOUT_MS,
           platform,
           runCancellationSignal(ambientContext()),
         );

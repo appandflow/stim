@@ -103,3 +103,29 @@ test.each([undefined, 0, 2, { unknown: 'simulator inventory unavailable' }])(
       expect(parseHostedNativeOffer({ ...wire, resources: { ...wire.resources, localDevices: invalid } })).toBeNull();
   },
 );
+
+test('an Android offer keeps the image the host would install only when it is the offered image', () => {
+  const choice = {
+    systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+    deviceProfile: 'pixel_6',
+    architecture: 'arm64-v8a',
+  };
+  const offer = {
+    platform: 'android',
+    choice,
+    declined: null,
+    resources: {
+      cpus: 4,
+      loadPerCore: 0.5,
+      memoryFreeBytes: 1000,
+      memoryPressure: 'normal',
+      workerDiskFreeBytes: null,
+    },
+  };
+  expect(parseHostedNativeOffer({ ...offer, installImage: choice.systemImage })).toMatchObject({
+    installImage: choice.systemImage,
+  });
+  expect(
+    parseHostedNativeOffer({ ...offer, installImage: 'system-images;android-35;google_apis;arm64-v8a' }),
+  ).not.toHaveProperty('installImage');
+});

@@ -91,6 +91,7 @@ if(input.mode === 'count') {
   process.exit(0);
 } else if(input.mode === 'image') {
   appendFileSync(join(process.env.STIM_HOME,'image-requests'),input.systemImage+'\\n');
+  if(input.systemImage.includes('slow')) await new Promise(()=>setInterval(()=>{},1000));
   process.stdout.write(JSON.stringify(input.systemImage.includes('refused') ? {state:'refused',notice:'licenses not accepted. Run sdkmanager --licenses.'} : {state:'ready'}));
   process.exit(0);
 }
@@ -1781,6 +1782,21 @@ test('a hosted Android image the host cannot install stops the session with its 
   expect(stopped.device).toBeNull();
   expect(existsSync(join(deviceHostArea(refused.id), 'home', 'modes'))).toBe(false);
   expect(readClaimSet(join(deviceHostRoot(), `${refused.id}.claims`)).live).toEqual([]);
+});
+
+test('stopping a hosted Android session while its image installs releases the reservation without a device', async () => {
+  const installing = await reserve({
+    platform: 'android',
+    attempt: 'image-slow',
+    systemImage: 'system-images;android-30;slow;arm64-v8a',
+    deviceProfile: 'pixel_6',
+  });
+  await vi.waitFor(() => expect(readFileSync(join(home, 'image-requests'), 'utf8')).toContain('slow'));
+  host.stop('client', { session: installing.id });
+  const stopped = await state(installing.id, 'stopped');
+  expect(stopped.device).toBeNull();
+  expect(existsSync(join(deviceHostArea(installing.id), 'home', 'modes'))).toBe(false);
+  expect(readClaimSet(join(deviceHostRoot(), `${installing.id}.claims`)).live).toEqual([]);
 });
 
 test('offers schema-compatible SDK choices without creating a journal, claim, or worker area', async () => {

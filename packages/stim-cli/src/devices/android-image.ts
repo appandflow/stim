@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, realpathSync, statfsSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statfsSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import type { SettingsObject } from '@stim-cli/core/state';
@@ -114,6 +114,14 @@ function freeBytes(path: string): number | null {
   }
 }
 
+function licenseAccepted(sdk: string): boolean {
+  try {
+    return readFileSync(join(sdk, 'licenses', 'android-sdk-license'), 'utf8').trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function claimRoot(sdk: string): string {
   let canonical = sdk;
   try {
@@ -189,7 +197,7 @@ export function systemImageInstallProblem(pkg: string, env: NodeJS.ProcessEnv): 
       remedy:
         'Install "Android SDK Command-line Tools (latest)" from the SDK Manager in Android Studio, then try again.',
     };
-  if (!existsSync(join(sdk, 'licenses', 'android-sdk-license'))) return licensesRefusal(pkg, sdk, env);
+  if (!licenseAccepted(sdk)) return licensesRefusal(pkg, sdk, env);
   const free = freeBytes(sdk);
   if (free !== null && free < IMAGE_INSTALL_FREE_BYTES)
     return {
@@ -245,6 +253,7 @@ export async function installSystemImage({
     await cancellableSleep(CLAIM_POLL_MS, { signal, what: 'wait for the Android system image install' });
   }
   const held = claim;
+  let unresolved = false;
   try {
     if (listInstalledSystemImages(undefined, env).some((image) => image.pkg === pkg))
       return { ok: true, installed: false };
@@ -264,6 +273,10 @@ export async function installSystemImage({
         },
       });
     } catch (error) {
+      if (error instanceof Error && 'reportCleanup' in error) {
+        unresolved = true;
+        throw error;
+      }
       signal?.throwIfAborted();
       const text = outputOf(error);
       if (LICENSE_NOT_ACCEPTED.test(text)) return licenses();
@@ -272,7 +285,7 @@ export async function installSystemImage({
         `Run \`${manual}\` on this machine to see the full error, then try again.`,
       );
     } finally {
-      clearClaimChild(held);
+      if (!unresolved) clearClaimChild(held);
     }
     if (LICENSE_NOT_ACCEPTED.test(output)) return licenses();
     const directory = join(sdk, ...pkg.split(';'));
@@ -284,6 +297,6 @@ export async function installSystemImage({
     await recordInstalledSystemImageAsync(realpathSync(directory));
     return { ok: true, installed: true };
   } finally {
-    releaseClaim(held);
+    if (!unresolved) releaseClaim(held);
   }
 }

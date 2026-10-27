@@ -92,6 +92,7 @@ interface WorkerRun {
 interface OwnedSession {
   claim: ClaimHandle;
   adopting?: boolean;
+  imagePhase?: boolean;
   reachedReady?: boolean;
   run?: WorkerRun;
   data?: Promise<void>;
@@ -1402,8 +1403,10 @@ export class DeviceHost {
         maxOutputBytes: 16_384,
       });
       owned.run = image;
+      owned.imagePhase = true;
       const installed = await image.done;
       if (owned.stopping) return;
+      delete owned.imagePhase;
       if (
         !installed.settled ||
         installed.notice ||
@@ -1522,16 +1525,14 @@ export class DeviceHost {
       if (!outcome.settled)
         throw new Error('The prior worker group is unresolved. Its claim and device were retained.');
       if (
-        isJsonObject(value) &&
-        value.state === 'stopped' &&
-        value.device === null &&
+        (owned.imagePhase || (isJsonObject(value) && value.state === 'stopped' && value.device === null)) &&
         !existsSync(join(home, 'hosted-device.json')) &&
         !existsSync(join(home, 'created-devices.json'))
       ) {
         this.change(record.id, (current) => {
           current.state = 'stopped';
           current.device = null;
-          if (typeof value.notice === 'string') current.notice = value.notice;
+          if (isJsonObject(value) && typeof value.notice === 'string') current.notice = value.notice;
           else delete current.notice;
         });
         this.release(record.id, owned);

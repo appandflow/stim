@@ -62,9 +62,11 @@ test.skipIf(!roomToInstall)(
   'two concurrent requests for one SDK run sdkmanager once and record the image as Stim-installed',
   async () => {
     const calls: string[][] = [];
+    const stdin: unknown[] = [];
     setExecutor({
-      runFileAsync: async (_file: string, args: string[]) => {
+      runFileAsync: async (_file: string, args: string[], options: { input?: string }) => {
         calls.push(args);
+        stdin.push(options.input);
         await new Promise((resolve) => setTimeout(resolve, 2500));
         mkdirSync(join(sdk, 'system-images', 'android-36', 'google_apis', 'arm64-v8a'), { recursive: true });
         return 'done';
@@ -75,6 +77,7 @@ test.skipIf(!roomToInstall)(
       installSystemImage({ pkg: ARM, env, note: () => {} }),
     ]);
     expect(calls).toEqual([[`--sdk_root=${sdk}`, '--install', ARM]]);
+    expect(stdin).toEqual(['n\n']);
     expect(results.map((result) => result.ok && result.installed).toSorted()).toEqual([false, true]);
     expect([...readCreatedDevices().systemImages]).toEqual([
       join(sdk, 'system-images', 'android-36', 'google_apis', 'arm64-v8a'),

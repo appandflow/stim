@@ -156,8 +156,8 @@ function doctorJson(args: string[], env: Record<string, string>, omitEnv: string
   return JSON.parse(
     getExecutor().runFile(process.execPath, [cli, 'doctor', '--json', ...args], {
       cwd: root,
-      env,
-      omitEnv,
+      env: { ANDROID_HOME: join(home, 'no-android-sdk'), ...env },
+      omitEnv: [...omitEnv, 'ANDROID_SDK_ROOT'],
       timeoutMs: 60_000,
     }),
   );

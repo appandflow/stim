@@ -1421,6 +1421,8 @@ export function androidImageDecision(
 ): SystemImageDecision | null {
   if (platform === 'ios' || (platform !== 'android' && !hasAndroidProject(layout))) return null;
   if (!existsSync(androidHome(env))) return null;
+  const remote = settings ? remoteAndroidSetting(settings) : null;
+  if (remote && (remote.kind === 'backend' || remote.machine !== 'auto')) return null;
   const requested = settingValueAt(settings, 'android.systemImage');
   return decideSystemImage({
     requested: typeof requested === 'string' && requested.trim() ? requested.trim() : null,
