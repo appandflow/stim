@@ -169,6 +169,7 @@ import StimKit
   @Published private(set) var entries: [PairedServers.Entry] = []
   private var servers: PairedServers?
   private var offlineSince: [String: Date] = [:]
+  private var knownLocalServerID: String?
 
   func setEnabled(_ enabled: Bool) {
     if enabled, servers == nil {
@@ -176,7 +177,7 @@ import StimKit
       self.servers = servers
       servers.onChange = { [weak self, weak servers] in
         guard let self, let servers, self.servers === servers else { return }
-        self.sync(servers, localServerID: Self.localServerID)
+        self.sync(servers, localServerID: self.lastLocalServerID())
       }
       servers.start()
     } else if !enabled, let servers {
@@ -190,7 +191,12 @@ import StimKit
 
   func localServerChanged() {
     guard let servers else { return }
-    sync(servers, localServerID: Self.localServerID)
+    sync(servers, localServerID: lastLocalServerID())
+  }
+
+  private func lastLocalServerID() -> String? {
+    if let id = Self.localServerID { knownLocalServerID = id }
+    return knownLocalServerID
   }
 
   static var localServerID: String? {
