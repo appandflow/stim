@@ -278,19 +278,18 @@ export const DEVICE_COMMAND_RULES: Readonly<Record<string, DeviceCommandRule>> =
   settings: {
     flags: { '--app': 'app' },
     positionals: (positionals, params) => {
+      // agent-device trims and lowercases the setting, its action and the permission target.
+      const [setting, , target] = positionals.map((value) => String(value).trim().toLowerCase());
       if (
-        positionals[0] === 'permission' &&
-        ['accessibility', 'screen-recording', 'input-monitoring'].includes(String(positionals[2]))
+        setting === 'permission' &&
+        ['accessibility', 'screen-recording', 'input-monitoring'].includes(String(target))
       )
         return {
           rule: 'command',
-          message: `Refused settings permission ${String(positionals[2])}: it is a macOS permission of the hosting Mac.`,
+          message: `Refused settings permission ${target}: it is a macOS permission of the hosting Mac.`,
         };
       const app = isJsonObject(params.input) ? params.input.app : undefined;
-      if (
-        (positionals[0] === 'clear-app-state' && positionals[1] !== undefined && !appId(positionals[1])) ||
-        (app !== undefined && !appId(app))
-      )
+      if ((setting === 'clear-app-state' && !positionals.slice(1).every(appId)) || (app !== undefined && !appId(app)))
         return {
           rule: 'host-path',
           message: 'Settings on a hosted device accept only installed app names or bundle ids, never paths.',

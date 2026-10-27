@@ -651,6 +651,8 @@ test.each([
   { command: 'artifacts', positionals: ['provider-session'] },
   { command: 'artifacts', flags: { providerSessionId: 'arn:x' } },
   { command: 'settings', positionals: ['permission', 'grant', 'accessibility'] },
+  { command: 'settings', positionals: [' Permission', 'grant', 'Screen-Recording'] },
+  { command: 'settings', positionals: ['clear-app-state', 'clear', '/host/App.app'] },
   { command: 'settings', positionals: ['permission', 'grant', 'camera'], input: { app: '/host/App.app' } },
   { command: 'open', positionals: ['dev.app'], flags: { metroPort: 8081 } },
   { command: 'open', positionals: ['dev.app'], flags: { metroHost: '10.0.0.5' } },
@@ -699,6 +701,7 @@ test.each([
   { command: 'settings', positionals: ['permission', 'grant', 'camera'], input: { app: 'dev.app' } },
   { command: 'wait', positionals: ['100'], flags: { durationMs: 100 } },
   { command: 'apps', flags: { appsFilter: 'user-installed' } },
+  { command: 'click', positionals: ['@e1'], flags: { noRecord: true } },
   {
     command: 'gesture',
     flags: { kind: 'tap' },

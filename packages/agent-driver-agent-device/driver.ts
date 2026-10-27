@@ -1328,7 +1328,7 @@ function pinDeviceRequest(
   return { rpc };
 }
 
-const DEVICE_SESSION_INPUTS = ['platform', 'verbose', 'session', 'leaseId'];
+const DEVICE_SESSION_INPUTS = ['platform', 'verbose', 'session', 'leaseId', 'noRecord'];
 
 function refusedKey(command: string, rule: DeviceCommandRule, key: string): string {
   const flag = Object.entries({ ...rule.flags, ...rule.refused }).find(([, value]) => value === key)?.[0];
