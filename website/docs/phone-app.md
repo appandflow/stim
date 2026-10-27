@@ -184,6 +184,14 @@ the server's authorization, use the Mac-side action above.
 | Read captured logs, build diagnostics and supported text diffs. | Tap, swipe, type and use supported buttons on controllable devices. |
 | View device screens and supported replay.                       | Control a leased Android phone while its lease is valid.            |
 
+Each machine the phone pairs with reports the work it started, including
+work it placed on another machine. A Home row names that machine on the build
+line, such as **Pods** beside `janics-mac-mini-2` for an offloaded build, and on
+the context line for running hosted simulators, emulators and macOS apps. The
+workspace page, build sheet and device tiles show it too. Each row stays under
+the server that owns it, and the phone pairs only with those servers. See
+[remote machines](./remote-machines.md).
+
 The build sheet shows build and device slot waits alongside the current phase,
 with the number of slots in use and a live elapsed wait timer. A device slot
 wait can overlap compilation. Older CLIs omit this information. While the run

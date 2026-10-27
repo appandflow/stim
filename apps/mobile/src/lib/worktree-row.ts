@@ -3,7 +3,7 @@ import { STALE_MS } from '@stim-cli/core/oversight';
 
 import { agentsSummary, workspaceAgentSessions } from '@/lib/agents';
 import type { HomeItem } from '@/lib/home';
-import { rowProblems, rowStatus, type RowProblem, type RowStatus } from '@/lib/home-list';
+import { rowHosts, rowProblems, rowStatus, type RowHosts, type RowProblem, type RowStatus } from '@/lib/home-list';
 import { worktreePage } from '@/lib/worktree-page';
 import { gitChip } from '@/lib/workspace-view';
 import { devicesOf, isActive, platformName } from '@/lib/workspaces';
@@ -82,6 +82,8 @@ export interface WorktreeRowSummary {
   sessions: AgentSession[];
   drivers: string[];
   remote: number;
+  /** The lead app's build machine and the hosts of every app's running hosted devices. */
+  hosts: RowHosts;
 }
 
 /**
@@ -177,6 +179,10 @@ export function worktreeRowSummary(
       ),
     ],
     remote: apps.reduce((sum, { env }) => sum + (env.remoteDevices?.length ?? 0), 0),
+    hosts: {
+      build: rowHosts(lead.env).build,
+      devices: [...new Set(apps.flatMap(({ env }) => rowHosts(env).devices))],
+    },
   };
 }
 
@@ -196,12 +202,16 @@ const platformSpoken = (state: PlatformState): string => {
 
 /** What the one-row worktree shows, spoken, since the row is one accessibility element. */
 export function worktreeRowLabel(title: string, summary: WorktreeRowSummary, machine: string | null): string {
-  const { lead, status, platforms, problems, sessions, drivers, remote } = summary;
+  const { lead, status, platforms, problems, sessions, drivers, remote, hosts } = summary;
   const driven = drivers.map((tool) => tool || t`unknown tool`).join(', ');
+  const buildHost = hosts.build;
+  const building = status.label;
+  const deviceHosts = hosts.devices.join(', ');
   return [
     title,
-    status.label,
+    buildHost && status.kind === 'building' ? t`${building} on ${buildHost}` : status.label,
     ...platforms.map(platformSpoken),
+    deviceHosts ? t`running on ${deviceHosts}` : null,
     agentsSummary(sessions),
     ...problems.map((p) => p.text),
     driven ? t`driven by ${driven}` : null,

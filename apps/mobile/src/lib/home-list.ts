@@ -15,7 +15,7 @@ import {
   type HomeWorktree,
 } from '@/lib/home';
 import { buildLabel } from '@/lib/spoken-status';
-import { appPresence, currentPhaseLabel, gitChip } from '@/lib/workspace-view';
+import { appPresence, currentPhaseLabel, gitChip, remoteBuild } from '@/lib/workspace-view';
 import {
   devicesOf,
   isSettingUp,
@@ -261,6 +261,24 @@ export interface RowDevices {
   remote: number;
 }
 
+/**
+ * The other machines the workspace's work runs on, as its owning server reports them: the build machine of a running
+ * offloaded build and the hosts of running hosted devices, each named once in device order. Not part of the row
+ * vectors Stim Desktop replays.
+ */
+export interface RowHosts {
+  build: string | null;
+  devices: string[];
+}
+
+export function rowHosts(env: EnvironmentState): RowHosts {
+  const build = runningBuild(env);
+  const hosts = orderDevices(devicesOf(env))
+    .filter((d) => d.running)
+    .flatMap((d) => (d.host ? [d.host] : []));
+  return { build: build ? (remoteBuild(build, 0)?.host ?? null) : null, devices: [...new Set(hosts)] };
+}
+
 const kindName = (d: DeviceRef) => {
   const name = platformName(d.platform);
   return d.physical ? t`${name} device` : name;
@@ -315,19 +333,22 @@ export function rowLabel({
   const { env, macName } = item;
   const build = runningBuild(env);
   const phase = build ? currentPhaseLabel(build) : null;
+  const buildHost = rowHosts(env).build;
   const running = orderDevices(devicesOf(env)).filter((d) => d.running);
   const devices = running.map((d) => {
     const kind = kindName(d);
     const { slot } = d;
     const name = slot === 'default' ? kind : t`${kind} slot ${slot}`;
     const activity = activityLabel(d.activity, now);
+    const { host } = d;
+    if (host) return activity ? t`${name} on ${host}, ${activity}` : t`${name} running on ${host}`;
     return activity ? t`${name}, ${activity}` : t`${name} running`;
   });
   const { remote } = rowDevices(env, now);
   return [
     item.title,
     build && status.kind === 'building'
-      ? [buildLabel(build, now), phase?.counts].filter(Boolean).join(', ')
+      ? [buildLabel(build, now, buildHost), phase?.counts].filter(Boolean).join(', ')
       : status.kind === 'driven'
         ? null
         : status.label,

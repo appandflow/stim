@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AgentSessionLine } from '@/components/agent-sessions';
 import { PhaseBar } from '@/components/build-progress';
+import { HostLabel } from '@/components/host-label';
 import { Icon } from '@/components/icon';
 import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
@@ -21,6 +22,7 @@ import type { HomeArchive, HomeItem, HomeWorktree } from '@/lib/home';
 import {
   offlineRowStatus,
   rowDevices,
+  rowHosts,
   rowLabel,
   rowProblems,
   rowStatus,
@@ -161,6 +163,17 @@ const WorkspaceRow = memo(function WorkspaceRow({
       <Text key="idle" variant="footnote" tone="tertiary">
         {devices.idle.text}
       </Text>,
+    );
+  }
+  const deviceHosts = (summary?.hosts ?? rowHosts(env)).devices;
+  if (deviceHosts.length) {
+    context.push(
+      <HostLabel
+        key="hosts"
+        host={deviceHosts.join(', ')}
+        variant="footnote"
+        color={offline ? theme.colors.tertiary : theme.colors.secondary}
+      />,
     );
   }
   const remote = summary?.remote ?? devices.remote;
@@ -416,16 +429,19 @@ function TickingRowBuild({ env, build }: { env: EnvironmentState; build: BuildRe
 }
 
 function RowBuild({ env, build, now }: { env: EnvironmentState; build: BuildReport; now: number }) {
+  const { theme } = useUnistyles();
   const steps = barSteps(phaseSteps(build, env.builds?.[build.platform] ?? [], now));
   const { elapsed, estimate } = buildTiming(build, now);
   const { phase, counts } = currentPhaseLabel(build);
   const outcome = outcomeLabel(build);
+  const host = rowHosts(env).build;
   return (
     <View style={styles.build}>
       <View style={styles.buildLine}>
         <Text variant="footnote" weight="semibold" tone="brand">
           {phase}
         </Text>
+        {host ? <HostLabel host={host} mode="building" variant="footnote" color={theme.colors.secondary} /> : null}
         {counts ? (
           <Text variant="footnote" tone="secondary" numberOfLines={1} style={[styles.shrink, styles.tabular]}>
             {counts}

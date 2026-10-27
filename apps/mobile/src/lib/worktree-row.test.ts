@@ -1,6 +1,6 @@
 import type { HomeItem } from '@/lib/home';
 import { platformStates, worktreeRowLabel, worktreeRowSummary } from '@/lib/worktree-row';
-import type { EnvironmentState, StageFacts } from '@/protocol/types';
+import type { EnvironmentState, SimState, StageFacts } from '@/protocol/types';
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -105,6 +105,45 @@ describe('worktreeRowSummary', () => {
     });
   const mobile = (extra: Partial<EnvironmentState> = {}) =>
     env('/w/apps/mobile', { live: true, ios: booted, stage: stage('running'), ...extra });
+
+  it('names the build machine of the lead app and the hosts of every app, in the spoken label', () => {
+    const machine = 'janics-mac-mini-2:7443';
+    const hosted: SimState = {
+      udid: '',
+      name: 'hosted',
+      owned: false,
+      state: 'ready',
+      host: {
+        machine,
+        session: 's',
+        selected: machine,
+        agent: { driver: 'none', setting: 'hosting.agentDriver' },
+        device: null,
+      },
+    };
+    const building = mobile({
+      build: {
+        platform: 'ios',
+        slot: 'default',
+        state: 'running',
+        phase: 'pods',
+        startedAt: ago(1000),
+        phaseStartedAt: ago(1000),
+        outcome: 'cold',
+        outcomeKnown: true,
+        expectedMs: null,
+        expectedPhaseMs: null,
+        basis: 0,
+        placement: { host: 'janics-mac-mini:7869', phase: 'pods', startedAt: ago(1000), phaseStartedAt: ago(1000) },
+      },
+      stage: stage('building', 'ios'),
+    });
+    const summary = worktreeRowSummary([item(building), item(desktop({ ios: hosted }))], NOW, null);
+    expect(summary.hosts).toEqual({ build: 'janics-mac-mini', devices: ['janics-mac-mini-2'] });
+    expect(worktreeRowLabel('feat/x', summary, null)).toMatch(
+      /^feat\/x, Building iOS on janics-mac-mini, .*running on janics-mac-mini-2/,
+    );
+  });
 
   it('keeps a single app as it is', () => {
     const summary = worktreeRowSummary([item(mobile())], NOW, null);

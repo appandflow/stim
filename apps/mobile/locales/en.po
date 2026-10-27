@@ -134,6 +134,10 @@ msgstr "{ahead, plural, one {# commit not pushed to {upstream}} other {# commits
 msgid "{behind, plural, one {# commit behind {upstream}} other {# commits behind {upstream}}}"
 msgstr "{behind, plural, one {# commit behind {upstream}} other {# commits behind {upstream}}}"
 
+#: src/lib/worktree-row.ts
+msgid "{building} on {buildHost}"
+msgstr "{building} on {buildHost}"
+
 #: src/screens/mac-status.tsx
 msgid "{builds} in all"
 msgstr "{builds} in all"
@@ -424,9 +428,17 @@ msgid "{name} no build"
 msgstr "{name} no build"
 
 #: src/lib/home-list.ts
+msgid "{name} on {host}, {activity}"
+msgstr "{name} on {host}, {activity}"
+
+#: src/lib/home-list.ts
 #: src/lib/worktree-row.ts
 msgid "{name} running"
 msgstr "{name} running"
+
+#: src/lib/home-list.ts
+msgid "{name} running on {host}"
+msgstr "{name} running on {host}"
 
 #: src/lib/workspace-view.ts
 msgid "{name} simulator"
@@ -573,6 +585,10 @@ msgstr "{time}, {msg}"
 #: src/screens/mac-status.tsx
 msgid "{title} — {remedy}"
 msgstr "{title} — {remedy}"
+
+#: src/lib/spoken-status.ts
+msgid "{title} on {host}"
+msgstr "{title} on {host}"
 
 #: src/screens/inbox.tsx
 msgid "{title}, {body}, {detail}, {ago} ago"
@@ -3425,6 +3441,10 @@ msgstr "running"
 #: src/lib/workspace-view.ts
 msgid "Running"
 msgstr "Running"
+
+#: src/lib/worktree-row.ts
+msgid "running on {deviceHosts}"
+msgstr "running on {deviceHosts}"
 
 #: src/components/device-grid-tile.tsx
 #: src/components/host-label.tsx
