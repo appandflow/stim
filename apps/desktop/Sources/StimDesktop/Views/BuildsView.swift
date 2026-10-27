@@ -18,7 +18,7 @@ struct BuildsView: View {
         if let error = history.error, history.items.isEmpty {
           VStack(alignment: .leading, spacing: Space.sm) {
             Text(abbreviatingHome(error)).foregroundStyle(Palette.error)
-            Text("If this stim is 1.25.0 or older, update it: the build history needs a newer stim.")
+            Text("If this stim is 1.26.0 or older, update it: the build history needs a newer stim.")
               .font(.stim(.footnote)).foregroundStyle(Palette.warning)
           }
         } else if days.isEmpty {
