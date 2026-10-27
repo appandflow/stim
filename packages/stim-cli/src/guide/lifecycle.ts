@@ -2875,7 +2875,10 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   authorized" and the call is STIM_DEVICE_TOOL_FAILED; open the app and accept
   its prompt.
   Android \`reset\` revokes the permission and clears its user-set flags so
-  the app asks again. iOS \`grant\` and \`revoke\` can terminate the running app.
+  the app asks again. A grant needs one of the
+  service's permissions to read back granted; a revoke or reset needs all of
+  them not granted, and a reset also no USER_SET or USER_FIXED flag. Changing a
+  permission can terminate the running app on both platforms.
 
   \`--json\` prints ONE line: { platform, slot, deviceId, deviceName, tool,
   action, ..., readBack }. \`readBack\` is read from the device after the change:

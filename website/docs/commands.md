@@ -1091,8 +1091,9 @@ does not own.
   does not declare in its manifest cannot be changed; Android lists it under
   `skipped` and succeeds when the app declares at least one permission of the
   service, and refuses with `STIM_DEVICE_TOOL_FAILED` when it declares none. `reset` on Android revokes the permission and clears its user-set
-  flags so the app asks again. On iOS, changing a permission can terminate the
-  running app.
+  flags so the app asks again; the call fails if the device still reports a
+  granted permission or a user flag. Changing a permission can terminate the
+  running app on both platforms.
 - `push ios --payload '{"aps":{"alert":"Hello"}}'` sends a test push to the
   app. The payload is a JSON object with an `aps` key, at most 4096 bytes. The app must
   already hold notification permission on the simulator, which `simctl privacy`

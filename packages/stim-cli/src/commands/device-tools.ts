@@ -65,6 +65,9 @@ const ANDROID_SERVICES: Readonly<Record<string, readonly string[]>> = {
 const SIMCTL_OPTIONS = { timeoutMs: 30_000, killSignal: 'SIGKILL' } as const;
 const ADB_OPTIONS = { timeoutMs: 15_000, killSignal: 'SIGKILL' } as const;
 
+const NETWORK_READS = 5;
+const NETWORK_READ_INTERVAL_MS = 400;
+
 const TARGET = 'STIM_DEVICE_TOOL_TARGET';
 const UNSUPPORTED = 'STIM_DEVICE_TOOL_UNSUPPORTED';
 const FAILED = 'STIM_DEVICE_TOOL_FAILED';
@@ -86,6 +89,7 @@ export interface ToolDeps {
   resolveIos: (udid: string) => Promise<{ name: string; booted: boolean } | 'missing' | 'notOwned'>;
   resolveAndroid: (avdName: string, preferredSerial?: string) => Promise<string | null>;
   run: (file: string, args: string[], options: ExecOptions) => Promise<string>;
+  sleep: (ms: number) => Promise<void>;
   out: (line: string) => void;
   note: (line: string) => void;
 }
@@ -104,6 +108,7 @@ const DEFAULT_DEPS: ToolDeps = {
   resolveAndroid: async (avdName, preferredSerial) =>
     (await resolveOwnedAvdSerialAsync(avdName, { preferredSerial })).serial ?? null,
   run: (file, args, options) => getExecutor().runFileAsync(file, args, options),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   out: (line) => console.log(line),
   note: (line) => console.error(line),
 };
@@ -323,11 +328,23 @@ export interface PermissionReadBack {
 }
 
 /** Reads each permission's grant state out of `dumpsys package <id>`; a permission the dump does not list is omitted. */
-export function parsePackagePermissions(dump: string, names: readonly string[]): PermissionReadBack[] {
-  const states: PermissionReadBack[] = [];
+export function parsePackagePermissions(
+  dump: string,
+  names: readonly string[],
+): (PermissionReadBack & { flags: string[] })[] {
+  const states: (PermissionReadBack & { flags: string[] })[] = [];
   for (const name of names) {
-    const match = new RegExp(`^\\s*${name.replaceAll('.', '\\.')}: granted=(true|false)`, 'm').exec(dump);
-    if (match) states.push({ name, granted: match[1] === 'true' });
+    const match = new RegExp(
+      `^\\s*${name.replaceAll('.', '\\.')}: granted=(true|false)(?:, flags=\\[([^\\]]*)\\])?`,
+      'm',
+    ).exec(dump);
+    if (match) {
+      states.push({
+        name,
+        granted: match[1] === 'true',
+        flags: (match[2] ?? '').split('|').map((flag) => flag.trim()),
+      });
+    }
   }
   return states;
 }
@@ -440,7 +457,8 @@ async function runAndroid(request: ToolRequest, target: ToolTarget, d: ToolDeps)
         if (request.action === 'reset') await pm(['clear-permission-flags', appId, name, 'user-set', 'user-fixed']);
       }
     }
-    const permissions = parsePackagePermissions(await adb(['shell', 'dumpsys', 'package', appId]), requested);
+    const states = parsePackagePermissions(await adb(['shell', 'dumpsys', 'package', appId]), requested);
+    const permissions = states.map(({ name, granted }) => ({ name, granted }));
     if (permissions.length === 0) {
       return failure(
         FAILED,
@@ -449,10 +467,14 @@ async function runAndroid(request: ToolRequest, target: ToolTarget, d: ToolDeps)
       );
     }
     const wanted = request.action === 'grant';
-    if (permissions.some((permission) => permission.granted !== wanted)) {
+    const promptable = (state: (typeof states)[number]) => !state.flags.some((flag) => /^USER_(SET|FIXED)$/.test(flag));
+    const done = wanted
+      ? states.some((state) => state.granted)
+      : states.every((state) => !state.granted && (request.action !== 'reset' || promptable(state)));
+    if (!done) {
       return failure(
         FAILED,
-        `${target.deviceName} did not report ${request.service} as ${wanted ? 'granted' : 'revoked'} for ${appId} after the change: ${JSON.stringify(permissions)}`,
+        `${target.deviceName} did not report ${request.service} as ${wanted ? 'granted' : request.action === 'reset' ? 'reset' : 'revoked'} for ${appId} after the change: ${JSON.stringify(states)}`,
         `Run \`adb shell dumpsys package ${appId}\` to read the device state.`,
       );
     }
@@ -471,8 +493,14 @@ async function runAndroid(request: ToolRequest, target: ToolTarget, d: ToolDeps)
     const verb = request.enabled ? 'enable' : 'disable';
     await adb(['shell', 'svc', 'wifi', verb]);
     await adb(['shell', 'svc', 'data', verb]);
-    const wifi = parseSettingFlag(await adb(['shell', 'settings', 'get', 'global', 'wifi_on']));
-    const data = parseSettingFlag(await adb(['shell', 'settings', 'get', 'global', 'mobile_data']));
+    let wifi: boolean | null = null;
+    let data: boolean | null = null;
+    for (let attempt = 0; attempt < NETWORK_READS; attempt++) {
+      if (attempt > 0) await d.sleep(NETWORK_READ_INTERVAL_MS);
+      wifi = parseSettingFlag(await adb(['shell', 'settings', 'get', 'global', 'wifi_on']));
+      data = parseSettingFlag(await adb(['shell', 'settings', 'get', 'global', 'mobile_data']));
+      if (wifi === request.enabled && data === request.enabled) break;
+    }
     if (wifi !== request.enabled || data !== request.enabled) {
       return failure(
         FAILED,
@@ -516,7 +544,18 @@ export async function runDeviceTool(
   if ('code' in request) return report(request);
   const root = d.findProjectRoot(process.cwd());
   if (!root) return report(NO_PROJECT_REFUSAL);
-  const target = await resolveToolTarget(request.platform, opts.slot ?? 'default', root, d);
+  let target: Awaited<ReturnType<typeof resolveToolTarget>>;
+  try {
+    target = await resolveToolTarget(request.platform, opts.slot ?? 'default', root, d);
+  } catch (error) {
+    return report(
+      failure(
+        FAILED,
+        `Stim could not inspect this workspace's ${request.platform} device: ${describeError(error)}`,
+        'Run `stim status` and retry when simctl or adb responds.',
+      ),
+    );
+  }
   if ('code' in target) return report(target);
   let result: ToolResult | ToolFailure;
   try {

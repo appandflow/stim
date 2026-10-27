@@ -25,12 +25,12 @@ const project: ProjectRecord = {
   },
 };
 
-function dump(grants: Record<string, boolean>): string {
+function dump(grants: Record<string, boolean>, flags = 'USER_SENSITIVE_WHEN_GRANTED'): string {
   return [
     'Packages:',
     '  Package [com.example.app] (abc):',
     '    runtime permissions:',
-    ...Object.entries(grants).map(([name, granted]) => `      ${name}: granted=${granted}, flags=[ USER_SET]`),
+    ...Object.entries(grants).map(([name, granted]) => `      ${name}: granted=${granted}, flags=[ ${flags}]`),
   ].join('\n');
 }
 
@@ -46,6 +46,7 @@ function harness(over: Partial<ToolDeps> = {}, replies: (args: string[]) => stri
     readLaunch: () => null,
     resolveIos: async () => ({ name: 'stim-ios', booted: true }),
     resolveAndroid: async () => SERIAL,
+    sleep: async () => {},
     run: async (file, args, options) => {
       calls.push({ file, args, ...(options.input === undefined ? {} : { input: options.input }) });
       return replies(args);
@@ -155,6 +156,22 @@ describe('target ownership', () => {
   });
 });
 
+describe('target probes', () => {
+  test('a simctl or adb inventory that throws is a JSON failure, not an unhandled rejection', async () => {
+    const h = harness({
+      resolveIos: async () => {
+        throw new Error('simctl list timed out');
+      },
+    });
+    const result = failed(
+      await runDeviceTool({ tool: 'location', platform: 'ios', clear: true }, { json: true }, h.deps),
+    );
+    expect(result.code).toBe('STIM_DEVICE_TOOL_FAILED');
+    expect(JSON.parse(h.out.join('\n'))).toMatchObject({ code: 'STIM_DEVICE_TOOL_FAILED' });
+    expect(h.calls).toEqual([]);
+  });
+});
+
 describe('iOS tool calls', () => {
   test('simctl takes the UDID right after the verb, and push reads the payload from stdin', async () => {
     const h = harness();
@@ -205,8 +222,8 @@ describe('Android read-back', () => {
     expect(
       parsePackagePermissions(dump({ [fine]: true, [coarse]: false }), [fine, coarse, 'android.permission.CAMERA']),
     ).toEqual([
-      { name: fine, granted: true },
-      { name: coarse, granted: false },
+      { name: fine, granted: true, flags: ['USER_SENSITIVE_WHEN_GRANTED'] },
+      { name: coarse, granted: false, flags: ['USER_SENSITIVE_WHEN_GRANTED'] },
     ]);
   });
 
@@ -238,6 +255,29 @@ describe('Android read-back', () => {
     expect(result.message).toContain('did not report camera as granted');
   });
 
+  test('a grant succeeds when one of the service permissions is granted, and a reset fails while the user flags remain', async () => {
+    const grant = parsePermissionRequest('android', 'grant', 'photos');
+    assert(!isFailure(grant));
+    const partial = harness({}, (args) =>
+      args.includes('dumpsys')
+        ? dump({ 'android.permission.READ_MEDIA_IMAGES': true, 'android.permission.READ_EXTERNAL_STORAGE': false })
+        : '',
+    );
+    expect(succeeded(await runDeviceTool(grant, {}, partial.deps)).readBack).toEqual({
+      permissions: [
+        { name: 'android.permission.READ_MEDIA_IMAGES', granted: true },
+        { name: 'android.permission.READ_EXTERNAL_STORAGE', granted: false },
+      ],
+    });
+
+    const reset = parsePermissionRequest('android', 'reset', 'camera');
+    assert(!isFailure(reset));
+    const flagged = harness({}, (args) =>
+      args.includes('dumpsys') ? dump({ 'android.permission.CAMERA': false }, 'USER_SET|USER_FIXED') : '',
+    );
+    expect(failed(await runDeviceTool(reset, {}, flagged.deps)).message).toContain('did not report camera as reset');
+  });
+
   test('reset revokes and clears the user-set flags so the app asks again', async () => {
     const h = harness({}, (args) => (args.includes('dumpsys') ? dump({ 'android.permission.CAMERA': false }) : ''));
     const req = parsePermissionRequest('android', 'reset', 'camera');
@@ -267,6 +307,18 @@ describe('Android read-back', () => {
     const result = failed(await runDeviceTool(parseLocationRequest('android', { set: '1,2' }), {}, h.deps));
     expect(result.code).toBe('STIM_DEVICE_TOOL_FAILED');
     expect(result.message).toContain('KO: bad fix');
+  });
+
+  test('network settings that lag a moment are read again before failing', async () => {
+    let reads = 0;
+    const h = harness({}, (args) => {
+      if (args.at(-1) === 'wifi_on') return '0';
+      reads += 1;
+      return reads < 3 ? '1' : '0';
+    });
+    const off = parseNetworkRequest('android', 'off');
+    assert(!isFailure(off));
+    expect(succeeded(await runDeviceTool(off, {}, h.deps)).readBack).toEqual({ wifi: false, data: false });
   });
 
   test('geo fix takes longitude before latitude', async () => {
