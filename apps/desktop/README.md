@@ -263,6 +263,14 @@ phones in copy. It never revokes a pairing. Desktop's own stim-server then liste
 paired phone gets the flag on at first launch with flags. The phone app is documented in
 `website/docs/phone-app.md`.
 
+**Paired machines** is off by default. On, **Settings > Paired Machines** lists this Mac's pairings with other machines'
+stim-servers and opens **Pair with a Machine...**, which takes the output of `stim-server pair` (the bare JSON or the
+`{ qr, expiresAt }` form of `--json`). `PairedServers` (StimKit) holds the list and the pairing in progress: one
+`ServerClient` per pairing while the tab is open, reporting the connection and recording each `hello` back to the store, and one
+pairing at a time. Items live in the data-protection Keychain, one per pairing, and an ad-hoc copy
+keeps them in memory only. An item that cannot be decoded shows as unreadable with Forget. Forget deletes the key
+and shows `stim-server devices revoke <id>`; it does not revoke on the machine.
+
 ## Hiding a workspace
 
 **Hide** and **Unhide** are in the sidebar row's context menu and in the page's "..." menu for a worktree

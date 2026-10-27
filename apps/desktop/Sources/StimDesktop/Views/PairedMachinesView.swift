@@ -80,7 +80,8 @@ struct PairedMachinesView: View {
       Section {
         ForEach(servers.entries) { entry in
           MachineRow(
-            entry: entry, reconnect: { servers.reconnect(id: entry.id) }, forget: { forgetting = entry }
+            entry: entry, busy: servers.isPairing, reconnect: { servers.reconnect(id: entry.id) },
+            forget: { forgetting = entry }
           )
         }
       } header: {
@@ -101,6 +102,7 @@ struct PairedMachinesView: View {
 
 private struct MachineRow: View {
   var entry: PairedServers.Entry
+  var busy: Bool
   var reconnect: () -> Void
   var forget: () -> Void
 
@@ -137,7 +139,7 @@ private struct MachineRow: View {
       }
       Menu {
         if entry.pairing != nil { Button("Reconnect", action: reconnect) }
-        Button("Forget\u{2026}", role: .destructive, action: forget)
+        Button("Forget\u{2026}", role: .destructive, action: forget).disabled(busy)
       } label: {
         Image(systemName: "ellipsis.circle")
       }
