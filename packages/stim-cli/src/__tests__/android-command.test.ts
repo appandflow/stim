@@ -101,7 +101,7 @@ import {
   runAndroid,
 } from '../commands/android.ts';
 import * as androidDevices from '../devices/android.ts';
-import { newestBuildTools } from '../devices/android.ts';
+import { hostSystemImageArch, newestBuildTools } from '../devices/android.ts';
 import { BUILD_ERROR, type BuildAndroidResult } from '../engine/gradle.ts';
 import {
   ADB_INSTALL_TIMEOUT_MS,
@@ -368,6 +368,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       return { avdName: 'stim-app-412', consolePort: 5584, owned: true };
     },
     listSystemImages: () => IMAGES,
+    ensureImage: async () => ({ ok: true as const, installed: false }),
     ensureDeviceBooted: async (args: unknown = {}) => {
       calls.booted.push(args);
       return { ok: true, serial: 'emulator-5584' };
@@ -6456,8 +6457,12 @@ describe('the emulator system-image flag', () => {
     expect(neither.calls.ensureDevice[0]).toMatchObject({ flags: { systemImage: null } });
   });
 
-  test('an unknown system image refuses with STIM_BAD_ARG naming the installed ids, before anything is created', async () => {
-    const h = harness({ json: true, systemImage: 'system-images;android-99;google_apis;arm64-v8a' });
+  test('with android.installImages never, an unknown system image refuses with STIM_BAD_ARG naming the installed ids, before anything is created', async () => {
+    const h = harness({
+      json: true,
+      systemImage: `system-images;android-99;google_apis;${hostSystemImageArch()}`,
+      resolveSettingsFor: () => ({ android: { installImages: 'never' } }),
+    });
     const result = await h.run();
     expect(result.ok).toBe(false);
     const stdout0 = h.stdout[0];
@@ -6469,6 +6474,37 @@ describe('the emulator system-image flag', () => {
       /system-images;android-36;google_apis;arm64-v8a, system-images;android-35;google_apis;arm64-v8a/,
     );
     expect(payload.remedy).toMatch(/--system-image/);
+    expect(payload.remedy).toMatch(/--install "system-images;android-99/);
+    expect(h.calls.ensureDevice.length).toBe(0);
+  });
+
+  test('with android.installImages auto, an uninstalled image for this host goes to the installer before the device', async () => {
+    const wanted = `system-images;android-99;google_apis;${hostSystemImageArch()}`;
+    const asked: unknown[] = [];
+    const h = harness({
+      systemImage: wanted,
+      ensureImage: async (args: { requested: string | null; policy: string }) => {
+        asked.push([args.requested, args.policy, h.calls.ensureDevice.length]);
+        return { ok: true as const, installed: true };
+      },
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(asked).toEqual([[wanted, 'auto', 0]]);
+    expect(h.calls.ensureDevice[0]).toMatchObject({ flags: { systemImage: wanted } });
+  });
+
+  test('a failed image install refuses before any device is created', async () => {
+    const h = harness({
+      json: true,
+      ensureImage: async () => ({
+        ok: false as const,
+        code: NO_DEVICE,
+        message: 'licenses',
+        remedy: 'sdkmanager --licenses',
+      }),
+    });
+    expect((await h.run()).ok).toBe(false);
+    expect(JSON.parse(h.stdout[0] ?? '{}')).toMatchObject({ code: NO_DEVICE, remedy: 'sdkmanager --licenses' });
     expect(h.calls.ensureDevice.length).toBe(0);
   });
 
@@ -6477,7 +6513,7 @@ describe('the emulator system-image flag', () => {
       version: 2,
       projects: {},
       repos: {},
-      android: { systemImage: 'system-images;android-99;google_apis;arm64-v8a' },
+      android: { systemImage: 'system-images;android-99;google_apis;arm64-v8a', installImages: 'never' },
     });
     const h = harness({ json: true });
     const result = await h.run();

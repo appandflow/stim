@@ -253,6 +253,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   { key: 'android.systemImage', type: STRING, scopes: EVERY, description: 'SDK system image for owned AVDs' },
   {
+    key: 'android.installImages',
+    type: { kind: 'choice', choices: ['auto', 'never'] },
+    scopes: EVERY,
+    default: 'auto',
+    description: 'Whether Stim installs a missing system image with sdkmanager before creating an owned AVD',
+  },
+  {
     key: 'android.deviceProfile',
     type: {
       kind: 'string',

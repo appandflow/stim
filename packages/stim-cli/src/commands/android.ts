@@ -136,6 +136,7 @@ import { logPostBuildFailure, persistLastBuild, persistThrownBuild } from './and
 import { finishAndroidRun, type AndroidRuntimePlan } from './android/launch.ts';
 import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
 import { planAndroid } from './android/next-build.ts';
+import { androidImageInstallPolicy, ensureSystemImage } from '../devices/android-image.ts';
 
 export { androidFacts, lastBuildRecord } from './android/result.ts';
 
@@ -342,6 +343,7 @@ interface RunAndroidOptions {
   deviceProfile?: string | null;
   listSystemImages?: typeof listInstalledSystemImages;
   listDeviceProfiles?: (options?: { signal?: AbortSignal }) => string[] | Promise<string[]>;
+  ensureImage?: typeof ensureSystemImage;
   device?: string | boolean | null;
   wait?: string | boolean;
   waitConflict?: boolean;
@@ -615,6 +617,16 @@ function avdSetupFailure(
     remedy: diag.remedy,
     extra: { lines: diag.lines, logPath: diag.logPath ? displayPath(root, diag.logPath) : null },
   };
+}
+
+async function localRunRefusal(
+  budgetRefusal: { code: string; message: string; remedy: string } | null,
+  target: { kind: string },
+  ensureImage: () => ReturnType<typeof ensureSystemImage>,
+): Promise<{ code: string; message: string; remedy: string } | null> {
+  if (budgetRefusal || target.kind !== 'emulator') return budgetRefusal;
+  const image = await ensureImage();
+  return image.ok ? null : image;
 }
 
 export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOptions): Promise<RunAndroidResult> {
@@ -953,6 +965,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           deviceProfile: target.deviceProfile,
           physical: false,
           remoteBackend: null,
+          installImages: androidImageInstallPolicy(settings),
         },
         { listSystemImages, listDeviceProfiles },
       ),
@@ -978,7 +991,17 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       );
   }
   reclaimed = budget.reclaimed;
-  if (budget.refusal) return fail(budget.refusal.code, budget.refusal.message, budget.refusal.remedy);
+  const localRefusal = await localRunRefusal(budget.refusal, target, () =>
+    (options.ensureImage ?? ensureSystemImage)({
+      requested: target.kind === 'emulator' ? target.systemImage : null,
+      listImages: listSystemImages,
+      policy: androidImageInstallPolicy(settings),
+      env: context.env,
+      signal: settingsSignal,
+      note: (line) => phase('image', line),
+    }),
+  );
+  if (localRefusal) return fail(localRefusal.code, localRefusal.message, localRefusal.remedy);
   const remoteContext = remoteBackend
     ? await resolveRemoteDeviceContext({
         root,

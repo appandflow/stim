@@ -5,8 +5,8 @@ import {
   ownedAvdDirectory,
   ownedAvdDeviceProfile,
   ownedAvdSystemImage,
-  pickDefaultSystemImage,
 } from '../devices/android.ts';
+import { androidImageInstallPolicy, decideSystemImage } from '../devices/android-image.ts';
 import { deviceSlotPlatforms, validateDeviceSlot } from '../devices/device-slots.ts';
 import { resolveAndroidRunPlan } from '../commands/android/plan.ts';
 import { planFlagRefusal, planPayload } from '../commands/build-plan.ts';
@@ -100,13 +100,16 @@ export async function planNativeAndroid(
               'Run stim android without --plan to reconcile the assignment, or use --slot <name> for an owned emulator.',
           },
         };
-      const image = reuseRecorded
-        ? recordedImage
-        : pickDefaultSystemImage(
-            listInstalledSystemImages(),
-            target.systemImage ? { systemImage: target.systemImage } : {},
-          )?.pkg;
-      abi = androidSystemImageAbi(image);
+      const decided = reuseRecorded
+        ? null
+        : decideSystemImage({
+            requested: target.systemImage,
+            installed: listInstalledSystemImages(),
+            policy: androidImageInstallPolicy(settings),
+          });
+      if (decided?.kind === 'refuse')
+        return { refusal: { code: decided.code, message: decided.message, remedy: decided.remedy } };
+      abi = androidSystemImageAbi(decided ? decided.pkg : recordedImage);
       if (!abi) throw new Error('No installed emulator image identifies the native Android build ABI.');
     }
     const snapshot = await nativeGradleArtifactSnapshot(root, declared, build, abi, env, signal);
