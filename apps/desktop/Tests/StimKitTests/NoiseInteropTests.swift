@@ -78,6 +78,14 @@ struct NoiseInteropTests {
       secret: try #require(Noise.decodeSecret(token)), fingerprint: fingerprint)
   }
 
+  static func outcome(_ payload: PairingPayload, _ store: PairedServerStore) async -> Result<PairedServer, ServerError> {
+    do {
+      return .success(try await pair(payload, store: store))
+    } catch {
+      return .failure(error as? ServerError ?? ServerError(code: "other", message: "\(error)"))
+    }
+  }
+
   static func pair(_ payload: PairingPayload, store: PairedServerStore) async throws -> PairedServer {
     try await NoisePairing.pair(
       payload, store: store, deviceName: "Interop Mac", clientName: "Stim Desktop test", clientVersion: "1", timeout: 10)
@@ -98,35 +106,61 @@ struct NoiseInteropTests {
     return client
   }
 
-  @Test func desktopPairsWithARealServerAndReconnectsWithThePinnedKey() async throws {
-    let runtime = try #require(Self.runtime)
-    let home = FileManager.default.temporaryDirectory.appendingPathComponent("stim-noise-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: home) }
-    let environment = [
-      "HOME": home.path, "STIM_HOME": home.appendingPathComponent(".stim").path, "SHELL": "/bin/sh",
-      "PATH": "/usr/bin:/bin",
-    ]
-    let script = URL(fileURLWithPath: runtime).appendingPathComponent("node_modules/@stim-cli/server/dist/stim-server.mjs")
-      .path
-    let port = try Self.freePort()
-    let server = try Child([script, "--port", String(port), "--loopback-only"], environment: environment)
-    defer { server.stop() }
-    var ready = false
-    for _ in 0..<120 where !ready {
-      let health = URL(string: "http://127.0.0.1:\(port)/health")!
-      if let (_, response) = try? await URLSession.shared.data(from: health) {
-        ready = (response as? HTTPURLResponse)?.statusCode == 200
+  /// A real `stim-server --loopback-only` in a private home, and a way to get a fresh single-use pairing code.
+  @MainActor final class RunningServer {
+    let port: Int
+    private let server: Child
+    private let script: String
+    private let environment: [String: String]
+    private let home: URL
+
+    init() async throws {
+      let runtime = try #require(interopRuntime)
+      home = FileManager.default.temporaryDirectory.appendingPathComponent("stim-noise-\(UUID().uuidString)")
+      try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+      environment = [
+        "HOME": home.path, "STIM_HOME": home.appendingPathComponent(".stim").path, "SHELL": "/bin/sh",
+        "PATH": "/usr/bin:/bin",
+      ]
+      script =
+        URL(fileURLWithPath: runtime).appendingPathComponent("node_modules/@stim-cli/server/dist/stim-server.mjs")
+        .path
+      port = try NoiseInteropTests.freePort()
+      server = try Child([script, "--port", String(port), "--loopback-only"], environment: environment)
+      var ready = false
+      for _ in 0..<120 where !ready {
+        let health = URL(string: "http://127.0.0.1:\(port)/health")!
+        if let (_, response) = try? await URLSession.shared.data(from: health) {
+          ready = (response as? HTTPURLResponse)?.statusCode == 200
+        }
+        if !ready { try await Task.sleep(for: .milliseconds(250)) }
       }
-      if !ready { try await Task.sleep(for: .milliseconds(250)) }
+      guard ready else {
+        stop()
+        throw ServerError(code: "not-ready", message: "stim-server did not answer /health")
+      }
     }
-    try #require(ready, "stim-server did not answer /health")
-    let pair = try Child([script, "pair", "--port", String(port)], environment: environment)
-    pair.process.waitUntilExit()
-    let code = try await pair.line(0)
-    let token = try #require(code["pairingToken"]?.string)
-    let fingerprint = try #require(code["fingerprint"]?.string)
-    let payload = try Self.payload(port: port, token: token, fingerprint: fingerprint)
+
+    func stop() {
+      server.stop()
+      try? FileManager.default.removeItem(at: home)
+    }
+
+    func payload() async throws -> PairingPayload {
+      let pair = try Child([script, "pair", "--port", String(port)], environment: environment)
+      pair.process.waitUntilExit()
+      let code = try await pair.line(0)
+      let token = try #require(code["pairingToken"]?.string)
+      let fingerprint = try #require(code["fingerprint"]?.string)
+      return try NoiseInteropTests.payload(port: port, token: token, fingerprint: fingerprint)
+    }
+  }
+
+  @Test func desktopPairsWithARealServerAndReconnectsWithThePinnedKey() async throws {
+    let server = try await RunningServer()
+    defer { server.stop() }
+    let payload = try await server.payload()
+    let fingerprint = payload.fingerprint
 
     let store = InMemoryPairedServerStore()
     let pairing = try await Self.pair(payload, store: store)
@@ -204,5 +238,81 @@ struct NoiseInteropTests {
     }
     #expect(try await responder.line(3) == ["message3": .bool(true), "payload": .string(#"{"name":"Interop Mac"}"#)])
     #expect(try store.pairings().map(\.id) == [fingerprint])
+  }
+
+  @Test func aPairingTheServerRefusesToRecordLeavesNoKeyBehind() async throws {
+    let server = try await RunningServer()
+    defer { server.stop() }
+    let payload = try await server.payload()
+    let winner = InMemoryPairedServerStore()
+    let pairing = try await Self.pair(payload, store: winner)
+
+    let loser = InMemoryPairedServerStore()
+    await #expect(throws: NoiseClientTransport.refusal("unknown-secret")) {
+      _ = try await Self.pair(payload, store: loser)
+    }
+    #expect(try loser.pairings().isEmpty)
+    #expect(try winner.pairings() == [pairing])
+  }
+
+  @Test func twoPairingsWithTheSameServerNeverForgetTheWinnersKey() async throws {
+    let server = try await RunningServer()
+    defer { server.stop() }
+    let payload = try await server.payload()
+    let store = InMemoryPairedServerStore()
+    async let first = Self.outcome(payload, store)
+    async let second = Self.outcome(payload, store)
+    var winners: [PairedServer] = []
+    var errors: [ServerError] = []
+    for result in [await first, await second] {
+      switch result {
+      case .success(let pairing): winners.append(pairing)
+      case .failure(let error): errors.append(error)
+      }
+    }
+    #expect(winners.count == 1)
+    #expect(errors.map(\.code) == ["pairing-in-progress"])
+    #expect(try store.pairings() == winners)
+  }
+
+  @Test func aServerThatNeverAnswersHelloEndsThePairingAtTheTimeoutAndKeepsIt() async throws {
+    let runtime = try #require(Self.runtime)
+    let token = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+    let responder = try Child([Self.responder, runtime, token, "hold"], environment: ["PATH": "/usr/bin:/bin"])
+    defer { responder.stop() }
+    let listening = try await responder.line(0)
+    let port = try #require(listening["port"]?.number.flatMap(ServerProtocol.exactInteger))
+    let fingerprint = try #require(listening["fingerprint"]?.string)
+    let payload = try Self.payload(port: port, token: token, fingerprint: fingerprint)
+
+    let store = InMemoryPairedServerStore()
+    let started = Date()
+    do {
+      _ = try await NoisePairing.pair(
+        payload, store: store, deviceName: "Interop Mac", clientName: "Stim Desktop test", clientVersion: "1", timeout: 1)
+      Issue.record("the pairing completed without a hello reply")
+    } catch let error as ServerError {
+      #expect(error.code == "pairing-unconfirmed")
+      #expect(error.message.contains("did not answer in time"))
+    }
+    #expect(Date().timeIntervalSince(started) < 8)
+    #expect(try store.pairings().map(\.id) == [fingerprint])
+
+    let cancelled = InMemoryPairedServerStore()
+    let other = try Self.payload(port: port, token: token, fingerprint: fingerprint)
+    let task = Task {
+      try await NoisePairing.pair(
+        other, store: cancelled, deviceName: "Interop Mac", clientName: "Stim Desktop test", clientVersion: "1",
+        timeout: 60)
+    }
+    _ = try await responder.line(2)
+    task.cancel()
+    do {
+      _ = try await task.value
+      Issue.record("a cancelled pairing completed")
+    } catch let error as ServerError {
+      #expect(error.code == "pairing-unconfirmed")
+    }
+    #expect(try cancelled.pairings().map(\.id) == [fingerprint])
   }
 }

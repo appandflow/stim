@@ -184,7 +184,10 @@ private let code =
     release?.resume()
     await first.value
     #expect(!rig.servers.isPairing)
-    guard case .failed(let notice) = rig.servers.pairingState else { return Issue.record("not failed") }
+    guard case .failed(let notice) = rig.servers.pairingState else {
+      Issue.record("not failed")
+      return
+    }
     #expect(notice.title.contains("expired"))
   }
 
@@ -201,7 +204,10 @@ private let code =
           return saved
         }, localServerID: { "mine" }))
     await servers.pair(code)
-    guard case .failed(let notice) = servers.pairingState else { return Issue.record("not refused") }
+    guard case .failed(let notice) = servers.pairingState else {
+      Issue.record("not refused")
+      return
+    }
     #expect(notice.title.contains("own server"))
     #expect(notice.command == "stim-server devices revoke device-9")
     #expect(try store.pairings().isEmpty)
