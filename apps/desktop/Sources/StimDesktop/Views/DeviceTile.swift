@@ -215,7 +215,8 @@ struct DeviceTile: View {
   static func hasButtons(_ device: OwnedDevice) -> Bool {
     switch device.ref {
     case .ios: return device.ref.isRunning && device.localSimulatorUDID != nil
-    case .android: return device.ref.isRunning && !device.ref.isPhysical && device.localEmulatorSerial != nil
+    case .android:
+      return device.owner.isLocal && device.ref.isRunning && !device.ref.isPhysical && device.ref.hostedMachine == nil
     case .web, .remote, .macos: return false
     }
   }
