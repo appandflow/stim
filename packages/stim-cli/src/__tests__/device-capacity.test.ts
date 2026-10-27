@@ -4,6 +4,7 @@ import { join, parse } from 'node:path';
 import { readStatsReport } from '@stim-cli/core/state';
 import { workspaceId } from '@stim-cli/core';
 import {
+  checkDeviceCapacity,
   peekDeviceSlots,
   withDeviceBootAdmission,
   deviceSlotWaitingLine,
@@ -176,6 +177,60 @@ test('admission lists simulators and emulators through the async executor', asyn
       }),
     ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
     expect(listed).toContain('adb');
+  } finally {
+    resetExecutor();
+  }
+});
+
+test('the early capacity check lists simulators and emulators through the async executor', async () => {
+  setExecutor(
+    makeExecutor({
+      runFile: () => {
+        throw new Error('a synchronous device listing blocks the event loop');
+      },
+      runFileAsync: async (file) =>
+        file === 'xcrun' ? '{"devices":{}}' : 'List of devices attached\nemulator-5554\tdevice\n',
+    }),
+  );
+  try {
+    await expect(
+      checkDeviceCapacity({
+        platform: 'android',
+        project: null,
+        max: 1,
+        config: makeConfig({
+          projects: {
+            '/work/holder': { platforms: { android: { owned: true, avdName: 'stim-holder', consolePort: 5554 } } },
+          },
+        }),
+        booting: [],
+      }),
+    ).resolves.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+  } finally {
+    resetExecutor();
+  }
+});
+
+test('the slot peek lists simulators and emulators through the async executor', async () => {
+  setExecutor(
+    makeExecutor({
+      runFile: () => {
+        throw new Error('a synchronous device listing blocks the event loop');
+      },
+      runFileAsync: async (file) =>
+        file === 'xcrun' ? '{"devices":{}}' : 'List of devices attached\nemulator-5554\tdevice\n',
+    }),
+  );
+  try {
+    const project = { platforms: { android: { owned: true, avdName: 'stim-holder', consolePort: 5554 } } };
+    await expect(
+      peekDeviceSlots({
+        platform: 'android',
+        project,
+        max: 2,
+        sources: { config: makeConfig({ projects: { '/work/holder': project } }), booting: [] },
+      }),
+    ).resolves.toMatchObject({ count: 1, max: 2, localLive: true });
   } finally {
     resetExecutor();
   }
@@ -696,7 +751,7 @@ test('reclaim attempts are at least fifteen seconds apart while capacity is poll
   expect(readStats().record?.capacityWaits?.[0]?.reclaimed).toBe(2);
 });
 
-test('the non-binding slot peek reports a live owned slot and FIFO waiters without taking capacity', () => {
+test('the non-binding slot peek reports a live owned slot and FIFO waiters without taking capacity', async () => {
   const ticket = tryAcquireClaim({
     root: join(root, 'device-waits'),
     mode: 'shared',
@@ -706,7 +761,7 @@ test('the non-binding slot peek reports a live owned slot and FIFO waiters witho
   try {
     const project = { platforms: { ios: { owned: true, deviceUdid: 'holder' } } };
     expect(
-      peekDeviceSlots({
+      await peekDeviceSlots({
         platform: 'ios',
         project,
         max: 3,
@@ -774,9 +829,9 @@ test('status slot usage names the workspace and slot of each counted device and 
   ).toMatchObject({ max: 3, inUse: null, unknown: expect.stringContaining('simctl timed out'), holders: [] });
 });
 
-test('the non-binding peek preserves an unknown count for the binding boot admission', () => {
+test('the non-binding peek preserves an unknown count for the binding boot admission', async () => {
   expect(
-    peekDeviceSlots({
+    await peekDeviceSlots({
       platform: 'ios',
       project: null,
       max: 1,

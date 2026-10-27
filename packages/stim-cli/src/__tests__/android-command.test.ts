@@ -362,7 +362,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
     projectRegistry: undefined as NonNullable<Parameters<typeof runAndroid>[0]>['projectRegistry'],
     ensureRemoteBootOwned: (args: Parameters<typeof ensureRemoteBootOwned>[0]) =>
       ensureRemoteBootOwned({ ...args, ledgerRoot: join(home, 'machine-eas') }),
-    deviceAbi: () => null,
+    deviceAbi: async () => null,
     ensureDevice: async (args: unknown = {}) => {
       calls.ensureDevice.push(args);
       return { avdName: 'stim-app-412', consolePort: 5584, owned: true };
@@ -981,7 +981,7 @@ describe('explicit remote backend behavior', () => {
       resolveAvdSerial: never('local AVD resolution for a remote device'),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend, easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => {
           remoteCalls.push('ensureDevice');
           return { deviceName: 'remote device', owned: true, remote: true };
@@ -1093,7 +1093,7 @@ describe('explicit remote backend behavior', () => {
     const { h } = remoteHarness('proxy', {
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'proxy', easBin: null, agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'remote device', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ failed: true, reason: 'ENOSPC: remote profile write failed' }),
         install: never('install'),
@@ -1115,7 +1115,7 @@ describe('explicit remote backend behavior', () => {
     const { h } = remoteHarness('eas', {
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
         install: step === 'install' ? failing : (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
@@ -1138,7 +1138,7 @@ describe('explicit remote backend behavior', () => {
       verifyCollector: () => ({ status: 'ours' as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
         install: (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
@@ -1298,7 +1298,7 @@ describe('explicit remote backend behavior', () => {
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
         install: (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
@@ -1336,7 +1336,7 @@ describe('explicit remote backend behavior', () => {
       },
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => {
           order.push('ensureDevice');
           return { deviceName: 'EAS Simulator', owned: true, remote: true };
@@ -1386,7 +1386,7 @@ describe('explicit remote backend behavior', () => {
       }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => {
           remoteCalls.push('ensureDevice');
           return { deviceName: 'EAS Simulator', owned: true, remote: true };
@@ -1448,7 +1448,7 @@ describe('explicit remote backend behavior', () => {
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => {
           order.push('boot');
@@ -1518,7 +1518,7 @@ describe('explicit remote backend behavior', () => {
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => {
           log.push('boot');
@@ -1552,7 +1552,7 @@ describe('explicit remote backend behavior', () => {
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
         install: never('install'),
@@ -1589,7 +1589,7 @@ describe('explicit remote backend behavior', () => {
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_unmanaged' }),
         install: never('install'),
@@ -1647,7 +1647,7 @@ describe('explicit remote backend behavior', () => {
         ensureMetroReachable: async () => ({ ok: true as const }),
         remoteDeviceDeps: () => ({
           ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-          checkCapacity: () => null,
+          checkCapacity: async () => null,
           ensureDevice: async () => {
             deviceEntries += 1;
             if (deviceEntries === 2) bothAtDevice();
@@ -1726,7 +1726,7 @@ describe('explicit remote backend behavior', () => {
       }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
         install: (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
@@ -4427,7 +4427,7 @@ describe('concurrency limits', () => {
       wait: false,
       recordCapacityRefusal,
       getLimits: () => ({ maxBuilds: 0, maxDevices: 3 }),
-      checkCapacity: (args: Record<string, unknown>) => {
+      checkCapacity: async (args: Record<string, unknown>) => {
         capacityCalls.push(args);
         return {
           code: 'STIM_AT_CAPACITY',
@@ -4469,7 +4469,11 @@ describe('concurrency limits', () => {
     const h = harness({
       recordCapacityRefusal,
       wait: false,
-      checkCapacity: () => ({ code: 'STIM_CLAIM_UNAVAILABLE', message: 'owner unknown', remedy: 'inspect claim' }),
+      checkCapacity: async () => ({
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        message: 'owner unknown',
+        remedy: 'inspect claim',
+      }),
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
@@ -5835,9 +5839,9 @@ describe('--device (a physical Android device)', () => {
   function physicalHarness(overrides: Record<string, unknown> = {}) {
     return harness({
       device: true,
-      listDevices: () => CONNECTED,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       checkCapacity: never('the device-capacity check'),
       ensureDevice: never('the owned-device path'),
       ensureDeviceBooted: never('the emulator boot'),
@@ -5864,7 +5868,7 @@ describe('--device (a physical Android device)', () => {
   test('a physical Debug run builds for the device primary ABI', async () => {
     const serials: string[] = [];
     const h = physicalHarness({
-      deviceAbi: (serial: string) => {
+      deviceAbi: async (serial: string) => {
         serials.push(serial);
         return 'arm64-v8a';
       },
@@ -5924,7 +5928,7 @@ describe('--device (a physical Android device)', () => {
   test('a physical run honours an explicit serial', async () => {
     const h = physicalHarness({
       device: 'RFCR7081Q9L',
-      listDevices: () => ({
+      listDevices: async () => ({
         emulators: [],
         physical: [{ serial: 'OTHER' }, { serial: 'RFCR7081Q9L' }],
         unhealthy: [],
@@ -5937,7 +5941,7 @@ describe('--device (a physical Android device)', () => {
 
   test('a physical run refuses with the resolver error and remedy when no device is connected', async () => {
     const h = physicalHarness({
-      listDevices: () => ({ emulators: [], physical: [], unhealthy: [] }),
+      listDevices: async () => ({ emulators: [], physical: [], unhealthy: [] }),
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
@@ -5956,9 +5960,9 @@ describe('--device (a physical Android device)', () => {
     const h = harness({
       device: true,
       remoteDevice: 'proxy',
-      listDevices: () => CONNECTED,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       fingerprint: never('the fingerprint'),
       resolveRemoteDeviceContext: never('the remote session'),
     });
@@ -5980,9 +5984,9 @@ describe('--device refusals found in review', () => {
   test('an empty --device value is refused, never silently run on the emulator', async () => {
     const h = harness({
       device: '',
-      listDevices: () => CONNECTED2,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED2,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       checkCapacity: never('the device-capacity check'),
       ensureDevice: never('the owned-device path'),
       ensureDeviceBooted: never('the emulator boot'),
@@ -6004,9 +6008,9 @@ describe('--device refusals found in review', () => {
     const h = harness({
       device: true,
       ...(remoteDevice ? { remoteDevice } : {}),
-      listDevices: () => CONNECTED2,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED2,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       checkCapacity: never('the device-capacity check'),
       ensureDevice: never('the owned-device path'),
       ensureDeviceBooted: never('the emulator boot'),
@@ -6023,9 +6027,9 @@ describe('--device refusals found in review', () => {
     const h = harness({
       device: true,
       remoteDevice: 'proxy',
-      listDevices: () => CONNECTED2,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED2,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       fingerprint: never('the fingerprint'),
       resolveRemoteDeviceContext: never('the remote session'),
     });
@@ -6043,9 +6047,9 @@ describe('--device refusals found in review', () => {
   test('a physical run records its Metro reverse, and no other serial, in the workspace state', async () => {
     const h = harness({
       device: true,
-      listDevices: () => CONNECTED2,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED2,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       checkCapacity: never('the device-capacity check'),
       ensureDevice: never('the owned-device path'),
       ensureDeviceBooted: never('the emulator boot'),
@@ -6066,9 +6070,9 @@ describe('--device refusals found in review', () => {
 test('a signature conflict on install names the conflict instead of blaming the cable', async () => {
   const h = harness({
     device: true,
-    listDevices: () => ({ emulators: [], physical: [{ serial: 'RFCR7081Q9L' }], unhealthy: [] }),
-    deviceModel: () => 'SM-G996W',
-    isEmulatorDevice: () => false,
+    listDevices: async () => ({ emulators: [], physical: [{ serial: 'RFCR7081Q9L' }], unhealthy: [] }),
+    deviceModel: async () => 'SM-G996W',
+    isEmulatorDevice: async () => false,
     checkCapacity: never('the device-capacity check'),
     ensureDevice: never('the owned-device path'),
     ensureDeviceBooted: never('the emulator boot'),
@@ -6157,9 +6161,9 @@ describe('--device: the lease on the device', () => {
     return harness({
       device: true,
       json: true,
-      listDevices: () => CONNECTED,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       acquireLease: async () => ({ status: 'leased', kind: 'run', expiresAt: lease.expiresAt }),
       makeRunLease: () => lease,
       ...overrides,
@@ -6224,9 +6228,9 @@ describe('--device: the lease on the device', () => {
       device: true,
       json: true,
       wait: '0',
-      listDevices: () => CONNECTED,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
     });
     const result = await h.run();
 
@@ -6248,9 +6252,9 @@ describe('--device: the lease on the device', () => {
       device: true,
       json: true,
       wait: false,
-      listDevices: () => CONNECTED,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
     });
     const result = await h.run();
 
@@ -6264,9 +6268,9 @@ describe('--device: the lease on the device', () => {
   test('a free device is leased by the run and released at the end', async () => {
     const h = harness({
       device: true,
-      listDevices: () => CONNECTED,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
     });
     expect((await h.run()).ok).toBe(true);
     expect(h.stderr.join('\n')).toMatch(new RegExp(`run lease on ${SERIAL} until`));
@@ -6277,8 +6281,8 @@ describe('--device: the lease on the device', () => {
     const bad = await harness({
       device: true,
       wait: 'soon',
-      listDevices: () => CONNECTED,
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      isEmulatorDevice: async () => false,
     }).run();
     expect(bad.error?.message).toMatch(/Invalid --wait value/);
 
@@ -6286,8 +6290,8 @@ describe('--device: the lease on the device', () => {
       device: true,
       wait: false,
       waitConflict: true,
-      listDevices: () => CONNECTED,
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      isEmulatorDevice: async () => false,
     }).run();
     expect(both.error?.message).toMatch(/--wait and --no-wait ask for opposite things/);
   });
@@ -6301,9 +6305,9 @@ describe('--device with no serial: the pool', () => {
     return harness({
       device: true,
       json: true,
-      listDevices: () => ({ emulators: [], physical: serials.map((serial) => ({ serial })), unhealthy: [] }),
+      listDevices: async () => ({ emulators: [], physical: serials.map((serial) => ({ serial })), unhealthy: [] }),
       deviceModel: (serial: string) => `model-${serial}`,
-      isEmulatorDevice: () => false,
+      isEmulatorDevice: async () => false,
       checkCapacity: never('the device-capacity check'),
       ensureDevice: never('the owned-device path'),
       ...overrides,
@@ -6875,7 +6879,7 @@ describe('optimization configuration', () => {
   test('native switches disable injected ccache and ABI narrowing and reach the Gradle engine', async () => {
     const engine: unknown[] = [];
     const h = harness({
-      deviceAbi: () => 'arm64-v8a',
+      deviceAbi: async () => 'arm64-v8a',
       ccacheFor: never('ccache setup'),
       resolveSettingsFor: () => ({
         optimizations: { android: { compilerCache: 'none', pch: 'on', gradleBuildCache: false, targetAbiOnly: false } },
@@ -7257,9 +7261,9 @@ describe('EAS development builds', () => {
     const { run, calls } = harness({
       device: 'RFCR7081Q9L',
       easProfile: 'development',
-      listDevices: () => ({ emulators: [], physical: [{ serial: 'RFCR7081Q9L' }], unhealthy: [] }),
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => ({ emulators: [], physical: [{ serial: 'RFCR7081Q9L' }], unhealthy: [] }),
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       resolveEasDevelopmentBuild: async () => ({
         ok: true,
         path,
@@ -7710,7 +7714,7 @@ describe('named Android hosting placement', () => {
                 : { probe: { machine, failure: 'declined: occupied' } },
           }),
         checkBudget,
-        checkCapacity: () => ({ code: 'STIM_AT_CAPACITY', message: '3/3 devices in use', remedy: 'stim stop' }),
+        checkCapacity: async () => ({ code: 'STIM_AT_CAPACITY', message: '3/3 devices in use', remedy: 'stim stop' }),
         placeHostedAndroid: async (_target: unknown, args: { reserved: (value: typeof placement) => void }) => {
           const hosted = { ...placement, selected: 'auto', reason: target.selection!.reason };
           args.reserved(hosted);

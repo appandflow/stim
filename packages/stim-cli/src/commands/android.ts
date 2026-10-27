@@ -87,7 +87,8 @@ import {
 import { verifyAndroidReleaseLaunch, verifyLaunch } from '../engine/launch-verify.ts';
 import {
   androidDeviceAbi,
-  listAdbDevices,
+  emulatorProbeSession,
+  listAdbDevicesAsync,
   listInstalledSystemImages,
   physicalDeviceModel,
   probeEmulatorSerial,
@@ -348,7 +349,7 @@ interface RunAndroidOptions {
   makeRunLease?: typeof runLease;
   selectPool?: typeof selectFromPool;
   onLeaseSignal?: typeof releaseLeaseOnAbort;
-  listDevices?: typeof listAdbDevices;
+  listDevices?: typeof listAdbDevicesAsync;
   deviceModel?: typeof physicalDeviceModel;
   deviceAbi?: typeof androidDeviceAbi;
   isEmulatorDevice?: typeof probeEmulatorSerial;
@@ -436,7 +437,7 @@ function resolveRunAndroidOptions(
     makeRunLease = runLease,
     selectPool = selectFromPool,
     onLeaseSignal = releaseLeaseOnAbort,
-    listDevices = listAdbDevices,
+    listDevices = listAdbDevicesAsync,
     deviceModel = physicalDeviceModel,
     deviceAbi = androidDeviceAbi,
     isEmulatorDevice = probeEmulatorSerial,
@@ -1147,11 +1148,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     device = pooled.device;
     bootPromise = Promise.resolve({ ok: true, serial: pooled.device.serial });
   } else if (target.kind === 'physical') {
-    const resolved = resolvePhysicalDevice(target.serial, listDevices(), isEmulatorDevice);
+    const adb = await listDevices();
+    const resolved = await emulatorProbeSession(isEmulatorDevice)((isEmulator) =>
+      resolvePhysicalDevice(target.serial, adb, isEmulator),
+    );
     if (!resolved.serial) return fail(NO_DEVICE, resolved.error!, resolved.remedy!);
     device = {
       serial: resolved.serial,
-      deviceName: deviceModel(resolved.serial) ?? resolved.serial,
+      deviceName: (await deviceModel(resolved.serial)) ?? resolved.serial,
       owned: false,
     };
     bootPromise = Promise.resolve({ ok: true, serial: resolved.serial });
@@ -1169,7 +1173,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     }
     const capacity =
       plan.deviceSlotWaitMs === 0
-        ? checkCapacity({
+        ? await checkCapacity({
             platform: PLATFORM,
             project,
             max: limits.maxDevices,
@@ -1285,7 +1289,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           writer,
           settings,
           buildPlan,
-          target: androidBuildOptions({
+          target: await androidBuildOptions({
             release,
             physical,
             device,

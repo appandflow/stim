@@ -536,23 +536,19 @@ export async function listAdbDevicesAsync({
 const ADB_PROP_TIMEOUT_MS = 5000;
 const EMULATOR_HARDWARE = new Set(['ranchu', 'goldfish', 'vbox86', 'vbox86p']);
 
-function adbProp(serial: string, name: string): string | null {
-  try {
-    const out = getExecutor().runFile(androidToolPath('adb'), ['-s', serial, 'shell', 'getprop', name], {
-      timeoutMs: ADB_PROP_TIMEOUT_MS,
-    });
-    return String(out ?? '').trim() || null;
-  } catch {
-    return null;
-  }
+async function adbProp(serial: string, name: string): Promise<string | null> {
+  const out = await getExecutor().runFileQuietAsync(androidToolPath('adb'), ['-s', serial, 'shell', 'getprop', name], {
+    timeoutMs: ADB_PROP_TIMEOUT_MS,
+  });
+  return String(out ?? '').trim() || null;
 }
 
-export function physicalDeviceModel(serial: string): string | null {
+export function physicalDeviceModel(serial: string): Promise<string | null> {
   return adbProp(serial, 'ro.product.model');
 }
 
-export function androidDeviceAbi(serial: string): string | null {
-  const abi = adbProp(serial, 'ro.product.cpu.abi');
+export async function androidDeviceAbi(serial: string): Promise<string | null> {
+  const abi = await adbProp(serial, 'ro.product.cpu.abi');
   return abi && ANDROID_ABIS.has(abi) ? abi : null;
 }
 
@@ -579,10 +575,10 @@ function looksLikeEmulator({
   );
 }
 
-export function probeEmulatorSerial(serial: string): boolean {
+export async function probeEmulatorSerial(serial: string): Promise<boolean> {
   return looksLikeEmulator({
-    kernelQemu: adbProp(serial, 'ro.kernel.qemu'),
-    hardware: adbProp(serial, 'ro.hardware'),
+    kernelQemu: await adbProp(serial, 'ro.kernel.qemu'),
+    hardware: await adbProp(serial, 'ro.hardware'),
   });
 }
 
@@ -609,29 +605,43 @@ function emulatorRefusal(serial: string): ResolvedPhysicalDevice {
   };
 }
 
-export function memoizeEmulatorProbe(
-  probe: (serial: string) => boolean = probeEmulatorSerial,
-): (serial: string) => boolean {
-  const seen = new Map<string, boolean>();
-  return (serial: string) => {
-    const cached = seen.get(serial);
-    if (cached !== undefined) return cached;
-    const probed = probe(serial);
-    seen.set(serial, probed);
-    return probed;
+class UnprobedSerial extends Error {
+  readonly serial: string;
+
+  constructor(serial: string) {
+    super(serial);
+    this.serial = serial;
+  }
+}
+
+export function emulatorProbeSession(
+  probe: (serial: string) => Promise<boolean>,
+): <T>(select: (isEmulator: (serial: string) => boolean) => T) => Promise<T> {
+  const known = new Map<string, boolean>();
+  const isEmulator = (serial: string): boolean => {
+    const answer = known.get(serial);
+    if (answer === undefined) throw new UnprobedSerial(serial);
+    return answer;
+  };
+  return async (select) => {
+    for (;;) {
+      try {
+        return select(isEmulator);
+      } catch (error) {
+        if (!(error instanceof UnprobedSerial)) throw error;
+        known.set(error.serial, await probe(error.serial));
+      }
+    }
   };
 }
 
-export function androidPoolCandidates(
-  adb: AdbDevices,
-  isEmulator: (serial: string) => boolean = probeEmulatorSerial,
-): AdbPhysicalEntry[] {
+export function androidPoolCandidates(adb: AdbDevices, isEmulator: (serial: string) => boolean): AdbPhysicalEntry[] {
   return (adb?.physical ?? []).filter((entry) => !isEmulator(entry.serial));
 }
 
 export function androidPoolNoCandidatesRefusal(
   adb: AdbDevices,
-  isEmulator: (serial: string) => boolean = probeEmulatorSerial,
+  isEmulator: (serial: string) => boolean,
 ): ResolvedPhysicalDevice {
   const physical = adb?.physical ?? [];
   if (physical.length > 0 && physical.every((entry) => isEmulator(entry.serial))) {
@@ -647,7 +657,7 @@ export function androidPoolNoCandidatesRefusal(
 export function resolvePhysicalDevice(
   requested: string | null,
   adb: AdbDevices,
-  isEmulator: (serial: string) => boolean = probeEmulatorSerial,
+  isEmulator: (serial: string) => boolean,
 ): ResolvedPhysicalDevice {
   const physical = adb?.physical ?? [];
   const unhealthy = adb?.unhealthy ?? [];

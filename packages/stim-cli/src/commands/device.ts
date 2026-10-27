@@ -29,8 +29,8 @@ import {
   androidPoolCandidates,
   getAvdNameForSerialAsync,
   androidPoolNoCandidatesRefusal,
-  listAdbDevices,
-  memoizeEmulatorProbe,
+  emulatorProbeSession,
+  listAdbDevicesAsync,
   physicalDeviceModel,
   probeEmulatorSerial,
   resolvePhysicalDevice,
@@ -43,7 +43,7 @@ export interface DeviceDeps {
   getProject: (root: string) => ProjectRecord | null;
   avdNameOf: (serial: string) => Promise<string | null>;
   listIosDevices: typeof listIosDevices;
-  listAdbDevices: typeof listAdbDevices;
+  listAdbDevices: typeof listAdbDevicesAsync;
   physicalDeviceModel: typeof physicalDeviceModel;
   probeEmulatorSerial: typeof probeEmulatorSerial;
   takeLease: typeof takeLease;
@@ -62,7 +62,7 @@ const DEFAULT_DEPS: DeviceDeps = {
   getProject,
   avdNameOf: getAvdNameForSerialAsync,
   listIosDevices,
-  listAdbDevices,
+  listAdbDevices: listAdbDevicesAsync,
   physicalDeviceModel,
   probeEmulatorSerial,
   takeLease,
@@ -141,11 +141,14 @@ async function resolveDevice(
     }
     return { id: resolved.udid, deviceName: resolved.name ?? resolved.udid };
   }
-  const resolved = resolvePhysicalDevice(requested, d.listAdbDevices(), d.probeEmulatorSerial);
+  const adb = await d.listAdbDevices();
+  const resolved = await emulatorProbeSession(d.probeEmulatorSerial)((isEmulator) =>
+    resolvePhysicalDevice(requested, adb, isEmulator),
+  );
   if (!resolved.serial) {
     return { code: 'STIM_NO_DEVICE', message: resolved.error as string, remedy: resolved.remedy ?? null };
   }
-  return { id: resolved.serial, deviceName: d.physicalDeviceModel(resolved.serial) ?? resolved.serial };
+  return { id: resolved.serial, deviceName: (await d.physicalDeviceModel(resolved.serial)) ?? resolved.serial };
 }
 
 interface OwnedVirtualDevice extends ResolvedDevice {
@@ -188,25 +191,31 @@ async function poolDevice(
   d: DeviceDeps,
   slot?: string,
 ): Promise<ResolvedDevice | DeviceFailure> {
-  const isEmulator = memoizeEmulatorProbe(d.probeEmulatorSerial);
+  const probed = emulatorProbeSession(d.probeEmulatorSerial);
   const pooled = await d.selectFromPool({
     ...(slot ? { slot } : {}),
     root,
     platform,
     idLabel,
-    list: async () =>
-      platform === 'ios'
-        ? iosPoolCandidates(await d.listIosDevices()).map((entry) => ({
-            id: entry.udid,
-            name: entry.name,
-            fallback: isWirelessIosDevice(entry),
-          }))
-        : androidPoolCandidates(d.listAdbDevices(), isEmulator).map((entry) => ({ id: entry.serial })),
+    list: async () => {
+      if (platform === 'ios') {
+        return iosPoolCandidates(await d.listIosDevices()).map((entry) => ({
+          id: entry.udid,
+          name: entry.name,
+          fallback: isWirelessIosDevice(entry),
+        }));
+      }
+      const adb = await d.listAdbDevices();
+      const candidates = await probed((isEmulator) => androidPoolCandidates(adb, isEmulator));
+      return candidates.map((entry) => ({ id: entry.serial }));
+    },
     noCandidates: async () => {
-      const resolved =
-        platform === 'ios'
-          ? iosPoolNoCandidatesRefusal(await d.listIosDevices())
-          : androidPoolNoCandidatesRefusal(d.listAdbDevices(), isEmulator);
+      let resolved;
+      if (platform === 'ios') resolved = iosPoolNoCandidatesRefusal(await d.listIosDevices());
+      else {
+        const adb = await d.listAdbDevices();
+        resolved = await probed((isEmulator) => androidPoolNoCandidatesRefusal(adb, isEmulator));
+      }
       return { message: resolved.error as string, remedy: resolved.remedy as string };
     },
     waitSeconds,
@@ -225,7 +234,8 @@ async function poolDevice(
     };
   }
   const name =
-    pooled.candidate.name ?? (platform === 'ios' ? pooled.candidate.id : d.physicalDeviceModel(pooled.candidate.id));
+    pooled.candidate.name ??
+    (platform === 'ios' ? pooled.candidate.id : await d.physicalDeviceModel(pooled.candidate.id));
   return { id: pooled.candidate.id, deviceName: name ?? pooled.candidate.id };
 }
 

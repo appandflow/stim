@@ -307,12 +307,12 @@ export async function planReactNativeAndroid(
         : await localImage();
   } else image = await localImage();
   if ('refusal' in image) return refuse(image.refusal);
-  const { abi, runOptions, remoteRunOptions } = androidBuildOptions({
+  const { abi, runOptions, remoteRunOptions } = await androidBuildOptions({
     release: build.release,
     physical: false,
     device: { systemImage: image.systemImage },
     variant: build.variant,
-    deviceAbi: () => null,
+    deviceAbi: async () => null,
     gradleProject: androidGradleProject(layout),
     buildProfile: build.profile,
     targetAbiOnly: build.targetAbiOnly,

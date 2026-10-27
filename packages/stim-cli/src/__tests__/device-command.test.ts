@@ -53,9 +53,9 @@ function harness(over: Partial<DeviceDeps> = {}) {
         transportType: 'wired',
       },
     ],
-    listAdbDevices: () => ({ emulators: [], physical: [{ serial: SERIAL }], unhealthy: [] }),
-    physicalDeviceModel: () => 'SM-G996W',
-    probeEmulatorSerial: () => false,
+    listAdbDevices: async () => ({ emulators: [], physical: [{ serial: SERIAL }], unhealthy: [] }),
+    physicalDeviceModel: async () => 'SM-G996W',
+    probeEmulatorSerial: async () => false,
     now: () => clock,
     sleep: async (ms: number) => {
       clock += ms;
@@ -333,7 +333,7 @@ describe('stim device lock', () => {
 
   test('with no id and several android serials, the pool picks and adb names it', async () => {
     const h = harness({
-      listAdbDevices: () => ({
+      listAdbDevices: async () => ({
         emulators: [],
         physical: [{ serial: 'ZY224' }, { serial: 'RFCR7081Q9L' }],
         unhealthy: [],
@@ -377,12 +377,12 @@ describe('stim device lock', () => {
 
   test('with no id and two emulator-probed android serials, the refusal names each one own reason', async () => {
     const h = harness({
-      listAdbDevices: () => ({
+      listAdbDevices: async () => ({
         emulators: [],
         physical: [{ serial: 'ZY224' }, { serial: 'RFCR7081Q9L' }],
         unhealthy: [],
       }),
-      probeEmulatorSerial: () => true,
+      probeEmulatorSerial: async () => true,
     });
     const failure = await runLock('android', undefined, {}, h.deps);
     assert('code' in failure);

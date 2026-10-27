@@ -414,7 +414,7 @@ export function deviceCapacityRefusal({
  * The early `concurrency.maxDevices` check, before Metro starts or a device is created. It is advisory, so an
  * unknown count passes: `withDeviceBootAdmission` makes the binding decision when the boot starts.
  */
-export function checkDeviceCapacity({
+export async function checkDeviceCapacity({
   platform,
   project,
   slot = 'default',
@@ -426,11 +426,11 @@ export function checkDeviceCapacity({
   slot: string;
   max: number;
 }> &
-  InventorySources = {}): CapacityRefusal | null {
+  AsyncInventorySources = {}): Promise<CapacityRefusal | null> {
   if (!max || max <= 0) return null;
-  let inventory: ReturnType<typeof readInventory>;
+  let inventory: Awaited<ReturnType<typeof readInventoryAsync>>;
   try {
-    inventory = readInventory(sources);
+    inventory = await readInventoryAsync(sources);
   } catch (error) {
     if (isClaimRefusal(error)) return null;
     throw error;
@@ -439,7 +439,7 @@ export function checkDeviceCapacity({
   return deviceCapacityRefusal({ platform, project, slot, max, ...inventory });
 }
 
-export function peekDeviceSlots({
+export async function peekDeviceSlots({
   platform,
   project,
   slot = 'default',
@@ -450,10 +450,10 @@ export function peekDeviceSlots({
   project: ProjectRecord | null;
   slot?: string;
   max?: number;
-  sources?: InventorySources;
-}): { count: number | null; max: number; queued: number; localLive: boolean } {
+  sources?: AsyncInventorySources;
+}): Promise<{ count: number | null; max: number; queued: number; localLive: boolean }> {
   try {
-    const inventory = readInventory(sources);
+    const inventory = await readInventoryAsync(sources);
     if ('code' in inventory) return { count: null, max, queued: 0, localLive: false };
     const owned = deviceSlotPlatforms(project, slot)?.[platform]?.owned === true;
     return {
