@@ -985,6 +985,38 @@ describe('a hosted session whose client is gone', () => {
     expect(kept.idleStop).toBeUndefined();
   });
 
+  test('keeps a session whose client connected and disconnected between two sweeps', async () => {
+    const first = await reserve();
+    await state(first.id, 'ready');
+    recordAbsence(first.id, 5 * IDLE_WINDOW_MS);
+
+    host.clientSeen('client');
+    host.sweepIdle();
+
+    const kept = await state(first.id, 'ready');
+    expect(kept.clientAbsentMs).toBeUndefined();
+    expect(kept.idleStop).toBeUndefined();
+  });
+
+  test('stops a session a crashed server left ready once its claim is free, and not before', async () => {
+    const crashed = seedHosted({ state: 'ready', attempt: 'crashed', workspace: '/client/crashed' });
+    recordAbsence(crashed.id, IDLE_WINDOW_MS);
+    const claim = tryAcquireClaim({
+      root: join(deviceHostRoot(), `${crashed.id}.claims`),
+      mode: 'exclusive',
+      label: 'hosted device session',
+      details: { session: crashed.id, client: 'client' },
+    });
+    if (!claim.acquired) throw new Error('the test claim was not taken');
+
+    host.sweepIdle();
+    expect(readHostedSessions().find((record) => record.id === crashed.id)).toMatchObject({ state: 'ready' });
+
+    releaseClaim(claim.acquired);
+    host.sweepIdle();
+    expect((await state(crashed.id, 'stopped')).idleStop?.reason).toMatch(/no connection/);
+  });
+
   test('never touches a session that is still preparing', async () => {
     const first = await reserve({ deviceType: 'hang' });
     await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'entered'))).toBe(true));
@@ -3442,6 +3474,22 @@ test('a clean server close parks and a restarted host adopts, while crashed runn
     await host.reserve('client', { ...request, workspace: '/client/crashed', attempt: 'replacement' }),
   ).toHaveProperty('error.code', 'device-busy');
   expect(hostedModes(crashed.id)).toEqual([]);
+});
+
+test('adopting a parked session drops the idle stop and absence the previous run recorded', async () => {
+  parkingLimits();
+  const parked = seedHosted({
+    parked: { at: '2026-10-01T00:00:00.000Z' },
+    idleStop: { at: '2026-10-01T00:00:00.000Z', reason: 'its client had no connection' },
+    clientAbsentMs: 5,
+  });
+
+  const adopted = await reserve({ attempt: 'again' });
+
+  expect(adopted.id).toBe(parked.id);
+  const ready = await state(adopted.id, 'ready');
+  expect(ready.idleStop).toBeUndefined();
+  expect(ready.clientAbsentMs).toBeUndefined();
 });
 
 test('a failed Android adoption before rebinding keeps a readable unknown journal and explicit stop retires it', async () => {

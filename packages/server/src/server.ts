@@ -316,6 +316,8 @@ export interface ServerOptions {
   deviceHostLimits?: Partial<DeviceHostLimits>;
   /** How often a device-host client connection is pinged, and how long it may stay silent before it is dropped. */
   clientHeartbeat?: { pingMs: number; silentMs: number };
+  /** How often hosted sessions are checked for a client that is gone; tests shorten it. */
+  hostedIdleSweepMs?: number;
   hostedRelay?: HostedRelayOptions;
   service?: {
     label: string | null;
@@ -1608,7 +1610,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     });
     // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
     revocationPoll ??= setInterval(checkRevocations, 1000).unref();
-    hostedIdleSweep ??= setInterval(() => hostedDevices.sweepIdle(), HOSTED_IDLE_SWEEP_MS).unref();
+    hostedIdleSweep ??= setInterval(
+      () => hostedDevices.sweepIdle(),
+      options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS,
+    ).unref();
     push.refresh();
     retireOnce ??= hostedDevices.reconcileStopped().catch((error: unknown) => {
       process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
@@ -1737,6 +1742,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       device = chosen;
       if (!local) touchDevice(device.id);
       if (access === 'device-host' && !local) {
+        hostedDevices.clientSeen(device.id);
         let heardAt = Date.now();
         const hear = () => (heardAt = Date.now());
         socket.on('pong', hear);

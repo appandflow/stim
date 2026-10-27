@@ -84,9 +84,10 @@ test('a due session with unresolved work or ownership is kept with the reason, n
   ]);
 });
 
-test('a window of 0 tracks absence but never stops', () => {
-  const result = plan([session('a', { clientAbsentMs: 99 * HOUR_MS })], { windowMs: 0 });
+test('a window of 0 stops nothing and forgets recorded absence, so enabling it later counts from nothing', () => {
+  const result = plan([session('a', { clientAbsentMs: 99 * HOUR_MS }), session('b')], { windowMs: 0 });
 
   expect(result.stops).toEqual([]);
   expect(result.kept).toEqual([]);
+  expect(result.updates).toEqual([{ id: 'a', absentMs: null }]);
 });

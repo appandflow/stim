@@ -460,6 +460,7 @@ async function start(
     pushEndpoint?: string;
     buildLimits?: ServerOptions['buildLimits'];
     clientHeartbeat?: ServerOptions['clientHeartbeat'];
+    hostedIdleSweepMs?: number;
     hostedRelay?: ServerOptions['hostedRelay'];
     startupProbeMs?: number;
     startupRetryMs?: number;
@@ -526,6 +527,7 @@ async function start(
     pullRequests: async () => new Map(),
     buildLimits: overrides.buildLimits,
     clientHeartbeat: overrides.clientHeartbeat,
+    hostedIdleSweepMs: overrides.hostedIdleSweepMs,
     hostedRelay: overrides.hostedRelay,
     requestLog: overrides.requestLog,
     desktopBootstrap:
@@ -2048,6 +2050,26 @@ describe('hosted device sessions', () => {
       reader.socket.resume?.();
       await vi.waitFor(() => expect(read).toBe(upload), { timeout: 20_000 });
       uploader.destroy();
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'keeps a hosted session while its client stays connected and stops it after the client is gone',
+    async () => {
+      const port = await start({
+        env: { STIM_MAINTENANCE_IDLE_STOP_HOURS: '0.0002' },
+        hostedIdleSweepMs: 50,
+      });
+      const { client, id } = await linkedSession(port);
+
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      expect(readHostedSessions().find((record) => record.id === id)).toMatchObject({ state: 'ready' });
+
+      client.socket.close();
+      await vi.waitFor(() => expect(readHostedSessions().find((record) => record.id === id)?.state).toBe('stopped'), {
+        timeout: 15_000,
+      });
+      expect(readHostedSessions().find((record) => record.id === id)?.idleStop?.reason).toMatch(/no connection/);
     },
   );
 

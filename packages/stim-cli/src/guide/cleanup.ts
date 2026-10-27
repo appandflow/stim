@@ -87,8 +87,9 @@ the hosted device is not seen here. On the host, stim-server stops a ready sessi
 whose client has had no connection, live stream or Metro link and sent no
 agent-device request for the host's own maintenance.idleStopHours (default 6; 0
 never; STIM_MAINTENANCE_IDLE_STOP_HOURS overrides). Server downtime is not
-counted. It uses the stop a person uses, never touches a preparing, stopping or
-unknown session, or one with a native operation or a claim it cannot prove free,
+counted. It uses the stop a person uses, never touches a session whose journal state is
+preparing, stopping or unknown, or one with a native operation or a claim it cannot prove free
+(a session a crashed server left ready counts once its claim is proven free),
 and writes the reason to the server log and the session's idleStop journal field.
 The count is per client, not per session. A dev server that may still run after its supervisor
 exited is kept until stim stop ends it. So is a dev server whose requests Stim

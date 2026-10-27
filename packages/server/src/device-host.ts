@@ -172,6 +172,7 @@ export class DeviceHost {
   private closed = false;
   private lastIdleSweep: number | undefined;
   private clientActive = new Set<string>();
+  private clientsSeen = new Set<string>();
   private readonly idleKept = new Map<string, string>();
   private reconciling?: Promise<void>;
   private draining: string | null = null;
@@ -417,6 +418,8 @@ export class DeviceHost {
             'agent',
             'metroPort',
             'clientMetroPort',
+            'clientAbsentMs',
+            'idleStop',
           ] as const)
             delete adopted[key];
           Object.assign(adopted, request, { state: 'preparing', createdAt: new Date().toISOString() });
@@ -1552,6 +1555,11 @@ export class DeviceHost {
     return this.owned.size;
   }
 
+  /** Notes that `client` authenticated a connection, so one that ends before the next sweep still counts as present. */
+  clientSeen(client: string): void {
+    this.clientsSeen.add(client);
+  }
+
   /** Notes that the session's client acted through a path that is not a connection, such as an agent-device request. */
   clientActed(session: string): void {
     this.clientActive.add(session);
@@ -1568,11 +1576,14 @@ export class DeviceHost {
     this.lastIdleSweep = now;
     const active = this.clientActive;
     this.clientActive = new Set();
+    const seen = this.clientsSeen;
+    this.clientsSeen = new Set();
     try {
       const setting = hostedIdleStopHours(this.options.env);
       if ('invalid' in setting) this.logIdleKept('setting', `${setting.invalid}; hosted sessions are not idle-stopped`);
       const windowMs = 'hours' in setting ? setting.hours * 3_600_000 : 0;
-      const connected = this.options.connected ?? (() => true);
+      const live = this.options.connected ?? (() => true);
+      const connected = (client: string) => live(client) || seen.has(client);
       const records = readHostedSessions();
       const plan = planHostedIdleStops({
         sessions: records,

@@ -22,7 +22,8 @@ function formatDuration(ms: number): string {
  * Decides which ready hosted sessions to stop because their client has been gone for `windowMs`. A session's absence
  * is the sum of the sweeps in which this server ran and saw no connection or request from its client. A sweep adds at
  * most two sweep intervals, so time the server was down, or the machine asleep, is not counted, and a stored value
- * survives a restart. Only a ready session that is not parked is tracked; anything else is never stopped here.
+ * survives a restart. Only a ready session that is not parked is tracked, and none is while `windowMs` is 0, so
+ * turning the setting back on starts every count from nothing. Anything else is never stopped here.
  * `unresolved` names why a due session cannot be stopped safely now, or returns null.
  */
 export function planHostedIdleStops({
@@ -45,13 +46,13 @@ export function planHostedIdleStops({
   for (const session of sessions) {
     const stored = session.clientAbsentMs;
     const tracked = session.state === 'ready' && !session.parked;
-    if (!tracked || connected(session.client) || active.has(session.id)) {
+    if (!tracked || !(windowMs > 0) || connected(session.client) || active.has(session.id)) {
       if (stored !== undefined) plan.updates.push({ id: session.id, absentMs: null });
       continue;
     }
     const absentMs = (stored ?? 0) + step;
     if (absentMs !== stored) plan.updates.push({ id: session.id, absentMs });
-    if (!(windowMs > 0) || absentMs < windowMs) continue;
+    if (absentMs < windowMs) continue;
     const why = unresolved(session.id);
     const reason = `its client had no connection for ${formatDuration(absentMs)}, over maintenance.idleStopHours`;
     if (why) plan.kept.push({ id: session.id, reason: `${why}; ${reason}` });
