@@ -88,6 +88,7 @@ export async function probeHost(
       choice = null;
     if (!isJsonObject(offer.capacity) || (offer.declined !== null && typeof offer.declined !== 'string'))
       throw new Error('unreadable device offer');
+    const installImage = parsed?.platform === 'android' ? parsed.installImage : undefined;
     return {
       probe: {
         machine,
@@ -114,7 +115,7 @@ export async function probeHost(
         },
       },
       ...(choice && ('runtime' in choice || 'systemImage' in choice)
-        ? { target: { host, choice, session: null } }
+        ? { target: { host, choice, session: null, ...(installImage ? { installImage } : {}) } }
         : {}),
     };
   } catch (error) {

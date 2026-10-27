@@ -1070,8 +1070,7 @@ export function unknownAndroidSystemImageRefusal(
   if ((images || []).some((i) => i.pkg === requested)) return null;
   return {
     message: `No installed Android system image is named "${requested}". Installed system images: ${installedNames((images || []).map((i) => i.pkg))}.`,
-    remedy:
-      'Pass `--system-image` (or set android.systemImage) to one of the package ids printed above. Install more with `sdkmanager "system-images;android-36;google_apis;arm64-v8a"`.',
+    remedy: 'Pass `--system-image` (or set android.systemImage) to one of the package ids printed above.',
   };
 }
 

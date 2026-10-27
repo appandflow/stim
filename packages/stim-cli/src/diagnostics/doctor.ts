@@ -58,7 +58,13 @@ import { readHostMemoryPressureAsync, hostMemoryPressureAdvice, type HostMemoryP
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { COMPILATION_CACHE_MIN_XCODE } from '../engine/xcode.ts';
-import { androidHome, hostSystemImageArch } from '../devices/android.ts';
+import { androidHome, hostSystemImageArch, listInstalledSystemImages } from '../devices/android.ts';
+import {
+  androidImageInstallPolicy,
+  decideSystemImage,
+  systemImageInstallProblem,
+  type SystemImageDecision,
+} from '../devices/android-image.ts';
 import {
   type EasAuthResult,
   checkEasAuth as probeEasAuth,
@@ -1336,6 +1342,7 @@ export async function reactNativeDoctorFindings({
       : androidCcacheFindings(projectRoot, platform, lookupCcache, androidLayout)),
     checkAndroidPathRoom(projectRoot, platform, host),
     checkAndroidSdk(projectRoot, platform, androidLayout),
+    checkAndroidSystemImage(androidImageDecision(platform, androidLayout, projectSettings, remoteEnv), remoteEnv),
     checkChrome({
       usesWeb: () =>
         !platform &&
@@ -1401,6 +1408,43 @@ export function checkAndroidSdk(
       'No Android SDK was found',
       `${refusal.reason} \`stim android\` refuses with ${refusal.code} before Gradle runs.`,
       refusal.remedy,
+    ),
+  };
+}
+
+/** The system image decision for this project's owned emulator, or null when doctor does not check Android here. */
+export function androidImageDecision(
+  platform: DoctorPlatform | undefined,
+  layout: AndroidLayout,
+  settings: SettingsObject | null,
+  env: NodeJS.ProcessEnv,
+): SystemImageDecision | null {
+  if (platform === 'ios' || (platform !== 'android' && !hasAndroidProject(layout))) return null;
+  if (!existsSync(androidHome(env))) return null;
+  const remote = settings ? remoteAndroidSetting(settings) : null;
+  if (remote && (remote.kind === 'backend' || remote.machine !== 'auto')) return null;
+  const requested = settingValueAt(settings, 'android.systemImage');
+  return decideSystemImage({
+    requested: typeof requested === 'string' && requested.trim() ? requested.trim() : null,
+    installed: listInstalledSystemImages(undefined, env),
+    policy: androidImageInstallPolicy(settings),
+    env,
+  });
+}
+
+function checkAndroidSystemImage(decision: SystemImageDecision | null, env: NodeJS.ProcessEnv): Finding | null {
+  if (!decision || decision.kind === 'installed') return null;
+  const title = 'No Android system image for an owned emulator is installed';
+  if (decision.kind === 'refuse')
+    return { code: 'android-system-image', ...finding('note', title, decision.message, decision.remedy) };
+  const problem = systemImageInstallProblem(decision.pkg, env);
+  return {
+    code: 'android-system-image',
+    ...finding(
+      'note',
+      title,
+      `\`stim android\` installs ${decision.pkg} with sdkmanager on its first emulator run (about 2 GB).${problem ? ` It cannot now: ${problem.message}` : ''}`,
+      problem ? problem.remedy : 'Run `stim doctor --fix --platform android` to install it now.',
     ),
   };
 }

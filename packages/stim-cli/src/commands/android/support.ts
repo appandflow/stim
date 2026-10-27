@@ -3,6 +3,7 @@ import { relative } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { killOnAbort } from '../../workspace/git-read.ts';
 import type { SettingsObject, SettingScope } from '@stim-cli/core/state';
+import { decideSystemImage, type AndroidImageInstallPolicy } from '../../devices/android-image.ts';
 import {
   androidDeviceAbi,
   androidSystemImageAbi,
@@ -99,6 +100,7 @@ export function systemImageRefusal({
   physical,
   remoteBackend,
   listImages,
+  installImages,
 }: {
   slot?: string;
   flag: string | null | undefined;
@@ -107,6 +109,7 @@ export function systemImageRefusal({
   physical: boolean;
   remoteBackend: string | null;
   listImages: typeof listInstalledSystemImages;
+  installImages: AndroidImageInstallPolicy;
 }): { code: string; message: string; remedy: string } | null {
   if (slot && slot !== 'default' && remoteBackend)
     return {
@@ -136,7 +139,14 @@ export function systemImageRefusal({
   }
   const refusal = unknownAndroidSystemImageRefusal(resolved, images);
   if (!refusal) return null;
-  const { message, remedy } = layerNote(refusal, 'android.systemImage', flag, origin);
+  const decided = decideSystemImage({ requested: resolved, installed: images, policy: installImages });
+  if (decided.kind !== 'refuse') return null;
+  const { message, remedy } = layerNote(
+    { message: refusal.message, remedy: decided.remedy },
+    'android.systemImage',
+    flag,
+    origin,
+  );
   return { code: 'STIM_BAD_ARG', message, remedy };
 }
 

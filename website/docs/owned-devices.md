@@ -300,7 +300,11 @@ iPhone model (for example "iPhone 18 Pro"), and the newest such model on it, by
 default. It falls back to a special model (no generation number, such as
 "iPhone Duo") only when no installed runtime offers a numbered one. `stim
 android` selects the newest installed system image matching the host
-architecture: `arm64-v8a` on ARM64 or `x86_64` on x64. Set `.stim.json`
+architecture: `arm64-v8a` on ARM64 or `x86_64` on x64. When none is installed,
+or `--system-image` names one that is not, it installs that image (or
+`system-images;android-36;google_apis;<host ABI>`) with the SDK's own
+`sdkmanager --install` first; see
+[`android.installImages`](./settings.md#installing-a-missing-android-system-image). Set `.stim.json`
 defaults or use `ios --device-type`, `ios --runtime`, `android --system-image`,
 and `android --device-profile` for a specific target. These flags choose the
 device Stim creates. When the workspace already owns a device of another model

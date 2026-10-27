@@ -17,6 +17,7 @@ export type HostedDevicePlatform = 'ios' | 'android' | 'macos';
 /** Deadlines stim-server gives each hosted worker run. Clients derive their waits from these. */
 export interface DeviceHostLimits {
   prepareMs: number;
+  imageInstallMs: number;
   offerMs: number;
   stopMs: number;
   logsMs: number;
@@ -25,6 +26,7 @@ export interface DeviceHostLimits {
 
 export const DEVICE_HOST_LIMITS: Readonly<DeviceHostLimits> = {
   prepareMs: 5 * 60_000,
+  imageInstallMs: 30 * 60_000,
   offerMs: 30_000,
   stopMs: 90_000,
   logsMs: 15_000,
@@ -94,7 +96,12 @@ export type HostedNativeOffer = {
   declined: string | null;
 } & (
   | { platform: 'ios'; choice: HostedIosChoice | null }
-  | { platform: 'android'; choice: HostedAndroidChoice | null }
+  | {
+      platform: 'android';
+      choice: HostedAndroidChoice | null;
+      /** The system image the host installs before it creates the AVD; absent when the chosen image is installed. */
+      installImage?: string;
+    }
   | { platform: 'macos'; choice: HostedMacosChoice | null }
 );
 
@@ -382,6 +389,9 @@ export function parseHostedNativeOffer(value: unknown): HostedNativeOffer | null
   return {
     platform: value.platform,
     choice,
+    ...(choice && 'systemImage' in choice && value.installImage === choice.systemImage
+      ? { installImage: choice.systemImage }
+      : {}),
     declined: value.declined,
     resources: {
       cpus: resources.cpus,

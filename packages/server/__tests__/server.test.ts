@@ -3041,7 +3041,7 @@ describe('offloaded builds', () => {
         writeFileSync(join(process.env.STIM_HOME,'created-devices.json'),JSON.stringify({version:1,ios:[],android:[device.avdName],web:[]}));
       }
       if(input.mode==='stop')writeFileSync(join(process.env.STIM_HOME,'created-devices.json'),JSON.stringify({version:1,ios:[],android:[],web:[]}));
-      process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
+      process.stdout.write(JSON.stringify({state:input.mode==='prepare'||input.mode==='image'?'ready':'stopped',device}));
     `,
       );
       const machine = setupClient(['build', 'device-host'], 'Android hosting client');

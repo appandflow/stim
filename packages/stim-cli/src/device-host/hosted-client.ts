@@ -35,6 +35,7 @@ export const SESSION_TIMEOUT_MS: number =
   2 * workerBoundMs(DEVICE_HOST_LIMITS.stopMs) +
   HOSTED_POLL_MARGIN_MS;
 export const PREPARE_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.prepareMs) + HOSTED_POLL_MARGIN_MS;
+export const IMAGE_INSTALL_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.imageInstallMs);
 export const INSTALL_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.prepareMs) + HOSTED_POLL_MARGIN_MS;
 export const OFFER_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.offerMs) + HOSTED_REQUEST_MARGIN_MS;
 export const RESERVE_TIMEOUT_MS: number =

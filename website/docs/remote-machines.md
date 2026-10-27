@@ -272,7 +272,12 @@ stim stop`} />
 
 `android.remote` sets the default (machine scope for every app on this machine; a workspace, repo or committed value overrides it). `--system-image` and
 `--device-profile` select choices installed on the host; the build targets
-its offered ABI. `--remote-build` remains independent. Named hosting is strict:
+its offered ABI. When the host has no matching system image and its machine
+`android.installImages` is `auto`, stim-server installs one with the host's own
+SDK before it creates the emulator, and the client prints
+`image  installing <package> on <mac>` while it waits. The host's licenses must
+already be accepted there; otherwise the run refuses with the command to run on
+the host. `--remote-build` remains independent. Named hosting is strict:
 refusal or an unreachable host fails with `STIM_HOSTING_REFUSED`. Stop before
 changing hosts or moving between local and hosted devices. `--device` with
 `--remote <machine>`, a running local emulator in that slot, and

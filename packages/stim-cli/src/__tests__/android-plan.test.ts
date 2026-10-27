@@ -490,7 +490,14 @@ describe('planAndroid', () => {
     expect(getProject(app)).toEqual(before);
   });
 
-  test('no installed system image refuses, because the ABI in the key is unknown', async () => {
+  test('with no installed system image, the key carries the ABI of the image Stim would install', async () => {
+    const { payload, exitCode } = await plan({}, { listSystemImages: () => [] });
+    expect(exitCode).toBeUndefined();
+    expect(payload.cacheKey).toBe(buildCacheKey('android', HASH, { variant: 'debug', abi: hostSystemImageArch() }));
+  });
+
+  test('with no installed system image and android.installImages never, the plan refuses with the install command', async () => {
+    writeFileSync(join(app, '.stim.json'), JSON.stringify({ android: { installImages: 'never' } }));
     const { payload, exitCode } = await plan({}, { listSystemImages: () => [] });
     expect(exitCode).toBe(1);
     expect(payload).toMatchObject({ code: 'STIM_NO_DEVICE', remedy: expect.stringContaining('sdkmanager') });

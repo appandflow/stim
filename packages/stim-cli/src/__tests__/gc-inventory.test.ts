@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
@@ -165,7 +165,16 @@ test('concurrent GC inventories keep device ownership and Android paths in each 
     mkdirSync(operation.home, { recursive: true });
     writeFileSync(
       join(operation.home, 'created-devices.json'),
-      JSON.stringify({ version: 1, ios: [operation.runId], android: [`stim-${operation.runId}`], web: [] }),
+      JSON.stringify({
+        version: 1,
+        ios: [operation.runId],
+        android: [`stim-${operation.runId}`],
+        web: [],
+        systemImages:
+          operation === a
+            ? [realpathSync(join(sdk, 'system-images', `android-${api}`, 'google_apis', 'arm64-v8a'))]
+            : [],
+      }),
     );
   }
   const results = await Promise.all(
@@ -184,6 +193,7 @@ test('concurrent GC inventories keep device ownership and Android paths in each 
         package: `system-images;android-${api};google_apis;arm64-v8a`,
         directory: join(sdk, 'system-images', `android-${api}`, 'google_apis', 'arm64-v8a'),
         avdCount: 1,
+        stimInstalled: operation === a,
         command: `${JSON.stringify(join(sdk, 'cmdline-tools', 'latest', 'bin', 'sdkmanager'))} --uninstall ${JSON.stringify(`system-images;android-${api};google_apis;arm64-v8a`)}`,
       }),
     ]);

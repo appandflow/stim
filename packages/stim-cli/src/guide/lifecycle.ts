@@ -556,6 +556,13 @@ Unreadable android.host blocks only its slot; restore its recorded machine and
 session from the host before stopping that slot.
 
 --system-image and --device-profile select installed choices on the host.
+When no image on the host matches and the host's android.installImages is
+auto, the offer names the image to install; stim-server installs it with its
+own ANDROID_HOME and sdkmanager before it creates the AVD, the client prints
+\`image  installing <package> on <mac>\` and waits for it like any other
+preparation. A host set to never, or one with unaccepted SDK licenses, no
+cmdline-tools or under 8 GB free refuses with STIM_HOSTING_REFUSED naming
+the command to run on the host.
 The build targets the offered ABI and --remote-build independently selects a
 compatible build worker. Stim builds before reserving, records the session as
 soon as it exists, then delivers one App.apk. The emulator boots headless;
@@ -1560,8 +1567,9 @@ PREDICTING THE NEXT BUILD (--plan)
   not answer, ios.remote or android.remote set to eas or proxy, or auto that
   would use an EAS Simulator now (remote.easFallback), refuses with
   STIM_BAD_ARG. Without --eas-profile an Android plan also
-  refuses the experimental compiler CAS with STIM_BAD_ARG, and refuses with
-  STIM_NO_DEVICE when no system image is installed.
+  refuses the experimental compiler CAS with STIM_BAD_ARG. With no system
+  image installed it keys on the image a run would install, and refuses with
+  STIM_NO_DEVICE when android.installImages is never.
 
 IOS SCHEME SELECTION
   Pass \`stim ios --scheme "App Staging"\` to select an exact shared Xcode
@@ -2596,7 +2604,14 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   A name that is not INSTALLED on this machine refuses with STIM_BAD_ARG
   before anything is created, and the message lists the installed names, so a
   wrong guess is one command, not a created simulator. A blank value is the
-  same refusal.
+  same refusal. The exception is an Android system image for this machine's
+  ABI while android.installImages is auto (the default): \`stim android\`
+  installs it with sdkmanager, printing an \`image\` line, then creates the
+  AVD from it. The same applies when no image is installed at all, with
+  system-images;android-36;google_apis;<host ABI>. See \`stim guide settings\`
+  for the license, disk and locking rules. \`stim doctor\` reports a missing
+  image as a note (android-system-image), and \`stim doctor --fix --platform
+  android\` installs it right away.
 
   What counts as installed for \`--device-type\` is what an installed RUNTIME
   can create, not what \`xcrun simctl list devicetypes\` prints: that table

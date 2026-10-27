@@ -206,9 +206,30 @@ KEYS STIM READS
                         from. Readable from the machine layer too, so one
                         machine can default every workspace to an image; a
                         project layer still wins. The \`--system-image\` flag
-                        overrides this per invocation, and an id this SDK has
-                        not installed is STIM_BAD_ARG with the installed ids
-                        printed, naming the layer the value came from.
+                        overrides this per invocation. An id this SDK has not
+                        installed is installed first (android.installImages);
+                        with installImages never, or an id for another ABI,
+                        it is STIM_BAD_ARG with the installed ids printed,
+                        naming the layer the value came from.
+  android.installImages auto (default) or never. With auto, when no installed
+                        system image matches the request, \`stim android\`
+                        installs the one android.systemImage or
+                        \`--system-image\` names, else
+                        system-images;android-36;google_apis;<host ABI>, with
+                        the SDK's own \`sdkmanager --install\` before it
+                        creates the owned AVD; a slot whose owned AVD
+                        finished a boot keeps it and installs nothing. It
+                        installs only images for
+                        this machine's ABI, never accepts an SDK license (an
+                        unaccepted one refuses and names \`sdkmanager
+                        --licenses\`), needs 8 GB free on the SDK volume and
+                        cmdline-tools/latest, and runs one install per SDK
+                        root and Stim home; a second run waits for it. never
+                        refuses with the \`sdkmanager --install\` line instead.
+                        For a hosted run the host's machine value decides,
+                        and stim-server installs into its own ANDROID_HOME.
+                        \`stim gc\` marks the images Stim installed
+                        (stimInstalled).
   android.deviceProfile e.g. "pixel_fold" -- the avdmanager hardware profile a
                         new owned AVD is created with, spelled exactly as
                         \`avdmanager list device -c\` prints it. Defaults to

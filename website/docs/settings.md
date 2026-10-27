@@ -176,7 +176,36 @@ stim settings set android.systemImage "system-images;android-36;google_apis;arm6
 A model or runtime the machine value names that no installed toolchain offers
 refuses with `STIM_BAD_ARG`, the same way an unresolvable per-project or
 per-invocation value does, and the message names the machine layer so it is
-clear where to fix it.
+clear where to fix it. An Android system image is the exception while
+`android.installImages` is `auto`: see below.
+
+### Installing a missing Android system image
+
+When no installed system image matches the request, `stim android` installs one
+before it creates the owned emulator: the image `--system-image` or
+`android.systemImage` names, else `system-images;android-36;google_apis;<host ABI>`.
+It runs the SDK's own `cmdline-tools/latest/bin/sdkmanager --install` and prints
+an `image` line while it downloads (about 2 GB).
+
+- A slot whose owned emulator already finished a boot keeps that emulator and
+  installs nothing.
+- It installs only images for this machine's ABI.
+- It never accepts an SDK license. With unaccepted licenses it refuses and names
+  the `sdkmanager --licenses` command to run.
+- It needs 8 GB free on the SDK volume and the SDK command-line tools.
+- One install runs per SDK root and Stim home; a second run waits for it.
+- `stim doctor` notes a missing image, and `stim doctor --fix --platform android`
+  installs it right away.
+- `stim gc` marks the images Stim installed with `stimInstalled`, next to the
+  `sdkmanager --uninstall` command that removes them.
+
+Set `android.installImages` to `never` to refuse with the install command
+instead, for example on a metered connection or a Mac short on disk. For a
+hosted run the host's machine value decides:
+
+```sh
+stim settings set android.installImages never --scope machine
+```
 
 ### SimSlim for every owned simulator
 

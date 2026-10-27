@@ -92,6 +92,7 @@ interface WorkerRun {
 interface OwnedSession {
   claim: ClaimHandle;
   adopting?: boolean;
+  imagePhase?: boolean;
   reachedReady?: boolean;
   run?: WorkerRun;
   data?: Promise<void>;
@@ -1392,6 +1393,43 @@ export class DeviceHost {
       this.beginStop(record);
       return;
     }
+    if (record.platform === 'android' && !owned.adopting) {
+      const image = this.runWorker({
+        cwd: dirname(this.options.worker),
+        env: this.options.env,
+        input: { mode: 'image', ...(record.systemImage ? { systemImage: record.systemImage } : {}) },
+        claim: owned.claim,
+        timeoutMs: this.limits.imageInstallMs,
+        maxOutputBytes: 16_384,
+      });
+      owned.run = image;
+      owned.imagePhase = true;
+      const installed = await image.done;
+      if (owned.stopping) return;
+      if (
+        !installed.settled ||
+        installed.notice ||
+        !isJsonObject(installed.value) ||
+        installed.value.state !== 'ready'
+      ) {
+        const value = installed.value;
+        this.change(record.id, (current) => {
+          current.state = installed.settled ? 'stopped' : 'unknown';
+          current.notice =
+            installed.notice ??
+            (isJsonObject(value) && typeof value.notice === 'string'
+              ? value.notice
+              : 'The Android system image install did not finish.');
+          if (current.state === 'stopped') this.release(record.id, owned);
+        });
+        return;
+      }
+      if (!this.options.allowed(record.client) || this.closed) {
+        this.beginStop(record);
+        return;
+      }
+      delete owned.imagePhase;
+    }
     const run = this.run(record, owned, owned.adopting ? 'adopt' : 'prepare');
     owned.run = run;
     const outcome = await run.done;
@@ -1487,21 +1525,31 @@ export class DeviceHost {
       if (!outcome.settled)
         throw new Error('The prior worker group is unresolved. Its claim and device were retained.');
       if (
-        isJsonObject(value) &&
-        value.state === 'stopped' &&
-        value.device === null &&
+        (owned.imagePhase || (isJsonObject(value) && value.state === 'stopped' && value.device === null)) &&
         !existsSync(join(home, 'hosted-device.json')) &&
         !existsSync(join(home, 'created-devices.json'))
       ) {
         this.change(record.id, (current) => {
           current.state = 'stopped';
           current.device = null;
-          if (typeof value.notice === 'string') current.notice = value.notice;
+          if (isJsonObject(value) && typeof value.notice === 'string') current.notice = value.notice;
           else delete current.notice;
         });
         this.release(record.id, owned);
         return;
       }
+    } else if (
+      record.platform === 'android' &&
+      record.state === 'preparing' &&
+      !existsSync(join(home, 'hosted-device.json')) &&
+      !existsSync(join(home, 'created-devices.json'))
+    ) {
+      this.change(record.id, (current) => {
+        current.state = 'stopped';
+        current.device = null;
+      });
+      this.release(record.id, owned);
+      return;
     }
     const device = readHostedDevice(home, record.platform);
     assertSessionDevice(record, device);
