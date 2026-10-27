@@ -892,9 +892,11 @@ RULES
                     it; command is the \`xcrun simctl runtime delete\`
                     line for a deletable runtime, else null. Stim never
                     runs it
-    systemImages  { package, directory, avdCount, command }  installed
-                    Android system images; avdCount is the AVDs whose
-                    image.sysdir.1 names it; command is the
+    systemImages  { package, directory, avdCount, stimInstalled,
+                    command }  installed Android system images; avdCount
+                    is the AVDs whose image.sysdir.1 names it;
+                    stimInstalled is true when this Stim home installed it
+                    (android.installImages); command is the
                     \`sdkmanager --uninstall\` line. Stim never runs it
     notices       why a listing is missing or partial, such as simctl
                     timing out or an AVD or system image folder Stim

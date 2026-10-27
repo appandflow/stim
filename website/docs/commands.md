@@ -623,8 +623,10 @@ can compile on a paired remote machine instead: see `remote.build` in
   See [machine settings](./settings.md#machine-settings) for supported builds and remedies.
 - `--variant <name>` selects a Gradle variant. The default is `debug`.
 - `--system-image <id>` creates this workspace's owned AVD from that sdkmanager
-  package id, overriding `android.systemImage` for one invocation; an id this
-  SDK has not installed refuses with `STIM_BAD_ARG` and prints the installed
+  package id, overriding `android.systemImage` for one invocation. An id this
+  SDK has not installed is installed first with `sdkmanager --install` when it
+  matches this machine's ABI and `android.installImages` is `auto` (the
+  default); otherwise it refuses with `STIM_BAD_ARG` and prints the installed
   ids. When the workspace already owns an AVD made from another image, Stim
   refuses with the same remedy as a profile change, unless that AVD never
   finished a boot: Stim then deletes it through owned-device teardown and
@@ -2291,7 +2293,8 @@ home did not create, or `user`. It also lists the iOS simulator runtimes and
 Android system images with how many devices use each (a runtime that
 `simctl runtime list` does not show has no size), and the
 `xcrun simctl runtime delete` or `sdkmanager --uninstall` command that removes
-it. `inventory.notices` says why a listing is missing or partial, such as an
+it. A system image with `stimInstalled: true` is one this Stim home installed
+under `android.installImages`. `inventory.notices` says why a listing is missing or partial, such as an
 AVD or system image folder Stim cannot read. When macOS privacy protection
 blocks the read, for example for AVDs on an external disk, the notice names the
 Privacy & Security setting that allows the app running Stim.

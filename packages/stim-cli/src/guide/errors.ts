@@ -35,7 +35,9 @@ Branch on the code, never on the message.`,
   tailscale ping. Check stim-server and Tailscale there,
   then run stim doctor. Correct --device-type / --runtime for iOS or
   --system-image / --device-profile for Android when the offer names
-  an unavailable choice. A session that exists stays recorded even if delivery
+  an unavailable choice. A host that would install a missing Android image
+  but cannot (android.installImages never there, unaccepted licenses, no
+  cmdline-tools, low disk) declines with the command to run on that host. A session that exists stays recorded even if delivery
   fails: retry stim ios|android --remote <machine>, or run stim stop to reconcile it.
   An Expo dev client whose running or pinned Metro port is in use on the host
   refuses before the build: run stim stop, then stim ios --remote <machine>
@@ -791,6 +793,12 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Mode off, over a cable or over Wi-Fi alike. Hardware is never created or
   booted, so there is nothing to retry into existence: fix the cable, the
   trust prompt, or Developer Mode.
+  On Android it also means no system image matched and Stim could not install
+  one: android.installImages is never, the SDK has no cmdline-tools/latest,
+  the SDK licenses are not accepted (Stim never accepts them; run the
+  \`sdkmanager --licenses\` line the remedy prints), the SDK volume has under
+  8 GB free, or sdkmanager failed. The remedy names the exact sdkmanager
+  command. Nothing was downloaded or created.
   Otherwise the owned simulator/emulator could not be created or could not
   reach a booted state. \`stim doctor\` checks the toolchain; \`stim status\` says what
   Stim thinks it owns. Re-running the command creates a fresh owned device
