@@ -200,17 +200,21 @@ export function followHostedLaunchLogs(
   };
 }
 
-export async function syncHostedLogs(root: string, context?: ReadContext): Promise<boolean> {
+export async function syncHostedLogs(root: string, context?: ReadContext, includeSlots = true): Promise<boolean> {
   const macos = readMacosRecord(root)?.host;
   const warnings = new Set<string>();
   const results = await Promise.all([
     ...(macos ? [syncHostedMacosLogs(root, macos, undefined, warnings, 'ios', context)] : []),
-    ...Object.entries(readHostedIos(root)).map(([slot, placement]) =>
-      syncHostedMacosLogs(root, placement, slot, warnings, 'ios', context),
-    ),
-    ...Object.entries(readHostedAndroid(root)).map(([slot, placement]) =>
-      syncHostedMacosLogs(root, placement, slot, warnings, 'android', context),
-    ),
+    ...(includeSlots
+      ? [
+          ...Object.entries(readHostedIos(root)).map(([slot, placement]) =>
+            syncHostedMacosLogs(root, placement, slot, warnings, 'ios', context),
+          ),
+          ...Object.entries(readHostedAndroid(root)).map(([slot, placement]) =>
+            syncHostedMacosLogs(root, placement, slot, warnings, 'android', context),
+          ),
+        ]
+      : []),
   ]);
   return results.every(Boolean);
 }
