@@ -6548,6 +6548,21 @@ describe('the emulator system-image flag', () => {
     },
   );
 
+  test('a run cancelled during the image install prints one cancellation payload', async () => {
+    const controller = new AbortController();
+    const h = harness({
+      json: true,
+      context: testContext({ signal: controller.signal }),
+      ensureImage: async () => {
+        controller.abort();
+        throw new Error('cancelled');
+      },
+    });
+    expect((await h.run()).ok).toBe(false);
+    expect(h.stdout.map((line) => JSON.parse(line).code)).toEqual(['STIM_CANCELLED']);
+    expect(h.calls.ensureDevice.length).toBe(0);
+  });
+
   test('a failed image install refuses before any device is created', async () => {
     const h = harness({
       json: true,

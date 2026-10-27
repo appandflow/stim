@@ -637,9 +637,16 @@ async function localRunRefusal(
   keepsAvd: () => boolean,
   ensureImage: () => ReturnType<typeof ensureSystemImage>,
   recheckSelectors: () => Promise<{ code: string; message: string; remedy: string } | null>,
+  signal: AbortSignal | undefined,
 ): Promise<{ code: string; message: string; remedy: string } | null> {
   if (budgetRefusal || target.kind !== 'emulator' || keepsAvd()) return budgetRefusal;
-  const image = await ensureImage();
+  let image: Awaited<ReturnType<typeof ensureSystemImage>>;
+  try {
+    image = await ensureImage();
+  } catch (error) {
+    if (!signal?.aborted || (error instanceof Error && 'reportCleanup' in error)) throw error;
+    return { code: 'STIM_CANCELLED', message: 'during the Android system image install', remedy: '' };
+  }
   if (!image.ok) return image;
   return image.installed ? recheckSelectors() : null;
 }
@@ -1021,6 +1028,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         note: (line) => phase('image', line),
       }),
     () => localSelectors(target.kind === 'emulator' ? target : { systemImage: null, deviceProfile: null }),
+    settingsSignal,
   );
   if (localRefusal) return fail(localRefusal.code, localRefusal.message, localRefusal.remedy);
   const remoteContext = remoteBackend
