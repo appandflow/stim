@@ -50,12 +50,15 @@ import {
 import {
   assertOwnedAvdStoppedAsync,
   avdPathExists,
+  avdStorageExists,
   avdStorageRoots,
+  isEmulatorToolAbsent,
   listAdbDevicesAsync,
   listOrphanedAvdDirectories,
   ownedAvdDirectory,
   type OrphanedAvdDirectory,
   resolveOwnedAvdSerial,
+  type ResolvedAvdSerial,
   resolveOwnedAvdSerialAsync,
   shutdownAndroidEmulator,
   waitForAndroidEmulatorShutdown,
@@ -537,11 +540,7 @@ async function teardownUnregisteredAvd(
   operation?.signal.throwIfAborted();
   const candidates = surveyed ? [surveyed] : listOrphanedAvdDirectories(avdName);
   if (candidates.length === 0) {
-    if (
-      avdStorageRoots().some(
-        (root) => avdPathExists(join(root, `${avdName}.ini`)) || avdPathExists(join(root, `${avdName}.avd`)),
-      )
-    )
+    if (avdStorageExists(avdName))
       throw new Error(`AVD ${avdName} is not listed but its storage remains; it was kept.`);
     return { status: 'missing' };
   }
@@ -644,7 +643,14 @@ async function teardownClaimedAvd(
     waitForShutdown = waitForAndroidEmulatorShutdown,
     assertStopped = (name) => assertOwnedAvdStoppedAsync(name, operation),
     resolveAvd: resolve = (name) =>
-      resolveOwnedAvdSerialAsync(name, { timeoutMs: AVD_INVENTORY_TIMEOUT_MS, operation, signal: operation?.signal }),
+      resolveOwnedAvdSerialAsync(name, {
+        timeoutMs: AVD_INVENTORY_TIMEOUT_MS,
+        operation,
+        signal: operation?.signal,
+      }).catch((error: unknown): ResolvedAvdSerial => {
+        if (isEmulatorToolAbsent(error, operation?.env)) return { missing: true };
+        throw error;
+      }),
   }: AvdTeardownOptions,
 ): Promise<TeardownOutcome> {
   let parkFallback: string | undefined;
