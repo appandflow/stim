@@ -288,8 +288,8 @@ An unresolved daemon claim blocks replacement and deletion.
 `agent-device record start [path] --remote-config <file>` records the emulator, and
 `record stop` downloads the video to that path, or `./recording-<time>.mp4`, on
 your machine. The hosting Mac writes the recording only in the session's private
-agent-device state and deletes the files after the download, on stop, on
-revocation and when the session's daemon restarts. One recording runs per
+agent-device state and deletes the files after the download, on `stim stop` or
+session teardown and when the session's daemon restarts. One recording runs per
 session; a second `record start`, a host output path, `record` inside `batch` and
 a `record stop` from another agent-device session are refused. The host stops a
 recording after 10 minutes; a `record stop` within the next 15 minutes downloads

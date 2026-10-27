@@ -107,6 +107,7 @@ const DEVICE_COMMANDS = [
 const MAX_RECORDING_MS = 10 * 60_000;
 const MAX_RECORDING_BYTES = 512 * 1024 * 1024;
 const CAP_RETRY_MS = 30_000;
+const CAP_ATTEMPTS = 10;
 // agent-device deletes a downloadable artifact nobody fetched after 15 minutes (ARTIFACT_CLEANUP_TIMEOUT_MS).
 const ARTIFACT_TTL_MS = 15 * 60_000;
 
@@ -226,6 +227,8 @@ interface Recording {
   dir: string;
   session: unknown;
   stop: Record<string, unknown>;
+  pending: boolean;
+  attempts: number;
   timer?: NodeJS.Timeout;
   capped?: Buffer;
 }
@@ -878,18 +881,30 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         });
         return;
       }
-      if (recording?.capped) {
-        clearTimeout(recording.timer);
-        this.recording = null;
-        this.answer(response, { status: 200, headers: {}, body: withId(recording.capped, id) });
+      if (recording?.pending) {
+        this.refuse(response, {
+          id,
+          rule: 'recording',
+          message: 'The recording is still starting; run record stop again once record start returns.',
+          details: { command: 'record' },
+        });
         return;
       }
+      if (recording?.capped) {
+        this.takeCapped(recording, recording.capped, response, id);
+        return;
+      }
+      rpc.params = recordStop(params);
       const answer = await this.send(running, lease, target, Buffer.from(JSON.stringify(rpc))).catch(() => null);
+      if (recording && this.recording === recording && recording.capped) {
+        this.takeCapped(recording, recording.capped, response, id);
+        return;
+      }
       if (!answer) {
         response.writeHead(502, { 'content-type': 'text/plain' }).end('Agent control is unavailable.\n');
         return;
       }
-      if (recording && this.recording === recording && answered(answer.body)) {
+      if (recording && this.recording === recording && (succeeded(answer.body) || noRecording(answer.body))) {
         clearTimeout(recording.timer);
         this.recording = null;
         if (succeeded(answer.body)) answer.body = withId(this.finished(recording, answer.body), id);
@@ -932,15 +947,9 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     const next: Recording = {
       dir,
       session: params.session,
-      stop: {
-        command: 'record',
-        positionals: ['stop'],
-        ...(params.session === undefined ? {} : { session: params.session }),
-        flags: Object.fromEntries(
-          Object.entries(flags).filter(([key]) => ['platform', 'udid', 'serial'].includes(key)),
-        ),
-        meta: owner,
-      },
+      stop: recordStop({ ...params, meta: owner }),
+      pending: true,
+      attempts: 0,
     };
     try {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -953,8 +962,9 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
     this.recording = next;
     const answer = await this.send(running, lease, target, body).catch(() => null);
+    next.pending = false;
     if (this.recording === next && answer && succeeded(answer.body)) {
-      next.timer = setTimeout(() => void this.capRecording(running, lease, next), this.options.maxRecordingMs);
+      next.timer = setTimeout(() => this.capLater(running, lease, next), this.options.maxRecordingMs);
       next.timer.unref();
     } else if (this.recording === next) {
       this.recording = null;
@@ -986,13 +996,21 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       recording.timer = setTimeout(then, ms);
       recording.timer.unref();
     };
-    if (!answer || !answered(answer.body)) {
-      later(CAP_RETRY_MS, () => void this.capRecording(running, lease, recording));
-      return;
-    }
-    if (!succeeded(answer.body)) {
+    recording.attempts += 1;
+    if (answer && noRecording(answer.body)) {
       this.recording = null;
       discard(recording.dir);
+      return;
+    }
+    if (!answer || !succeeded(answer.body)) {
+      if (recording.attempts < CAP_ATTEMPTS) later(CAP_RETRY_MS, () => this.capLater(running, lease, recording));
+      else {
+        this.recording = null;
+        discard(recording.dir);
+        process.stderr.write(
+          'A hosted recording reached its time limit and could not be stopped; its files were deleted.\n',
+        );
+      }
       return;
     }
     recording.capped = this.finished(recording, answer.body);
@@ -1001,6 +1019,18 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       this.recording = null;
       discard(recording.dir);
     });
+  }
+
+  private capLater(running: Running, lease: Lease, recording: Recording): void {
+    this.capRecording(running, lease, recording).catch((error: unknown) =>
+      process.stderr.write(`Hosted recording limit failed: ${String(error).replace(/\s+/g, ' ')}\n`),
+    );
+  }
+
+  private takeCapped(recording: Recording, capped: Buffer, response: ServerResponse, id: string | number | null): void {
+    clearTimeout(recording.timer);
+    this.recording = null;
+    this.answer(response, { status: 200, headers: {}, body: withId(capped, id) });
   }
 
   private finished(recording: Recording, body: Buffer): Buffer {
@@ -1507,9 +1537,27 @@ function parsed(body: Buffer): Record<string, unknown> | null {
   }
 }
 
-function answered(body: Buffer): boolean {
+// agent-device answers record stop without a recording to stop with INVALID_ARGS "no active recording".
+function noRecording(body: Buffer): boolean {
   const rpc = parsed(body);
-  return rpc !== null && isJsonObject(rpc.result);
+  return (
+    rpc !== null &&
+    isJsonObject(rpc.error) &&
+    rpc.error.message === 'no active recording' &&
+    isJsonObject(rpc.error.data) &&
+    rpc.error.data.code === 'INVALID_ARGS'
+  );
+}
+
+function recordStop(params: Record<string, unknown>): Record<string, unknown> {
+  const flags = isJsonObject(params.flags) ? params.flags : {};
+  return {
+    command: 'record',
+    positionals: ['stop'],
+    ...(params.session === undefined ? {} : { session: params.session }),
+    flags: Object.fromEntries(Object.entries(flags).filter(([key]) => ['platform', 'udid', 'serial'].includes(key))),
+    ...(params.meta === undefined ? {} : { meta: params.meta }),
+  };
 }
 
 function succeeded(body: Buffer): boolean {

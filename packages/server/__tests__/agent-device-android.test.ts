@@ -430,7 +430,11 @@ test.each([
   { command: 'uninstall' },
   { command: 'shutdown' },
   { command: 'boot' },
-  { command: 'record' },
+  {
+    command: 'record',
+    positionals: ['start', '/host/clip.mp4'],
+    meta: { clientArtifactPaths: { outPath: '/c/clip' } },
+  },
   { command: 'logs' },
   { command: 'close', flags: { shutdown: true } },
   { command: 'snapshot', serial: 'emulator-5556' },

@@ -1105,11 +1105,15 @@ Hosted iOS and Android sessions allow `record start` and `record stop`, outside
 telemetry only there. `record stop` returns them as daemon artifacts, which the
 client downloads over `GET /artifacts/<id>` on the same agent route, and the
 daemon deletes each file after its download, or after 15 minutes. One recording
-runs per session; a second start, and a stop naming another agent-device session,
-are refused with rule `recording`. Any daemon answer to the matching stop ends
-the recording. After 10 minutes the adapter sends `record stop` itself under the
-session's tenant, retrying every 30 seconds until the daemon answers, and answers
-the client's next `record stop` within 15 minutes with that result. A finished
+runs per session; a second start, a stop naming another agent-device session and
+a stop while the start is still in flight are refused with rule `recording`. A
+stop carries only the session and the pinned platform and device flags. A matching
+stop ends the recording when it succeeds or agent-device answers
+`no active recording`; any other failure keeps the recording and its files, as
+agent-device keeps them for a retried stop. After 10 minutes the adapter sends
+`record stop` itself under the session's tenant, every 30 seconds until it
+succeeds or up to 10 times, after which it deletes the files, and answers the
+client's next `record stop` within 15 minutes with that result. A finished
 recording over 512 MiB, whichever stop finished it, is deleted and `record stop`
 fails with `STIM_RECORDING_TOO_LARGE`. A request the relay cannot process
 answers 500 instead of rejecting. Driver stop and daemon start

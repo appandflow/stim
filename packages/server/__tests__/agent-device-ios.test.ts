@@ -23,7 +23,7 @@ const fixture = vi.hoisted(() => ({
   stubborn: new Set<number>(),
   events: [] as string[],
   calls: [] as { path: string; body: string; headers: Record<string, string> }[],
-  recordOk: true,
+  recordError: { code: '', message: '' },
 }));
 
 vi.mock('@stim-cli/core/process-identity', async (original) => {
@@ -110,11 +110,13 @@ vi.mock('node:http', async (original) => ({
           options.path === '/health'
             ? { upstream: { leaseBackends: fixture.backend ? ['ios-instance'] : [] } }
             : sent.params?.command === 'record'
-              ? {
-                  jsonrpc: '2.0',
-                  id: sent.id,
-                  result: { ok: fixture.recordOk, data: { recording: sent.params.positionals[0] } },
-                }
+              ? fixture.recordError.message
+                ? {
+                    jsonrpc: '2.0',
+                    id: sent.id,
+                    error: { code: -32000, message: fixture.recordError.message, data: fixture.recordError },
+                  }
+                : { jsonrpc: '2.0', id: sent.id, result: { ok: true, data: { recording: sent.params.positionals[0] } } }
               : { forwarded: true };
         queueMicrotask(() =>
           answer(
@@ -145,7 +147,7 @@ beforeEach(() => {
   fixture.backend = true;
   fixture.proxyStopped = true;
   fixture.calls = [];
-  fixture.recordOk = true;
+  fixture.recordError = { code: '', message: '' };
   fixture.ps = [];
   fixture.psError = false;
   fixture.uncaptured = new Set();
@@ -772,10 +774,10 @@ test('overlapping starts run only one recording', async () => {
 
 test('a start the daemon refuses leaves no recording behind', async () => {
   await start();
-  fixture.recordOk = false;
+  fixture.recordError = { code: 'COMMAND_FAILED', message: 'recorder failed to start' };
   expect((await rpc(recordStart())).status).toBe(200);
   expect(readdirSync(join(home, 'agent', 'recordings'))).toEqual([]);
-  fixture.recordOk = true;
+  fixture.recordError = { code: '', message: '' };
   expect((await rpc(recordStart())).status).toBe(200);
 });
 
@@ -854,16 +856,25 @@ test.each([
   expect(existsSync(join(output, '..'))).toBe(false);
 });
 
-test('a stop the daemon answers with a failure ends the recording', async () => {
+test('only a stop agent-device answers with no active recording ends a recording it did not finish', async () => {
   await start();
   await rpc(recordStart());
   const output = forwardedRecord().params.positionals[1];
-  fixture.recordOk = false;
-  expect(JSON.parse((await rpc({ command: 'record', session: 'default', positionals: ['stop'] })).text)).toMatchObject({
-    result: { ok: false },
-  });
+  fixture.recordError = { code: 'INVALID_ARGS', message: 'record stop accepts no --record or --no-record flags' };
+  const stop = {
+    command: 'record',
+    session: 'default',
+    positionals: ['stop'],
+    flags: { record: true, noRecord: true },
+  };
+  expect((await rpc(stop)).status).toBe(200);
+  expect(forwardedRecord().params.flags).toEqual({ platform: 'ios', udid: UDID });
+  expect(existsSync(join(output, '..'))).toBe(true);
+  expect((await rpc(recordStart())).status).toBe(400);
+  fixture.recordError = { code: 'INVALID_ARGS', message: 'no active recording' };
+  await rpc(stop);
   expect(existsSync(join(output, '..'))).toBe(false);
-  fixture.recordOk = true;
+  fixture.recordError = { code: '', message: '' };
   expect((await rpc(recordStart())).status).toBe(200);
 });
 
