@@ -30,6 +30,9 @@ public enum NoiseCredential: Sendable {
   private let onVerified: @MainActor (Data) throws -> Void
   private let onEvent: @MainActor (ServerTransportEvent) -> Void
 
+  /// stim-server pings no ordinary client, and its `ws` server answers every ping, so Desktop drives liveness itself at
+  /// the interval the server pings its own links with (`METRO_LINK_PING_MS` in `packages/server/src/server.ts`).
+  static let keepaliveInterval: TimeInterval = 15
   static let closeRefused: UInt16 = 4401
   static let closeBadRequest: UInt16 = 4400
 
@@ -84,7 +87,8 @@ public enum NoiseCredential: Sendable {
     self.handshake = handshake
     let socket = WebSocketStream(
       to: target.endpoint, using: target.parameters, host: target.host, path: target.path,
-      maximumMessageSize: Noise.maximumServerMessageBytes + Noise.transportOverheadBytes
+      maximumMessageSize: Noise.maximumServerMessageBytes + Noise.transportOverheadBytes,
+      keepalive: Self.keepaliveInterval
     ) { [weak self] event in self?.receive(event) }
     self.socket = socket
     socket.send(.binary, prefix + first)
