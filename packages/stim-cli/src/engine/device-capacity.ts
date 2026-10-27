@@ -816,6 +816,7 @@ export async function withDeviceBootAdmission<T>(
   let lastLine = -Infinity;
   let visibleWait = false;
   let lastInventory: { limit: DeviceLimit; holders: string[] } | undefined;
+  let lastTurn = false;
   let binding: DeviceLimit | undefined;
   let lastListed = -Infinity;
   let reclaimed = 0;
@@ -859,7 +860,7 @@ export async function withDeviceBootAdmission<T>(
               const firstOfPlatform = ahead.every((holder) => holder.details.platform !== device.platform);
               return { limit, holders, queue, reclaim: turn && firstOfPlatform && limit.count >= limit.max };
             };
-            if (ticket && lastInventory && ahead.length > 0 && now() - lastListed < INVENTORY_REFRESH_MS) {
+            if (ticket && lastInventory && ahead.length > 0 && !lastTurn && now() - lastListed < INVENTORY_REFRESH_MS) {
               const booting = sources.booting ?? readBootingDevices;
               const own = deviceKey(device.platform, device.key);
               const claims = typeof booting === 'function' ? booting() : booting;
@@ -877,6 +878,7 @@ export async function withDeviceBootAdmission<T>(
             const turn = ahead.every((waiter) => platformWalled(keys, waiter, platformMax));
             if (turn && limits.every((limit) => limit.count < limit.max)) return admit();
             lastListed = now();
+            lastTurn = turn;
             const limit = bindingLimit(limits);
             if (!limit) return admit();
             binding = limit;

@@ -367,6 +367,34 @@ describe('per-platform device caps', () => {
     }
   });
 
+  test('a waiter behind a platform-walled head refreshes its inventory each poll and takes a slot the moment it frees', async () => {
+    const head = takeTicket({ platform: 'ios', sequence: 1 });
+    let clock = Date.now();
+    let freed = false;
+    try {
+      await expect(
+        admit('android', {
+          max: 0,
+          platformMax: { ios: 1, android: 1 },
+          noWait: false,
+          waitMs: 5000,
+          sources: {
+            ...empty,
+            sims: [sim('a')],
+            booting: () => (freed ? [] : [{ platform: 'android', key: 'other' }]),
+          },
+          now: () => clock,
+          sleep: async (ms) => {
+            clock += ms;
+            freed = true;
+          },
+        }),
+      ).resolves.toBe('booted');
+    } finally {
+      releaseClaim(head);
+    }
+  });
+
   test('a waiter ahead that is not held back by a platform cap still blocks the queue behind it', async () => {
     const head = takeTicket({ platform: 'android', sequence: 1 });
     try {
