@@ -277,7 +277,7 @@ struct DeviceViewer: View {
     !device.ref.isPhysical && device.activityKey != nil
   }
 
-  /// Physical and remote devices have no replay, as on the phone, and a paired server's devices none here.
+  /// Physical and remote devices have no replay, as on the phone.
   private func replayTarget(_ device: DeviceRef) -> ReplayTarget? {
     switch device {
     case .remote, .macos: return nil

@@ -17,7 +17,6 @@
     }
 
     private var offline: Bool { scenario == .error }
-    /// Ready is a `--control` pairing; Empty is a read-only one.
     private var capabilities: [String] { scenario == .empty ? ["read"] : ["read", "control"] }
 
     private var access: PairedAccess {

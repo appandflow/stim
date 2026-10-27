@@ -92,13 +92,10 @@ struct PairedWorkspacePage: View {
   var owned: OwnedWorkspace
   var serverName: String
   var connectionLine: String?
-  /// Nil until the server's session exists; the page then offers no action.
   var access: PairedAccess?
-  /// The action this page is running.
   var running: String? = nil
   var outcome: PairedActionOutcome? = nil
   var run: (String) -> Void = { _ in }
-  /// Opens the viewer for a device the server streams.
   var view: ((DeviceRef) -> Void)? = nil
   @State private var confirmingStop = false
 
@@ -140,7 +137,6 @@ struct PairedWorkspacePage: View {
       if let outcome, outcome.key == owned.key {
         Text(verbatim: outcome.message).font(.stim(.caption))
           .foregroundStyle(outcome.failed ? Palette.error : Palette.secondary)
-          .textSelection(.enabled)
       } else if let reason = access?.reason {
         Text(verbatim: reason).font(.stim(.caption)).foregroundStyle(Palette.secondary).textSelection(.enabled)
       }
@@ -151,7 +147,6 @@ struct PairedWorkspacePage: View {
 
   private func offers(_ action: String) -> Bool { access?.actions.contains(action) == true }
 
-  /// Reload and Stop as the server advertises them; while it lets this Mac view only, both show disabled with why.
   private func actionButtons(_ env: Workspace) -> some View {
     let shown = canControl ? PairedAccess.known.filter(offers) : PairedAccess.known
     let reason = access?.reason ?? "Waiting for \(serverName)."
@@ -239,7 +234,6 @@ struct PairedWorkspacePage: View {
     }
   }
 
-  /// The devices whose screen the server streams: its own and hosted iOS and Android devices, and hosted macOS apps.
   private static func streams(_ device: OwnedDevice) -> Bool {
     switch device.ref {
     case .ios, .android: return true

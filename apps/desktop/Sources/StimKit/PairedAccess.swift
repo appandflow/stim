@@ -43,11 +43,7 @@ public struct PairedAccess: Equatable, Sendable {
     self.canControl = canControl
   }
 
-  /// The grant command Stim Desktop builds from the device id, or the device list when the id is not a plain one.
   static func grantCommand(deviceID: String?) -> String {
-    guard let deviceID, !deviceID.isEmpty, deviceID.count <= 64,
-      deviceID.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
-    else { return "stim-server devices grant <id> --control" }
-    return "stim-server devices grant \(deviceID) --control"
+    "stim-server devices grant \(PairedServerWording.plainDeviceID(deviceID) ?? "<id>") --control"
   }
 }

@@ -156,7 +156,6 @@ struct NoiseInteropTests {
       return try NoiseInteropTests.payload(port: port, token: token, fingerprint: fingerprint)
     }
 
-    /// A Stim workspace this server's home lists, by the canonical path a status payload reports.
     func registerWorkspace() throws -> String {
       let directory = home.appendingPathComponent("workspace")
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
