@@ -1021,7 +1021,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     () =>
       (options.ensureImage ?? ensureSystemImage)({
         requested: target.kind === 'emulator' ? target.systemImage : null,
-        listImages: listSystemImages,
         policy: androidImageInstallPolicy(settings),
         env: context.env,
         signal: settingsSignal,

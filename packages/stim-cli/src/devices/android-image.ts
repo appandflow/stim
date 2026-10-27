@@ -169,23 +169,20 @@ function outputOf(error: unknown): string {
 export async function ensureSystemImage({
   requested,
   policy,
-  listImages = listInstalledSystemImages,
   env,
   signal,
   note,
 }: {
   requested: string | null;
   policy: AndroidImageInstallPolicy;
-  listImages?: typeof listInstalledSystemImages;
   env: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   note: (line: string) => void;
 }): Promise<{ ok: true; installed: boolean } | ({ ok: false } & SystemImageRefusal)> {
-  const decision = decideSystemImage({ requested, installed: listImages(undefined, env), policy, env });
+  const decision = decideSystemImage({ requested, installed: listInstalledSystemImages(undefined, env), policy, env });
   if (decision.kind === 'refuse')
     return { ok: false, code: decision.code, message: decision.message, remedy: decision.remedy };
-  if (decision.kind === 'installed' && imageComplete(androidHome(env), decision.pkg))
-    return { ok: true, installed: false };
+  if (decision.kind === 'installed') return { ok: true, installed: false };
   const result = await installSystemImage({ pkg: decision.pkg, env, signal, note });
   return result.ok ? { ok: true, installed: true } : result;
 }

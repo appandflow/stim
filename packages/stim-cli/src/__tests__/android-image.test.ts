@@ -136,3 +136,27 @@ test.skipIf(!roomToInstall)('an image directory sdkmanager left mid-install is i
   });
   expect(calls).toEqual([[`--sdk_root=${sdk}`, '--install', HOST]]);
 });
+
+test('an image left mid-install is never used, and under never it is refused instead of installed', async () => {
+  const image = (api: number) => join(sdk, 'system-images', `android-${api}`, 'google_apis', hostSystemImageArch());
+  mkdirSync(join(image(37), '.installer'), { recursive: true });
+  mkdirSync(image(36), { recursive: true });
+  writeFileSync(join(image(36), 'package.xml'), '<package/>');
+  setExecutor({
+    runFileAsync: async () => {
+      throw new Error('sdkmanager must not run');
+    },
+  });
+  expect(await ensureSystemImage({ requested: null, policy: 'auto', env, note: () => {} })).toEqual({
+    ok: true,
+    installed: false,
+  });
+  expect(
+    await ensureSystemImage({
+      requested: `system-images;android-37;google_apis;${hostSystemImageArch()}`,
+      policy: 'never',
+      env,
+      note: () => {},
+    }),
+  ).toMatchObject({ ok: false, code: 'STIM_BAD_ARG', remedy: expect.stringContaining('--install') });
+});

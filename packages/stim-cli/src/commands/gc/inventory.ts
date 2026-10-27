@@ -379,6 +379,7 @@ export async function collectInventory(
   const images = listInstalledSystemImages(
     (error) => notices.push(unreadableNotice('Android system images', error, env)),
     env,
+    { includePartial: true },
   ).map((image) => {
     const directory = join(imagesRoot, `android-${image.api}`, image.tag, image.arch);
     let canonical = directory;
