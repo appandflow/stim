@@ -68,6 +68,12 @@ import Foundation
     previews = ReplayPreviews(target: target)
   }
 
+  /// Fires once each time playback goes from paused or live to playing. A subscriber that attaches while a replay
+  /// is already playing does not get the current state.
+  public var playbackStarts: AnyPublisher<Void, Never> {
+    $replay.map { ($0?.rate ?? 0) > 0 }.removeDuplicates().dropFirst().filter { $0 }.map { _ in }.eraseToAnyPublisher()
+  }
+
   public var timeline: ReplayTimeline? { range.flatMap { ReplayTimeline(spans: $0.spans) } }
 
   /// The Mac's time now, estimated as the newest span's end plus the time since `range` came, while connected to a

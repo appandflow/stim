@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 
@@ -327,6 +328,33 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
 
     controller.live()
     #expect(sub.cancelled && controller.replay == nil)
+  }
+
+  @Test func reportsPlaybackStartsOnlyForPausedToPlayingTransitions() async throws {
+    let server = FakeServer()
+    let controller = ReplayController(target: target, scheduler: ManualScheduler().schedule)
+    controller.connect(server)
+    controller.seek(at: 5_000, rate: 2)
+    var starts = 0
+    let early = controller.playbackStarts.sink { starts += 1 }
+    #expect(starts == 0)
+
+    controller.seek(at: 6_000, rate: 0)
+    controller.seek(at: 6_000, rate: 1)
+    controller.seek(at: 7_000, rate: 2)
+    #expect(starts == 1)
+    controller.seek(at: 7_000, rate: 0)
+    controller.seek(at: 8_000, rate: 1)
+    #expect(starts == 2)
+
+    var late = 0
+    let lateSink = controller.playbackStarts.sink { late += 1 }
+    #expect(late == 0)
+    controller.seek(at: 8_000, rate: 0)
+    controller.seek(at: 9_000, rate: 1)
+    #expect(late == 1 && starts == 3)
+    early.cancel()
+    lateSink.cancel()
   }
 
   @Test func refusesToReplayWhenTheServerAnswersWithoutH264() async throws {
