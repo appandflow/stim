@@ -321,7 +321,7 @@ public struct WorktreeRowSummary: Sendable {
 extension WorktreePage {
   public func rowSummary(now: Date, subtitle: String?, showsGit: Bool) -> WorktreeRowSummary {
     var problems: [String] = []
-    let errors = apps.reduce(0) { $0 + ($1.logs?.errorsSinceMarker ?? 0) }
+    let errors = Format.sum(apps.map { $0.logs?.errorsSinceMarker ?? 0 })
     if errors > 0 { problems.append(countLabel(errors, "error")) }
     let states = apps.map { $0.platformStates(now: now) }
     let names = apps.indices.map { i -> String? in
@@ -345,7 +345,7 @@ extension WorktreePage {
           name: names[$0], platforms: states[$0], status: apps[$0].rowStatus(now: now), active: apps[$0].isActive)
       },
       agents: agents, problems: problems, drivers: tools.isEmpty ? nil : tools.joined(separator: ", "),
-      remote: apps.reduce(0) { $0 + ($1.remoteDevices?.count ?? 0) },
+      remote: Format.sum(apps.map { $0.remoteDevices?.count ?? 0 }),
       git: showsGit ? GitChip(apps[0].worktree) : nil, subtitle: subtitle)
   }
 

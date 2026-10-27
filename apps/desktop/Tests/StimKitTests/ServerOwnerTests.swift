@@ -84,12 +84,15 @@ struct ServerOwnerTests {
     #expect(hidden.flatMap(\.entries).map(\.path) == ["/Users/me/app"])
   }
 
-  @Test func memoryTotalsPastIntsRangeFromAPairedServerDoNotTrap() throws {
+  @Test func countsPastIntsRangeFromAPairedServerDoNotTrap() throws {
     let huge = try ["a", "b"].map { name in
       try JSONDecoder().decode(
         Workspace.self,
         from: Data(
-          #"{"path":"/home/bot/app/.worktrees/\#(name)","live":true,"warnings":[],"memoryMb":5000000000000000000}"#.utf8))
+          #"""
+          {"path":"/home/bot/app/.worktrees/\#(name)","live":true,"warnings":[],"memoryMb":5000000000000000000,
+           "worktree":{"path":"/home/bot/app/.worktrees/\#(name)","git":{"changed":5000000000000000000,"untracked":5000000000000000000}}}
+          """#.utf8))
     }
     var options = SidebarOptions()
     for sort in SidebarSort.allCases {
@@ -98,5 +101,6 @@ struct ServerOwnerTests {
       #expect(trees.map(\.summary.project.root) == ["/home/bot/app"])
       #expect(trees.flatMap(\.entries).count == 2)
     }
+    #expect(huge.map { $0.worktree?.git?.uncommitted } == [Int.max, Int.max])
   }
 }

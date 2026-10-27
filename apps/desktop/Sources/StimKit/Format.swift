@@ -31,6 +31,14 @@ public enum Format {
     return Int(value)
   }
 
+  /// The sum of counts another machine reports, at `Int.max` instead of trapping when it overflows.
+  public static func sum(_ values: some Sequence<Int>) -> Int {
+    values.reduce(0) { total, value in
+      let (sum, overflow) = total.addingReportingOverflow(value)
+      return overflow ? (value < 0 ? .min : .max) : sum
+    }
+  }
+
   /// `value` with one decimal, a tie rounded up the way the phone app's `toFixed(1)` does.
   public static func tenths(_ value: Double) -> String {
     let scaled = value * 10

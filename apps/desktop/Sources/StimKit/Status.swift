@@ -378,7 +378,7 @@ public struct WorktreeGit: Decodable, Hashable, Sendable {
   }
 
   /// Changed and untracked files together: what a commit would still have to pick up.
-  public var uncommitted: Int { changed + untracked }
+  public var uncommitted: Int { Format.sum([changed, untracked]) }
 
   /// `\u{2191}2 \u{2193}1` for commits ahead of and behind the upstream, or nil when level with it.
   public var arrows: String? { Self.arrows(ahead: ahead ?? 0, behind: behind ?? 0) }
