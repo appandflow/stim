@@ -696,6 +696,10 @@ function mergeMovedPackages(changes: SourceChange[]): SourceChange[] {
 }
 
 export function compareSourceLists(previous: unknown[], current: unknown[]): SourceChange[] {
+  return mergeMovedPackages(sourceListChanges(previous, current));
+}
+
+function sourceListChanges(previous: unknown[], current: unknown[]): SourceChange[] {
   const previousByName = new Map<string, { hash: string | null; reasons: string[] }>();
   for (const source of previous) {
     const name = sourceName(source);
@@ -720,12 +724,12 @@ export function compareSourceLists(previous: unknown[], current: unknown[]): Sou
   for (const [name, before] of previousByName) {
     if (!seen.has(name)) changes.push({ name, change: 'removed', reasons: before.reasons });
   }
-  return mergeMovedPackages(changes);
+  return changes;
 }
 
 /** Whether `current` differs from `previous` in at least one source, and only in sources inside `dir`. */
 export function changedOnlyInside(previous: unknown[], current: unknown[], dir: string): boolean {
-  const changes = compareSourceLists(previous, current);
+  const changes = sourceListChanges(previous, current);
   return dir !== '.' && changes.length > 0 && changes.every(({ name }) => name === dir || name.startsWith(`${dir}/`));
 }
 

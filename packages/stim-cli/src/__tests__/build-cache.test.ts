@@ -731,6 +731,12 @@ test('changedOnlyInside accepts a difference confined to the iOS project and not
   expect(changedOnlyInside(client, changed('aa', 'bb'), 'ios')).toBe(false);
   expect(changedOnlyInside(client, [...changed('aa', 'bb'), { filePath: 'ios-extra', hash: 'cc' }], 'ios')).toBe(false);
   expect(changedOnlyInside(client, changed('a2', 'bb'), '.')).toBe(false);
+  const packageOutside = [...client, { id: 'node_modules/native-lib/package.json', hash: 'dd' }];
+  const packageMovedInside = [
+    ...changed('aa', 'bb'),
+    { filePath: 'ios/node_modules/native-lib/package.json', hash: 'ee' },
+  ];
+  expect(changedOnlyInside(packageOutside, packageMovedInside, 'ios')).toBe(false);
 });
 
 test('diffFingerprintSources prefers the project differ and falls back when it throws or misbehaves', () => {
