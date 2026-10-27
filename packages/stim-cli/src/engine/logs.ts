@@ -40,7 +40,8 @@ export async function openWorkspaceLogs(
       new Error(`No Stim workspace has run in ${root}. Run stim start, stim ios, or stim android in the app first.`),
       { code: 'STIM_NO_PROJECT' },
     );
-  const hostedReachable = await syncHostedLogs(root, context);
+  const readsDevice = !options.sources?.length || options.sources.includes('device');
+  const hostedReachable = await syncHostedLogs(root, context, readsDevice);
   context.signal.throwIfAborted();
   const initial = await openLogDir(dir, { signal: context.signal });
   let attempts: NdjsonRecord[];

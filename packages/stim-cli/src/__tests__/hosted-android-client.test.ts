@@ -481,6 +481,35 @@ test('stim logs --errors --json pulls Android native records without progress on
   }
 });
 
+test('stim logs queries the host for native logs only when device records can be read', async () => {
+  mkdirSync(workspaceLogsDir(root), { recursive: true });
+  writeFileSync(
+    join(workspaceLogsDir(root), 'build-android.ndjson'),
+    JSON.stringify({ ts: 1, src: 'build', level: 'info', msg: 'built' }) + '\n',
+  );
+  writeHostedAndroid(root, 'default', placement);
+  logRecords = [{ ts: 2, src: 'device', level: 'info', msg: 'startup' }];
+  const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const cwd = process.cwd();
+  process.chdir(root);
+  const run = async (...args: string[]) => {
+    output.mockClear();
+    const program = new Command();
+    logsCommand(program);
+    await program.parseAsync(['node', 'stim', 'logs', '--json', ...args]);
+    return output.mock.calls.map(([line]) => JSON.parse(String(line)).msg);
+  };
+  const queries = () => methods.filter((entry) => entry.method === 'device-host.logs.query').length;
+  try {
+    expect(await run('--source', 'build')).toEqual(['built']);
+    expect(queries()).toBe(0);
+    expect(await run('--source', 'device')).toEqual(['startup']);
+    expect(queries()).toBeGreaterThan(0);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
 test('older Android hosts get an update note and no log queries during sync or follow', async () => {
   writeHostedAndroid(root, 'default', placement);
   dataFeature = false;
