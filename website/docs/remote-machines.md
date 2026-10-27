@@ -293,7 +293,7 @@ host serial and AVD name private. Unreachable cleanup retains the placement;
 retry stop when the host answers.
 
 Set `hosting.agentDriver` to `agent-device` on the hosting Mac and install
-agent-device 0.21.22 or later on both machines. `android.host.agent` in
+agent-device 0.21.30 or later on both machines. `android.host.agent` in
 `stim status --json` reports a private remote-config file per slot:
 
 ```sh
@@ -304,9 +304,9 @@ agent-device click <ref> --remote-config <file>
 
 Use the returned config, keeping the host serial on the host. One daemon per
 session pins the exact owned emulator serial; its inventory lists only that
-emulator. It allows inspection of, interaction with and recording of installed
-apps, and refuses install, reinstall, uninstall, boot, shutdown,
-`close --shutdown`, logs, other devices and host paths. Stim installs the app. An unavailable or older
+emulator. It allows the same commands as a [hosted simulator](./owned-devices.md#run-ios-on-another-mac),
+including `telephony` for incoming calls and SMS, and refuses other devices and
+host paths. Stim installs the app. An unavailable or older
 driver reports `none` with the host's reason. Stop closes the matching agent
 connection and stops the daemon and its helpers before parking or deleting the emulator.
 An unresolved daemon claim blocks replacement and deletion.
