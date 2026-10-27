@@ -82,7 +82,6 @@ export interface WorktreeRowSummary {
   sessions: AgentSession[];
   drivers: string[];
   remote: number;
-  /** The lead app's build machine and the hosts of every app's running hosted devices. */
   hosts: RowHosts;
 }
 

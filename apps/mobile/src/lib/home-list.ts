@@ -261,11 +261,7 @@ export interface RowDevices {
   remote: number;
 }
 
-/**
- * The other machines the workspace's work runs on, as its owning server reports them: the build machine of a running
- * offloaded build and the hosts of running hosted devices, each named once in device order. Not part of the row
- * vectors Stim Desktop replays.
- */
+/** Where the workspace's work runs when not on its owning server's machine; kept out of the `rowDevices` vectors Stim Desktop replays. */
 export interface RowHosts {
   build: string | null;
   devices: string[];

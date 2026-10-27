@@ -30,7 +30,7 @@ import {
   type HomeWorkspace,
 } from '@/lib/home-list';
 import { worktreeRowLabel, worktreeRowSummary, type PlatformState } from '@/lib/worktree-row';
-import { barSteps, currentPhaseLabel, gitChip, phaseSteps } from '@/lib/workspace-view';
+import { barSteps, currentPhaseLabel, gitChip, phaseSteps, remoteBuild } from '@/lib/workspace-view';
 import { isSettingUp, isShownLive, platformName, runningBuild } from '@/lib/workspaces';
 import type { BuildReport, EnvironmentState, WorktreeFacts } from '@/protocol/types';
 
@@ -172,6 +172,7 @@ const WorkspaceRow = memo(function WorkspaceRow({
         key="hosts"
         host={deviceHosts.join(', ')}
         variant="footnote"
+        numberOfLines={lines}
         color={offline ? theme.colors.tertiary : theme.colors.secondary}
       />,
     );
@@ -434,14 +435,18 @@ function RowBuild({ env, build, now }: { env: EnvironmentState; build: BuildRepo
   const { elapsed, estimate } = buildTiming(build, now);
   const { phase, counts } = currentPhaseLabel(build);
   const outcome = outcomeLabel(build);
-  const host = rowHosts(env).build;
+  const large = useLargeText();
+  const host = remoteBuild(build, 0)?.host;
+  const hostLabel = host ? (
+    <HostLabel host={host} mode="building" variant="footnote" color={theme.colors.secondary} />
+  ) : null;
   return (
     <View style={styles.build}>
       <View style={styles.buildLine}>
         <Text variant="footnote" weight="semibold" tone="brand">
           {phase}
         </Text>
-        {host ? <HostLabel host={host} mode="building" variant="footnote" color={theme.colors.secondary} /> : null}
+        {large ? null : hostLabel}
         {counts ? (
           <Text variant="footnote" tone="secondary" numberOfLines={1} style={[styles.shrink, styles.tabular]}>
             {counts}
@@ -467,6 +472,7 @@ function RowBuild({ env, build, now }: { env: EnvironmentState; build: BuildRepo
           </Text>
         ) : null}
       </View>
+      {large ? hostLabel : null}
       <PhaseBar steps={steps} buildId={buildKey(build)} names={false} />
     </View>
   );
