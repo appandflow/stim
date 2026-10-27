@@ -208,8 +208,9 @@ public final class StatusStore: ObservableObject {
     Task.detached {
       let resolved = await withTaskGroup(of: (String, Project, Bool).self) { group in
         for path in paths where reported[path] == nil {
+          guard known[path] == nil || existed[path] != nil else { continue }
           let exists = FileManager.default.fileExists(atPath: path)
-          guard known[path] == nil || (existed[path] != nil && existed[path] != exists) else { continue }
+          guard known[path] == nil || existed[path] != exists else { continue }
           group.addTask { (path, Project.resolve(workspace: path), exists) }
         }
         return await group.reduce(into: [String: (project: Project, exists: Bool)]()) { $0[$1.0] = ($1.1, $1.2) }

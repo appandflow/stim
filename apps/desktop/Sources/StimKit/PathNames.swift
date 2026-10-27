@@ -2,9 +2,9 @@ import Foundation
 
 /// Display names for a workspace, the same as the phone app's.
 ///
-/// The title is the worktree's branch, else the worktree's folder, else the project for a workspace inside the
-/// project's root, else the folder. `inCheckout` is where the workspace sits inside its checkout, such as `apps/mobile`, or nil at
-/// the checkout root.
+/// The title is the worktree's branch, else the worktree's folder, else the project for a workspace inside
+/// the project's root, else the folder. `inCheckout` is where the workspace sits inside its checkout, such as
+/// `apps/mobile`, or nil at the checkout root.
 public struct PathNames: Hashable, Sendable {
   public var title: String
   public var inCheckout: String?

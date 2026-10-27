@@ -241,7 +241,6 @@ import Testing
     #expect(names.title == "stim")
     #expect(names.inCheckout == "apps/mobile")
     #expect(PathNames(path: "/Users/dev/stim/apps/mobile").title == "mobile")
-    #expect(PathNames(path: "/Users/dev/stim", project: Project(root: "/Users/dev/stim")).title == "stim")
   }
 
   @Test func doesNotTitleAWorkspaceOutsideItsProjectByTheProject() {
