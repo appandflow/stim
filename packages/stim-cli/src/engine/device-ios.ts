@@ -14,7 +14,7 @@ import {
   withConfigLockAsync,
 } from '../workspace/config.ts';
 import { configuredIosSimulatorViewer, type IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
-import { getExecutor } from '../exec.ts';
+import { getExecutor, isTimeoutError } from '../exec.ts';
 import { hostMemoryPressureAdvice, readHostMemoryPressure, reportMemoryCulprits } from '../host-memory.ts';
 import {
   bootIosSim,
@@ -626,6 +626,7 @@ type IosBootArgs = {
 type IosBootAttempt = BootResult & { springBoardDown?: true };
 
 const SPRINGBOARD_RESPAWN_POLLS = 20;
+const SPAWN_STALL_TOLERANCE_MS = 180000;
 
 export async function ensureIosBooted(args: IosBootArgs): Promise<BootResult> {
   const { springBoardDown, ...first } = await bootOwnedIosSim(args);
@@ -712,8 +713,20 @@ async function bootOwnedIosSim({
   const ready = async (): Promise<IosBootAttempt> => {
     try {
       // Apple simctl spawn searches the device PATH for bare names; absolute paths use the host root.
-      const listSpringBoard = () =>
-        getExecutor().runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 30000 });
+      const stallDeadline = Date.now() + SPAWN_STALL_TOLERANCE_MS;
+      const listSpringBoard = async (): Promise<string> => {
+        for (;;) {
+          try {
+            return await getExecutor().runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], {
+              timeoutMs: 30000,
+            });
+          } catch (error) {
+            if (!isTimeoutError(error) || Date.now() >= stallDeadline) throw error;
+            const sims = await listAllIosSimsAsync().catch(() => null);
+            if (sims && sims.find((s) => s.udid === udid)?.state !== 'Booted') throw error;
+          }
+        }
+      };
       let listing = await listSpringBoard();
       for (let poll = 0; !springBoardRunning(listing) && poll < SPRINGBOARD_RESPAWN_POLLS; poll++) {
         await cancellableSleep(pollMs);

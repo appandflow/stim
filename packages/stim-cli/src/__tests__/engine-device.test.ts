@@ -173,10 +173,15 @@ describe('ensureBooted: ios', () => {
   );
 
   test.each([false, true])('refuses a simulator that cannot spawn a process after boot (joined=%s)', async (joined) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    let probes = 0;
     setExecutor({
       run: () => simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]),
       runFile(file, args = []) {
         if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
+        if (args[3] !== 'launchctl') return '';
+        probes++;
+        vi.advanceTimersByTime(30000);
         throw Object.assign(new Error('simctl spawn timed out'), { code: 'ETIMEDOUT' });
       },
       runFileQuiet: () => null,
@@ -195,6 +200,54 @@ describe('ensureBooted: ios', () => {
     expect(result.reason).toMatch(/U1.*process-spawn readiness.*simctl spawn timed out/);
     expect(result.reason).toContain('Activity Monitor');
     expect(result.reason).not.toMatch(/out of memory|OOM/i);
+    expect(probes).toBe(6);
+  });
+
+  test('keeps probing a Booted simulator whose spawn calls time out, until one answers', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const booted = simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+    let probes = 0;
+    setExecutor({
+      run: () => simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]),
+      runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return booted;
+        if (args[3] !== 'launchctl') return '';
+        vi.advanceTimersByTime(30000);
+        if (++probes <= 3) throw Object.assign(new Error('simctl spawn timed out'), { code: 'ETIMEDOUT' });
+        return SPRINGBOARD_ROW;
+      },
+      runFileQuiet: () => null,
+    });
+    const result = await ensureBooted({
+      projectPath: tmpHome,
+      platform: 'ios',
+      device: { deviceUdid: 'U1', owned: true, booting: { udid: 'U1', done: Promise.resolve() } },
+    });
+    expect(result).toEqual({ ok: true, udid: 'U1' });
+    expect(probes).toBe(4);
+  });
+
+  test('stops probing at the first timeout once the simulator is no longer Booted', async () => {
+    const shutdown = simList([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
+    let probes = 0;
+    setExecutor({
+      run: () => simList([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]),
+      runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return shutdown;
+        if (args[3] !== 'launchctl') return '';
+        probes++;
+        throw Object.assign(new Error('simctl spawn timed out'), { code: 'ETIMEDOUT' });
+      },
+      runFileQuiet: () => null,
+    });
+    const result = await ensureBooted({
+      projectPath: tmpHome,
+      platform: 'ios',
+      device: { deviceUdid: 'U1', owned: true, booting: { udid: 'U1', done: Promise.resolve() } },
+    });
+    expect(result.failed).toBe(true);
+    expect(result.reason).toMatch(/U1.*process-spawn readiness.*simctl spawn timed out/);
+    expect(probes).toBe(1);
   });
 
   describe('a Booted simulator whose SpringBoard is not running', () => {
