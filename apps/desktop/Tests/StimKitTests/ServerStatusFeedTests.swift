@@ -56,12 +56,13 @@ import Testing
     await settle()
   }
 
-  private func openClient(retries: Box<[@MainActor () -> Void]> = Box([]), transports: Box<[FakeTransport]> = Box([]))
-    async throws -> (ServerClient, FakeTransport)
-  {
+  private func openClient(
+    endpoint: URL = URL(fileURLWithPath: "/tmp/stim/server/local.sock"),
+    retries: Box<[@MainActor () -> Void]> = Box([]), transports: Box<[FakeTransport]> = Box([])
+  ) async throws -> (ServerClient, FakeTransport) {
     var transport: FakeTransport?
     let client = ServerClient(
-      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Stim Desktop", clientVersion: "1",
+      endpoint: endpoint, clientName: "Stim Desktop", clientVersion: "1",
       transport: { _, onEvent in
         let next = FakeTransport(onEvent: onEvent)
         transport = next
@@ -270,6 +271,25 @@ import Testing
 
     feed.follow([])
     #expect(await until { recorder.payloads.last?.environments.first?.logs == nil })
+  }
+
+  @Test func aPairedServerThatRepeatsItsArchiveCursorFailsTheRead() async throws {
+    let (client, socket) = try await openClient(endpoint: URL(string: "ws://100.64.0.2:7787")!)
+    defer { client.stop() }
+    let recorder = Recorder()
+    let feed = feed(recorder)
+    feed.use(client)
+    await settle()
+    await subscribe(socket)
+    socket.reply(workspaces(["/w/a"]))
+    let page: JSONValue = .object(["archived": .array([archive("a")]), "usage": .null, "next": .string("same")])
+    for count in 1...2 {
+      #expect(await until { socket.sent.filter { $0["method"] == .string("archived.list") }.count == count })
+      socket.answer("archived.list", page)
+    }
+    #expect(await until { recorder.errors == ["The paired server's archive list did not end."] })
+    await settle()
+    #expect(socket.sent.filter { $0["method"] == .string("archived.list") }.count == 2)
   }
 
   @Test func archivesAreReadInPagesAndRetainedUntilAFailedRefreshRecovers() async throws {

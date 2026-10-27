@@ -36,6 +36,9 @@ import Foundation
   private var shown = 0
   private var failures: [String: Error] = [:]
   private var loggedDecodeFailure: String?
+  /// `archived.list` pages a paired server may return for one read: 500 pages of `ARCHIVED_PAGE_LIMIT` (50) records,
+  /// far beyond `archive.maxCount`'s default of 200, so a server that never ends its list cannot grow memory forever.
+  static let maximumPairedArchivePages = 500
   private var refreshing = false
   private var refreshPending = false
   private var delivering = false {
@@ -213,6 +216,7 @@ import Foundation
       var archived: [JSONValue] = []
       var usage: JSONValue?
       var before: String?
+      var cursors: Set<String> = []
       do {
         repeat {
           let page = try await client.request("archived.list", before.map { ["before": .string($0)] } ?? [:])
@@ -225,6 +229,12 @@ import Foundation
           archived += entries
           usage = fields["usage"]
           before = fields["next"]?.string
+          if remote, let next = before, !cursors.insert(next).inserted || cursors.count > Self.maximumPairedArchivePages {
+            self?.archivesFailed(
+              summary, generation: generation, client: client, connectionGeneration: connectionGeneration,
+              error: ServerError(code: "bad-response", message: "The paired server's archive list did not end."))
+            return
+          }
         } while before != nil && !Task.isCancelled
       } catch {
         DebugLog.warning(
