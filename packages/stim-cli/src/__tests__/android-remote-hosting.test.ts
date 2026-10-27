@@ -7,7 +7,15 @@ import { setDevice, upsertProject } from '../workspace/config.ts';
 let home: string;
 let saved: Record<string, string | undefined>;
 const root = () => join(home, 'project');
-const envKeys = ['STIM_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'ANDROID_AVD_HOME', 'HOME', 'USERPROFILE'];
+const androidKeys = [
+  'ANDROID_HOME',
+  'ANDROID_SDK_ROOT',
+  'ANDROID_AVD_HOME',
+  'ANDROID_EMULATOR_HOME',
+  'ANDROID_USER_HOME',
+  'ANDROID_SDK_HOME',
+];
+const envKeys = ['STIM_HOME', 'HOME', 'USERPROFILE', ...androidKeys];
 const enoent = (path: string) => Object.assign(new Error(`spawn ${path} ENOENT`), { code: 'ENOENT', path });
 
 beforeEach(() => {
@@ -16,9 +24,7 @@ beforeEach(() => {
   process.env.STIM_HOME = join(home, 'stim');
   process.env.HOME = home;
   process.env.USERPROFILE = home;
-  delete process.env.ANDROID_HOME;
-  delete process.env.ANDROID_SDK_ROOT;
-  delete process.env.ANDROID_AVD_HOME;
+  for (const key of androidKeys) delete process.env[key];
   upsertProject(root(), {});
   setDevice(root(), 'android', { avdName: 'stim-project', owned: true, deviceName: 'stim-project' });
 });
