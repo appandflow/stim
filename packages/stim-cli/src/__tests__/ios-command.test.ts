@@ -9463,7 +9463,7 @@ describe('strict remote machine selection', () => {
     const keys = store.mock.calls.map(([, key]) => key);
     expect(keys).toEqual([expect.stringContaining(after)]);
     expect(keys[0]).not.toContain(FINGERPRINT);
-    expect(result.stderr).toContain('a3f9b1.. -> bbbbbb.. (after pod install on mini)');
+    expect(result.stderr).toContain('a3f9b1.. -> bbbbbb.. (as mini built it)');
     expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({ fingerprint: after, status: 'ok' });
   });
 

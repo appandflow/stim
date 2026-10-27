@@ -644,7 +644,7 @@ export async function acquireIosArtifact(
             chalk.dim(
               phaseLine(
                 'fingerprint',
-                `${shortHash(storeHash)} -> ${shortHash(rekeyed.hash)} (after pod install on ${outcome.machine})`,
+                `${shortHash(storeHash)} -> ${shortHash(rekeyed.hash)} (as ${outcome.machine} built it)`,
               ),
             ),
           );

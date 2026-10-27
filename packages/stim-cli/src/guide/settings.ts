@@ -1005,12 +1005,14 @@ and no platform selection on a Mac, it also checks the macOS Xcode and SDK.
 A client with no Xcode and no simulator SDK, such as Linux or Windows, has no
 Xcode to match: the Mac's own Xcode, simulator SDK and CocoaPods are the
 build's toolchain, the client leaves pod install to it, and \`stim ios --remote
-<mac> --remote-build <mac>\` runs the app on that Mac's hosted simulator. If
-that pod install changes Podfile.lock or the Xcode project, the Mac builds and
-stores the app under the fingerprint after it, and so does the client. The
-committed files are then stale: run pod install once on a Mac and commit what
-it changed, so the client's own fingerprint finds that app. A client with an
-Xcode still needs the same one, and its builds fail with fingerprint-mismatch.
+<mac> --remote-build <mac>\` runs the app on that Mac's hosted simulator. When
+that pod install, or a file it generates there, changes what the fingerprint
+covers, the Mac builds and stores the app under its own fingerprint after pod
+install, and the client stores it under that key. The client's own fingerprint
+does not compute that key, so each run builds on the Mac again. A stale
+Podfile.lock is then worth regenerating on a Mac and committing. A client with
+an Xcode still needs the same one, and there a worker pod install that changes
+the fingerprint fails with fingerprint-mismatch.
 Two machines build for each other when their Stim releases share a build
 compatibility version, which changes only when what a worker builds, how it
 builds, or the build messages change; their Stim builds can differ. A
