@@ -427,6 +427,18 @@ function isWorkspaceChangeMethod(method: string): method is 'workspace.files' | 
 const MAX_KEYFRAME_READS = 8;
 const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
 const HELPER_RETRY_MS = 5 * 60_000;
+
+const MACOS_ONLY_FEATURES: readonly string[] = [
+  'physical-ios',
+  'macos-window',
+  'macos-windows',
+  'macos-window-select',
+  'macos-window-control',
+  'macos-keyboard-extended',
+  'duo-frames',
+  'native-xcode-build',
+  'native-xcode-toolchain',
+];
 /**
  * Test switch: set to 1, a `physical` target may resolve to an emulator its workspace leases with `stim device
  * lock`, which then streams and takes input over adb as a phone does. It exists to exercise the physical-device
@@ -1235,12 +1247,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       if (done) unsubscribe();
     });
+  const hostsDevices = options.hostsDevices ?? process.platform === 'darwin';
   const frameLimits: FrameLimits = { ...DEFAULT_FRAME_LIMITS, ...options.frameLimits };
   let helperPath = options.frameHelper ?? null;
   let helperBuilding = false;
   let helperRetryAt = 0;
   const helperAbort = new AbortController();
   const buildHelper = () => {
+    if (!hostsDevices) return;
     helperBuilding = true;
     void (async () => {
       try {
@@ -1698,7 +1712,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (access !== undefined && access !== 'build' && access !== 'device-host') {
         return refuse(id, 'bad-request', 'params.access is build or device-host.', CLOSE_BAD_REQUEST);
       }
-      if (access === 'device-host' && !(options.hostsDevices ?? process.platform === 'darwin')) {
+      if (access === 'device-host' && !hostsDevices) {
         return refuse(
           id,
           'forbidden',
@@ -1746,6 +1760,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         capabilities: device.capabilities,
         features: FEATURES.filter(
           (feature) =>
+            (hostsDevices || !MACOS_ONLY_FEATURES.includes(feature)) &&
             (![
               'desktop-settings-write',
               'desktop-reload',

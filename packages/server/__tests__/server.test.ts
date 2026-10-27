@@ -1185,6 +1185,29 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
 });
 
 describe('pairing', () => {
+  it('does not advertise macOS-only features from a machine that is not a Mac, but keeps the hosted relays', async () => {
+    const port = await start({ hostsDevices: false });
+    const { token } = createPairingToken();
+    const client = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
+    const hello = await client.request('hello', { client: CLIENT });
+    expect(hello).toMatchObject({
+      result: {
+        features: expect.not.arrayContaining([
+          'macos-window',
+          'macos-windows',
+          'macos-keyboard-extended',
+          'duo-frames',
+          'native-xcode-build',
+        ]),
+      },
+    });
+    expect(hello).toMatchObject({
+      result: {
+        features: expect.arrayContaining(['ios-hosted', 'android-hosted', 'macos-hosted', 'device-frames']),
+      },
+    });
+  });
+
   it('records the key that spends a pairing token, with the token capabilities, and refuses a second use', async () => {
     const port = await start();
     const keyPair = generateNoiseKeyPair();
