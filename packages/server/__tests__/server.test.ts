@@ -321,7 +321,7 @@ if (process.argv[2].startsWith('offer')) {
     }
     if (job.platform === 'android') writeFileSync(join(job.area, 'out', job.job, 'App.apk'), 'APK bytes');
     const sha256 = createHash('sha256').update(archive).digest('hex');
-    print({ type: 'result', ok: true, artifact: { name: job.platform === 'android' ? 'App.apk' : 'App.app', size: archive.length, sha256 }, fingerprint: job.expectedFingerprint, sourceDigest: job.native?.sourceDigest, compilationCache: { status: 'reported', hits: 3, cacheableTasks: 4, hitRatePercent: 75 }, timings: { buildMs: 5 } });
+    print({ type: 'result', ok: true, artifact: { name: job.platform === 'android' ? 'App.apk' : 'App.app', size: archive.length, sha256 }, fingerprint: job.expectedFingerprint, ...(job.reuseArtifact ? { reused: true } : {}), sourceDigest: job.native?.sourceDigest, compilationCache: { status: 'reported', hits: 3, cacheableTasks: 4, hitRatePercent: 75 }, timings: { buildMs: 5 } });
   }
 }
 `;
@@ -1279,6 +1279,7 @@ describe('pairing', () => {
           'server-update',
           'build-compat',
           'build-jdk',
+          'build-reuse-artifact',
           'status-views',
         ],
         actions: [],
@@ -2624,6 +2625,7 @@ describe('offloaded builds', () => {
         fingerprintIgnored,
         fingerprintTracked,
         podsOnWorker: true,
+        reuseArtifact: true,
       });
       expect(started).toMatchObject({ result: { job: expect.any(String) } });
       const job = (started as { result: { job: string } }).result.job;
@@ -2637,6 +2639,7 @@ describe('offloaded builds', () => {
           outcome: expect.objectContaining({
             ok: true,
             artifact: { name: 'App.app', size: 17, sha256: sha('app archive bytes') },
+            reused: true,
           }),
         },
       ]);
@@ -2652,6 +2655,8 @@ describe('offloaded builds', () => {
         expectedIgnored: fingerprintIgnored,
         expectedTracked: fingerprintTracked,
         podsOnWorker: true,
+        reuseArtifact: true,
+        artifactCache: join(area, 'artifact-cache'),
         runtime: 'iOS-27-0',
       });
       expect(ran.job.manifest.map((entry: { path: string }) => entry.path).toSorted()).toEqual([

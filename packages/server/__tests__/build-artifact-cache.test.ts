@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reactNativeArtifactIdentity, reactNativeArtifactQuery } from '@stim-cli/core';
-import { BuildArtifactCache } from '../src/build-artifact-cache.ts';
+import { BuildArtifactCache } from 'stim/build-artifact-cache';
 import { BuildHost } from '../src/build.ts';
 import * as artifactQuery from '../src/artifact-query.ts';
 import type { WebSocket } from 'ws';

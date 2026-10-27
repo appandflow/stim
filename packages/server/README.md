@@ -1893,7 +1893,11 @@ connected since stim-server started keeps its directory when revoked.
   checkout has no copy of. With the `fingerprint-tracked` feature, it can
   send `fingerprintTracked`, the top-level entry names of `project` that its
   git tracks although an ignore pattern matches them, which the machine's
-  empty index would skip. It returns `{ "job" }`. It fails with
+  empty index would skip. With the `build-reuse-artifact` feature, a caller
+  that sets `podsOnWorker` can also set `reuseArtifact: true` when its cache
+  reads allow it; a job whose fingerprint after `pod install` differs from
+  `fingerprint` then returns the development archive this machine retained
+  under that fingerprint instead of compiling. It returns `{ "job" }`. It fails with
   `build-busy` while the offer would be declined, naming the reason, or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with

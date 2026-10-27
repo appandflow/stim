@@ -1046,6 +1046,7 @@ export type BuildRequest =
   | {
       platform: 'ios';
       cacheArtifact?: boolean;
+      reuseArtifact?: boolean;
       native?: { provider: 'xcode'; snapshot: NativeInputSnapshot; cacheKey: string; arch: 'arm64' | 'x86_64' | null };
       runtime: string;
       configuration: string | null;
@@ -1092,8 +1093,14 @@ function leavesPodsToWorker(choice: OffloadChoice, request: BuildRequest): boole
   return request.platform === 'ios' && !request.native && target.platform === 'ios' && buildsOnlyOnWorker(target.local);
 }
 
-function startPods(choice: OffloadChoice, request: BuildRequest): { podsOnWorker?: true } {
-  return leavesPodsToWorker(choice, request) ? { podsOnWorker: true } : {};
+function startPods(choice: OffloadChoice, request: BuildRequest): { podsOnWorker?: true; reuseArtifact?: true } {
+  if (request.platform !== 'ios' || !leavesPodsToWorker(choice, request)) return {};
+  return {
+    podsOnWorker: true,
+    ...(request.reuseArtifact === true && choice.connection.supports('build-reuse-artifact')
+      ? { reuseArtifact: true }
+      : {}),
+  };
 }
 
 /**
@@ -1820,14 +1827,13 @@ export async function offloadBuild(
     keepStaging = true;
     return {
       ok: true,
-      ...(cacheHit ? { cacheHit: true } : {}),
       ...(rebuilt ? { builtFingerprint: rebuilt } : {}),
       machine,
       artifactPath,
       ...(typeof declared.handoff === 'string' && /^[0-9a-f]{64}$/.test(declared.handoff)
         ? { handoff: { serverKey: choice.credential.serverKey!, token: declared.handoff, sha256: digest } }
         : {}),
-      ...offloadCacheActivity(request.platform, result.compilationCache, cacheHit),
+      ...offloadCacheActivity(request.platform, result.compilationCache, cacheHit || result.reused === true),
       ...(native?.provider === 'gradle' ? { androidPackage: result.androidPackage as string } : {}),
       timings: {
         offerMs: choice.offerMs,
@@ -1854,8 +1860,8 @@ function offloadCacheActivity(
   platform: BuildRequest['platform'],
   activity: unknown,
   cacheHit: boolean,
-): Pick<Extract<OffloadOutcome, { ok: true }>, 'compilationCache' | 'ccache'> {
-  if (cacheHit) return { compilationCache: COMPILATION_CACHE_NOT_RUN, ccache: CCACHE_NOT_RUN };
+): Pick<Extract<OffloadOutcome, { ok: true }>, 'cacheHit' | 'compilationCache' | 'ccache'> {
+  if (cacheHit) return { cacheHit: true, compilationCache: COMPILATION_CACHE_NOT_RUN, ccache: CCACHE_NOT_RUN };
   return {
     compilationCache: platform === 'ios' ? compilationActivity(activity) : COMPILATION_CACHE_UNAVAILABLE,
     ccache: platform === 'android' ? ccacheActivity(activity) : CCACHE_UNAVAILABLE,

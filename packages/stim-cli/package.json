@@ -49,6 +49,11 @@
       "types": "./dist/pull-requests.d.mts",
       "module-sync": "./dist/pull-requests.mjs",
       "default": "./dist/pull-requests.mjs"
+    },
+    "./build-artifact-cache": {
+      "types": "./dist/build-artifact-cache.d.mts",
+      "module-sync": "./dist/build-artifact-cache.mjs",
+      "default": "./dist/build-artifact-cache.mjs"
     }
   },
   "scripts": {
