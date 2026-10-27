@@ -264,7 +264,13 @@ export class HostedAgentHost {
     else
       response
         .writeHead(verdict === 'unknown' ? 404 : 403, { 'content-type': 'text/plain' })
-        .end(verdict === 'unknown' ? 'Not found.\n' : 'Forbidden.\n');
+        .end(
+          verdict === 'unknown'
+            ? 'Not found.\n'
+            : node === null
+              ? 'Forbidden. The server could not identify the requesting tailnet node.\n'
+              : 'Forbidden.\n',
+        );
     return verdict;
   }
 

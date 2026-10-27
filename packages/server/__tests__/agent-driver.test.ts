@@ -98,9 +98,10 @@ async function call(
   agents: HostedAgentHost,
   session: string,
   token: string | null,
+  node: string | null = null,
 ): Promise<{ status: number; body: string }> {
   const server = createServer((request, response) => {
-    agents.forward(session, token, request, response);
+    agents.forward(session, token, request, response, node);
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -316,6 +317,19 @@ describe('hosted agent grants', () => {
     expect(agents.authorize(A, token, 'nLaptop')).toBe('ok');
     expect(agents.authorize(A, token, 'nTakeover')).toBe('forbidden');
     expect(agents.authorize(A, token, null)).toBe('forbidden');
+    await agents.close();
+  });
+
+  test('name an unidentified requesting node in the refusal, and say nothing more than Forbidden for an identified one', async () => {
+    const driver = new FakeDriver();
+    const agents = host(driver, (client, node) => client === 'client-1' && node === 'nLaptop');
+    const token = tokenOf((await agents.appRunning(app(A, 10, 'client-1'))).grant);
+    expect(await call(agents, A, token, null)).toEqual({
+      status: 403,
+      body: 'Forbidden. The server could not identify the requesting tailnet node.\n',
+    });
+    expect(await call(agents, A, token, 'nTakeover')).toEqual({ status: 403, body: 'Forbidden.\n' });
+    expect(await call(agents, A, token, 'nLaptop')).toEqual({ status: 200, body: 'forwarded' });
     await agents.close();
   });
 
