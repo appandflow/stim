@@ -134,7 +134,6 @@ async function start(): Promise<number> {
   return address.port;
 }
 
-/** Approves this Stim home's client key for device-host on the server and pins the server as a `local:` machine. */
 function approveLocalMachine(port: number): { machine: string; client: string } {
   const machine = `local:127.0.0.1:${port}`;
   const ticket = Buffer.from(newSecret(), 'base64url');
@@ -174,7 +173,6 @@ async function call(connection: BuildConnection, method: string, params: unknown
   return reply.result;
 }
 
-/** A ready hosted iOS session with an installed app and the agent token its client got for it. */
 async function hostedApp(machine: string): Promise<{ session: string; token: string }> {
   const connection = await hostConnector(machine)();
   connections.push(connection);

@@ -861,7 +861,7 @@ from a client that still holds `device-host`. The client's Metro supervisor
 listens for these on a loopback port per hosted session and names that port in
 the remote config, and holds at most 8 connections there. A session holds at
 most 16 agent links; a new one closes the oldest. A link that carries no bytes
-for 5 minutes is closed, and stopping the session closes all of its links. The
+for 5 minutes between requests is closed, and stopping the session closes all of its links. The
 feature `hosted-agent-link` advertises it.
 
 The `agent-device` adapter runs the binary that `STIM_AGENT_DEVICE_BIN` names

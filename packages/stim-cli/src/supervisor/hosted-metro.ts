@@ -141,11 +141,13 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
         },
         onLost: () => {
           ready = false;
-          if (active[session] === request) publish(session, { id: request.id, processToken });
+          if (active[session] === request)
+            publish(session, { id: request.id, processToken, ...(agentPort ? { agentPort } : {}) });
         },
         onError: (message) => {
           ready = false;
-          if (active[session] === request) publish(session, { id: request.id, processToken, error: message });
+          if (active[session] === request)
+            publish(session, { id: request.id, processToken, error: message, ...(agentPort ? { agentPort } : {}) });
         },
       });
       pools.set(session, {

@@ -403,6 +403,7 @@ const CLOSE_METRO_RESET = 4410;
 interface AgentLink {
   client: string;
   session: string;
+  busy: number;
 }
 const AGENT_PATH = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/;
 const METRO_LINK_PING_MS = 15_000;
@@ -1445,7 +1446,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     session: string,
     link?: AgentLink,
   ): Promise<void> {
-    const peer = link ? `client:${link.client}` : (peerAddress(request) ?? 'local');
+    const peer = link ? `client:${link.client}:${link.session}` : (peerAddress(request) ?? 'local');
     const refuse = (status: number, text: string) =>
       void response.writeHead(status, { 'content-type': 'text/plain' }).end(`${text}\n`);
     if (request.headers.origin !== undefined || request.headers['sec-fetch-site'] !== undefined)
@@ -1465,6 +1466,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const link = agentLinks.get(request.socket);
     const session = AGENT_PATH.exec(request.url ?? '')?.[1];
     if (!link || !session) return void response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
+    link.busy++;
+    response.once('close', () => link.busy--);
     answerAgent(request, response, session, link).catch(() => {
       if (response.headersSent) response.destroy();
       else response.writeHead(500, { 'content-type': 'text/plain' }).end('Agent control failed.\n');
@@ -4289,7 +4292,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (agentDrivers.holder(hosted) !== session.id)
         return error(id, 'unknown-session', 'This client has no hosted session with agent control by that id.');
       const [inside, outside] = duplexPair();
-      agentLinks.set(inside, { client: session.id, session: hosted });
+      const link: AgentLink = { client: session.id, session: hosted, busy: 0 };
+      agentLinks.set(inside, link);
       const streams = agentStreams.get(hosted) ?? new Set<Duplex>();
       agentStreams.set(hosted, streams.add(outside));
       outside.once('close', () => {
@@ -4298,7 +4302,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       let excess = [...streams].filter((stream) => !stream.destroyed).length - MAX_AGENT_LINKS;
       for (const oldest of streams) if (!oldest.destroyed && excess-- > 0) oldest.destroy();
-      const idle = setTimeout(() => outside.destroy(), AGENT_LINK_IDLE_MS);
+      const idle = setTimeout(() => (link.busy > 0 ? idle.refresh() : outside.destroy()), AGENT_LINK_IDLE_MS);
       idle.unref();
       const active = () => idle.refresh();
       socket.on('message', active);

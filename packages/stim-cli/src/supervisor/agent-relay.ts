@@ -65,6 +65,7 @@ export function openAgentRelay({
   };
   const server = createServer({ pauseOnConnect: true }, (socket) => void relay(socket));
   server.maxConnections = MAX_CONNECTIONS;
+  server.on('error', () => {});
   const listen = (port: number) =>
     new Promise<number>((resolve, reject) => {
       server.once('error', reject);
