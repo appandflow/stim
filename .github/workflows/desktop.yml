@@ -11,6 +11,7 @@ on:
       - 'apps/mobile/src/design/tokens.ts'
       - 'apps/mobile/src/lib/agent-prompts.ts'
       - 'apps/mobile/mock-server/fixtures/status.json'
+      - 'packages/core/__tests__/fixtures/noise-*.json'
       - 'packages/server/helper/**'
       - '.github/workflows/desktop.yml'
       - '.github/workflows/desktop-release.yml'
@@ -20,6 +21,7 @@ on:
       - 'apps/mobile/src/design/tokens.ts'
       - 'apps/mobile/src/lib/agent-prompts.ts'
       - 'apps/mobile/mock-server/fixtures/status.json'
+      - 'packages/core/__tests__/fixtures/noise-*.json'
       - 'packages/server/helper/**'
       - '.github/workflows/desktop.yml'
       - '.github/workflows/desktop-release.yml'
@@ -74,9 +76,12 @@ jobs:
               }
             }
           '
+      - name: Stage the bundled stim-server
+        run: node scripts/server-runtime.mjs "$RUNNER_TEMP/stim-server"
       - run: swift test -Xswiftc -warnings-as-errors
         env:
           STIM_BUILD_MACHINES_SHOTS: ${{ runner.temp }}/build-machines-screenshots
+          STIM_TEST_SERVER_RUNTIME: ${{ runner.temp }}/stim-server
       - name: Upload build machine screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -97,7 +102,6 @@ jobs:
       - name: Start the bundled stim-server under the hardened runtime
         run: |
           runtime="$RUNNER_TEMP/stim-server"
-          node scripts/server-runtime.mjs "$runtime"
           codesign --force --options runtime --sign - --entitlements Support/Node/node.entitlements "$runtime/bin/node"
           home=$(mktemp -d)
           env -i HOME="$home" "$runtime/bin/node" --input-type=module \

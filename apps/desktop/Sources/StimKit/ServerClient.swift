@@ -2,11 +2,13 @@ import Darwin
 import Foundation
 import Network
 
-/// What a transport reports: a text or binary message, or that the socket closed.
+/// What a transport reports: a text or binary message, that the socket closed, or that the server refused this client
+/// until it pairs again or updates.
 public enum ServerTransportEvent: Sendable {
   case text(String)
   case data(Data)
   case closed(String)
+  case refused(ServerError)
 }
 
 /// A WebSocket to stim-server. Messages sent before the socket opens wait for it.
@@ -38,9 +40,9 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   func observeControlEnded(_ onEnded: @escaping @MainActor (ControlEnded) -> Void) -> () -> Void
 }
 
-/// One connection to stim-server over its Unix socket, as `apps/mobile/src/lib/connection.ts` keeps one: it reconnects
-/// with a delay that doubles from 1 to 30 seconds, sends each subscription again after every `hello`, and stops on a
-/// refusal (`unauthorized`, `pairing-expired`, `protocol-unsupported`) until `start` runs again.
+/// One connection to stim-server, as `apps/mobile/src/lib/connection.ts` keeps one: it reconnects with a delay that
+/// doubles from 1 to 30 seconds, sends each subscription again after every `hello`, and stops on a refusal
+/// (`ServerProtocol.refusalCodes`) until `start` runs again. A message it cannot parse closes the connection.
 @MainActor public final class ServerClient: DeviceServer {
   public enum State: Equatable, Sendable {
     case idle
@@ -106,9 +108,10 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   /// Changes whenever the active transport is replaced or dropped, including reconnects to the same server.
   public private(set) var generation = 0
 
-  /// `endpoint` is the file URL of the server's Unix socket. With `serverPort`, the client refuses a socket whose
-  /// server does not listen on that TCP port, before it sends any bootstrap proof: two servers that share a Stim home
-  /// share its socket path.
+  /// `endpoint` is the file URL of this Stim home's server's Unix socket, or a paired server's `ws://` or `wss://`
+  /// URL, whose `transport` runs the Noise handshake. With `serverPort`, the client refuses a socket whose server does
+  /// not listen on that TCP port, before it sends any bootstrap proof: two servers that share a Stim home share its
+  /// socket path. A remote endpoint never runs the bootstrap and never sends `ServerProtocol.isLocalOnly` methods.
   public init(
     endpoint: URL, clientName: String, clientVersion: String,
     serverPort: Int? = nil,
@@ -137,6 +140,9 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     if case .open = state { return true }
     return false
   }
+
+  /// Whether the endpoint is another machine's server rather than this Stim home's Unix socket.
+  public var isRemote: Bool { !endpoint.isFileURL }
 
   public func start() {
     guard stopped else { return }
@@ -290,6 +296,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     guard isOpen, let transport else {
       throw ServerError(code: "not-connected", message: "Not connected to stim-server.")
     }
+    try refuseLocalOnly(method)
     var cancelling = false
     let sub = Subscription(
       method: method, params: { params }, onSubscribed: { _ in },
@@ -340,35 +347,13 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     generation += 1
     let current = generation
     state = .connecting
-    let maximumPathBytes = MemoryLayout.size(ofValue: sockaddr_un().sun_path) - 1
-    guard endpoint.path.utf8.count <= maximumPathBytes else {
-      stopped = true
-      state = .refused(
-        ServerError(
-          code: "socket-path-too-long",
-          message:
-            "The local socket path exceeds macOS's limit of \(maximumPathBytes) bytes. Use a shorter Stim home and restart Stim Desktop."
-        ))
-      return
-    }
-    let directory = endpoint.deletingLastPathComponent()
-    if directory.path == "/tmp/stim-sockets-\(getuid())" {
-      var directoryInfo = stat()
-      var socketInfo = stat()
-      guard lstat(directory.path, &directoryInfo) == 0,
-        lstat(endpoint.path, &socketInfo) == 0,
-        StimHome.isPrivateLocalSocket(directory: directoryInfo, socket: socketInfo)
-      else {
-        scheduleReconnect("The local socket and its directory must be private, user-owned and not symbolic links.")
-        return
-      }
-    }
+    if endpoint.isFileURL, !checkLocalSocket() { return }
     let onEvent: @MainActor (ServerTransportEvent) -> Void = { [weak self] event in
       self?.receive(event, generation: current)
     }
     Task {
       guard current == generation, !stopped else { return }
-      let bootstrap = self.bootstrap()
+      let bootstrap = isRemote ? nil : self.bootstrap()
       let transport = makeTransport(endpoint, onEvent)
       self.transport = transport
       do {
@@ -414,6 +399,33 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     }
   }
 
+  private func checkLocalSocket() -> Bool {
+    let maximumPathBytes = MemoryLayout.size(ofValue: sockaddr_un().sun_path) - 1
+    guard endpoint.path.utf8.count <= maximumPathBytes else {
+      stopped = true
+      state = .refused(
+        ServerError(
+          code: "socket-path-too-long",
+          message:
+            "The local socket path exceeds macOS's limit of \(maximumPathBytes) bytes. Use a shorter Stim home and restart Stim Desktop."
+        ))
+      return false
+    }
+    let directory = endpoint.deletingLastPathComponent()
+    if directory.path == "/tmp/stim-sockets-\(getuid())" {
+      var directoryInfo = stat()
+      var socketInfo = stat()
+      guard lstat(directory.path, &directoryInfo) == 0,
+        lstat(endpoint.path, &socketInfo) == 0,
+        StimHome.isPrivateLocalSocket(directory: directoryInfo, socket: socketInfo)
+      else {
+        scheduleReconnect("The local socket and its directory must be private, user-owned and not symbolic links.")
+        return false
+      }
+    }
+    return true
+  }
+
   private func receive(_ event: ServerTransportEvent, generation: Int) {
     guard generation == self.generation, transport != nil else { return }
     switch event {
@@ -427,12 +439,34 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     case .closed(let reason):
       detach(reason)
       if !stopped { scheduleReconnect(reason) }
+    case .refused(let refusal):
+      detach(refusal.message)
+      stopped = true
+      state = .refused(refusal)
     }
   }
 
+  private func malformed() {
+    let reason = "stim-server sent a malformed message."
+    DebugLog.warning(.server, reason)
+    detach(reason)
+    if !stopped { scheduleReconnect(reason) }
+  }
+
   private func receive(_ text: String) {
-    guard case .object(let message)? = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) else { return }
-    if let id = message["id"]?.number.map(Int.init) {
+    guard case .object(let message)? = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) else {
+      return malformed()
+    }
+    let id: Int?
+    switch message["id"] {
+    case nil, .null?, .string?: id = nil
+    case .number(let number)?:
+      guard let exact = ServerProtocol.exactInteger(number) else { return malformed() }
+      id = exact
+    default: return malformed()
+    }
+    if let seq = message["seq"], seq.number.flatMap(ServerProtocol.exactInteger) == nil { return malformed() }
+    if let id {
       if let sub = actionReplies.removeValue(forKey: id) {
         if case .object(let fields)? = message["result"], let subscription = fields["subscription"]?.string {
           sub.serverID = subscription
@@ -482,6 +516,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   ) async throws
     -> JSONValue
   {
+    try refuseLocalOnly(method)
     let id = nextID
     nextID += 1
     let message: JSONValue = .object(["id": .number(Double(id)), "method": .string(method), "params": .object(params)])
@@ -498,6 +533,11 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
         self?.pending.removeValue(forKey: id)?.resume(throwing: CancellationError())
       }
     }
+  }
+
+  private func refuseLocalOnly(_ method: String) throws {
+    guard isRemote, ServerProtocol.isLocalOnly(method) else { return }
+    throw ServerError(code: "forbidden", message: "\(method) is only for this Mac's own stim-server.")
   }
 
   private func sendSubscribe(_ sub: Subscription, on transport: ServerTransport) {
@@ -598,13 +638,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
 /// URLSession cannot reach a Unix socket, and Network.framework's WebSocket protocol aborts on a Unix endpoint before
 /// it sends the upgrade, so this frames a plain stream connection with `WebSocketFraming`.
 @MainActor public final class UnixSocketTransport: ServerTransport {
-  private let connection: NWConnection
-  private let key = WebSocketFraming.newKey()
-  private var reader = WebSocketFraming.Reader(maximumMessageSize: UnixSocketTransport.maximumMessageSize)
-  private var handshake: Data? = Data()
-  private var queued: [Data] = []
-  private var closed = false
-  private let onEvent: @MainActor (ServerTransportEvent) -> Void
+  private let socket: WebSocketStream
 
   /// Keyframes of a full-size device screen are several megabytes.
   nonisolated static let maximumMessageSize = 16 * 1024 * 1024
@@ -617,103 +651,19 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   }
 
   init(path: String, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void) {
-    connection = NWConnection(to: .unix(path: path), using: .tcp)
-    self.onEvent = onEvent
-    connection.stateUpdateHandler = { [weak self] state in
-      MainActor.assumeIsolated {
-        guard let self else { return }
-        switch state {
-        case .ready: self.write(WebSocketFraming.upgradeRequest(key: self.key))
-        case .failed(let error), .waiting(let error): self.end(error.localizedDescription)
-        case .cancelled: self.end("Connection closed.")
-        default: break
-        }
-      }
-    }
-    connection.start(queue: .main)
-    receive()
-  }
-
-  public func send(_ text: String) {
-    let frame = WebSocketFraming.frame(.text, Data(text.utf8))
-    if handshake == nil { write(frame) } else { queued.append(frame) }
-  }
-
-  public func close() {
-    guard !closed else { return }
-    closed = true
-    guard handshake == nil else { return connection.cancel() }
-    connection.send(
-      content: WebSocketFraming.frame(.close, Data([0x03, 0xE8])),
-      completion: .contentProcessed { [connection] _ in connection.cancel() })
-  }
-
-  private func write(_ data: Data) {
-    connection.send(
-      content: data,
-      completion: .contentProcessed { [weak self] error in
-        guard let error else { return }
-        MainActor.assumeIsolated { self?.end(error.localizedDescription) }
-      })
-  }
-
-  private func receive() {
-    connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [weak self] data, _, isComplete, error in
-      MainActor.assumeIsolated {
-        guard let self, !self.closed else { return }
-        if let error { return self.end(error.localizedDescription) }
-        if let data, !data.isEmpty {
-          do {
-            try self.read(data)
-          } catch {
-            return self.end(error.localizedDescription)
-          }
-        }
-        if isComplete { return self.end("stim-server closed the connection.") }
-        if !self.closed { self.receive() }
+    socket = WebSocketStream(
+      to: .unix(path: path), using: .tcp, host: "localhost", path: "/", maximumMessageSize: Self.maximumMessageSize
+    ) { event in
+      switch event {
+      case .message(.text, let payload): onEvent(.text(String(decoding: payload, as: UTF8.self)))
+      case .message(.binary, let payload): onEvent(.data(payload))
+      case .message: break
+      case .closed(let description, _, _): onEvent(.closed(description))
       }
     }
   }
 
-  private func read(_ data: Data) throws {
-    var frames = data
-    if var head = handshake {
-      head.append(data)
-      guard let rest = try WebSocketFraming.readUpgrade(head, key: key) else {
-        handshake = head
-        return
-      }
-      handshake = nil
-      for frame in queued { write(frame) }
-      queued = []
-      frames = rest
-    }
-    for frame in try reader.read(frames) {
-      switch frame.opcode {
-      case .text: onEvent(.text(String(decoding: frame.payload, as: UTF8.self)))
-      case .binary: onEvent(.data(frame.payload))
-      case .ping: write(WebSocketFraming.frame(.pong, frame.payload))
-      case .close: return answerClose(frame.payload)
-      case .pong, .continuation: break
-      }
-      if closed { return }
-    }
-  }
+  public func send(_ text: String) { socket.send(.text, Data(text.utf8)) }
 
-  /// RFC 6455 section 5.5.1: answers the server's close frame with one carrying its status code, then disconnects.
-  private func answerClose(_ payload: Data) {
-    guard !closed else { return }
-    closed = true
-    connection.send(
-      content: WebSocketFraming.frame(.close, payload.prefix(2)),
-      completion: .contentProcessed { [connection] _ in connection.cancel() })
-    onEvent(.closed("stim-server closed the connection."))
-  }
-
-  private func end(_ reason: String) {
-    guard !closed else { return }
-    closed = true
-    connection.cancel()
-    onEvent(.closed(reason))
-  }
+  public func close() { socket.close() }
 }

@@ -2,10 +2,24 @@ import Foundation
 
 /// The parts of stim-server's WebSocket protocol (`packages/server/src/protocol.ts`) that Stim Desktop speaks.
 public enum ServerProtocol {
-  /// Error codes that refuse the client until it pairs again or updates; clients retry the others.
+  /// Error codes that refuse the client until it pairs again or updates; clients retry the others. The network ones
+  /// are the phone's (`sessionRefusal` in `apps/mobile/src/lib/connection.ts`); `other-server` is the local socket's
+  /// adoption check.
   public static let refusalCodes: Set<String> = [
-    "unauthorized", "pairing-expired", "protocol-unsupported", "other-server",
+    "unauthorized", "protocol-unsupported", "server-outdated", "server-key-mismatch", "unknown-secret", "other-server",
   ]
+
+  /// The methods stim-server answers only on its Unix socket (`desktopMethod` in `packages/server/src/server.ts`).
+  public static func isLocalOnly(_ method: String) -> Bool {
+    method.hasPrefix("desktop.") || method == "route.setup" || method.hasPrefix("machines.update.")
+      || method.hasPrefix("device-host.sessions")
+  }
+
+  /// `number` as an Int when it is a whole number JSON carries exactly, at most 2^53.
+  public static func exactInteger(_ number: Double) -> Int? {
+    guard abs(number) <= 9_007_199_254_740_992 else { return nil }
+    return Int(exactly: number)
+  }
 }
 
 /// An error answer, or a subscription's `error` event.
@@ -42,11 +56,13 @@ public struct HelloResult: Decodable, Equatable, Sendable {
   public var capabilities: [String]
   /// What the server serves beyond the base protocol, such as `physical-android`; nil from a server older than it.
   public var features: [String]?
+  /// The `action` names this connection may run; nil from a server older than it.
+  public var actions: [String]?
   public var device: Device?
   public var desktopBootstrap: DesktopBootstrapChallenge?
 
   enum CodingKeys: String, CodingKey {
-    case server, capabilities, features, device, desktopBootstrap
+    case server, capabilities, features, actions, device, desktopBootstrap
     case protocolVersion = "protocol"
   }
 
@@ -175,10 +191,11 @@ public struct ReplayKeyframe: Equatable, Sendable {
   /// Nil for a result missing a field or with `data` that is not base64.
   public init?(_ result: JSONValue) {
     guard case .object(let fields) = result, let start = fields["start"]?.number, let end = fields["end"]?.number,
-      let at = fields["at"]?.number, let width = fields["width"]?.number, let height = fields["height"]?.number,
-      let data = fields["data"]?.string, let accessUnit = Data(base64Encoded: data)
+      let at = fields["at"]?.number, let width = fields["width"]?.number.flatMap(ServerProtocol.exactInteger),
+      let height = fields["height"]?.number.flatMap(ServerProtocol.exactInteger), let data = fields["data"]?.string,
+      let accessUnit = Data(base64Encoded: data)
     else { return nil }
-    self.init(start: start, end: end, at: at, width: Int(width), height: Int(height), accessUnit: accessUnit)
+    self.init(start: start, end: end, at: at, width: width, height: height, accessUnit: accessUnit)
   }
 }
 
