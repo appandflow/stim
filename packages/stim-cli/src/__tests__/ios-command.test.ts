@@ -9421,6 +9421,52 @@ describe('strict remote machine selection', () => {
     },
   );
 
+  test('an app the machine built under the fingerprint after its pod install is stored only under that key', async () => {
+    reserve();
+    configureMini();
+    const after = 'b'.repeat(40);
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
+      machine: 'mini',
+      offer: { capacity: {} },
+    } as offloadClient.OffloadChoice);
+    const artifactPath = join(root, 'fetched.app');
+    mkdirSync(artifactPath);
+    vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
+      ok: true,
+      machine: 'mini',
+      artifactPath,
+      builtFingerprint: after,
+      compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
+      ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
+      timings: {
+        offerMs: 0,
+        syncMs: 0,
+        workerMs: 10,
+        fetchMs: 0,
+        totalMs: 10,
+        worker: {},
+        uploadedBytes: 0,
+        artifactBytes: 0,
+      },
+    });
+    const store = vi.fn<(_platform: string, key: string, path: string) => string>((_platform, _key, path) => path);
+    const result = await run(
+      { remoteBuild: 'mini', json: true },
+      {
+        storeBuild: store,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    const keys = store.mock.calls.map(([, key]) => key);
+    expect(keys).toEqual([expect.stringContaining(after)]);
+    expect(keys[0]).not.toContain(FINGERPRINT);
+    expect(result.stderr).toContain('a3f9b1.. -> bbbbbb.. (after pod install on mini)');
+    expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({ fingerprint: after, status: 'ok' });
+  });
+
   test('an offloaded hosted iOS build carries its handoff through artifact caching into delivery', async () => {
     reserve();
     configureMini();
