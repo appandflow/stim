@@ -2085,7 +2085,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             wait also records a capacityWaits event in stats,
                             with reclaimed when one or more devices were
                             shut down for it.
-                            While at the cap, only the queue head reclaims:
+                            While at the cap, only the queue head reclaims (or a run behind a
+                            head held back only by its own platform's cap):
                             it shuts down the longest-idle eligible owned
                             device in another workspace of this Stim home,
                             one per attempt, at most once every 15 seconds,

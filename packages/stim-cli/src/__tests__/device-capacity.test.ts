@@ -405,6 +405,31 @@ describe('per-platform device caps', () => {
   });
 });
 
+describe('queue reclaim behind a platform-walled head', () => {
+  test('only the first waiter of a platform reclaims, so two runs queued on a full iOS cap do not both shut devices down', async () => {
+    const head = takeTicket({ platform: 'ios', sequence: 1 });
+    let clock = Date.now();
+    try {
+      await expect(
+        withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+          root,
+          max: 0,
+          platformMax: { ios: 1 },
+          waitMs: 1000,
+          sources: { ...empty, sims: [makeIosSim({ udid: 'a', name: 'stim-a', state: 'Booted' })] },
+          now: () => clock,
+          sleep: async (ms) => {
+            clock += ms;
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+      expect(reclaimIdleDevice).not.toHaveBeenCalled();
+    } finally {
+      releaseClaim(head);
+    }
+  });
+});
+
 test('a timed-out wait reports elapsed time and count, records both events, and releases its ticket', async () => {
   let now = Date.now();
   const lines: string[] = [];
@@ -961,6 +986,25 @@ test('status reports each per-platform cap that is set, with or without the shar
   expect(unknown.platformDevices).toEqual({
     android: { max: 1, inUse: null, unknown: expect.stringContaining('simctl timed out') },
   });
+});
+
+test('the placement peek reports the tightest limit and does not queue a run behind a waiter held only by another platform cap', async () => {
+  const ticket = takeTicket({ platform: 'ios', sequence: 1 });
+  const sources = { ...empty, sims: [makeIosSim({ udid: 'a', name: 'stim-a', state: 'Booted' })] };
+  const android = () => peekDeviceSlots({ platform: 'android', project: null, max: 5, platformMax: 1, sources });
+  try {
+    expect(await android()).toMatchObject({ count: 0, max: 1, queued: 1, limit: 'concurrency.maxAndroidDevices' });
+    process.env.STIM_MAX_IOS_DEVICES = '1';
+    expect(await android()).toMatchObject({ queued: 0 });
+    expect(await peekDeviceSlots({ platform: 'ios', project: null, max: 5, sources })).toMatchObject({
+      count: 1,
+      max: 1,
+      limit: 'concurrency.maxIosDevices',
+    });
+  } finally {
+    delete process.env.STIM_MAX_IOS_DEVICES;
+    releaseClaim(ticket);
+  }
 });
 
 test('the non-binding peek preserves an unknown count for the binding boot admission', async () => {

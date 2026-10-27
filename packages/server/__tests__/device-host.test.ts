@@ -1651,6 +1651,7 @@ test.each([
   ]);
   expect(answer).toMatchObject({ result: { capacity: { running, max: 2, available, local } } });
   if ('error' in answer) throw new Error(answer.error.message);
+  expect(answer.result.resources).not.toHaveProperty('localPlatforms');
   expect(answer.result.declined).toBe(
     typeof local !== 'number'
       ? `Hosted device capacity is unknown: ${local.unknown}`

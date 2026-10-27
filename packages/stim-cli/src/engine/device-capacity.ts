@@ -243,6 +243,18 @@ function deviceLimits(keys: Set<string>, platform: string, max: number, platform
   return limits;
 }
 
+/** Whether a queued waiter is held back by its own platform cap, so it does not hold up the runs behind it. */
+function platformWalled(
+  keys: Set<string>,
+  waiter: ClaimHolder,
+  platformMax: Partial<Record<CappedPlatform, number>>,
+): boolean {
+  const platform = String(waiter.details.platform);
+  if (!isCappedPlatform(platform)) return false;
+  const cap = platformMax[platform] ?? 0;
+  return cap > 0 && platformCount(keys, platform) >= cap;
+}
+
 /** The first cap with no room left, or the first cap when all have room (for a run waiting behind another). */
 function bindingLimit(limits: DeviceLimit[]): DeviceLimit | undefined {
   return limits.find((limit) => limit.count >= limit.max) ?? limits[0];
@@ -262,7 +274,7 @@ function atCapacityRefusal({ count, max, setting, noun }: DeviceLimit): Capacity
 function uncountedRefusal(error: unknown): CapacityRefusal {
   return {
     code: 'STIM_NO_DEVICE',
-    message: `concurrency.maxDevices is set, and Stim could not count the booted devices: ${(error as Error)?.message || error}`,
+    message: `A device cap (concurrency.maxDevices, concurrency.maxIosDevices or concurrency.maxAndroidDevices) is set, and Stim could not count the booted devices: ${(error as Error)?.message || error}`,
     remedy: `Listing devices times out when the machine is overloaded: retry once the load falls. Otherwise run \`stim doctor\` to check the simulator and adb toolchains, and check that ${join(getConfigDir(), 'config.json')} and ${bootingDevicesRoot()} are readable.`,
   };
 }
@@ -526,7 +538,9 @@ export async function peekDeviceSlots({
     return {
       count: tightest?.count ?? keys.size,
       max: tightest?.max ?? max,
-      queued: liveWaiters().length,
+      queued: liveWaiters().filter(
+        (waiter) => !platformWalled(keys, waiter, { ...getPlatformDeviceLimits(), [platform]: platformMax }),
+      ).length,
       localLive:
         owned &&
         workspaceHasLiveDevice({
@@ -712,7 +726,7 @@ function takeBootMarker(device: BootingDevice): ClaimHandle {
   if (attempt.acquired) return attempt.acquired;
   throw new DeviceAdmissionRefusal({
     code: 'STIM_NO_DEVICE',
-    message: `Another process holds ${bootingDevicesRoot()} exclusively, so this boot cannot be counted toward concurrency.maxDevices.`,
+    message: `Another process holds ${bootingDevicesRoot()} exclusively, so this boot cannot be counted toward the device caps.`,
     remedy: 'Retry once that process finishes.',
   });
 }
@@ -742,7 +756,7 @@ async function admissionTransaction<T>(
     if (workspaceProcessLockError(error) !== 'timeout') throw error;
     throw new DeviceAdmissionRefusal({
       code: 'STIM_NO_DEVICE',
-      message: `Waited ${formatElapsed(lockWaitMs)} for other runs to finish counting booted devices for concurrency.maxDevices.`,
+      message: `Waited ${formatElapsed(lockWaitMs)} for other runs to finish counting booted devices for the device caps.`,
       remedy: 'Listing devices is slow, which usually means the machine is overloaded. Retry once the load falls.',
     });
   }
@@ -842,7 +856,8 @@ export async function withDeviceBootAdmission<T>(
                 ticket = takeWaitTicket(device, waiters);
                 started = now();
               }
-              return { limit, holders, queue, reclaim: turn && limit.count >= limit.max };
+              const firstOfPlatform = ahead.every((holder) => holder.details.platform !== device.platform);
+              return { limit, holders, queue, reclaim: turn && firstOfPlatform && limit.count >= limit.max };
             };
             if (ticket && lastInventory && ahead.length > 0 && now() - lastListed < INVENTORY_REFRESH_MS) {
               const booting = sources.booting ?? readBootingDevices;
@@ -859,13 +874,7 @@ export async function withDeviceBootAdmission<T>(
             if ((device.platform === 'ios' && keys.has(own)) || ownBooting) return admit();
             keys.delete(own);
             const limits = deviceLimits(keys, device.platform, max, ownCap);
-            const walled = (waiter: ClaimHolder) => {
-              const platform = String(waiter.details.platform);
-              if (!isCappedPlatform(platform)) return false;
-              const cap = platformMax[platform] ?? 0;
-              return cap > 0 && platformCount(keys, platform) >= cap;
-            };
-            const turn = ahead.every(walled);
+            const turn = ahead.every((waiter) => platformWalled(keys, waiter, platformMax));
             if (turn && limits.every((limit) => limit.count < limit.max)) return admit();
             lastListed = now();
             const limit = bindingLimit(limits);

@@ -112,6 +112,15 @@ test('reclaims exactly the longest-idle eligible device across workspaces and re
   ]);
 });
 
+test('a platform filter reclaims only a device of that platform even when another platform has idled longer', async () => {
+  add('ios-young', 20);
+  const android = add('android-old', 60);
+  android.kind = 'android';
+  await expect(reclaimIdleDevice(waiter, 10 * MINUTE, out, () => NOW, skipped, 'ios')).resolves.toBe(1);
+  expect(teardownOwnedIosSim).toHaveBeenCalledWith('ios-young', expect.anything());
+  expect(teardownOwnedAvd).not.toHaveBeenCalled();
+});
+
 test('the reclaim line names which worktree held a device when projects share a name', async () => {
   const victim = add('first', 25, join(home, 'trees', 'qa-b-p2', 'mobile'));
   add('second', 5, join(home, 'trees', 'qa-b-p3', 'mobile'));
