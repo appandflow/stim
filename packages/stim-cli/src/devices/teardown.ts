@@ -51,11 +51,13 @@ import {
   assertOwnedAvdStoppedAsync,
   avdPathExists,
   avdStorageRoots,
+  isEmulatorToolAbsent,
   listAdbDevicesAsync,
   listOrphanedAvdDirectories,
   ownedAvdDirectory,
   type OrphanedAvdDirectory,
   resolveOwnedAvdSerial,
+  type ResolvedAvdSerial,
   resolveOwnedAvdSerialAsync,
   shutdownAndroidEmulator,
   waitForAndroidEmulatorShutdown,
@@ -644,7 +646,14 @@ async function teardownClaimedAvd(
     waitForShutdown = waitForAndroidEmulatorShutdown,
     assertStopped = (name) => assertOwnedAvdStoppedAsync(name, operation),
     resolveAvd: resolve = (name) =>
-      resolveOwnedAvdSerialAsync(name, { timeoutMs: AVD_INVENTORY_TIMEOUT_MS, operation, signal: operation?.signal }),
+      resolveOwnedAvdSerialAsync(name, {
+        timeoutMs: AVD_INVENTORY_TIMEOUT_MS,
+        operation,
+        signal: operation?.signal,
+      }).catch((error: unknown): ResolvedAvdSerial => {
+        if (isEmulatorToolAbsent(error, operation?.env)) return { missing: true };
+        throw error;
+      }),
   }: AvdTeardownOptions,
 ): Promise<TeardownOutcome> {
   let parkFallback: string | undefined;

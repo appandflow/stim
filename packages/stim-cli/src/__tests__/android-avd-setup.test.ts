@@ -296,6 +296,76 @@ test('an interruption after native creation returns permits cleanup once the cre
   expect(existsSync(join(avdRoot, `${avdName}.avd`))).toBe(false);
 });
 
+function removeSystemImages(): void {
+  rmSync(join(home, 'sdk', 'system-images'), { recursive: true, force: true });
+}
+
+test('a creation that fails before avdmanager starts leaves no reservation', async () => {
+  removeSystemImages();
+  await expect(prepare()).rejects.toThrow(/system image is installed/);
+  expect(getProject(project)?.platforms?.android).toBeUndefined();
+});
+
+test('a creation that fails before avdmanager starts restores the previous device record', async () => {
+  removeSystemImages();
+  const previous = { avdName: 'stim-previous', owned: true, deviceName: 'stim-previous' };
+  setDevice(project, 'android', previous);
+  await expect(
+    prepareOwnedAvd({
+      projectPath: project,
+      label: 'setup',
+      previousAvdName: 'stim-previous',
+      configuration: 'fixture',
+      configure: () => {},
+    }),
+  ).rejects.toThrow(/system image is installed/);
+  expect(getProject(project)?.platforms?.android).toMatchObject(previous);
+});
+
+describe('teardown of a record on a machine without the Android emulator tool', () => {
+  const enoent = () => Object.assign(new Error('spawn emulator ENOENT'), { code: 'ENOENT' });
+  const reserve = () =>
+    setDevice(project, 'android', { avdName, owned: true, deviceName: avdName, setupIncomplete: true });
+
+  beforeEach(() => {
+    const base = getExecutor();
+    setExecutor({
+      ...base,
+      runFile(file, args, options) {
+        if (file === 'emulator') throw enoent();
+        return base.runFile(file, args, options);
+      },
+    });
+    reserve();
+  });
+
+  test('clears the record when no SDK is configured and no AVD data exists', async () => {
+    delete process.env.ANDROID_HOME;
+    delete process.env.ANDROID_SDK_ROOT;
+    const outcome = await teardownOwnedAvd(avdName, {
+      owner: { projectPath: project },
+      onRemoved: () => clearDevice(project, 'android', undefined, avdName),
+    });
+    expect(outcome.status).toBe('missing');
+    expect(getProject(project)?.platforms?.android).toBeUndefined();
+  });
+
+  test('keeps the record when AVD data exists on disk', async () => {
+    delete process.env.ANDROID_HOME;
+    delete process.env.ANDROID_SDK_ROOT;
+    createFiles();
+    const outcome = await teardownOwnedAvd(avdName, { owner: { projectPath: project } });
+    expect(outcome.status).toBe('failed');
+    expect(getProject(project)?.platforms?.android?.avdName).toBe(avdName);
+  });
+
+  test('keeps the record when ANDROID_HOME names an SDK that may be on an unmounted volume', async () => {
+    const outcome = await teardownOwnedAvd(avdName, { owner: { projectPath: project } });
+    expect(outcome).toMatchObject({ status: 'failed', reason: expect.stringContaining('ENOENT') });
+    expect(getProject(project)?.platforms?.android?.avdName).toBe(avdName);
+  });
+});
+
 test('another workspace creating the same label while the first is reserved receives a distinct AVD', async () => {
   const other = join(home, 'other');
   upsertProject(other, {});

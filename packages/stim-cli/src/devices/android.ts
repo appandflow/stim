@@ -1795,6 +1795,17 @@ export function resolveOwnedAvdSerial(avdName: string, opts: { timeoutMs?: numbe
 }
 
 /**
+ * True when `error` is the emulator binary failing to spawn on a machine with no Android SDK configured.
+ * Nothing Stim started can be running through a tool that does not exist. An explicit ANDROID_HOME or
+ * ANDROID_SDK_ROOT may name an unmounted volume, so it keeps the failure.
+ */
+export function isEmulatorToolAbsent(error: unknown, env: NodeJS.ProcessEnv = ambientEnv()): boolean {
+  return (
+    error instanceof Error && 'code' in error && error.code === 'ENOENT' && !env.ANDROID_HOME && !env.ANDROID_SDK_ROOT
+  );
+}
+
+/**
  * `resolveOwnedAvdSerial` without blocking the event loop, with the same reads and the same timeout budget.
  * `preferredSerial` is the serial this workspace recorded for the AVD: it is read first, and the other
  * emulators are read only when it does not run the AVD.
