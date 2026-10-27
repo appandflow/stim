@@ -32,6 +32,7 @@ const { values } = parseArgs({
     overlay: { type: 'string' },
     'slot-waits': { type: 'boolean', default: false },
     capacity: { type: 'boolean', default: false },
+    'linux-owner': { type: 'boolean', default: false },
   },
 });
 
@@ -109,7 +110,8 @@ const busy = new Set();
 const startedAt = Date.now();
 const shiftMs = startedAt - Date.parse(fixtures.capturedAt);
 const logs = fixtures.logs.map((record) => ({ ...record, ts: record.ts + shiftMs }));
-const only = values.workspaces ? new RegExp(values.workspaces) : null;
+const LINUX_OWNER_ROOT = /^\/home\/floco\//;
+const only = values.workspaces ? new RegExp(values.workspaces) : values['linux-owner'] ? LINUX_OWNER_ROOT : null;
 const readOverlay = () => {
   if (!values.overlay) return {};
   try {
@@ -129,6 +131,7 @@ const overlaid = (payload) => {
 };
 const status = () => {
   const payload = overlaid(shiftTimestamps(fixtures.status, shiftMs));
+  if (values['linux-owner']) Object.assign(payload, { simctlAvailable: false, deviceLeases: [], archived: [] });
   const archived = payload.archived ?? [];
   payload.archivedUsage = {
     count: archived.length,
