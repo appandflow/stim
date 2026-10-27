@@ -1087,7 +1087,7 @@ Missing or unsupported agent-device reports `driver: none` with its reason.
 
 The policy pins the ledger-owned serial and filters `devices` to that emulator.
 Inspection and interaction commands match iOS. Installs, reinstall, uninstall,
-boot/shutdown, `close --shutdown`, record, logs, uploads, other serials (including
+boot/shutdown, `close --shutdown`, logs, uploads, other serials (including
 nested batches and leases), and host paths are refused. Ambient fields are
 stripped and replaced with host-owned platform, serial and lease scope.
 Stim installs apps. Android snapshots use one-shot helpers without adb forwards;
@@ -1095,6 +1095,30 @@ after daemon exit the host stops and verifies only the two fixed agent-device
 helper packages on that serial. Their APKs leave with emulator deletion.
 Reinstall, stop, revocation and close await agent teardown before native work;
 unresolved agent claims refuse replacement and deletion after restart too.
+
+Hosted iOS and Android sessions allow `record start` and `record stop`, outside
+`batch`. The adapter accepts no output path but agent-device's remote temp shape
+(`/tmp/agent-device-recording-<ms>-<id>.<ext>`) and requires the client's
+`clientArtifactPaths.outPath`. It replaces the path with
+`device-host/sessions/<session>/agent-device/recordings/<random>/recording.<ext>`
+(directory mode 0700), so the daemon writes the video, its chunks and gesture
+telemetry only there. `record stop` returns them as daemon artifacts, which the
+client downloads over `GET /artifacts/<id>` on the same agent route, and the
+daemon deletes each file after its download, or after 15 minutes. One recording
+runs per session; a second start, a stop naming another agent-device session and
+a stop while the start is still in flight are refused with rule `recording`. A
+stop carries only the session and the pinned platform and device flags. A matching
+stop ends the recording when it succeeds or agent-device answers
+`no active recording`; any other failure keeps the recording and its files, as
+agent-device keeps them for a retried stop. After 10 minutes the adapter sends
+`record stop` itself under the session's tenant, every 30 seconds until it
+succeeds or up to 10 times, after which it deletes the files, and answers the
+client's next `record stop` within 15 minutes with that result. A finished
+recording over 512 MiB, whichever stop finished it, is deleted and `record stop`
+fails with `STIM_RECORDING_TOO_LARGE`. A request the relay cannot process
+answers 500 instead of rejecting. Driver stop and daemon start
+delete the `recordings` directory. Hosted macOS refuses `record`, because
+agent-device's `macos-app` lease does not allow it.
 
 ### Hosted macOS app sessions
 

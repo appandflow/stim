@@ -918,14 +918,15 @@ targeting its exact simulator UDID before deleting the simulator, even without `
 
 Allowed commands are `devices`, `open`, `close`, `snapshot`, `diff`, `wait`, `find`, `get`,
 `is`, `click`, `fill`, `press`, `type`, `focus`, `scroll`, `screenshot`,
-`longpress`, `swipe`, `back`, `home`, `orientation`, `appstate`, `alert` and `batch`.
-They inspect and interact with the simulator and its installed apps. `devices`
+`longpress`, `swipe`, `back`, `home`, `orientation`, `appstate`, `alert`, `batch`,
+`record start` and `record stop`. They inspect, interact with or record the
+simulator and its installed apps. `devices`
 lists only the session's simulator, filtered by the daemon policy. Its device
 claims are session-local and record `/` as the workspace; a host-side agent-device
 using the same simulator is not visible to the hosted daemon. Client device
 selectors are stripped and requests are pinned to iOS and that UDID; an explicitly
 named foreign UDID is refused. Selecting another device, boot/shutdown/erase,
-installs, uninstall, uploads, `push`, `record`, `logs`, `network`, `perf`, `trace`,
+installs, uninstall, uploads, `push`, `logs`, `network`, `perf`, `trace`,
 `clipboard` and `settings` are refused. Stim installs the app; agents cannot
 enumerate other host devices or write host files. Ambient client fields (`cwd`,
 `stateDir`, `config` and `remoteConfig`) are stripped, including within batch steps.
@@ -933,6 +934,18 @@ Host paths and launch inputs (`--out`, baseline, launchConsole, developerDir,
 installSource and similar fields) are refused, including within batch steps.
 Runtime hints are dropped and only reporting/artifact metadata is forwarded. Screenshots accept agent-device's generated remote temp artifact,
 which the client downloads, rather than arbitrary host destinations.
+
+`agent-device record start [path] --remote-config <file>` records the simulator, and
+`record stop` downloads the video to that path, or `./recording-<time>.mp4`, on
+your machine. The hosting Mac writes the recording only in the session's private
+agent-device state and deletes the files after the download, on `stim stop` or
+session teardown and when the session's daemon restarts. One recording runs per
+session; a second `record start`, a host output path, `record` inside `batch` and
+a `record stop` from another agent-device session are refused. The host stops a
+recording after 10 minutes; a `record stop` within the next 15 minutes downloads
+it.
+A finished recording over 512 MiB is deleted instead. A hosting Mac whose Stim
+predates hosted recording refuses `record` as a command outside its allowed list.
 
 If the setting is `none`, the daemon cannot enforce the policy, or the host
 lacks the `hosted-ios-agent` hello feature, agent access stays

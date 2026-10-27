@@ -10,11 +10,12 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, dirname, extname, join } from 'node:path';
 import {
   claimRemoveCommand,
   clearClaimChild,
@@ -100,7 +101,15 @@ const DEVICE_COMMANDS = [
   'orientation',
   'appstate',
   'alert',
+  'record',
 ];
+
+const MAX_RECORDING_MS = 10 * 60_000;
+const MAX_RECORDING_BYTES = 512 * 1024 * 1024;
+const CAP_RETRY_MS = 30_000;
+const CAP_ATTEMPTS = 10;
+// agent-device deletes a downloadable artifact nobody fetched after 15 minutes (ARTIFACT_CLEANUP_TIMEOUT_MS).
+const ARTIFACT_TTL_MS = 15 * 60_000;
 
 function deviceScope(device: HostedAgentDevice) {
   const platform = device.udid === undefined ? 'android' : 'ios';
@@ -182,6 +191,10 @@ export interface AgentDeviceDriverOptions {
   stopTimeoutMs?: number;
   watchMs?: number;
   leaseRenewMs?: number;
+  /** How long a hosted device recording may run before the host stops it. */
+  maxRecordingMs?: number;
+  /** The largest finished hosted device recording the host hands back; a larger one is deleted. */
+  maxRecordingBytes?: number;
 }
 
 type AndroidIdentity = 'verified' | 'lost' | 'unverified';
@@ -208,6 +221,22 @@ interface Lease {
   scope: HostedAgentLease;
   renew?: NodeJS.Timeout;
   renewing: Promise<unknown>;
+}
+
+interface Recording {
+  dir: string;
+  session: unknown;
+  stop: Record<string, unknown>;
+  pending: boolean;
+  attempts: number;
+  timer?: NodeJS.Timeout;
+  capped?: Buffer;
+}
+
+interface Exchange {
+  status: number;
+  headers: Record<string, string | string[]>;
+  body: Buffer;
 }
 
 const FORWARDED = [
@@ -240,6 +269,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private androidVerifiedAt = 0;
   private readonly leases = new Map<string, Lease>();
   private readonly released = new Set<string>();
+  private recording: Recording | null = null;
 
   constructor(options: AgentDeviceDriverOptions) {
     this.options = {
@@ -247,8 +277,14 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       stopTimeoutMs: 20_000,
       watchMs: 5000,
       leaseRenewMs: 120_000,
+      maxRecordingMs: MAX_RECORDING_MS,
+      maxRecordingBytes: MAX_RECORDING_BYTES,
       ...options,
     };
+  }
+
+  private get recordings(): string {
+    return join(this.options.stateDir, 'recordings');
   }
 
   onExit(listener: () => void): void {
@@ -303,6 +339,9 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.stopping = false;
     this.androidVerifiedAt = 0;
     rmSync(join(this.options.stateDir, 'daemon.json'), { force: true });
+    clearTimeout(this.recording?.timer);
+    this.recording = null;
+    rmSync(this.recordings, { recursive: true, force: true });
     const policy = join(this.options.stateDir, 'policy.json');
     writeFileSync(policy, `${JSON.stringify(this.options.device ? devicePolicy(this.options.device) : POLICY)}\n`, {
       mode: 0o600,
@@ -522,8 +561,11 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       this.claim = attempt.acquired;
       this.daemonRecord = attempt.reaped.find((holder) => holder.child)?.child ?? null;
     }
+    clearTimeout(this.recording?.timer);
+    this.recording = null;
     if (running || this.claim) await this.teardown(running?.proxy, running ?? undefined);
     for (const session of sessions) this.removeSessionDirectories(session);
+    rmSync(this.recordings, { recursive: true, force: true });
   }
 
   private async teardown(proxy?: ChildProcess, running?: Running): Promise<void> {
@@ -767,10 +809,10 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       return;
     }
     if (!target.startsWith('/rpc')) {
-      void this.relay(running, lease, request, response, target);
+      this.relay(running, lease, request, response, target).catch((error: unknown) => failed(response, error));
       return;
     }
-    void this.relayPinned(running, lease, request, response, target);
+    this.relayPinned(running, lease, request, response, target).catch((error: unknown) => failed(response, error));
   }
 
   private async relayPinned(
@@ -788,25 +830,293 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       return;
     }
     const pinned = pinLease(body, lease);
-    if (!Buffer.isBuffer(pinned))
-      response.writeHead(400, { 'content-type': 'application/json' }).end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: pinned.id,
-          error: {
-            code: -32000,
-            message: pinned.message,
-            data: {
-              code: 'UNAUTHORIZED',
-              message: pinned.message,
-              hint: `The hosted agent connection allows only ${(this.options.device ? DEVICE_COMMANDS : POLICY.commands.allow).join(', ')} on the one ${this.options.device ? (this.options.device.udid ? 'hosted iOS simulator' : 'hosted Android emulator') : 'leased macOS app'}; retrying will not help.`,
-              retriable: false,
-              details: { reason: 'STIM_AGENT_REQUEST_REFUSED', rule: pinned.rule, ...pinned.details },
-            },
+    if (!('rpc' in pinned)) this.refuse(response, pinned);
+    else if (this.options.device && isJsonObject(pinned.rpc.params) && pinned.rpc.params.command === 'record')
+      await this.relayRecord(running, lease, response, target, pinned.rpc, pinned.rpc.params);
+    else await this.relay(running, lease, request, response, target, Buffer.from(JSON.stringify(pinned.rpc)));
+  }
+
+  private refuse(response: ServerResponse, refusal: Refusal): void {
+    response.writeHead(400, { 'content-type': 'application/json' }).end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: refusal.id,
+        error: {
+          code: -32000,
+          message: refusal.message,
+          data: {
+            code: 'UNAUTHORIZED',
+            message: refusal.message,
+            hint:
+              refusal.rule === 'recording'
+                ? 'Run agent-device record stop, then start a new recording.'
+                : `The hosted agent connection allows only ${(this.options.device ? DEVICE_COMMANDS : POLICY.commands.allow).join(', ')} on the one ${this.options.device ? (this.options.device.udid ? 'hosted iOS simulator' : 'hosted Android emulator') : 'leased macOS app'}; retrying will not help.`,
+            retriable: false,
+            details: { reason: 'STIM_AGENT_REQUEST_REFUSED', rule: refusal.rule, ...refusal.details },
           },
-        }),
+        },
+      }),
+    );
+  }
+
+  private async relayRecord(
+    running: Running,
+    lease: Lease,
+    response: ServerResponse,
+    target: string,
+    rpc: Record<string, unknown>,
+    params: Record<string, unknown>,
+  ): Promise<void> {
+    const id = typeof rpc.id === 'string' || typeof rpc.id === 'number' ? rpc.id : null;
+    const positionals = Array.isArray(params.positionals) ? params.positionals : [];
+    if (!(await this.admit(running, response))) return;
+    const recording = this.recording;
+    if (positionals[0] === 'stop') {
+      if (recording && params.session !== recording.session) {
+        this.refuse(response, {
+          id,
+          rule: 'recording',
+          message: `This hosted session's recording runs in agent-device session ${JSON.stringify(recording.session ?? 'default')}; stop it with that session.`,
+          details: { command: 'record' },
+        });
+        return;
+      }
+      if (recording?.pending) {
+        this.refuse(response, {
+          id,
+          rule: 'recording',
+          message: 'The recording is still starting; run record stop again once record start returns.',
+          details: { command: 'record' },
+        });
+        return;
+      }
+      if (recording?.capped) {
+        this.takeCapped(recording, recording.capped, response, id);
+        return;
+      }
+      rpc.params = recordStop(params);
+      const answer = await this.send(running, lease, target, Buffer.from(JSON.stringify(rpc))).catch(() => null);
+      if (recording && this.recording === recording && recording.capped) {
+        this.takeCapped(recording, recording.capped, response, id);
+        return;
+      }
+      if (!answer) {
+        response.writeHead(502, { 'content-type': 'text/plain' }).end('Agent control is unavailable.\n');
+        return;
+      }
+      if (recording && this.recording === recording && (succeeded(answer.body) || noRecording(answer.body))) {
+        clearTimeout(recording.timer);
+        this.recording = null;
+        if (succeeded(answer.body)) answer.body = withId(this.finished(recording, answer.body), id);
+        else discard(recording.dir);
+      }
+      this.answer(response, answer);
+      return;
+    }
+    if (recording) {
+      this.refuse(response, {
+        id,
+        rule: 'recording',
+        message: recording.capped
+          ? `The previous recording reached the ${durationLabel(this.options.maxRecordingMs)} limit and the hosting Mac stopped it; run record stop to download it before starting another.`
+          : 'A recording is already running in this hosted session; run record stop before starting another.',
+        details: { command: 'record' },
+      });
+      return;
+    }
+    const extension = typeof positionals[1] === 'string' ? extname(positionals[1]) : '.mp4';
+    const dir = join(this.recordings, randomBytes(8).toString('hex'));
+    const meta = isJsonObject(params.meta) ? params.meta : {};
+    const { requestId: _requestId, clientArtifactPaths, ...owner } = meta;
+    const outPath =
+      isJsonObject(clientArtifactPaths) && typeof clientArtifactPaths.outPath === 'string'
+        ? clientArtifactPaths.outPath
+        : '';
+    const { out: _out, ...flags } = isJsonObject(params.flags) ? params.flags : {};
+    params.flags = flags;
+    if (isJsonObject(params.input)) {
+      const { out: _inputOut, ...input } = params.input;
+      params.input = input;
+    }
+    params.positionals = ['start', join(dir, `recording${extension}`)];
+    params.meta = {
+      ...meta,
+      clientArtifactPaths: { outPath: extname(outPath) ? outPath : `${outPath}${extension}` },
+    };
+    const body = Buffer.from(JSON.stringify(rpc));
+    const next: Recording = {
+      dir,
+      session: params.session,
+      stop: recordStop({ ...params, meta: owner }),
+      pending: true,
+      attempts: 0,
+    };
+    try {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      process.stderr.write(`Hosted recording directory failed: ${String(error).replace(/\s+/g, ' ')}\n`);
+      response
+        .writeHead(500, { 'content-type': 'text/plain' })
+        .end('The hosting Mac could not prepare the recording.\n');
+      return;
+    }
+    this.recording = next;
+    const answer = await this.send(running, lease, target, body).catch(() => null);
+    next.pending = false;
+    if (this.recording === next && answer && succeeded(answer.body)) {
+      next.timer = setTimeout(() => this.capLater(running, lease, next), this.options.maxRecordingMs);
+      next.timer.unref();
+    } else if (this.recording === next) {
+      this.recording = null;
+      discard(dir);
+    }
+    if (answer) this.answer(response, answer);
+    else response.writeHead(502, { 'content-type': 'text/plain' }).end('Agent control is unavailable.\n');
+  }
+
+  private async capRecording(running: Running, lease: Lease, recording: Recording): Promise<void> {
+    if (this.recording !== recording) return;
+    const answer = (await this.admit(running))
+      ? await this.send(
+          running,
+          lease,
+          '/rpc',
+          Buffer.from(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: 'stim-recording-limit',
+              method: 'agent_device.command',
+              params: recording.stop,
+            }),
+          ),
+        ).catch(() => null)
+      : null;
+    if (this.recording !== recording) return;
+    const later = (ms: number, then: () => void) => {
+      recording.timer = setTimeout(then, ms);
+      recording.timer.unref();
+    };
+    recording.attempts += 1;
+    if (answer && noRecording(answer.body)) {
+      this.recording = null;
+      discard(recording.dir);
+      return;
+    }
+    if (!answer || !succeeded(answer.body)) {
+      if (recording.attempts < CAP_ATTEMPTS) later(CAP_RETRY_MS, () => this.capLater(running, lease, recording));
+      else {
+        this.recording = null;
+        discard(recording.dir);
+        process.stderr.write(
+          'A hosted recording reached its time limit and could not be stopped; its files were deleted.\n',
+        );
+      }
+      return;
+    }
+    recording.capped = this.finished(recording, answer.body);
+    later(ARTIFACT_TTL_MS, () => {
+      if (this.recording !== recording) return;
+      this.recording = null;
+      discard(recording.dir);
+    });
+  }
+
+  private capLater(running: Running, lease: Lease, recording: Recording): void {
+    this.capRecording(running, lease, recording).catch((error: unknown) =>
+      process.stderr.write(`Hosted recording limit failed: ${String(error).replace(/\s+/g, ' ')}\n`),
+    );
+  }
+
+  private takeCapped(recording: Recording, capped: Buffer, response: ServerResponse, id: string | number | null): void {
+    clearTimeout(recording.timer);
+    this.recording = null;
+    this.answer(response, { status: 200, headers: {}, body: withId(capped, id) });
+  }
+
+  private finished(recording: Recording, body: Buffer): Buffer {
+    let bytes = 0;
+    try {
+      for (const entry of readdirSync(recording.dir, { withFileTypes: true }))
+        if (entry.isFile()) bytes += statSync(join(recording.dir, entry.name)).size;
+    } catch {}
+    if (bytes <= this.options.maxRecordingBytes) return body;
+    discard(recording.dir);
+    return Buffer.from(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: null,
+        result: {
+          ok: false,
+          error: {
+            code: 'COMMAND_FAILED',
+            message: `The recording is ${mib(bytes)} MiB, over the hosted limit of ${mib(this.options.maxRecordingBytes)} MiB, so the hosting Mac deleted it.`,
+            hint: 'Record a shorter clip.',
+            details: { reason: 'STIM_RECORDING_TOO_LARGE' },
+          },
+        },
+      }),
+    );
+  }
+
+  private async admit(running: Running, response?: ServerResponse): Promise<boolean> {
+    const identity = await this.androidIdentity(true);
+    if (identity === 'verified' && this.running === running && !this.stopping && !running.reported) return true;
+    response
+      ?.writeHead(503, { 'content-type': 'text/plain' })
+      .end(
+        this.options.device?.serial
+          ? 'Agent control is refused: the hosted emulator is absent, replaced, or its identity could not be verified.\n'
+          : 'Agent control is not running.\n',
       );
-    else await this.relay(running, lease, request, response, target, pinned);
+    if (identity === 'lost' && this.running === running) this.exited();
+    return false;
+  }
+
+  private send(running: Running, lease: Lease, target: string, body: Buffer): Promise<Exchange> {
+    return new Promise((resolve, reject) => {
+      const upstream = httpRequest(
+        {
+          host: running.url.hostname,
+          port: running.url.port,
+          method: 'POST',
+          path: target,
+          headers: {
+            authorization: `Bearer ${running.token}`,
+            'x-agent-device-tenant': lease.scope.tenant,
+            'content-type': 'application/json',
+            'content-length': String(body.length),
+          },
+        },
+        (answer) => {
+          const chunks: Buffer[] = [];
+          let size = 0;
+          answer.on('data', (chunk: Buffer) => {
+            size += chunk.length;
+            if (size > MAX_RPC_BYTES) answer.destroy(new Error('The agent-device answer is too large.'));
+            else chunks.push(chunk);
+          });
+          answer.once('error', reject);
+          answer.once('end', () => {
+            const headers: Record<string, string | string[]> = {};
+            for (const [name, value] of Object.entries(answer.headers))
+              if (value !== undefined && !HOP_BY_HOP.has(name) && name !== 'content-length') headers[name] = value;
+            resolve({ status: answer.statusCode ?? 502, headers, body: Buffer.concat(chunks) });
+          });
+        },
+      );
+      upstream.once('error', reject);
+      upstream.end(body);
+    });
+  }
+
+  private answer(response: ServerResponse, answer: Exchange): void {
+    response
+      .writeHead(answer.status, {
+        'content-type': 'application/json',
+        ...answer.headers,
+        'content-length': String(answer.body.length),
+      })
+      .end(answer.body);
   }
 
   private async relay(
@@ -817,18 +1127,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     target: string,
     body?: Buffer,
   ): Promise<void> {
-    const identity = await this.androidIdentity(true);
-    if (identity !== 'verified' || this.running !== running || this.stopping || running.reported) {
-      response
-        .writeHead(503, { 'content-type': 'text/plain' })
-        .end(
-          this.options.device?.serial
-            ? 'Agent control is refused: the hosted emulator is absent, replaced, or its identity could not be verified.\n'
-            : 'Agent control is not running.\n',
-        );
-      if (identity === 'lost' && this.running === running) this.exited();
-      return;
-    }
+    if (!(await this.admit(running, response))) return;
     const headers: Record<string, string> = {
       authorization: `Bearer ${running.token}`,
       'x-agent-device-tenant': lease.scope.tenant,
@@ -863,7 +1162,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
 
 interface Refusal {
   id: string | number | null;
-  rule: 'command' | 'method' | 'request' | 'host-path' | 'device';
+  rule: 'command' | 'method' | 'request' | 'host-path' | 'device' | 'recording';
   message: string;
   details: { command?: string; method?: string };
 }
@@ -873,7 +1172,7 @@ interface Refusal {
  * for every client, so the lease, its owner scope and tenant session isolation come from the host, never from
  * the client. Methods other than commands and lease renewal or release are refused.
  */
-function pinLease(body: Buffer | null, lease: Lease): Buffer | Refusal {
+function pinLease(body: Buffer | null, lease: Lease): { rpc: Record<string, unknown> } | Refusal {
   let rpc: unknown;
   try {
     rpc = body === null ? undefined : JSON.parse(body.toString('utf8'));
@@ -897,7 +1196,10 @@ function pinLease(body: Buffer | null, lease: Lease): Buffer | Refusal {
       return {
         id,
         rule: 'command' as const,
-        message: `Refused command${command === undefined ? '' : ` "${command}"`}. Allowed commands: ${POLICY.commands.allow.join(', ')}.`,
+        message:
+          command === 'record'
+            ? 'Refused command "record": agent-device\'s macos-app lease does not allow screen recording, so a hosted macOS app cannot be recorded.'
+            : `Refused command${command === undefined ? '' : ` "${command}"`}. Allowed commands: ${POLICY.commands.allow.join(', ')}.`,
         details: command === undefined ? {} : { command },
       };
     };
@@ -929,7 +1231,7 @@ function pinLease(body: Buffer | null, lease: Lease): Buffer | Refusal {
     const method = rpc.method.slice(0, MAX_ECHO);
     return { id, rule: 'method', message: `Refused method "${method}".`, details: { method } };
   }
-  return Buffer.from(JSON.stringify(rpc));
+  return { rpc };
 }
 
 const DEVICE_LEASE_METHODS = new Set([...LEASE_METHODS, 'agent_device.lease.allocate', 'agent-device.lease.allocate']);
@@ -983,7 +1285,11 @@ const HOST_INPUTS = [
   'keyframes',
 ];
 
-function pinDeviceRequest(rpc: Record<string, unknown>, id: Refusal['id'], lease: Lease): Buffer | Refusal {
+function pinDeviceRequest(
+  rpc: Record<string, unknown>,
+  id: Refusal['id'],
+  lease: Lease,
+): { rpc: Record<string, unknown> } | Refusal {
   const params = rpc.params as Record<string, unknown>;
   const { tenant, runId, clientId, deviceKey } = lease.scope;
   const owner = { tenantId: tenant, runId, clientId, deviceKey, leaseProvider: 'proxy' };
@@ -1036,12 +1342,17 @@ function pinDeviceRequest(rpc: Record<string, unknown>, id: Refusal['id'], lease
       ...(typeof params.ttlMs === 'number' ? { ttlMs: params.ttlMs } : {}),
     };
   } else return { id, rule: 'method', message: 'Refused method.', details: {} };
-  return Buffer.from(JSON.stringify(rpc));
+  return { rpc };
 }
 
 // agent-device rewrites remote screenshot destinations to this temp shape before downloading the artifact.
 function remoteScreenshot(value: unknown): boolean {
   return typeof value === 'string' && /^\/tmp\/agent-device-screenshot-\d+-[a-z0-9]+\.png$/.test(value);
+}
+
+// agent-device rewrites an explicit remote `record start` destination to this temp shape, keeping its extension.
+function remoteRecording(value: unknown): boolean {
+  return typeof value === 'string' && /^\/tmp\/agent-device-recording-\d+-[a-z0-9]+\.[A-Za-z0-9]{1,8}$/.test(value);
 }
 
 function inspectDeviceCommand(
@@ -1056,6 +1367,8 @@ function inspectDeviceCommand(
     return refuse('device', 'Another emulator is refused; this connection targets one hosted emulator.');
   const noun = device.platform === 'android' ? 'emulator' : 'simulator';
   const screenshot = params.command === 'screenshot';
+  const positionals = Array.isArray(params.positionals) ? params.positionals : [];
+  const recordStart = params.command === 'record' && positionals[0] === 'start';
   for (const fields of [params.flags, params.input]) {
     if (!isJsonObject(fields)) continue;
     if (
@@ -1069,13 +1382,13 @@ function inspectDeviceCommand(
         (key) =>
           fields[key] !== undefined &&
           fields[key] !== false &&
-          !(screenshot && key === 'out' && remoteScreenshot(fields[key])),
+          !(screenshot && key === 'out' && remoteScreenshot(fields[key])) &&
+          !(recordStart && key === 'out'),
       )
     )
       return refuse('host-path', 'Host paths and launch inputs are refused.');
     if (fields.shutdown === true) return refuse('command', 'Simulator shutdown is refused; use stim stop.');
   }
-  const positionals = Array.isArray(params.positionals) ? params.positionals : [];
   if (screenshot && positionals.some((value) => !remoteScreenshot(value)))
     return refuse('host-path', 'Screenshots use only agent-device remote artifacts.');
   if (
@@ -1089,11 +1402,40 @@ function inspectDeviceCommand(
     )
   )
     return refuse('host-path', 'Open and close accept only installed simulator app names or bundle ids.');
+  if (params.command === 'record') {
+    const [action, output, ...rest] = positionals;
+    if ((action !== 'start' && action !== 'stop') || rest.length > 0 || (action === 'stop' && output !== undefined))
+      return refuse('command', 'Refused record: this connection allows only record start and record stop.');
+    if (output !== undefined && !remoteRecording(output))
+      return refuse(
+        'host-path',
+        `Refused record start: the hosting Mac writes a recording only in this session's private area and returns it through agent-device's remote download, so a host output path is refused.`,
+      );
+    const meta = params.meta;
+    if (
+      action === 'start' &&
+      !(
+        isJsonObject(meta) &&
+        isJsonObject(meta.clientArtifactPaths) &&
+        typeof meta.clientArtifactPaths.outPath === 'string' &&
+        meta.clientArtifactPaths.outPath.trim() !== ''
+      )
+    )
+      return refuse(
+        'request',
+        'Refused record start: it needs the local destination agent-device sends when it runs with --remote-config.',
+      );
+  }
   for (const fields of [params.flags, params.input]) {
     if (!isJsonObject(fields) || fields.batchSteps === undefined) continue;
     if (!Array.isArray(fields.batchSteps)) return refuse('request', 'Invalid batch steps.');
     for (const step of fields.batchSteps) {
       if (!isJsonObject(step)) return refuse('request', 'Invalid batch step.');
+      if (step.command === 'record')
+        return refuse(
+          'command',
+          'Refused record inside batch: run record start and record stop as their own commands.',
+        );
       const failure = inspectDeviceCommand(step, id, device);
       if (failure) return failure;
     }
@@ -1162,6 +1504,70 @@ const CLIENT_META = ['requestId', 'debug', 'includeCost', 'responseLevel', 'sess
 function pickClientMeta(meta: unknown): Record<string, unknown> {
   if (!isJsonObject(meta)) return {};
   return Object.fromEntries(CLIENT_META.filter((key) => meta[key] !== undefined).map((key) => [key, meta[key]]));
+}
+
+function failed(response: ServerResponse, error: unknown): void {
+  process.stderr.write(`Hosted agent request failed: ${String(error).replace(/\s+/g, ' ').slice(0, 400)}\n`);
+  if (response.headersSent) response.destroy();
+  else response.writeHead(500, { 'content-type': 'text/plain' }).end('Agent control failed on the hosting Mac.\n');
+}
+
+function discard(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch (error) {
+    process.stderr.write(`Hosted recording cleanup failed: ${String(error).replace(/\s+/g, ' ')}\n`);
+  }
+}
+
+function mib(bytes: number): number {
+  return Math.ceil(bytes / (1024 * 1024));
+}
+
+function durationLabel(ms: number): string {
+  return ms % 60_000 === 0 ? `${ms / 60_000}-minute` : `${ms / 1000}-second`;
+}
+
+function parsed(body: Buffer): Record<string, unknown> | null {
+  try {
+    const value: unknown = JSON.parse(body.toString('utf8'));
+    return isJsonObject(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+// agent-device answers record stop without a recording to stop with INVALID_ARGS "no active recording".
+function noRecording(body: Buffer): boolean {
+  const rpc = parsed(body);
+  return (
+    rpc !== null &&
+    isJsonObject(rpc.error) &&
+    rpc.error.message === 'no active recording' &&
+    isJsonObject(rpc.error.data) &&
+    rpc.error.data.code === 'INVALID_ARGS'
+  );
+}
+
+function recordStop(params: Record<string, unknown>): Record<string, unknown> {
+  const flags = isJsonObject(params.flags) ? params.flags : {};
+  return {
+    command: 'record',
+    positionals: ['stop'],
+    ...(params.session === undefined ? {} : { session: params.session }),
+    flags: Object.fromEntries(Object.entries(flags).filter(([key]) => ['platform', 'udid', 'serial'].includes(key))),
+    ...(params.meta === undefined ? {} : { meta: params.meta }),
+  };
+}
+
+function succeeded(body: Buffer): boolean {
+  const rpc = parsed(body);
+  return rpc !== null && isJsonObject(rpc.result) && rpc.result.ok === true;
+}
+
+function withId(body: Buffer, id: string | number | null): Buffer {
+  const rpc = parsed(body);
+  return rpc === null ? body : Buffer.from(JSON.stringify({ ...rpc, id }));
 }
 
 function readBody(request: IncomingMessage, limit: number): Promise<Buffer | null> {

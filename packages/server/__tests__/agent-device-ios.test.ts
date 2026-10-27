@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,6 +23,7 @@ const fixture = vi.hoisted(() => ({
   stubborn: new Set<number>(),
   events: [] as string[],
   calls: [] as { path: string; body: string; headers: Record<string, string> }[],
+  recordError: { code: '', message: '' },
 }));
 
 vi.mock('@stim-cli/core/process-identity', async (original) => {
@@ -104,13 +105,25 @@ vi.mock('node:http', async (original) => ({
     const request = Object.assign(new EventEmitter(), {
       end: (body?: Buffer) => {
         fixture.calls.push({ path: options.path, body: body?.toString() ?? '', headers: options.headers });
+        const sent = options.path === '/rpc' ? JSON.parse(body?.toString() ?? '{}') : {};
         const data =
           options.path === '/health'
             ? { upstream: { leaseBackends: fixture.backend ? ['ios-instance'] : [] } }
-            : { forwarded: true };
+            : sent.params?.command === 'record'
+              ? fixture.recordError.message
+                ? {
+                    jsonrpc: '2.0',
+                    id: sent.id,
+                    error: { code: -32000, message: fixture.recordError.message, data: fixture.recordError },
+                  }
+                : { jsonrpc: '2.0', id: sent.id, result: { ok: true, data: { recording: sent.params.positionals[0] } } }
+              : { forwarded: true };
         queueMicrotask(() =>
           answer(
-            Object.assign(Readable.from([JSON.stringify(data)]), { statusCode: 200, headers: {} }) as IncomingMessage,
+            Object.assign(Readable.from([Buffer.from(JSON.stringify(data))]), {
+              statusCode: 200,
+              headers: {},
+            }) as IncomingMessage,
           ),
         );
       },
@@ -134,6 +147,7 @@ beforeEach(() => {
   fixture.backend = true;
   fixture.proxyStopped = true;
   fixture.calls = [];
+  fixture.recordError = { code: '', message: '' };
   fixture.ps = [];
   fixture.psError = false;
   fixture.uncaptured = new Set();
@@ -169,8 +183,8 @@ async function rpc(params: object, method = 'agent_device.command', path = '/rpc
   return rpcBody({ id: 4, method, params }, path);
 }
 
-async function rpcBody(body: object, path = '/rpc') {
-  const request = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), {
+async function rpcBody(body: object | string, path = '/rpc') {
+  const request = Object.assign(Readable.from([Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]), {
     url: `/device-host/agent/${SESSION}${path}`,
     method: 'POST',
     headers: { authorization: 'Bearer client-private' },
@@ -617,6 +631,16 @@ test.each([
   { command: 'open', input: { installSource: { kind: 'path', path: '/host/app' } } },
   { command: 'snapshot', input: { developerDir: '/host' } },
   {
+    command: 'record',
+    positionals: ['start', '/Users/me/clip.mp4'],
+    meta: { clientArtifactPaths: { outPath: '/c/r' } },
+  },
+  { command: 'record', positionals: ['start', '/tmp/agent-device-recording-1-ab/../../etc/x.mp4'] },
+  { command: 'record', positionals: ['start'], meta: {} },
+  { command: 'record', positionals: ['stop', '/tmp/agent-device-recording-1-ab.mp4'] },
+  { command: 'record', positionals: ['list'] },
+  { command: 'batch', flags: { batchSteps: [{ command: 'record', positionals: ['stop'] }] } },
+  {
     command: 'batch',
     flags: {
       batchSteps: [
@@ -701,4 +725,175 @@ test('allows screenshot artifacts but refuses uploads and stops forwarding after
   await driver.revoke(SESSION);
   expect((await rpc({ command: 'snapshot' })).status).toBe(503);
   expect(fixture.calls).toEqual([]);
+});
+
+const recordStart = (output?: string) => ({
+  command: 'record',
+  session: 'default',
+  positionals: output === undefined ? ['start'] : ['start', output],
+  flags: { platform: 'ios', out: '/client/clip.mov', fps: 30 },
+  meta: { requestId: 'r', clientArtifactPaths: { outPath: '/client/clip' } },
+});
+
+const forwardedRecord = () => JSON.parse(fixture.calls.at(-1)?.body ?? '{}');
+
+test('writes a recording only in the session state, one at a time, and removes it on stop', async () => {
+  await start();
+  const remote = await rpc(recordStart('/tmp/agent-device-recording-1793117267701-ab12cd.mov'));
+  expect(remote.status).toBe(200);
+  const started = forwardedRecord().params;
+  const output = started.positionals[1];
+  expect(output.startsWith(join(home, 'agent', 'recordings') + '/')).toBe(true);
+  expect(output.endsWith('/recording.mov')).toBe(true);
+  expect(started.flags).toEqual({ platform: 'ios', udid: UDID, fps: 30 });
+  expect(started.meta.clientArtifactPaths).toEqual({ outPath: '/client/clip.mov' });
+  expect(statSync(join(output, '..')).mode & 0o777).toBe(0o700);
+
+  const second = await rpc(recordStart());
+  expect(second.status).toBe(400);
+  expect(JSON.parse(second.text).error.data.details.rule).toBe('recording');
+
+  expect(JSON.parse((await rpc({ command: 'record', session: 'default', positionals: ['stop'] })).text)).toMatchObject({
+    id: 4,
+    result: { ok: true },
+  });
+  expect((await rpc(recordStart())).status).toBe(200);
+  expect(forwardedRecord().params.positionals[1]).toMatch(/\/recording\.mp4$/);
+  expect(forwardedRecord().params.meta.clientArtifactPaths).toEqual({ outPath: '/client/clip.mp4' });
+
+  await driver.stop();
+  expect(existsSync(join(home, 'agent', 'recordings'))).toBe(false);
+});
+
+test('overlapping starts run only one recording', async () => {
+  await start();
+  const answers = await Promise.all([rpc(recordStart()), rpc(recordStart())]);
+  expect(answers.map((answer) => answer.status).toSorted()).toEqual([200, 400]);
+  expect(fixture.calls.filter((call) => call.body.includes('"record"'))).toHaveLength(1);
+});
+
+test('a start the daemon refuses leaves no recording behind', async () => {
+  await start();
+  fixture.recordError = { code: 'COMMAND_FAILED', message: 'recorder failed to start' };
+  expect((await rpc(recordStart())).status).toBe(200);
+  expect(readdirSync(join(home, 'agent', 'recordings'))).toEqual([]);
+  fixture.recordError = { code: '', message: '' };
+  expect((await rpc(recordStart())).status).toBe(200);
+});
+
+test('stops a recording at the time limit and hands that stop to the next client stop', async () => {
+  await driver.stop();
+  driver = new AgentDeviceDriver({
+    env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
+    stateDir: join(home, 'agent'),
+    claimRoot: join(home, 'claims'),
+    device: { session: SESSION, udid: UDID },
+    maxRecordingMs: 20,
+  });
+  await start();
+  await rpc(recordStart());
+  await vi.waitFor(() => expect(forwardedRecord().params.positionals).toEqual(['stop']));
+  const stop = forwardedRecord();
+  expect(stop.params).toEqual({
+    command: 'record',
+    positionals: ['stop'],
+    session: 'default',
+    flags: { platform: 'ios', udid: UDID },
+    meta: {
+      tenantId: `stim.${SESSION}`,
+      runId: SESSION,
+      clientId: 'agent',
+      deviceKey: `ios:mobile:${UDID}`,
+      leaseProvider: 'proxy',
+      leaseBackend: 'ios-instance',
+      sessionIsolation: 'tenant',
+    },
+  });
+  expect(fixture.calls.at(-1)?.headers).toMatchObject({ 'x-agent-device-tenant': `stim.${SESSION}` });
+  const refused = JSON.parse((await rpc(recordStart())).text);
+  expect(refused.error.data.details.rule).toBe('recording');
+  expect(refused.error.message).toContain('limit');
+  const calls = fixture.calls.length;
+  const answer = await rpcBody({
+    id: 'client-stop',
+    method: 'agent_device.command',
+    params: { command: 'record', session: 'default', positionals: ['stop'] },
+  });
+  expect(JSON.parse(answer.text)).toEqual({
+    jsonrpc: '2.0',
+    id: 'client-stop',
+    result: { ok: true, data: { recording: 'stop' } },
+  });
+  expect(fixture.calls).toHaveLength(calls);
+  expect((await rpc(recordStart())).status).toBe(200);
+});
+
+test.each([
+  { stop: 'client', maxRecordingMs: 600_000 },
+  { stop: 'time limit', maxRecordingMs: 200 },
+])('deletes a recording over the size limit after a $stop stop', async ({ maxRecordingMs }) => {
+  await driver.stop();
+  driver = new AgentDeviceDriver({
+    env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
+    stateDir: join(home, 'agent'),
+    claimRoot: join(home, 'claims'),
+    device: { session: SESSION, udid: UDID },
+    maxRecordingBytes: 10,
+    maxRecordingMs,
+  });
+  await start();
+  await rpc(recordStart());
+  const output = forwardedRecord().params.positionals[1];
+  writeFileSync(output, 'more than ten bytes');
+  await vi.waitFor(() => {
+    if (maxRecordingMs < 600_000 && existsSync(join(output, '..'))) throw new Error('waiting for the time-limit stop');
+  });
+  const answer = JSON.parse((await rpc({ command: 'record', session: 'default', positionals: ['stop'] })).text);
+  expect(answer).toMatchObject({
+    id: 4,
+    result: { ok: false, error: { details: { reason: 'STIM_RECORDING_TOO_LARGE' } } },
+  });
+  expect(existsSync(join(output, '..'))).toBe(false);
+});
+
+test('only a stop agent-device answers with no active recording ends a recording it did not finish', async () => {
+  await start();
+  await rpc(recordStart());
+  const output = forwardedRecord().params.positionals[1];
+  fixture.recordError = { code: 'INVALID_ARGS', message: 'record stop accepts no --record or --no-record flags' };
+  const stop = {
+    command: 'record',
+    session: 'default',
+    positionals: ['stop'],
+    flags: { record: true, noRecord: true },
+  };
+  expect((await rpc(stop)).status).toBe(200);
+  expect(forwardedRecord().params.flags).toEqual({ platform: 'ios', udid: UDID });
+  expect(existsSync(join(output, '..'))).toBe(true);
+  expect((await rpc(recordStart())).status).toBe(400);
+  fixture.recordError = { code: 'INVALID_ARGS', message: 'no active recording' };
+  await rpc(stop);
+  expect(existsSync(join(output, '..'))).toBe(false);
+  fixture.recordError = { code: '', message: '' };
+  expect((await rpc(recordStart())).status).toBe(200);
+});
+
+test('a stop from another agent-device session keeps the running recording', async () => {
+  await start();
+  await rpc(recordStart());
+  const calls = fixture.calls.length;
+  const other = await rpc({ command: 'record', session: 'other', positionals: ['stop'] });
+  expect(other.status).toBe(400);
+  expect(JSON.parse(other.text).error.data.details.rule).toBe('recording');
+  expect(fixture.calls).toHaveLength(calls);
+  expect((await rpc(recordStart())).status).toBe(400);
+  expect((await rpc({ command: 'record', session: 'default', positionals: ['stop'] })).status).toBe(200);
+});
+
+test('a request too deep to serialize fails without rejecting the relay', async () => {
+  await start();
+  const depth = 12_000;
+  const body = `{"id":9,"method":"agent_device.command","params":{"command":"snapshot","flags":${'{"a":'.repeat(depth)}1${'}'.repeat(depth)}}}`;
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  expect((await rpcBody(body)).status).toBe(500);
 });
