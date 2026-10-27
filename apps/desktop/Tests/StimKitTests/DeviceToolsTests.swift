@@ -68,7 +68,7 @@ import Testing
       #"{"code":"STIM_DEVICE_TOOL_FAILED","message":"simctl failed:\nline two","remedy":"Retry."}"#.utf8)
     #expect(DeviceToolError(stdout: json, stderr: "ignored").errorDescription == "simctl failed:\nline two Retry.")
     let old = DeviceToolError(stdout: Data(), stderr: "error: unknown command 'location'")
-    #expect(old.errorDescription == "This version of stim has no device tools. Update stim to 1.30.0 or later.")
+    #expect(old.errorDescription == "This version of stim has no device tools. Update stim to 1.31.0 or later.")
     let error = DeviceToolError(
       stdout: Data(),
       stderr: "STIM_DEVICE_TOOL_TARGET: The owned iOS simulator is not booted.\nRun `stim ios` to boot it.")
