@@ -37,6 +37,7 @@
     case buildSheet = "Build sheet"
     case archivedBuildSheet = "Archived build sheet"
     case simulator = "Simulator controls"
+    case deviceTools = "Device tools"
     case hostedIos = "Hosted iOS"
     case hostedAndroid = "Hosted Android"
     case settings = "Settings"
@@ -60,7 +61,8 @@
       case .hostedIos, .hostedAndroid: return [.ready, .loading, .error, .empty]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
-      case .tokens, .addMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards: return [.ready]
+      case .tokens, .addMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards, .deviceTools:
+        return [.ready]
       }
     }
   }
@@ -262,6 +264,15 @@
         ScrollView {
           SimulatorOptionsView(fixture: PlaygroundSimulator(scenario: scenario))
             .padding(Space.xl)
+        }
+      case .deviceTools:
+        ScrollView {
+          HStack(alignment: .top, spacing: Space.xl) {
+            EmulatorOptionsView(
+              title: "Simulator Options", tools: DeviceToolsView(platform: "ios", run: playgroundDeviceTool("ios")))
+            EmulatorOptionsView(tools: DeviceToolsView(platform: "android", run: playgroundDeviceTool("android")))
+          }
+          .padding(Space.xl)
         }
       case .settings:
         TabView(selection: $scope) {
