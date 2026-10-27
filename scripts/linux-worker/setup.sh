@@ -293,6 +293,8 @@ next_steps() {
      then try a build:
 
        stim android --remote-build $name --no-build-cache
+
+  To pair Stim Desktop or the phone app with this machine, run 'stim-server pair' here.
 EOF
   if [ "$emulator" = 1 ]; then
     echo
