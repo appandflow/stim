@@ -1,0 +1,122 @@
+[
+  {
+    "path": "/home/floco/work/hinges-onboarding/apps/mobile",
+    "live": true,
+    "phase": "live",
+    "phaseSince": null,
+    "memoryMb": 0,
+    "warnings": [],
+    "issues": [],
+    "ios": {
+      "udid": "",
+      "owned": false,
+      "state": "ready",
+      "name": "stim-hosted (iPhone 18 27.0)",
+      "host": {
+        "machine": "janics-mac-mini-2:7443",
+        "session": "5b0e7c1a-3f52-4d7e-9a18-6c2f0d4e8b31",
+        "selected": "janics-mac-mini-2:7443",
+        "device": {
+          "name": "iPhone 18",
+          "runtime": "iOS 27.0"
+        },
+        "agent": {
+          "driver": "none",
+          "setting": "hosting.agentDriver"
+        }
+      },
+      "activity": {
+        "state": "driven",
+        "driver": {
+          "tool": "Claude Code",
+          "pid": 4181,
+          "since": "2026-09-25T04:11:09.012Z"
+        },
+        "basis": ["agent-action"]
+      },
+      "appPresence": null
+    },
+    "worktree": {
+      "path": "/home/floco/work/hinges-onboarding",
+      "branch": "bot/onboarding-copy",
+      "repository": "/home/floco/work/hinges",
+      "git": {
+        "changed": 0,
+        "untracked": 0,
+        "upstream": "origin/bot/onboarding-copy",
+        "ahead": 1,
+        "behind": 0,
+        "mergedInto": null
+      },
+      "gitChip": {
+        "parts": [],
+        "ci": null
+      }
+    },
+    "remoteDevices": [],
+    "stage": {
+      "kind": "running",
+      "since": null,
+      "platform": null,
+      "closedApps": []
+    }
+  },
+  {
+    "path": "/home/floco/work/hinges-pods/apps/mobile",
+    "live": true,
+    "phase": "live",
+    "phaseSince": null,
+    "memoryMb": 0,
+    "warnings": [],
+    "issues": [],
+    "worktree": {
+      "path": "/home/floco/work/hinges-pods",
+      "branch": "bot/upgrade-pods",
+      "repository": "/home/floco/work/hinges",
+      "git": {
+        "changed": 0,
+        "untracked": 0,
+        "upstream": "origin/bot/upgrade-pods",
+        "ahead": 1,
+        "behind": 0,
+        "mergedInto": null
+      },
+      "gitChip": {
+        "parts": [],
+        "ci": null
+      }
+    },
+    "remoteDevices": [],
+    "build": {
+      "platform": "ios",
+      "slot": "default",
+      "state": "running",
+      "phase": "pods",
+      "startedAt": "2026-09-25T04:21:40.012Z",
+      "phaseStartedAt": "2026-09-25T04:22:13.012Z",
+      "outcome": "cold",
+      "expectedMs": 160000,
+      "expectedPhaseMs": 94000,
+      "basis": 3,
+      "outcomeKnown": true,
+      "placement": {
+        "host": "janics-mac-mini-2:7443",
+        "phase": "pods",
+        "startedAt": "2026-09-25T04:21:52.012Z",
+        "phaseStartedAt": "2026-09-25T04:22:13.012Z"
+      },
+      "completedPhaseMs": {
+        "prepare": 2100,
+        "cache-lookup": 900,
+        "prebuild": 6400
+      },
+      "cacheLookupOutcome": "miss"
+    },
+    "stage": {
+      "kind": "building",
+      "since": "2026-09-25T04:21:40.012Z",
+      "platform": "ios",
+      "closedApps": []
+    }
+  }
+]
