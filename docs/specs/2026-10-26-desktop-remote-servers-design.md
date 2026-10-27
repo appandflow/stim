@@ -99,8 +99,7 @@ phone's payloads already define all of them.
 Phase 1 adds no server protocol for ownership. A viewer sees the hosted logs
 that the bot's own `stim` commands copied, and the log view says "Hosted logs
 copy when the agent runs stim logs". A server-side pull of hosted logs is a
-later phase. Any gap the floco QA finds, such as a probe or relay that fails
-off macOS, is fixed in phase 0.
+later phase. The Linux gaps the floco QA found are fixed in phase 0.
 
 ### One session, one owner
 
@@ -109,15 +108,16 @@ that reports it.
 
 - **Same server.** Two paired entries are the same server when their pinned
   server keys are equal. Pairing refuses a second entry with "Already paired".
+- **Identity.** Desktop keys everything about a pairing on its local pairing
+  id and the pinned key's fingerprint. `hello.server.id` is supplied by the
+  server, so a compromised server controls it. It is only a hint.
 - **Local server.** An entry whose `hello.server.id` equals Desktop's local
-  server's id is Desktop's own server. The server id is only known after the
-  token is spent, so that pairing is refused after the fact. Desktop deletes
-  the pin and shows the `stim-server devices revoke <id>` command for the
-  record it left.
+  server's id is treated as Desktop's own server. A lying server can at worst
+  make Desktop refuse its pairing. The id is only known after the token is
+  spent, so Desktop refuses after the fact, deletes the pairing's key and
+  shows the `stim-server devices revoke <id>` command for the record it left.
 - **No cross-server de-duplication.** Pairing is limited to owning servers,
   so no two of them report the same hosted session.
-
-Both apps apply the same rule: compare pinned keys, then server ids.
 
 ### Who controls it
 
@@ -173,12 +173,17 @@ Desktop gets a Swift Noise client built on CryptoKit.
   little-endian counter. That is CryptoKit's 12-byte `ChaChaPoly.Nonce`.
 - **Sealed boxes.** Build them with `SealedBox(nonce:ciphertext:tag:)`, never
   with `SealedBox(combined:)`. Stim's wire format carries no nonce.
-- **Shared secrets.** An all-zero X25519 shared secret throws, as `noise.ts`
-  requires.
+- **Shared secrets.** The client checks for an all-zero X25519 shared secret
+  and throws, as `noise.ts` requires. CryptoKit does not document this check,
+  so the client makes it explicitly. A Swift test with an all-zero public key
+  covers it; the JSON vectors do not.
 - **Tests.** The client passes the JSON vectors in
   `packages/core/__tests__/fixtures/` (`noise-vectors.json`,
   `noise-framing-vectors.json`, `noise-secret-vectors.json`). A CI test also
   pairs and reconnects against a real `stim-server` over loopback TCP.
+- **Why a Swift implementation.** The phone's Noise is C++ on libsodium inside
+  a Nitro module (`apps/mobile/modules/stim-session`). Desktop is a SwiftPM
+  package, and CryptoKit provides every primitive without a C dependency.
 
 ### Client changes
 
@@ -186,10 +191,33 @@ The transport is a `ServerTransport` over `NWConnection`, with TLS for `wss://`
 and without it for `ws://`. `ServerClient.connect()` runs its Unix-socket
 checks only for a `file:` endpoint.
 
-`ServerProtocol.refusalCodes` gains the Noise refusals the phone maps in
-`sessionRefusal`: `server-key-mismatch`, `unknown-secret` and
-`handshake-failed`. Desktop then stops retrying instead of feeding the
-server's failed-handshake lockout.
+The transport surfaces the WebSocket close code and reason.
+`ServerProtocol.refusalCodes` matches the phone's `sessionRefusal`
+(`apps/mobile/src/lib/connection.ts`) exactly:
+
+- `server-outdated`, from close 4400 "unexpected binary frame" by a protocol 1
+  server;
+- `server-key-mismatch`;
+- `unknown-secret`;
+- `unauthorized`;
+- `protocol-unsupported`.
+
+Desktop then stops retrying instead of feeding the server's failed-handshake
+lockout. A `handshake-failed` close stays retryable, as on the phone, because
+it can be transient.
+
+`HelloResult` gains `actions`. A remote client has a nil `bootstrap` and
+`serverPort`, so it never answers a Desktop bootstrap challenge.
+
+Desktop accepts messages up to `MAX_SERVER_MESSAGE_BYTES` plus
+`TRANSPORT_OVERHEAD_BYTES`, as `hosted-relay.ts` does. It never sends more
+than `MAX_CLIENT_MESSAGE_BYTES` (64 KiB), because larger sends close the
+connection.
+
+The pairing payload parser reuses `PairingCode` (`StimServer.swift`), which
+already decodes the `{ qr, expiresAt }` wrapper. The endpoint rule lives in
+the parser, so the loopback interop test can still connect to
+`ws://127.0.0.1`.
 
 ### Untrusted input
 
@@ -197,34 +225,55 @@ A paired server is another machine, and the bot's server runs as an AI agent's
 account. Every message Desktop receives from it is validated the same way:
 
 - reply ids and sequence numbers use checked integer conversion;
-- sizes keep their existing 16 MiB bound;
-- a malformed message closes that connection and never traps the app.
+- sizes are capped as above;
+- a malformed message closes that connection and never traps the app;
+- remote H.264, images and log text go through the same decoders as local
+  data, which must fail without trapping.
 
 This applies to the existing parsers that assumed a local server, such as
 `ServerClient.swift`'s reply id and `StatusViews.swift`'s sequence. Remote
 URLs, such as an agent session's `openUrl`, are never opened automatically.
-Remote paths are never turned into file URLs (see Phase 1).
+Remote paths are never turned into file URLs (see Phase 1). The control
+phase's Copy command copies only commands Desktop builds itself, never a
+remote-supplied remedy. Endpoints are parsed with `URLComponents`, and an
+endpoint with userinfo is refused.
 
 ### Storage
 
 Desktop stores keys and pins in the macOS Keychain. It never stores them under
 `$STIM_HOME`, in `UserDefaults`, or in the CLI's `client-identity.key`.
 
-- **Client key.** There is one X25519 key per Desktop install. It is a
-  generic-password item in the data-protection keychain
+- **One key per pairing.** Desktop generates a fresh X25519 key for each
+  pairing and keeps it in that pairing's item. It does not use one key per
+  install. The server replaces records by public key (`spendSecret`), and
+  Forget does not revoke. With a single key, a forgotten pairing would stay
+  live, and a stolen key would work on every paired server.
+- **The item.** It is a generic-password item in the data-protection keychain
   (`kSecUseDataProtectionKeychain`), with
-  `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, not synchronizable.
-- **Pairings.** There is one item per pairing. It holds the endpoint, display
-  name, pinned server key, server id, the capabilities seen in the last
-  `hello`, and the pairing time. The pins are integrity data: a file that
-  another process could rewrite would let it redirect a pairing.
-- **Entitlements.** The data-protection keychain needs signed entitlements
-  (`keychain-access-groups` under the release team). The released app has them.
-  Ad-hoc test copies (`apps/desktop/scripts/bundle.sh`) do not. PR C confirms
-  the entitlement on a signed build.
-- **Test copies and unit tests.** Ad-hoc copies use an in-memory store, so
-  they re-pair on every launch. The pairing sheet says "Pairings are not kept
-  in this build". Unit tests use the same in-memory store.
+  `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, not synchronizable. It
+  holds:
+  - the private key;
+  - the endpoint and display name;
+  - the pinned server key and the server id hint;
+  - the capabilities seen in the last `hello`;
+  - the pairing time.
+
+  The pins are integrity data: a file that another process could rewrite
+  would let it redirect a pairing.
+
+- **Write order.** Desktop writes the item, with the pin, as soon as the
+  handshake proves the fingerprint and before it sends `hello`. If that write
+  fails after the token is spent, Desktop shows the revoke command for the
+  record it left.
+- **Entitlements.** No new entitlement is added. The default access group is
+  the application-identifier that `apps/desktop/Support/app.entitlements`
+  already carries in signed releases. A new restricted entitlement outside the
+  Developer ID profile would make the system kill the app at launch.
+- **Test copies and unit tests.** Ad-hoc copies (`apps/desktop/scripts/bundle.sh`)
+  have no application-identifier. They use an in-memory store, so they re-pair
+  on every launch, and the pairing sheet says "Pairings are not kept in this
+  build". `swift test` is unsigned, so the Keychain code itself is checked by
+  hand on a signed build.
 
 ### Endpoints
 
@@ -245,9 +294,12 @@ refuses a funneled route.
   record. So does that Mac's Desktop **Settings > Phones** list, renamed
   **Paired Devices** because Desktop records appear there too. The open
   connection closes within about 1 s. Desktop then shows "<name> no longer
-  knows this Mac. Pair again." and stops retrying.
-- **In Desktop.** **Forget** deletes the Keychain item. Like the phone, it does
-  not revoke on the server. The sheet says so and shows the revoke command.
+  knows this Mac. Pair again." and stops retrying. The sidebar row and the
+  Paired Machines tab use the same text.
+- **In Desktop.** **Forget** deletes the Keychain item, and with it that
+  pairing's private key, so the server's record can never authenticate again.
+  It does not remove the record on the server. The sheet says so and shows
+  the revoke command.
 
 ### Read and control
 
@@ -265,7 +317,7 @@ Read exposes everything the phone sees on that server:
 - the live screens of every local and hosted device of every workspace there.
 
 The website page says this next to the pairing steps, as it already does for
-phones.
+phones. That text lands with the pairing UI (PR D).
 
 ## Phase 1: what Desktop shows for a remote server (read-only)
 
@@ -304,9 +356,11 @@ file URL, a process working directory, a git, `gh` or icon lookup, or a Finder
 action. A remote path can equal a local one when both machines share a
 username.
 
-UI state that Desktop persists by path is keyed by server id, so a remote path
-never collides with a local one. That covers hidden workspaces, navigation
-history and expanded projects.
+Phase 1 does not persist UI state for remote workspaces. Hidden workspaces,
+navigation history and expanded projects stay in memory, keyed by pairing id,
+so a remote path never collides with a local one and none reaches disk. Remote
+strings shown in Swift use ASCII escapes such as `\u{00B7}`, under the
+`Sources` ASCII rule.
 
 ### Actions
 
@@ -398,9 +452,31 @@ I checked floco read-only on 2026-10-26.
 - Tailscale lists only floco, janics-mac-mini-2 and an offline
   janics-macbook-pro.
 
-A separate QA run on floco checks the Linux read path with a test install.
-This section takes its findings when they land. Until then, nothing here
-claims the path was run on Linux.
+A QA run on floco on 2026-10-26 used `main` (1.30.0) from a test install and
+a private Stim home. It found:
+
+- **Read path works.** A Linux stim-server serves a read client. Pairing with
+  the token, the Noise handshake and `hello` give `capabilities: ["read"]`.
+  `workspaces.subscribe`, `machine.subscribe`, `worktrees.list` and
+  `maintenance.get` answer. A write method is refused, a reused token closes
+  with 4401 `unknown-secret`, and the server stops cleanly on SIGTERM.
+- **Hosted iOS from a Linux client works.** floco's
+  `stim ios --remote janics-mac-mini-2 --remote-build janics-mac-mini-2` gave
+  `launched: true`. Doctor shows mini-2 approved for build and device-host,
+  and `stim stop` works. mini-2 runs stim-server 1.28.0 with
+  `hosting.agentDriver` set to `none`.
+- **Two bugs, tracked in #4491.**
+  - `pair --json` drops the route note, so it prints a `wss://...:7443`
+    endpoint that nothing serves, with no signal.
+  - `hello` advertises macOS-only features on Linux.
+
+  The fix must keep `ios-hosted`, `android-hosted` and `macos-hosted`. On a
+  client server those advertise its relay of its own hosted sessions, which is
+  network forwarding and works on Linux. It is what lets viewers see the
+  bot's simulator.
+
+The relay itself, viewing floco's hosted device through floco's server, is not
+yet run. It is part of the phase 0 measurement.
 
 ### Setup
 
@@ -421,7 +497,7 @@ Linux**.
 
    `service install` adds a `dev.stim.server` unit to the same user manager
    and reloads it. A reload does not restart other units, but it is the live
-   bot's manager, so this step waits for the maintainer (Q2).
+   bot's manager, so this step waits for the maintainer (open decision 2).
 
 4. Run `stim-server pair` over SSH to print the payload. Pairing is not setup,
    so SSH is fine.
@@ -431,18 +507,27 @@ under the bot's account, beside the `stim` it serves.
 
 ### Code changes
 
-Only what QA confirms:
+These are confirmed by the QA run or by reading the code:
 
-- **`pair` endpoint.** On a host with no serve route, `pair` prints a
-  reachable endpoint. It prints the tailnet IP endpoint and says why, instead
-  of assuming `wss://<dns>:7443` when `tailscale serve status` fails without
-  operator.
-- **No simctl off macOS.** Status skips `xcrun simctl` off macOS instead of
-  recording an error each time.
-- **Frame helper.** The server stops retrying the frame helper off macOS.
+- **`pair` endpoint (#4491).** With no serve route, `pair` prints a reachable
+  endpoint built from `tailscale.ips` and `--port`, and says why. Today it
+  assumes `wss://<dns>:7443` from `route.port`
+  (`packages/server/bin/stim-server.ts`). `pair --json` carries the route
+  state beside `qr`. The test extends the fake `tailscale` in
+  `packages/server/__tests__/cli.test.ts`.
+- **Platform features (#4491).** `hello` drops macOS-local features off macOS
+  and keeps the hosted relay features.
+- **No simctl off macOS.** `status-read.ts` stops running
+  `listAllIosSimsAsync` off macOS, with `simctlAvailable: false` and no error
+  string. The test goes in `packages/stim-cli/src/__tests__`.
+- **Frame helper.** `server.ts` stops retrying the frame helper and logging
+  "frames come from screenshots" off macOS. `frame-helper.ts` already
+  refuses there.
 - **Service status.** `stim-server service status` reports the pairing
   endpoint (`service.ts`).
-- **Docs.** The website section above, and the server README.
+- **Docs.** Extend the existing "Linux worker" section of
+  `website/docs/remote-machines.md`, `scripts/linux-worker/setup.sh` and the
+  server README to cover serving Desktop and phones.
 
 `stim guide` topics do not change: pairing is a person's step on the server,
 not an agent command.
@@ -463,9 +548,16 @@ The phone uses the same model.
 - Nothing Desktop paired with appears on the phone, and nothing the phone
   paired with appears on Desktop.
 
-The phone already does most of this. Its work is the where-it-runs label for
-hosted devices and offloaded builds in the workspace list and build sheet. Its
-drawer already names each machine.
+The phone already does almost all of this:
+
+- `components/host-label.tsx` renders Running on, Building on and On for tiles,
+  the device view, workspace cards and build details;
+- `WorktreeRow` names the machine whenever more than one is paired.
+
+Its gap is the owner name on `components/workspace-cards.tsx` when several
+machines are paired. It also needs a mock-server fixture of a Linux owner,
+with `simctlAvailable: false`, a hosted iOS session on mini-2 and an offloaded
+build, so the labels are exercised against that payload.
 
 ### Pairing the phone from Desktop
 
@@ -523,7 +615,7 @@ The UI follows `apps/desktop/README.md` and the current `Sidebar.swift`.
   | unreachable                     | "Can't reach floco · retrying in 12 s"                    |
   | offline after being open        | "Offline · retrying", with stale data and "Offline since" |
   | expired or used pairing code    | "This pairing code expired or was already used"           |
-  | revoked                         | "No longer paired. Pair again"                            |
+  | revoked                         | "floco no longer knows this Mac. Pair again."             |
   | server key changed              | "Server key changed"                                      |
   | protocol 1 or a missing feature | "Update stim-server on floco"                             |
   | newer protocol                  | "Update Stim Desktop"                                     |
@@ -565,7 +657,7 @@ server's Unix socket, normally..." through "without pairing or Noise." with:
 > sentences] It may also pair, as a client, with another machine's stim-server,
 > as the phone app does: it spends a `stim-server pair` token in protocol 2's
 > Noise handshake, requires the payload's server-key fingerprint, and keeps its
-> client private key and each pairing's pinned server key in the macOS Keychain,
+> per-pairing client private key and pinned server key in the macOS Keychain,
 > never under `$STIM_HOME`. The pinned key is the trust boundary; Desktop
 > accepts only tailnet endpoints, and `stim-server pair` refuses a Funnel route.
 > A remote server grants it only the capabilities recorded for its key: `read`,
@@ -589,7 +681,7 @@ only through their owning client's server.
 
 0. **Linux owning server (critical path).**
    - Run stim-server on the bot VM as a user service.
-   - Fix what the floco QA finds.
+   - Fix #4491 and the other Linux gaps above.
    - Make `pair` print a reachable endpoint.
    - Write the docs.
    - Measure the relay path.
@@ -616,37 +708,43 @@ only through their owning client's server.
 
 Each row is one PR. **(critical)** marks the critical path.
 
-| PR                                                        | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Depends on                          |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| **A. Linux serving (critical)**                           | `packages/server/bin/stim-server.ts` (the `pair` endpoint off macOS), `packages/server/src/service.ts` (status prints the endpoint), `packages/server/src/frame-helper.ts` and `server.ts` (no helper retry off macOS), `packages/stim-cli/src/status-read.ts` and `devices/ios.ts` (skip simctl off macOS), `website/docs/remote-machines.md` and `packages/server/README.md` (serving from Linux), and tests in `packages/server/__tests__`                                                                                                                                                                                                                                                                                               | the floco QA findings; Q1 for reach |
-| **B. Floco deployment (critical, ops)**                   | No repo files. Install the server, operator, service and pairing on floco, with the maintainer's approval at each step that changes the VM.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | A; Q1; Q2                           |
-| **C. Desktop Noise client and Keychain (critical)**       | `apps/desktop/Sources/StimKit/Noise.swift`, `NoiseTransport.swift`, `PairedServerStore.swift` (Keychain plus an in-memory store), `PairingPayload.swift`, `ServerClient.swift` (endpoint kinds, checked ids), `ServerProtocol.swift` (Noise refusals), `StatusViews.swift` (checked sequence), Noise and malformed-message tests, a loopback interop test against a real server, the entitlements in `Support/` and `scripts/bundle.sh`, and the `CLAUDE.md` rule change                                                                                                                                                                                                                                                                    | none                                |
-| **D. Desktop pairing UI (critical)**                      | `apps/desktop/Sources/StimDesktop/PairedServersModel.swift`, `Views/PairMachineSheet.swift`, `Views/PairedMachinesView.swift`, `Views/SettingsView.swift` (the tab), `FeatureFlagStore.swift` (the flag), `Views/PhonesView.swift` (renamed Paired Devices), `apps/desktop/README.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                       | C                                   |
-| **E. Desktop owner identity and remote views (critical)** | `StimKit/DeviceRef.swift` and workspace identity (the owner), `ServerSession.swift` (a client per server), `StimStores/StatusStore.swift` (a store keyed by server and path), `Views/Sidebar.swift`, `SidebarWorktreeRow.swift`, `SidebarRowDetails.swift`, `OverviewView.swift`, `WallView.swift`, `DeviceTile.swift`, `DeviceViewer.swift`, `DeviceViewerToolbar.swift`, `LogsView.swift`, `WorkspaceDiffView.swift`, `ReplayViews.swift`, `ArchivedReplay.swift`, `PhysicalDeviceScreen.swift`, `AgentFeed.swift`, `RootView.swift`, the workspace detail view, `MachineView.swift`, `MachineDetailView.swift`, `WorkspaceActionsMenu.swift` (hides actions for remote rows), the persisted-UI-state keys, and `website/docs/desktop.md` | D                                   |
-| **F. Phone labels**                                       | `apps/mobile/src/lib/device-tile.ts`, `apps/mobile/src/lib/home-list.ts`, the workspace and build screens, `apps/mobile/mock-server/payloads.mjs` and fixtures (a hosted session and an offloaded build from a Linux owner), `apps/mobile/src/intl` and `locales`, `website/docs/phone-app.md`                                                                                                                                                                                                                                                                                                                                                                                                                                              | none                                |
-| **G. Control from Desktop (phase 3)**                     | `Views/WorkspaceActionsMenu.swift`, `Views/DeviceViewerToolbar.swift` (the Control toggle), `StimKit/AgentActions.swift` (routes remote actions to that server's `action`), `settings.get` and `recording.set` for remote rows, docs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | E                                   |
+| PR                                                        | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Depends on                |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| **A. Linux serving (critical)**                           | `packages/server/bin/stim-server.ts` (the `pair` endpoint and route state, #4491), the `hello` feature list in `packages/server/src/server.ts` (#4491, keeping the hosted relay features), `server.ts` (no frame-helper retry off macOS), `packages/server/src/service.ts` (status prints the endpoint), `packages/stim-cli/src/status-read.ts` (no simctl off macOS), `website/docs/remote-machines.md` "Linux worker", `scripts/linux-worker/setup.sh`, `packages/server/README.md`, and tests in `packages/server/__tests__/cli.test.ts` and `packages/stim-cli/src/__tests__`                                                                                                                                                                                                      | none                      |
+| **B. Floco deployment (critical, ops)**                   | No repo files. Install the server, operator, service and pairing on floco, with the maintainer's approval at each step that changes the VM.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | A; open decisions 1 and 2 |
+| **C. Desktop Noise client and Keychain (critical)**       | `apps/desktop/Sources/StimKit/Noise.swift`, `NoiseTransport.swift`, `PairedServerStore.swift` (Keychain, one key per pairing, plus an in-memory store), the payload parser on `PairingCode` (`StimServer.swift`), `ServerClient.swift` (endpoint kinds, size caps, checked ids, nil bootstrap for remote), `ServerProtocol.swift` (the phone's refusal codes, `actions` in `HelloResult`), `StatusViews.swift` (checked sequence), Noise, low-order-key and malformed-message tests, a loopback interop test against a real server and a scripted responder, `.github/workflows/desktop.yml` (Node for the interop test, `paths` for the noise fixtures), the `CLAUDE.md` rule change, and the "Desktop does not pair" lines of `docs/specs/2026-10-13-pluggable-transports-design.md` | none                      |
+| **D. Desktop pairing UI (critical)**                      | `apps/desktop/Sources/StimDesktop/PairedServersModel.swift`, `Views/PairMachineSheet.swift`, `Views/PairedMachinesView.swift`, `Views/SettingsView.swift` (the tab), `FeatureFlagStore.swift` (the flag), `Views/PhonesView.swift` (renamed Paired Devices), `apps/desktop/README.md`, and the read-exposure text in `website/docs/desktop.md`                                                                                                                                                                                                                                                                                                                                                                                                                                         | C                         |
+| **E. Desktop owner identity and remote views (critical)** | `StimKit/DeviceRef.swift` and workspace identity (the owner), `ServerSession.swift` (a client per server), `StimStores/StatusStore.swift` (a store keyed by server and path), `Views/Sidebar.swift`, `SidebarWorktreeRow.swift`, `SidebarRowDetails.swift`, `OverviewView.swift`, `WallView.swift`, `DeviceTile.swift`, `DeviceViewer.swift`, `DeviceViewerToolbar.swift`, `LogsView.swift`, `WorkspaceDiffView.swift`, `ReplayViews.swift`, `ArchivedReplay.swift`, `PhysicalDeviceScreen.swift`, `AgentFeed.swift`, `RootView.swift`, the workspace detail view, `MachineView.swift`, `MachineDetailView.swift`, `WorkspaceActionsMenu.swift` (hides actions for remote rows), the in-memory UI state for remote rows, and the rest of `website/docs/desktop.md`                     | D                         |
+| **F. Phone owner label**                                  | `apps/mobile/src/components/workspace-cards.tsx` (owner name when several machines are paired), `apps/mobile/mock-server/payloads.mjs` and fixtures (a Linux owner with a hosted iOS session on mini-2 and an offloaded build), `apps/mobile/locales/en.po` and `en.ts`, `website/docs/phone-app.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | none                      |
+| **G. Control from Desktop (phase 3)**                     | `Views/WorkspaceActionsMenu.swift`, `Views/DeviceViewerToolbar.swift` (the Control toggle), `StimKit/AgentActions.swift` (routes remote actions to that server's `action`), `settings.get` and `recording.set` for remote rows, docs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | E                         |
 
 The critical path for the maintainer's case is A then B, running in parallel
 with C then D then E. F runs alongside them, and G follows E. PR E is the
 largest; it can split into identity (DeviceRef, ServerSession, StatusStore)
-and views once identity lands.
+and views once identity lands. A, C and D change pairing, key storage or what
+another machine can reach, so they carry `review: needs-human`.
 
 ## Test and verification plan
 
 - **Unit tests, C and E.**
   - Swift Noise passes the core JSON vectors.
-  - A loopback interop test pairs with a real `stim-server`, reconnects in
-    returning mode, and refuses a wrong fingerprint before message 3 and a
-    changed server key on reconnect.
+  - An all-zero X25519 public key is refused.
+  - A loopback interop test pairs with a real `stim-server` and reconnects in
+    returning mode.
+  - A scripted responder covers a wrong fingerprint, refused before message 3,
+    and a changed server key on reconnect.
+  - A protocol 1 close (4400) and each refusal code stop retrying;
+    `handshake-failed` retries.
   - The payload parser accepts both printed forms and refuses a missing
     fingerprint, a non-tailnet host, `v: 1` (update stim-server) and a later
     `v` (update Stim Desktop).
   - Malformed authenticated messages, such as an oversized reply id, a bad
     sequence number or a truncated frame, close the connection without
     trapping.
-  - The in-memory store round-trips and Forget deletes the item.
-  - A remote workspace exposes no action, and a remote path never reaches a
-    file or process API.
+  - Forget leaves no key that can authenticate: a reconnect after Forget
+    has nothing to send.
+  - A remote workspace offers no action. A remote path has its own type with
+    no file URL conversion, so the compiler enforces the rule.
   - A remote device with `host == nil` never resolves to a local simulator.
 - **Server tests, A.** These run in the Linux CI job:
   - `pair` on a host without a serve route prints the tailnet IP endpoint;
@@ -657,19 +755,20 @@ and views once identity lands.
      endpoint.
   2. Run `stim-server pair` over SSH.
   3. Pair a Desktop test copy on janics-mac-mini, following the Desktop
-     workflow rules. It uses the in-memory store. Pair the maintainer's phone
-     too.
+     workflow rules. It uses the in-memory store and names itself as a test
+     copy. Pair the maintainer's phone too.
   4. The bot runs `stim ios --remote janics-mac-mini-2` in its own test
-     worktree.
+     worktree. The QA run already proved this launch from floco.
   5. Confirm on both clients:
      - the workspace appears under floco;
      - the build shows "building on janics-mac-mini-2" with its phase;
      - the hosted simulator streams through the relay, with latency and
        bitrate recorded against the acceptance above;
-     - `devices revoke` on floco closes Desktop within about 2 s and shows "No
-       longer paired";
+     - `devices revoke` on floco closes Desktop within about 2 s and shows "floco
+       no longer knows this Mac. Pair again.";
      - mini-2's own Desktop lists the session only in its local "Hosted here".
-  6. Run `stim stop` in the bot's test worktree.
+  6. Run `stim stop` in the bot's test worktree, and `stim-server devices
+revoke` for every test-copy record left on floco.
 - **Desktop screenshots on janics-mac-mini.** Use `stim macos --remote-build
 janics-mac-mini --remote janics-mac-mini` and agent-device with the native
   backend. Capture:
