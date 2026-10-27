@@ -22,10 +22,9 @@ const native = vi.hoisted(() => ({
   reset: vi.fn<(_avd: string, _serial: string, keep: string) => Promise<void>>(),
   image: vi.fn<() => string | null>(),
   resolved: vi.fn<() => { notRunning?: true; missing?: true; notOwned?: true; serial?: string }>(),
-  pressure: vi.fn<() => string | null>(),
   mute: vi.fn<(serial: string, avdName: string) => Promise<void>>(),
 }));
-vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => native.pressure() }));
+vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => null }));
 vi.mock('../devices/android.ts', () => ({
   DEFAULT_AVD_DEVICE_PROFILE: 'pixel_6',
   hostSystemImageArch: () => 'arm64-v8a',
@@ -71,7 +70,6 @@ beforeEach(() => {
   home = join(area, 'home');
   mkdirSync(home);
   process.env.STIM_HOME = home;
-  native.pressure.mockReturnValue('normal');
   native.wait.mockResolvedValue({ ok: true });
   native.image.mockReturnValue('system-images;android-30;google_apis;arm64-v8a');
   native.resolved.mockReturnValue({ notRunning: true });
@@ -101,6 +99,10 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.STIM_HOME;
   rmSync(area, { recursive: true, force: true });
+});
+
+test('prepare trusts the offer instead of sampling memory pressure again', async () => {
+  expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({ state: 'ready' });
 });
 
 test('persists exact ownership before a viewer-free boot and stops only that AVD', async () => {

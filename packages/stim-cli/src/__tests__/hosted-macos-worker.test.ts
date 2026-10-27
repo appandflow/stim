@@ -443,8 +443,17 @@ test('stop without an app skips defaults and refuses a foreign preference domain
 test('prepare records its app slot without a device ledger and refuses replacement or memory pressure', async () => {
   rmSync(join(home, 'hosted-device.json'));
   native.pressure.mockReturnValue('warning');
-  expect(await runHostedMacosApp('prepare', request)).toMatchObject({ state: 'stopped', device: null });
-  native.pressure.mockReturnValue('normal');
+  expect(await runHostedMacosApp('prepare', request)).toMatchObject({
+    state: 'stopped',
+    device: null,
+    notice: 'Host memory pressure is warning; hosted sessions wait until it is normal.',
+  });
+  native.pressure.mockReturnValue(null);
+  expect(await runHostedMacosApp('prepare', request)).toMatchObject({
+    state: 'stopped',
+    notice: 'Host memory pressure could not be read; retry shortly.',
+  });
+  native.pressure.mockReturnValueOnce(null).mockReturnValue('normal');
   expect(await runHostedMacosApp('prepare', request)).toMatchObject({
     state: 'ready',
     device: { macosVersion: '27.0', appSlot: 3 },
