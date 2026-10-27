@@ -519,7 +519,7 @@ struct WorkspaceDetail: View {
   ) -> some View {
     let workspace = owner ?? self.workspace
     let canControl =
-      device.isInteractive
+      OwnedDevice(owner: .local, ref: device).isInteractive
       && ((!device.isPhysical && device.hostedMachine == nil)
         || PhysicalScreen(device: device, link: server.link, now: Date()).canControl)
     let build = workspace.runningBuild(for: device)
