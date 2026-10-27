@@ -1035,7 +1035,8 @@ it was busy.
 has no simulators of its own: `bot/onboarding-copy`, an iOS simulator hosted on
 `janics-mac-mini-2` and driven by Claude Code, and `bot/upgrade-pods`, an iOS build
 running on `janics-mac-mini-2`. `pnpm run mock-server --linux-owner --name floco`
-serves only them, with `simctlAvailable` false, no device leases and no archives.
+lists only them as workspaces, with `simctlAvailable` false, no device leases and no archives;
+the machine's usage, `machine.details` and notifications stay the captured Mac's.
 The `a4-multi-device` workspace also carries a macOS app that
 `stim macos --remote janics-mac-mini` placed on another Mac, added by hand in the
 `macos.host` shape.

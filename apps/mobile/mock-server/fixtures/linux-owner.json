@@ -1,6 +1,6 @@
 [
   {
-    "path": "/home/floco/work/hinges-onboarding/apps/mobile",
+    "path": "/home/floco/work/onboarding-copy/apps/mobile",
     "live": true,
     "phase": "live",
     "phaseSince": null,
@@ -37,9 +37,9 @@
       "appPresence": null
     },
     "worktree": {
-      "path": "/home/floco/work/hinges-onboarding",
+      "path": "/home/floco/work/onboarding-copy",
       "branch": "bot/onboarding-copy",
-      "repository": "/home/floco/work/hinges",
+      "repository": "/home/floco/work/bot-app",
       "git": {
         "changed": 0,
         "untracked": 0,
@@ -62,7 +62,7 @@
     }
   },
   {
-    "path": "/home/floco/work/hinges-pods/apps/mobile",
+    "path": "/home/floco/work/upgrade-pods/apps/mobile",
     "live": true,
     "phase": "live",
     "phaseSince": null,
@@ -70,9 +70,9 @@
     "warnings": [],
     "issues": [],
     "worktree": {
-      "path": "/home/floco/work/hinges-pods",
+      "path": "/home/floco/work/upgrade-pods",
       "branch": "bot/upgrade-pods",
-      "repository": "/home/floco/work/hinges",
+      "repository": "/home/floco/work/bot-app",
       "git": {
         "changed": 0,
         "untracked": 0,
