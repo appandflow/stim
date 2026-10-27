@@ -495,7 +495,7 @@ struct WorkspaceRowContent: View {
   private func context(_ devices: RowDevices) -> Text? {
     var parts: [Text] = []
     if env.pathMissing == true, !env.isActive {
-      parts.append(Text("Run stim worktree remove to drop it").foregroundStyle(Palette.warning))
+      parts.append(Text("Run \(env.removalCommand) to drop it").foregroundStyle(Palette.warning))
     }
     if let names = devices.names { parts.append(Text(names).foregroundStyle(Palette.secondary)) }
     if let drivers = devices.drivers {

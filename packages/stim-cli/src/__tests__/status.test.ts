@@ -884,7 +884,7 @@ test('a workspace whose folder was deleted reports pathMissing and no ready phas
   });
   const human = await runStatus();
   expect(human.some((line) => line.includes('gone [folder missing]'))).toBe(true);
-  expect(human.some((line) => line.includes('stim gc --delete'))).toBe(true);
+  expect(human.some((line) => line.includes(`stim worktree remove '${gone}'`))).toBe(true);
   expect(Object.keys(loadConfig()?.projects ?? {})).toEqual([gone]);
 });
 

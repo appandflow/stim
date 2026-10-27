@@ -251,6 +251,7 @@ import Testing
     #expect(!missing.isActive)
     #expect(missing.rowStatus(now: Self.now).kind == .missing)
     #expect(missing.rowStatus(now: Self.now).text == "Folder missing")
+    #expect(missing.removalCommand == "stim worktree remove '/w'")
   }
 
   @Test func aReadyWorkspaceWithItsFolderStaysReady() throws {

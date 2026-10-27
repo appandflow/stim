@@ -81,6 +81,9 @@ extension Format {
 }
 
 extension Workspace {
+  /// The command that drops this workspace's record once its folder is gone.
+  public var removalCommand: String { "stim worktree remove '\(path)'" }
+
   private var settingUp: Bool { !live && isSettingUp }
 
   /// The running local devices in `orderedDevices` order; EAS sessions are counted apart.
@@ -111,7 +114,7 @@ extension Workspace {
     }
     if pathMissing == true, !isActive {
       return RowStatus(
-        kind: .missing, text: "Folder missing", label: "Folder missing, run stim worktree remove to drop it", tone: .warning)
+        kind: .missing, text: "Folder missing", label: "Folder missing, run \(removalCommand) to drop it", tone: .warning)
     }
     if !isActive {
       guard let seconds = since(metro?.lastStop?.at, now) else {
