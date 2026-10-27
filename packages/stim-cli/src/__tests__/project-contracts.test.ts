@@ -145,7 +145,7 @@ test('doctor combines shared findings with the selected native platform and reco
       (finding: { code?: string; title: string }) =>
         finding.code === 'not-an-app' ||
         finding.code?.startsWith('android-') ||
-        finding.title.includes('iOS runs through EAS'),
+        finding.title.includes('iOS runs on a remote Mac or through EAS'),
     ),
   ).toBe(false);
   expect(getProject(root)?.doctorRuns?.ios?.version).toBe('1.2.3');

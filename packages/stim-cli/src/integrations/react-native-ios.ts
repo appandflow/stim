@@ -26,7 +26,7 @@ import { easDeviceBuildRemedy } from '../engine/eas-build.ts';
 import { copyAppAside, writeIpTxt } from '../engine/ios-lan.ts';
 import { staleNativeDirRefusal, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { bundlerPin } from '../engine/bundler.ts';
-import { iosToolchainAsync } from '../offload/toolchain.ts';
+import { buildsOnlyOnWorker, iosToolchainAsync } from '../offload/toolchain.ts';
 import { resolveIosProjectDir, type IosProjectDir, type SettingsObject } from '../workspace/settings.ts';
 import { IosRecipeRefusal, type IosProject, type IosArtifactContext, type IosArtifactRecipe } from './ios-project.ts';
 
@@ -53,6 +53,7 @@ type ReactNativeIosDependencies = Pick<
   | 'readPodState'
   | 'podsAreStale'
   | 'runPodInstall'
+  | 'iosToolchain'
   | 'buildIos'
   | 'gateProfileForDevice'
   | 'sealAppForDevice'
@@ -389,7 +390,9 @@ function reactNativeIosArtifact(
       const podState = d.readPodState(root, iosProject.dir);
       const verdict = d.podsAreStale(podState.lockText, podState.manifestText, podState.dir);
       const action = podAction(podState, verdict, { prebuildRan: mutatingSteps.includes('prebuild') });
-      if (action.install) {
+      if (action.install && buildsOnlyOnWorker(await d.iosToolchain(root, null))) {
+        phase('pods', `${action.reason} -> no Xcode here; the Mac that builds runs pod install`);
+      } else if (action.install) {
         step('pods');
         const result = await d.runPodInstall(root, logWriter(), {
           onHeartbeat: note,

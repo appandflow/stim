@@ -539,9 +539,11 @@ refuses with `STIM_LOCK_TIMEOUT`, names that process, and installs nothing.
 
 ### From Windows or Linux
 
-`--remote eas` is the supported way to run iOS from a host without Xcode.
-`stim doctor --platform ios` on such a host points at it instead of at
-CocoaPods and simulators. Install `eas-cli` 21.6.0 or later and `agent-device`, plus `ngrok` or
+From a host without Xcode, iOS runs either on a paired Mac with
+`stim ios --remote <mac> --remote-build <mac>` (see
+[Remote machines](./remote-machines.md#requirements)) or through EAS with
+`--remote eas`. `stim doctor --platform ios` on such a host points at both
+instead of at CocoaPods and simulators. Install `eas-cli` 21.6.0 or later and `agent-device`, plus `ngrok` or
 `cloudflared` for the Metro tunnel, then:
 
 ```bash
