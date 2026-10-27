@@ -117,7 +117,6 @@ async function start(extra: Partial<Parameters<typeof startServer>[0]> = {}): Pr
     name: 'Worker',
     stimVersion: '9.9.9',
     serverVersion: '1.2.3',
-    env: { ...process.env, ...extra.env },
     hostsDevices: true,
     tailscale: null,
     tailscaleState: { state: 'not-running', backendState: 'Stopped' },
