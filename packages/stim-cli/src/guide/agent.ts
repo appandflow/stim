@@ -212,6 +212,9 @@ RULES DURING THE LOOP
   survive the run. Trust the exact device, app, Metro, and launch facts in the
   final summary. Use the full reported device ID. Never assume a simulator
   named booted belongs to this workspace.
+- With no matching Android system image, android downloads one (about 2 GB)
+  with sdkmanager unless android.installImages is never. It never accepts SDK
+  licenses: give the user the refusal's \`sdkmanager --licenses\` command.
 - After each ios or android run, give the user one compact result: exact device,
   app id, launch state, cache result, total duration, and whether stim logs
   --errors passed. Include a remedy only when action remains. Do not repeat the
