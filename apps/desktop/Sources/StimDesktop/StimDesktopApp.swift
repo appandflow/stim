@@ -179,6 +179,7 @@ struct StimDesktopApp: App {
   private let buildMachines: BuildMachinesModel
   private let statsReader: StatsReader
   private let serverStatus: AnyCancellable
+  private let pairedStatus: AnyCancellable
   private let metrics: MetricsStore
   private let storage: StorageStore
   private let planChecks: BuildPlanChecks
@@ -221,6 +222,9 @@ struct StimDesktopApp: App {
       DispatchQueue.main.async {
         MainActor.assumeIsolated { store?.useServer(ServerSession.shared.feedConnection) }
       }
+    }
+    pairedStatus = PairedServerSessions.shared.$sessions.sink { [weak store] sessions in
+      MainActor.assumeIsolated { store?.usePairedServers(sessions.compactMapValues(\.client)) }
     }
     notifier = Notifier(store: store)
     let actions = ActionCenter(cli: cli) { ServerSession.shared.statsConnection }
