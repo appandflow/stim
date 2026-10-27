@@ -228,6 +228,7 @@ describe('ensureBooted: ios', () => {
   });
 
   test('stops probing at the first timeout once the simulator is no longer Booted', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
     const shutdown = simList([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
     let probes = 0;
     setExecutor({
@@ -236,6 +237,7 @@ describe('ensureBooted: ios', () => {
         if (file === 'xcrun' && args[1] === 'list') return shutdown;
         if (args[3] !== 'launchctl') return '';
         probes++;
+        vi.advanceTimersByTime(30000);
         throw Object.assign(new Error('simctl spawn timed out'), { code: 'ETIMEDOUT' });
       },
       runFileQuiet: () => null,
