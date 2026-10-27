@@ -569,6 +569,11 @@ The host verifies the policy digest and android-instance backend before granting
 control. An older host, missing binary or unsupported policy reports driver: none;
 the host's notice explains unavailable control.
 
+On a local: machine, daemonBaseUrl is http://127.0.0.1:<port> of this
+workspace's Metro supervisor, which carries each request to the host over its
+own authenticated device-host connection (host feature hosted-agent-link). It
+works for Debug runs while stim start runs; Release runs report driver: none.
+
 android.host.agent in stim status --json provides driver, remoteConfig and
 command, never its token. Each slot has a separate 0600 file under the workspace
 state directory at hosted-android/<slot>/agent-device-remote.json. Use that file:
@@ -868,6 +873,11 @@ restart alone does not prove they stopped. A daemon exit restarts only that
 session and rotates its grant; rerun stim ios to reattach and refresh the config.
 An unresolved proxy or daemon retains its claim and blocks reinstall and native
 teardown; clear a named claim only after proving its owner and child are gone.
+
+On a local: machine, daemonBaseUrl is http://127.0.0.1:<port> of this
+workspace's Metro supervisor, which carries each request to the host over its
+own authenticated device-host connection (host feature hosted-agent-link). It
+works for Debug runs while stim start runs; Release runs report driver: none.
 
 The client writes a separate 0600 remote-config file for each workspace slot.
 Status prints agent: <command>; ios.host.agent in --json carries driver,

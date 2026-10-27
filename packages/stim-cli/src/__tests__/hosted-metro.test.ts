@@ -5,7 +5,7 @@ import { setImmediate, setTimeout as delay } from 'node:timers/promises';
 import { hostedMetroLinks } from '@stim-cli/core/state';
 import { watchHostedMetro } from '../supervisor/hosted-metro.ts';
 import { captureProcessToken } from '../process-identity.ts';
-import { closeHostedMetro, requireHostedMetro } from '../device-host/metro-request.ts';
+import { closeHostedMetro, hostedAgentPort, requireHostedMetro } from '../device-host/metro-request.ts';
 import { writeHostedNative } from '../device-host/ios-state.ts';
 import type { HostedIosPlacement } from '@stim-cli/core/state';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -15,6 +15,9 @@ const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | n
 
 const links = vi.hoisted(() => ({
   close: vi.fn<() => void>(),
+  relayClose: vi.fn<() => void>(),
+  relayPort: vi.fn<(port: number | undefined) => void>(),
+  lost: vi.fn<() => void>(),
   probe: vi.fn<() => Promise<{ state: 'ready' | 'stopped' }>>(),
   dropWatchEvents: false,
   failLinkWrites: 0,
@@ -55,9 +58,16 @@ vi.mock('node:fs', async (importOriginal) => {
 });
 vi.mock('../device-host/hosted-client.ts', () => ({ probeHostedSession: links.probe }));
 vi.mock('../supervisor/metro-links.ts', () => ({
-  openMetroLinks: ({ onReady }: { onReady: () => void }) => {
+  openMetroLinks: ({ onReady, onLost }: { onReady: () => void; onLost: () => void }) => {
+    links.lost.mockImplementation(onLost);
     queueMicrotask(onReady);
     return { close: links.close };
+  },
+}));
+vi.mock('../supervisor/agent-relay.ts', () => ({
+  openAgentRelay: ({ port }: { port?: number }) => {
+    links.relayPort(port);
+    return { port: Promise.resolve(51234), close: links.relayClose };
   },
 }));
 let home: string;
@@ -70,6 +80,9 @@ beforeEach(() => {
   process.env.STIM_HOME = home;
   root = join(home, 'app');
   links.close.mockReset();
+  links.relayClose.mockReset();
+  links.relayPort.mockReset();
+  links.lost.mockReset();
   links.probe.mockReset();
   links.dropWatchEvents = false;
   links.failLinkWrites = 0;
@@ -109,12 +122,42 @@ test('closing links completes while host evidence is pending, and orphan request
       expect(readWorkspaceState(root)?.hostedMetroRequests).not.toHaveProperty(orphan);
       expect(links.probe).toHaveBeenCalled();
     });
+    expect(hostedAgentPort(root, session)).toBeNull();
     await closeHostedMetro(root, session);
     expect(readWorkspaceState(root)?.hostedMetroLinks).toEqual({});
     expect(links.close).toHaveBeenCalledOnce();
   } finally {
     await close();
     release?.({ state: 'ready' });
+  }
+});
+
+test('a session on a local network machine publishes its agent relay port with readiness and closes the relay with its links', async () => {
+  links.probe.mockResolvedValue({ state: 'ready' });
+  writeWorkspaceState(root, {
+    hostedMetroRequests: { [session]: { id: 'request', machine: 'local:10.0.0.92' } },
+    hostedMetroLinks: { [session]: { id: 'earlier', processToken: 'gone', agentPort: 51234 } },
+  });
+  const close = watchHostedMetro(root, 8082, 'watcher');
+  try {
+    await vi.waitFor(() =>
+      expect(readWorkspaceState(root)?.hostedMetroLinks).toMatchObject({
+        [session]: { id: 'request', processToken: 'watcher', ready: true, agentPort: 51234 },
+      }),
+    );
+    expect(links.relayPort).toHaveBeenCalledWith(51234);
+    expect(hostedAgentPort(root, session)).toBe(51234);
+    links.lost();
+    expect(hostedMetroLinks(readWorkspaceState(root))[session]).toEqual({
+      id: 'request',
+      processToken: 'watcher',
+      agentPort: 51234,
+    });
+    expect(hostedAgentPort(root, session)).toBeNull();
+    await closeHostedMetro(root, session);
+    await vi.waitFor(() => expect(links.relayClose).toHaveBeenCalledOnce());
+  } finally {
+    await close();
   }
 });
 

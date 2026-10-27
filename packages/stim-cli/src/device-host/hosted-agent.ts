@@ -12,19 +12,25 @@ export async function removeAgentAccess(file: string, keep?: string): Promise<vo
   }
 }
 
+/**
+ * Writes the remote config that lets agent-device drive a hosted app and says how to use it. A tailnet machine is
+ * reached at its `tailscale serve` route. A local network machine is reached only through `relay`, the loopback port
+ * of this workspace's supervisor relay, or not at all when `relay` is the reason there is none.
+ */
 export async function agentAccess(
   file: string,
   credential: DeviceHostMachineCredential,
   grant: unknown,
   note: (line: string) => void,
   platform: 'macos' | 'ios' | 'android' = 'macos',
+  relay:
+    | number
+    | string = `Agent control of apps hosted on ${credential.machine} over the local network is relayed only for hosted iOS and Android Debug runs.`,
 ): Promise<HostedAgentAccess> {
   const machine = parseMachine(credential.machine);
-  if (machine?.transport === 'local') {
-    if (grant !== undefined)
-      note(
-        `Agent control of apps hosted on ${credential.machine} needs a tailnet machine; the local network does not carry it.`,
-      );
+  const local = machine?.transport === 'local';
+  if (local && typeof relay === 'string') {
+    if (grant !== undefined) note(relay);
     await removeAgentAccess(file);
     return { driver: 'none', setting: 'hosting.agentDriver' };
   }
@@ -40,7 +46,9 @@ export async function agentAccess(
     client && issued
       ? client.access({
           grant: issued,
-          baseUrl: `https://${credential.address}${port === 443 ? '' : `:${port}`}${issued.path}`,
+          baseUrl: local
+            ? `http://127.0.0.1:${relay}${issued.path}`
+            : `https://${credential.address}${port === 443 ? '' : `:${port}`}${issued.path}`,
           file: target,
           platform,
         })

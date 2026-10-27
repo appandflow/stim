@@ -1464,6 +1464,7 @@ export function protocolJsonSchema(): JsonSchema {
           }),
           request('device-host.metro.close', session({})),
           request('device-host.metro.link', session({})),
+          request('device-host.agent.link', session({})),
           request(
             'device-host.frames.subscribe',
             session({

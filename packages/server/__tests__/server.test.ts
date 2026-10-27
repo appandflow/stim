@@ -1271,6 +1271,7 @@ describe('pairing', () => {
           'hosted-android-process',
           'hosted-metro-ports',
           'hosted-metro-link',
+          'hosted-agent-link',
           'server-update',
           'build-compat',
           'build-jdk',
