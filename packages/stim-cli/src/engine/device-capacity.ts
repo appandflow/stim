@@ -414,7 +414,7 @@ export function deviceCapacityRefusal({
  * The early `concurrency.maxDevices` check, before Metro starts or a device is created. It is advisory, so an
  * unknown count passes: `withDeviceBootAdmission` makes the binding decision when the boot starts.
  */
-export function checkDeviceCapacity({
+export async function checkDeviceCapacity({
   platform,
   project,
   slot = 'default',
@@ -426,11 +426,11 @@ export function checkDeviceCapacity({
   slot: string;
   max: number;
 }> &
-  InventorySources = {}): CapacityRefusal | null {
+  AsyncInventorySources = {}): Promise<CapacityRefusal | null> {
   if (!max || max <= 0) return null;
-  let inventory: ReturnType<typeof readInventory>;
+  let inventory: Awaited<ReturnType<typeof readInventoryAsync>>;
   try {
-    inventory = readInventory(sources);
+    inventory = await readInventoryAsync(sources);
   } catch (error) {
     if (isClaimRefusal(error)) return null;
     throw error;

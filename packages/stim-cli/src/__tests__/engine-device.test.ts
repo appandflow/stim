@@ -1858,7 +1858,7 @@ describe('ensureOwnedDevice: ios', () => {
       const outcome = await enforceBudget({ root, note: () => {}, budget: limits, simSnapshot });
       expect(outcome.status).toBe('ok');
       expect(
-        checkDeviceCapacity({
+        await checkDeviceCapacity({
           platform: 'ios',
           project: getProject(root),
           max: 5,
@@ -2784,11 +2784,11 @@ describe('ensureOwnedDevice: android', () => {
       expect(repeated.avdName).toBe(first.avdName);
       expect(repeated.systemImage).toBe(first.systemImage);
       const options = (device: typeof first) =>
-        androidBuildOptions({ release: false, physical: false, device, variant: null, deviceAbi: () => null });
-      expect(options(first).abi).toBe(arch);
-      expect(options(repeated).abi).toBe(arch);
-      expect(buildCacheKey('android', 'same-fingerprint', options(repeated).runOptions)).toBe(
-        buildCacheKey('android', 'same-fingerprint', options(first).runOptions),
+        androidBuildOptions({ release: false, physical: false, device, variant: null, deviceAbi: async () => null });
+      expect((await options(first)).abi).toBe(arch);
+      expect((await options(repeated)).abi).toBe(arch);
+      expect(buildCacheKey('android', 'same-fingerprint', (await options(repeated)).runOptions)).toBe(
+        buildCacheKey('android', 'same-fingerprint', (await options(first)).runOptions),
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -3422,7 +3422,7 @@ describe('checkDeviceCapacity', () => {
     'a listing that %s lets the early check pass and stops the boot admission',
     async (_, sims) => {
       const sources = { sims, adb: makeAdbDevices(), config: makeConfig(), booting: [] };
-      expect(checkDeviceCapacity({ platform: 'ios', project: { platforms: {} }, max: 4, ...sources })).toBe(null);
+      expect(await checkDeviceCapacity({ platform: 'ios', project: { platforms: {} }, max: 4, ...sources })).toBe(null);
       await expect(
         withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', {
           root: tmpHome,
@@ -3446,7 +3446,9 @@ describe('checkDeviceCapacity', () => {
       config: makeConfig(),
       booting: [],
     };
-    expect(checkDeviceCapacity({ platform: 'android', project: { platforms: {} }, max: 1, ...sources })).toBe(null);
+    expect(await checkDeviceCapacity({ platform: 'android', project: { platforms: {} }, max: 1, ...sources })).toBe(
+      null,
+    );
     await expect(
       withDeviceBootAdmission({ platform: 'android', key: 'stim-a' }, async () => 'booted', {
         root: tmpHome,

@@ -817,7 +817,7 @@ async function runIos(
       wireless = resolved.wireless === true;
     }
     if (checkCapacity && !hostedTarget) {
-      const capacity = d.checkDeviceCapacity({
+      const capacity = await d.checkDeviceCapacity({
         platform: PLATFORM,
         project: proj,
         max: limits.maxDevices,

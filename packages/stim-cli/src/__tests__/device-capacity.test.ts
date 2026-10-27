@@ -4,6 +4,7 @@ import { join, parse } from 'node:path';
 import { readStatsReport } from '@stim-cli/core/state';
 import { workspaceId } from '@stim-cli/core';
 import {
+  checkDeviceCapacity,
   peekDeviceSlots,
   withDeviceBootAdmission,
   deviceSlotWaitingLine,
@@ -176,6 +177,35 @@ test('admission lists simulators and emulators through the async executor', asyn
       }),
     ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
     expect(listed).toContain('adb');
+  } finally {
+    resetExecutor();
+  }
+});
+
+test('the early capacity check lists simulators and emulators through the async executor', async () => {
+  setExecutor(
+    makeExecutor({
+      runFile: () => {
+        throw new Error('a synchronous device listing blocks the event loop');
+      },
+      runFileAsync: async (file) =>
+        file === 'xcrun' ? '{"devices":{}}' : 'List of devices attached\nemulator-5554\tdevice\n',
+    }),
+  );
+  try {
+    await expect(
+      checkDeviceCapacity({
+        platform: 'android',
+        project: null,
+        max: 1,
+        config: makeConfig({
+          projects: {
+            '/work/holder': { platforms: { android: { owned: true, avdName: 'stim-holder', consolePort: 5554 } } },
+          },
+        }),
+        booting: [],
+      }),
+    ).resolves.toMatchObject({ code: 'STIM_AT_CAPACITY' });
   } finally {
     resetExecutor();
   }

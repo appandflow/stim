@@ -7,11 +7,13 @@ import { collectHostedAndroidLogs } from '../device-host/android-logs.ts';
 
 const native = vi.hoisted(() => {
   const runFile = vi.fn<(file: string, args?: string[], options?: { timeoutMs?: number }) => string>();
+  const runFileQuiet = vi.fn<(file: string, args?: string[]) => string>();
   return {
     runFile,
     runFileAsync: async (file: string, args?: string[], options?: { timeoutMs?: number }) =>
       runFile(file, args, options),
-    runFileQuiet: vi.fn<(file: string, args?: string[]) => string>(),
+    runFileQuiet,
+    runFileQuietAsync: async (file: string, args?: string[]) => runFileQuiet(file, args),
   };
 });
 vi.mock('../exec.ts', () => ({ getExecutor: () => native }));

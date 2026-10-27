@@ -199,7 +199,7 @@ function remoteDeviceDeps(ctx: RemoteContext) {
   const easEnv = easExecOptions(ctx.root);
 
   return {
-    checkCapacity: () => null,
+    checkCapacity: async () => null,
 
     ensureDevice: async (): Promise<RemoteDeviceRecord> => ({
       deviceName: ctx.backend === 'proxy' ? 'remote device (your daemon)' : 'EAS Simulator',
@@ -928,7 +928,7 @@ async function readDaemon(ctx: RemoteContext, sessionId: string): Promise<Remote
 
 export function remoteIosDeps(ctx: RemoteContext): {
   ctx: RemoteContext;
-  checkDeviceCapacity: () => null;
+  checkDeviceCapacity: () => Promise<null>;
   ensureOwnedDevice: () => Promise<RemoteDeviceRecord>;
   ensureBooted: (opts?: { out?: (msg: string) => void }) => Promise<BootResult>;
   installIosApp: (a: { udid: string; appPath: string }) => Promise<InstallResult>;
@@ -963,7 +963,7 @@ export function remoteIosDeps(ctx: RemoteContext): {
 // adb reverse and 10.0.2.2 resolve on the remote host, so Android uses the public Metro origin.
 export function remoteAndroidDeps(ctx: RemoteContext): {
   ctx: RemoteContext;
-  checkCapacity: () => null;
+  checkCapacity: () => Promise<null>;
   ensureDevice: () => Promise<RemoteDeviceRecord>;
   ensureDeviceBooted: (opts?: { out?: (msg: string) => void }) => Promise<{
     ok?: boolean;
