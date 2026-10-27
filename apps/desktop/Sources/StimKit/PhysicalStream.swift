@@ -35,6 +35,7 @@ import Foundation
   private var generation = 0
   private var beginGeneration = 0
   private var pressed: (x: Double, y: Double)?
+  private var keyframeRequest: Task<Void, Never>?
 
   public init(target: ReplayTarget, physical: Bool = true) {
     self.target = target
@@ -109,10 +110,16 @@ import Foundation
     connect(nil)
   }
 
-  /// Asks for a keyframe after the decoder lost its state.
+  /// Asks for a keyframe after the decoder lost its state, while no earlier request is still unanswered, so a server
+  /// that sends undecodable keyframes and never answers holds at most one request.
   public func requestKeyframe() {
-    guard let server, let subscriptionID else { return }
-    Task { _ = try? await server.request("frames.keyframe", ["subscription": .string(subscriptionID)]) }
+    guard keyframeRequest == nil, let server, let subscriptionID else { return }
+    let current = generation
+    keyframeRequest = Task { [weak self] in
+      _ = try? await server.request("frames.keyframe", ["subscription": .string(subscriptionID)])
+      guard let self, current == self.generation else { return }
+      self.keyframeRequest = nil
+    }
   }
 
   /// Starts driving the device, taking it over from an agent that drives it. The server refuses a workspace that
@@ -195,6 +202,8 @@ import Foundation
 
   private func close() {
     generation += 1
+    keyframeRequest?.cancel()
+    keyframeRequest = nil
     unsubscribe?()
     unsubscribe = nil
     unobserve?()

@@ -159,6 +159,21 @@ import Testing
     #expect(server.take("input.window")?.params == ["session": .string(session), "window": .number(9)])
     #expect(server.take("input.window")?.params == ["session": .string(session), "window": .null])
   }
+
+  @Test func keepsOneKeyframeRequestOutstandingWhileTheServerDoesNotAnswer() async throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    try #require(server.subs.first).onSubscribed(["subscription": .string("s1")])
+    for _ in 0..<5 { stream.requestKeyframe() }
+    await settle()
+    #expect(server.requests.map(\.method) == ["frames.keyframe"])
+    try #require(server.take("frames.keyframe")).reply.resume(returning: .object([:]))
+    await settle()
+    stream.requestKeyframe()
+    await settle()
+    #expect(server.requests.map(\.method) == ["frames.keyframe"])
+  }
 }
 
 @Suite @MainActor struct ServerClientControlTests {
