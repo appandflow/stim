@@ -165,6 +165,43 @@ describe('single-app row platforms', () => {
     expect(screen.queryByText('iOS, Android')).toBeNull();
   });
 
+  it('names the machine an offloaded build and a hosted device run on', async () => {
+    const now = new Date().toISOString();
+    const machine = 'janics-mac-mini-2:7443';
+    const screen = await renderRow(
+      single({
+        ios: {
+          name: 'hosted',
+          udid: '',
+          owned: false,
+          state: 'ready',
+          host: {
+            machine,
+            session: 's',
+            selected: machine,
+            agent: { driver: 'none', setting: 'hosting.agentDriver' },
+            device: null,
+          },
+        },
+        build: {
+          platform: 'ios',
+          slot: 'default',
+          state: 'running',
+          phase: 'pods',
+          startedAt: now,
+          phaseStartedAt: now,
+          outcome: 'cold',
+          expectedMs: null,
+          expectedPhaseMs: null,
+          basis: 0,
+          placement: { host: 'janics-mac-mini:7869', phase: 'pods', startedAt: now, phaseStartedAt: now },
+        },
+      }),
+    );
+    expect(screen.getByLabelText('Building on janics-mac-mini')).toBeTruthy();
+    expect(screen.getByLabelText('Running on janics-mac-mini-2')).toBeTruthy();
+  });
+
   it('shows no platform line for an app that never ran', async () => {
     const screen = await renderRow(single({ live: false }));
     expect(screen.queryByText('iOS')).toBeNull();
