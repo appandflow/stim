@@ -1614,6 +1614,7 @@ export class DeviceHost {
         elapsedMs,
         windowMs,
         unresolved: (id) => this.idleUnresolved(id),
+        foreign: (id) => this.ownedElsewhere(id),
       });
       if (plan.updates.length)
         this.transaction((current) => {
@@ -1627,7 +1628,9 @@ export class DeviceHost {
       for (const { id, reason } of plan.kept) this.logIdleKept(id, reason);
       for (const { id, reason } of plan.stops) this.stopIdle(id, reason);
       const due = new Set([...plan.kept, ...plan.stops].map(({ id }) => id));
-      for (const id of this.idleKept.keys()) if (id !== 'setting' && !due.has(id)) this.idleKept.delete(id);
+      for (const id of this.idleKept.keys())
+        if (id !== 'setting' && id !== 'journal' && !due.has(id)) this.idleKept.delete(id);
+      this.idleKept.delete('journal');
       if (!('invalid' in setting)) this.idleKept.delete('setting');
     } catch (error) {
       this.logIdleKept(
@@ -1643,6 +1646,20 @@ export class DeviceHost {
     process.stderr.write(
       `Hosted session ${key === 'setting' || key === 'journal' ? '' : `${key} `}kept: ${reason.replace(/[\r\n]+/g, ' ')}\n`,
     );
+  }
+
+  private ownedElsewhere(id: string): boolean {
+    if (this.owned.has(id)) return false;
+    const attempt = tryAcquireClaim({
+      root: join(deviceHostRoot(), `${id}.claims`),
+      mode: 'exclusive',
+      label: 'hosted device session',
+      details: { session: id },
+    });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (!attempt.acquired) return true;
+    releaseClaim(attempt.acquired);
+    return false;
   }
 
   private idleUnresolved(id: string): string | null {
@@ -1668,7 +1685,7 @@ export class DeviceHost {
       });
       process.stderr.write(`Hosted session ${id} stopped: ${reason}\n`);
     } catch (error) {
-      this.logIdleKept(id, `${error instanceof Error ? error.message : String(error)}; ${reason}`);
+      this.logIdleKept(id, error instanceof Error ? error.message : String(error));
     }
   }
 

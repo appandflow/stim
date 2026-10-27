@@ -17,6 +17,7 @@ function plan(
     elapsedMs: HOSTED_IDLE_SWEEP_MS,
     windowMs: 6 * HOUR_MS,
     unresolved: () => null,
+    foreign: () => false,
     ...options,
   });
 }
@@ -96,6 +97,12 @@ test('a due session with unresolved work or ownership is kept with the reason, n
   expect(result.kept).toEqual([
     expect.objectContaining({ id: 'a', reason: expect.stringContaining('its native input is not provably finished') }),
   ]);
+});
+
+test('a session another live server owns is neither counted nor stopped', () => {
+  const result = plan([session('a', { clientAbsentMs: 7 * HOUR_MS })], { foreign: () => true });
+
+  expect(result).toEqual({ updates: [], stops: [], kept: [] });
 });
 
 test('a window of 0 stops nothing and forgets recorded absence, so enabling it later counts from nothing', () => {

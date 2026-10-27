@@ -24,6 +24,7 @@ function formatDuration(ms: number): string {
  * most two sweep intervals, so time the server was down, or the machine asleep, is not counted, and a stored value
  * survives a restart. Only a ready session that is not parked is tracked, and none is while `windowMs` is 0, so
  * turning the setting back on starts every count from nothing. Anything else is never stopped here.
+ * `foreign` skips a session another live server owns, so two servers never count the same absence twice.
  * `unresolved` names why a due session cannot be stopped safely now, or returns null.
  */
 export function planHostedIdleStops({
@@ -33,6 +34,7 @@ export function planHostedIdleStops({
   elapsedMs,
   windowMs,
   unresolved,
+  foreign,
 }: {
   sessions: readonly IdleRecord[];
   connected: (client: string) => boolean;
@@ -40,11 +42,13 @@ export function planHostedIdleStops({
   elapsedMs: number;
   windowMs: number;
   unresolved: (id: string) => string | null;
+  foreign: (id: string) => boolean;
 }): HostedIdlePlan {
   const plan: HostedIdlePlan = { updates: [], stops: [], kept: [] };
   const step = Math.min(Math.max(elapsedMs, 0), MAX_ELAPSED_MS);
   const present = new Set(sessions.filter(({ id }) => active.has(id)).map(({ client }) => client));
   for (const session of sessions) {
+    if (session.state === 'ready' && !session.parked && foreign(session.id)) continue;
     const stored = session.clientAbsentMs;
     const tracked = session.state === 'ready' && !session.parked;
     if (!tracked || !(windowMs > 0) || connected(session.client) || present.has(session.client)) {

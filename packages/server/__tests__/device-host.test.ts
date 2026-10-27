@@ -1054,7 +1054,7 @@ describe('a hosted session whose client is gone', () => {
     expect((await state(first.id, 'ready')).idleStop).toBeUndefined();
   });
 
-  test('leaves a session whose owner is another live server, since its claim is not free', async () => {
+  test('neither counts nor stops a session whose owner is another live server', async () => {
     const first = await reserve();
     await state(first.id, 'ready');
     recordAbsence(first.id, IDLE_WINDOW_MS);
@@ -1070,8 +1070,10 @@ describe('a hosted session whose client is gone', () => {
       other.sweepIdle();
       other.sweepIdle();
 
-      expect(written.mock.calls.filter(([line]) => String(line).includes(' kept: '))).toHaveLength(1);
-      expect((await state(first.id, 'ready')).idleStop).toBeUndefined();
+      const untouched = await state(first.id, 'ready');
+      expect(untouched.idleStop).toBeUndefined();
+      expect(untouched.clientAbsentMs).toBe(IDLE_WINDOW_MS);
+      expect(written).not.toHaveBeenCalled();
       expect(host.attach('client', { session: first.id })).toHaveProperty('result.state', 'ready');
     } finally {
       written.mockRestore();
