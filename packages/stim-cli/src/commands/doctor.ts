@@ -508,12 +508,14 @@ export default function doctorCommand(
             process.exitCode = 1;
           }
         }
-        const image = androidImageDecision(
-          opts.platform,
-          resolveAndroidLayout(settings, root, settingsContext.repoRoot ?? root),
-          settings,
-          process.env,
-        );
+        const image =
+          settings &&
+          androidImageDecision(
+            opts.platform,
+            resolveAndroidLayout(settings, root, settingsContext.repoRoot ?? root),
+            settings,
+            process.env,
+          );
         if (image?.kind === 'install') {
           const installed = await installSystemImage({
             pkg: image.pkg,
