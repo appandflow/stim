@@ -4302,7 +4302,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       let excess = [...streams].filter((stream) => !stream.destroyed).length - MAX_AGENT_LINKS;
       for (const oldest of streams) if (!oldest.destroyed && excess-- > 0) oldest.destroy();
-      const idle = setTimeout(() => (link.busy > 0 ? idle.refresh() : outside.destroy()), AGENT_LINK_IDLE_MS);
+      let heard = true;
+      socket.on('pong', () => (heard = true));
+      const idle = setTimeout(() => {
+        if (link.busy === 0 || !heard) return void outside.destroy();
+        heard = false;
+        socket.ping();
+        idle.refresh();
+      }, AGENT_LINK_IDLE_MS);
       idle.unref();
       const active = () => idle.refresh();
       socket.on('message', active);

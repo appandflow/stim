@@ -16,6 +16,8 @@ const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | n
 const links = vi.hoisted(() => ({
   close: vi.fn<() => void>(),
   relayClose: vi.fn<() => void>(),
+  relayPort: vi.fn<(port: number | undefined) => void>(),
+  lost: vi.fn<() => void>(),
   probe: vi.fn<() => Promise<{ state: 'ready' | 'stopped' }>>(),
   dropWatchEvents: false,
   failLinkWrites: 0,
@@ -56,13 +58,17 @@ vi.mock('node:fs', async (importOriginal) => {
 });
 vi.mock('../device-host/hosted-client.ts', () => ({ probeHostedSession: links.probe }));
 vi.mock('../supervisor/metro-links.ts', () => ({
-  openMetroLinks: ({ onReady }: { onReady: () => void }) => {
+  openMetroLinks: ({ onReady, onLost }: { onReady: () => void; onLost: () => void }) => {
+    links.lost.mockImplementation(onLost);
     queueMicrotask(onReady);
     return { close: links.close };
   },
 }));
 vi.mock('../supervisor/agent-relay.ts', () => ({
-  openAgentRelay: () => ({ port: Promise.resolve(51234), close: links.relayClose }),
+  openAgentRelay: ({ port }: { port?: number }) => {
+    links.relayPort(port);
+    return { port: Promise.resolve(51234), close: links.relayClose };
+  },
 }));
 let home: string;
 let root: string;
@@ -75,6 +81,8 @@ beforeEach(() => {
   root = join(home, 'app');
   links.close.mockReset();
   links.relayClose.mockReset();
+  links.relayPort.mockReset();
+  links.lost.mockReset();
   links.probe.mockReset();
   links.dropWatchEvents = false;
   links.failLinkWrites = 0;
@@ -126,7 +134,10 @@ test('closing links completes while host evidence is pending, and orphan request
 
 test('a session on a local network machine publishes its agent relay port with readiness and closes the relay with its links', async () => {
   links.probe.mockResolvedValue({ state: 'ready' });
-  writeWorkspaceState(root, { hostedMetroRequests: { [session]: { id: 'request', machine: 'local:10.0.0.92' } } });
+  writeWorkspaceState(root, {
+    hostedMetroRequests: { [session]: { id: 'request', machine: 'local:10.0.0.92' } },
+    hostedMetroLinks: { [session]: { id: 'earlier', processToken: 'gone', agentPort: 51234 } },
+  });
   const close = watchHostedMetro(root, 8082, 'watcher');
   try {
     await vi.waitFor(() =>
@@ -134,10 +145,17 @@ test('a session on a local network machine publishes its agent relay port with r
         [session]: { id: 'request', processToken: 'watcher', ready: true, agentPort: 51234 },
       }),
     );
+    expect(links.relayPort).toHaveBeenCalledWith(51234);
     expect(hostedAgentPort(root, session)).toBe(51234);
-    await closeHostedMetro(root, session);
+    links.lost();
+    expect(hostedMetroLinks(readWorkspaceState(root))[session]).toEqual({
+      id: 'request',
+      processToken: 'watcher',
+      agentPort: 51234,
+    });
     expect(hostedAgentPort(root, session)).toBeNull();
-    expect(links.relayClose).toHaveBeenCalledOnce();
+    await closeHostedMetro(root, session);
+    await vi.waitFor(() => expect(links.relayClose).toHaveBeenCalledOnce());
   } finally {
     await close();
   }
