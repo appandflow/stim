@@ -47,8 +47,22 @@ public struct Capacity: Decodable, Sendable {
   public var builds: BuildSlots?
   /// `concurrency.maxDevices` usage; present only while that cap is set.
   public var devices: DeviceSlots?
+  /// `concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` usage; each is present only while its cap is set.
+  public var platformDevices: PlatformDeviceSlots?
   /// Absent from a `stim` that predates it.
   public var load: CapacityLoad?
+}
+
+public struct PlatformDeviceSlots: Decodable, Hashable, Sendable {
+  public var ios: PlatformSlots?
+  public var android: PlatformSlots?
+}
+
+public struct PlatformSlots: Decodable, Hashable, Sendable {
+  public var max: Int
+  /// Nil when `stim` could not count the owned devices; `unknown` says why.
+  public var inUse: Int?
+  public var unknown: String?
 }
 
 /// The Mac's 5-minute load average per core, and the state `stim` placed it in.
