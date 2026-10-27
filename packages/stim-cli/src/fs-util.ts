@@ -122,7 +122,7 @@ export function isAbsentPath(path: string): boolean {
     statSync(path);
     return false;
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
+    const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : null;
     return code === 'ENOENT' || code === 'ENOTDIR';
   }
 }

@@ -16,12 +16,11 @@ import {
   gradleVersionsPending,
   includesGradleVersions,
 } from './gc/gradle-versions.ts';
-import { existsSync } from 'fs';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { loadConfig, removeProject, withConfigLockAsync } from '../workspace/config.ts';
 import { plural, quotedPath } from '../command-output.ts';
-import { directorySizeAsync, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
+import { directorySizeAsync, isAbsentPath, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { removeExpiredLease } from '../engine/device-lease.ts';
@@ -864,7 +863,7 @@ async function pruneDeadProjects(deadProjects: string[], output: GcOutput, opera
   let deleteFailures = 0;
   for (const path of deadProjects) {
     operation?.signal.throwIfAborted();
-    if (existsSync(path) || !isOnMountedVolume(path)) {
+    if (!isAbsentPath(path) || !isOnMountedVolume(path)) {
       output.log(chalk.yellow(`Kept ${path}: its absence can no longer be confirmed.`));
       output.record('project', 'kept', path, { detail: 'its absence can no longer be confirmed' });
       continue;
