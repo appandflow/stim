@@ -2,8 +2,8 @@ import Foundation
 
 /// Display names for a workspace, the same as the phone app's.
 ///
-/// The title is the worktree's branch, else the worktree's folder, else the project for a main checkout, else
-/// the folder. `inCheckout` is where the workspace sits inside its checkout, such as `apps/mobile`, or nil at
+/// The title is the worktree's branch, else the worktree's folder, else the project for a workspace inside the
+/// project's root, else the folder. `inCheckout` is where the workspace sits inside its checkout, such as `apps/mobile`, or nil at
 /// the checkout root.
 public struct PathNames: Hashable, Sendable {
   public var title: String
@@ -11,7 +11,8 @@ public struct PathNames: Hashable, Sendable {
 
   public init(path: String, branch: String? = nil, worktree: String? = nil, project: Project? = nil) {
     let checkout = worktree ?? markedCheckout(path)
-    title = branch ?? checkout.map(lastComponent) ?? project?.name ?? lastComponent(path)
+    let inProject = project.map { path == $0.root || path.hasPrefix($0.root + "/") } ?? false
+    title = branch ?? checkout.map(lastComponent) ?? (inProject ? project?.name : nil) ?? lastComponent(path)
     inCheckout = pathInCheckout(path, worktree: worktree ?? project?.root)
   }
 }
