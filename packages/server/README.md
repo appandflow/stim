@@ -848,6 +848,21 @@ MagicDNS name from replaying it, and a request whose node no transport identifie
 is refused. Browser requests and
 other sessions' tokens are refused with 403, an unknown or stopped session with 404.
 
+A client on a `local:` machine has no tailnet node, so its agent requests ride
+connections it opened itself. On an approved `device-host` connection it calls
+`device-host.agent.link` with `{session}`; the server answers `{}` only when that
+session's agent grant belongs to the authenticated client key, and refuses any
+other session with `unknown-session` and a second link on the same connection
+with `bad-request`. The connection then carries one HTTP connection as binary
+frames, with the same backpressure and close codes as a Metro link. The server
+answers it with the agent route above, where the authenticated key replaces the
+node check: each request must name the linked session, carry its token and come
+from a client that still holds `device-host`. The client's Metro supervisor
+listens for these on a loopback port per hosted session and names that port in
+the remote config. A session holds at most 16 agent links; a new one closes the
+oldest, so links of a client that vanished cannot accumulate. The feature
+`hosted-agent-link` advertises it.
+
 The `agent-device` adapter runs the binary that `STIM_AGENT_DEVICE_BIN` names
 in `stim-server`'s environment, or else the first of
 `~/.local/bin/agent-device`, `/opt/homebrew/bin/agent-device` and

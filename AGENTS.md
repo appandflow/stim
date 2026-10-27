@@ -455,7 +455,11 @@ outside it moves to its own issue and pull request.
   `device-host.metro.link` connection the session's own client opened and
   authenticated, and the client forwards it only to its verified loopback Metro.
   Stop and revocation close the bridge, idle links and active streams. Keep the
-  recorded worker port on reconnect; refuse an occupied port.
+  recorded worker port on reconnect; refuse an occupied port. Agent control of a
+  session on a `local:` machine rides `device-host.agent.link` connections its
+  own client opened and authenticated, which the client's supervisor feeds from
+  a loopback port; the host serves only that client's session and still checks
+  the session's agent token on every request.
   App transfer uses bounded digest chunks, including the manifest itself. The
   worker validates content, contained links, simulator platform, architecture
   and minimum OS before installing on the exact ledger-owned device. Hold the

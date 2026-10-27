@@ -13,6 +13,8 @@ import {
 import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { clearHostedMetro } from '../device-host/metro-request.ts';
+import { parseMachine } from '../offload/tailnet.ts';
+import { openAgentRelay } from './agent-relay.ts';
 import { openMetroLinks, type MetroLinkPool } from './metro-links.ts';
 import { watchWorkspaceState } from '../workspace/workspace-state-watch.ts';
 
@@ -120,23 +122,38 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
     for (const session of actions.open) {
       const request = requests[session]!;
       active[session] = request;
-      pools.set(
+      const relay =
+        parseMachine(request.machine)?.transport === 'local'
+          ? openAgentRelay({ machine: request.machine, session })
+          : null;
+      let agentPort: number | undefined;
+      const listening = relay ? relay.port.then((port) => void (agentPort = port)).catch(() => {}) : Promise.resolve();
+      let ready = false;
+      const pool = openMetroLinks({
+        machine: request.machine,
         session,
-        openMetroLinks({
-          machine: request.machine,
-          session,
-          metroPort,
-          onReady: () => {
-            if (active[session] === request) publish(session, { id: request.id, processToken, ready: true });
-          },
-          onLost: () => {
-            if (active[session] === request) publish(session, { id: request.id, processToken });
-          },
-          onError: (message) => {
-            if (active[session] === request) publish(session, { id: request.id, processToken, error: message });
-          },
-        }),
-      );
+        metroPort,
+        onReady: async () => {
+          ready = true;
+          await listening;
+          if (active[session] === request && ready)
+            publish(session, { id: request.id, processToken, ready: true, ...(agentPort ? { agentPort } : {}) });
+        },
+        onLost: () => {
+          ready = false;
+          if (active[session] === request) publish(session, { id: request.id, processToken });
+        },
+        onError: (message) => {
+          ready = false;
+          if (active[session] === request) publish(session, { id: request.id, processToken, error: message });
+        },
+      });
+      pools.set(session, {
+        close: () => {
+          pool.close();
+          relay?.close();
+        },
+      });
     }
     if (!probing && Date.now() >= probingAt) {
       clearTimeout(probeTimer);

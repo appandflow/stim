@@ -47,7 +47,7 @@ import {
   type HostConnection,
   type HostedSession,
 } from './hosted-client.ts';
-import { requestHostedMetro, closeHostedMetro, requireHostedMetro } from './metro-request.ts';
+import { requestHostedMetro, closeHostedMetro, hostedAgentPort, requireHostedMetro } from './metro-request.ts';
 import { writeHostedNative } from './ios-state.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { cancellableSleep } from '../cancellation.ts';
@@ -482,6 +482,12 @@ async function placeHostedNativeOnce(
           : undefined,
         note,
         platform,
+        mode !== 'development'
+          ? undefined
+          : !host.connection.supports('hosted-agent-link')
+            ? `${host.machine} runs a stim-server that cannot carry agent control over the local network. Update stim-server there, then retry.`
+            : (hostedAgentPort(root, session.id) ??
+              `The Metro supervisor does not relay agent control to ${host.machine}. Run stim stop; stim start, then retry.`),
       ),
     };
     return { placement, launched: mode !== 'development' && delivery.launched === true ? true : 'unverified' };

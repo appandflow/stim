@@ -12,6 +12,9 @@ type Resolved = HostedAgentDriver | null | Promise<HostedAgentDriver | null>;
 
 export type AgentAccess = { grant: HostedAgentGrant; notice?: string };
 
+/** Where an agent request came from: a tailnet node, or null when none identifies it, or an authenticated client link. */
+export type AgentPeer = { node: string | null } | { client: string };
+
 interface Entry {
   app: HostedAgentApp;
   grant: HostedAgentGrant;
@@ -27,10 +30,12 @@ export interface HostedAgentHostOptions {
   resolve: () => Resolved;
   resolveDevice?: (app: HostedAgentDevice, stopping?: boolean) => Resolved;
   /**
-   * Whether `node`, the tailnet node an agent request came from, may use `client`'s agent grant: the client must still
-   * have its device-host approval, and the host may also require the node its authenticated connection came from.
+   * Whether a request from `from` may use `client`'s agent grant: the client must still have its device-host approval.
+   * A request through the tailnet route names its tailnet node, which the host may also require to be the node the
+   * client's authenticated connection came from. A request over `device-host.agent.link` names the client key that
+   * authenticated the link, which must be `client`.
    */
-  approved: (client: string, node: string | null) => boolean;
+  approved: (client: string, from: AgentPeer) => boolean;
   strictStop?: boolean;
   restartDelayMs?: number;
   maxRestarts?: number;
@@ -237,13 +242,21 @@ export class HostedAgentHost {
     });
   }
 
-  /** Agent control needs the session's token; `approved` may also check the requesting node. */
-  authorize(session: string, token: string | null, node: string | null = null): 'ok' | 'unknown' | 'forbidden' {
+  /** The client whose agent grant is live for `session`, or undefined. */
+  holder(session: string): string | undefined {
     const child = this.devices.get(session);
-    if (child) return child.authorize(session, token, node);
+    if (child) return child.holder(session);
+    const entry = this.entries.get(session);
+    return entry && entry.grant.driver !== 'none' ? entry.app.client : undefined;
+  }
+
+  /** Agent control needs the session's token; `approved` also checks where the request came from. */
+  authorize(session: string, token: string | null, from: AgentPeer = { node: null }): 'ok' | 'unknown' | 'forbidden' {
+    const child = this.devices.get(session);
+    if (child) return child.authorize(session, token, from);
     const entry = this.entries.get(session);
     if (!entry || entry.grant.driver === 'none') return 'unknown';
-    if (!token || !this.options.approved(entry.app.client, node)) return 'forbidden';
+    if (!token || !this.options.approved(entry.app.client, from)) return 'forbidden';
     const presented = digest(token);
     return presented.length === entry.digest.length && timingSafeEqual(presented, entry.digest) ? 'ok' : 'forbidden';
   }
@@ -253,11 +266,11 @@ export class HostedAgentHost {
     token: string | null,
     request: IncomingMessage,
     response: ServerResponse,
-    node: string | null = null,
+    from: AgentPeer = { node: null },
   ): 'ok' | 'unknown' | 'forbidden' {
     const child = this.devices.get(session);
-    if (child) return child.forward(session, token, request, response, node);
-    const verdict = this.authorize(session, token, node);
+    if (child) return child.forward(session, token, request, response, from);
+    const verdict = this.authorize(session, token, from);
     if (verdict === 'ok' && this.active) this.active.forward(session, request, response);
     else if (verdict === 'ok')
       response.writeHead(503, { 'content-type': 'text/plain' }).end('Agent control is not running.\n');
@@ -267,9 +280,11 @@ export class HostedAgentHost {
         .end(
           verdict === 'unknown'
             ? 'Not found.\n'
-            : node === null
+            : 'node' in from && from.node === null
               ? 'Forbidden. The server could not identify the requesting tailnet node.\n'
-              : 'Forbidden.\n',
+              : 'client' in from && !this.options.approved(from.client, from)
+                ? 'Forbidden. This machine no longer has device-host approval on the host.\n'
+                : 'Forbidden.\n',
         );
     return verdict;
   }

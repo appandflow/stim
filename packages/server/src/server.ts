@@ -6,7 +6,8 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http';
-import { connect as connectSocket, isIP, type AddressInfo, type Socket } from 'node:net';
+import { connect as connectSocket, isIP, Socket, type AddressInfo } from 'node:net';
+import { duplexPair, type Duplex } from 'node:stream';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -399,7 +400,13 @@ const LOCAL_DEVICE: PairedDevice = {
 type ServerSocket = WebSocket | NoiseSocket;
 const CLOSE_AUTH_TIMEOUT = 4408;
 const CLOSE_METRO_RESET = 4410;
+interface AgentLink {
+  client: string;
+  session: string;
+}
+const AGENT_PATH = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/;
 const METRO_LINK_PING_MS = 15_000;
+const MAX_AGENT_LINKS = 16;
 const METRO_END_MS = 30_000;
 const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
@@ -1402,9 +1409,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         deviceHostArea(app.session),
         app,
       ),
-    approved: (client, node) =>
-      node !== null &&
-      agentNodes.get(client) === node &&
+    approved: (client, from) =>
+      ('client' in from ? from.client === client : from.node !== null && agentNodes.get(client) === from.node) &&
       readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
   });
   const hostedDevices = new DeviceHost({
@@ -1427,19 +1433,42 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
   });
   const agentLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
-  async function answerAgent(request: IncomingMessage, response: ServerResponse, session: string): Promise<void> {
-    const peer = peerAddress(request) ?? 'local';
+  /** The client and session each `device-host.agent.link` stream was opened for, keyed by the stream `agentHttp` serves. */
+  const agentLinks = new WeakMap<object, AgentLink>();
+  /** Each hosted session's open agent link streams, oldest first, so a client that vanished cannot hold them unbounded. */
+  const agentStreams = new Map<string, Set<Duplex>>();
+  async function answerAgent(
+    request: IncomingMessage,
+    response: ServerResponse,
+    session: string,
+    link?: AgentLink,
+  ): Promise<void> {
+    const peer = link ? `client:${link.client}` : (peerAddress(request) ?? 'local');
     const refuse = (status: number, text: string) =>
       void response.writeHead(status, { 'content-type': 'text/plain' }).end(`${text}\n`);
     if (request.headers.origin !== undefined || request.headers['sec-fetch-site'] !== undefined)
       return refuse(403, 'Forbidden.');
     if (agentLimiter.blocked(peer)) return refuse(429, 'Too many attempts. Try again in a minute.');
+    if (link && link.session !== session) {
+      agentLimiter.record(peer);
+      return refuse(403, 'Forbidden. This agent link carries another hosted session.');
+    }
     const bearer = /^bearer (.+)$/i.exec(request.headers.authorization ?? '')?.[1];
     const header = request.headers['x-agent-device-token'];
     const token = bearer ?? (typeof header === 'string' ? header : null);
-    const node = peer === 'local' ? null : await peerNode(request, peer);
-    if (agentDrivers.forward(session, token, request, response, node) === 'forbidden') agentLimiter.record(peer);
+    const from = link ? { client: link.client } : { node: peer === 'local' ? null : await peerNode(request, peer) };
+    if (agentDrivers.forward(session, token, request, response, from) === 'forbidden') agentLimiter.record(peer);
   }
+  /** Serves agent requests carried by `device-host.agent.link` streams; it never listens on a socket of its own. */
+  const agentHttp = createServer((request, response) => {
+    const link = agentLinks.get(request.socket);
+    const session = AGENT_PATH.exec(request.url ?? '')?.[1];
+    if (!link || !session) return void response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
+    answerAgent(request, response, session, link).catch(() => {
+      if (response.headersSent) response.destroy();
+      else response.writeHead(500, { 'content-type': 'text/plain' }).end('Agent control failed.\n');
+    });
+  });
   const setupLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
   /** The journal holds no secret, so it is served to whoever names it; failures are rate limited by peer. */
   function answerSetup(request: IncomingMessage, response: ServerResponse): void {
@@ -1674,7 +1703,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     let runId: string | null = null;
     let buildSession: BuildSession | null = null;
     let metroLink: MetroLink | null = null;
-    let metroStream: Socket | null = null;
+    let metroStream: Duplex | null = null;
     let metroPing: NodeJS.Timeout | undefined;
     let queue = Promise.resolve();
     let archiveReads = Promise.resolve();
@@ -4212,21 +4241,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (refused) socket.close(CLOSE_BAD_REQUEST, refused.slice(0, 120));
     }
 
+    function carry(stream: Duplex): void {
+      clearInterval(metroPing);
+      metroLink = null;
+      metroStream = stream;
+      stream.once('close', (hadError) => socket.close(hadError ? CLOSE_METRO_RESET : 1000));
+      stream.on('data', (chunk: Buffer) => {
+        socket.send(chunk, { binary: true }, () => {
+          if (stream.isPaused() && socket.bufferedAmount < METRO_LINK_BUFFERED_BYTES) stream.resume();
+        });
+        if (socket.bufferedAmount >= METRO_LINK_BUFFERED_BYTES) stream.pause();
+      });
+    }
+
     function linkMetro(id: RequestId, raw: unknown, session: PairedDevice): void {
       if (metroLink || metroStream) return error(id, 'bad-request', 'This connection already links Metro.');
       const link: MetroLink = {
         open: (stream) => {
           if (socket.readyState !== socket.OPEN) return false;
-          clearInterval(metroPing);
-          metroLink = null;
-          metroStream = stream;
-          stream.once('close', (hadError) => socket.close(hadError ? CLOSE_METRO_RESET : 1000));
-          stream.on('data', (chunk: Buffer) => {
-            socket.send(chunk, { binary: true }, () => {
-              if (stream.isPaused() && socket.bufferedAmount < METRO_LINK_BUFFERED_BYTES) stream.resume();
-            });
-            if (socket.bufferedAmount >= METRO_LINK_BUFFERED_BYTES) stream.pause();
-          });
+          carry(stream);
           send(socket, JSON.stringify({ event: 'device-host.metro.link.open' } satisfies MetroLinkOpenEvent));
           stream.resume();
           return true;
@@ -4248,8 +4281,36 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       metroPing.unref();
     }
 
+    function linkAgent(id: RequestId, raw: unknown, session: PairedDevice): void {
+      if (metroLink || metroStream) return error(id, 'bad-request', 'This connection already carries a link.');
+      const hosted = isJsonObject(raw) && typeof raw.session === 'string' ? raw.session : null;
+      if (hosted === null) return error(id, 'bad-request', 'An agent link needs a session.');
+      if (agentDrivers.holder(hosted) !== session.id)
+        return error(id, 'unknown-session', 'This client has no hosted session with agent control by that id.');
+      const [inside, outside] = duplexPair();
+      agentLinks.set(inside, { client: session.id, session: hosted });
+      const streams = agentStreams.get(hosted) ?? new Set<Duplex>();
+      agentStreams.set(hosted, streams.add(outside));
+      outside.once('close', () => {
+        streams.delete(outside);
+        if (streams.size === 0 && agentStreams.get(hosted) === streams) agentStreams.delete(hosted);
+      });
+      let excess = streams.size - MAX_AGENT_LINKS;
+      for (const oldest of streams) if (excess-- > 0) oldest.destroy();
+      outside.once('end', () => outside.end());
+      outside.once('close', () => inside.destroy());
+      inside.once('close', () => {
+        outside.push(null);
+        outside.end();
+      });
+      send(socket, { id, result: {} });
+      carry(outside);
+      agentHttp.emit('connection', inside);
+    }
+
     async function hostedMethod(id: RequestId, method: string, raw: unknown, session: PairedDevice): Promise<void> {
       if (method === 'device-host.metro.link') return linkMetro(id, raw, session);
+      if (method === 'device-host.agent.link') return linkAgent(id, raw, session);
       const params = isJsonObject(raw) ? raw : {};
       if (method === 'device-host.frames.subscribe' || method === 'device-host.control.begin') {
         if (typeof params.session !== 'string') return error(id, 'bad-request', 'A hosted session is required.');
@@ -4544,7 +4605,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           clearTimeout(ending);
           stream.off('drain', arm);
         });
-      } else if (stream && !stream.destroyed) stream.resetAndDestroy();
+      } else if (stream && !stream.destroyed) {
+        if (stream instanceof Socket) stream.resetAndDestroy();
+        else stream.destroy();
+      }
       relay.close();
       relays.delete(socket);
       clearTimeout(timer);
@@ -4823,7 +4887,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         answerSetup(request, response);
         return;
       }
-      const agent = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/.exec(request.url ?? '');
+      const agent = AGENT_PATH.exec(request.url ?? '');
       if (agent && arrival(request) === 'direct') {
         response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
         return;

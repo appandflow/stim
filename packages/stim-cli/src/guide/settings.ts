@@ -844,7 +844,10 @@ ticket, which is a credential: whoever spends it first, after setup stores it,
 gets the approval, and on a local network that takes only the ticket and a
 route to the worker, not tailnet membership. Agents show it only to the user.
 Offloaded builds and hosted Debug and
-Release runs work there; agent control of hosted apps needs a tailnet machine.
+Release runs work there. Agent control of hosted iOS and Android Debug runs
+goes through a loopback port of this workspace's Metro supervisor, which
+carries it over its own authenticated connection; Release runs and hosted macOS
+apps there report agent control as none.
 \`stim-server pair\` puts \`ws://<address>:<port>\` in the phone pairing code
 when Tailscale is not running and \`server.lanAddresses\` is set.
 

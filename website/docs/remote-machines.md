@@ -921,8 +921,13 @@ set up with `scripts/linux-worker/setup.sh --no-tailscale` takes the same
 `server.lanAddresses` setting.
 
 Offloaded builds and hosted Debug and Release runs on a simulator or emulator
-work over the local network. Agent control of hosted apps needs a tailnet
-machine. `stim-server pair` puts the worker's local network
+work over the local network. Agent control of hosted iOS and Android Debug runs
+works there too: the remote config points agent-device at a loopback port of
+this workspace's Metro supervisor, which carries each request to the worker
+over its own authenticated connection, so it works while `stim start` runs.
+The worker needs a stim-server that advertises `hosted-agent-link`. Hosted
+Release runs and hosted macOS apps on a local network machine report agent
+control as `none` with the reason. `stim-server pair` puts the worker's local network
 endpoint in the phone pairing code when Tailscale is not running there and
 `server.lanAddresses` is set.
 
