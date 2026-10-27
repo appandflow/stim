@@ -39,7 +39,7 @@ struct PairMachineSheet: View {
       Divider()
       footer.padding(Space.xl)
     }
-    .frame(width: 560, height: 560)
+    .frame(width: 560, height: 640)
     .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.primary)
     .background(Palette.background)
     .onAppear { servers.dismissPairing() }
