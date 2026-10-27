@@ -653,6 +653,12 @@ export interface EnvironmentState {
   doctorRuns?: Partial<Record<'ios' | 'android', { at: string }>>;
   live: boolean;
   phase?: WorkspacePhase;
+  /**
+   * Present when the workspace's folder no longer exists on a mounted volume, for example after `git worktree remove`
+   * or `rm -rf`; `phase` is then never `warming` or `ready`. The entry stays registered until `stim gc --delete`. A
+   * folder on a volume that is not mounted is not reported.
+   */
+  pathMissing?: true;
   /** When the warm started (`warming`) or finished (`ready`); null for `live` and `idle`. */
   phaseSince?: string | null;
   /** Whether stim-server may record this workspace's device screens, from `recording.enabled`. */

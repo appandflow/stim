@@ -1222,6 +1222,12 @@ RULES
               device screens for replay, from recording.enabled
   hidden      true when workspace.hidden is set; absent otherwise. The next
               command that uses the workspace clears it.
+  pathMissing true when the workspace folder no longer exists on a mounted
+              volume, such as after git worktree remove or rm -rf; absent
+              otherwise, and for a folder on a volume that is not mounted.
+              phase is then never warming or ready. status only reports it:
+              the entry stays registered until stim gc --delete or
+              stim worktree remove <path> removes it.
 
   Each environment also carries stage, where the workspace is as Stim
   Desktop and the phone app show it: { kind, since, platform, closedApps }.

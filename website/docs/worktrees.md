@@ -222,6 +222,11 @@ workspace `[warming: copy]`, `[ready]` or `[idle]`. A warm that finds no app
 registers nothing, and the worktree stays in `unprovisionedWorktrees` until
 `start`, `ios`, `android`, or `doctor` registers it.
 
+A registered workspace whose folder was deleted outside Stim reads as `idle`
+with `pathMissing: true` in `stim status --json` and the marker
+`[folder missing]`; `stim worktree remove <path>` or `stim gc --delete` removes
+the entry.
+
 Each worktree also reports its git state: the number of changed and untracked
 files, its upstream with commits ahead and behind, and whether its branch is
 merged into the default branch. In `--json` that is the `git` object on each
@@ -301,6 +306,14 @@ On the source checkout, `worktree remove` only reclaims the Stim environment.
 It does not remove that checkout. Run from the checkout root, it reclaims every
 registered project under it. Run from a subfolder such as `apps/mobile`, it
 reclaims only the project at or above that folder, with the projects nested under it.
+
+A worktree deleted outside Stim, with `git worktree remove` or `rm -rf`, stays
+registered and shows as `[folder missing]` in `stim status`. Pass its path to
+`worktree remove` to drop the record of that path and of the projects registered
+under it, with their owned devices, leases and workspace directory. This works
+only when the folder is gone from a mounted volume; a path on a volume that is
+not mounted is kept and refused, since the folder may come back. `gc --delete`
+prunes every such entry.
 
 `worktree remove` refuses a worktree that a `stim-server service` runs from,
 even with `--force` (`STIM_WORKTREE_SERVICE`): deleting the folder would delete
