@@ -116,6 +116,14 @@ private let code =
     #expect(rig.store.unreadableIDs.isEmpty)
   }
 
+  @Test func anUnsignedBuildKeepsPairingsInMemoryInsteadOfFailingToSaveThem() throws {
+    let store = KeychainPairedServerStore.make()
+    #expect(!store.keepsPairings)
+    let kept = pairing(6)
+    try store.save(kept)
+    #expect(try store.pairings() == [kept])
+  }
+
   @Test func everyRefusalCodeHasItsOwnWording() {
     let fallback = PairedServerWording.notice(
       for: ServerError(code: "something-else", message: "x"), context: .pairing, name: "floco")

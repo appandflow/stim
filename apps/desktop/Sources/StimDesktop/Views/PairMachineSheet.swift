@@ -74,7 +74,7 @@ struct PairMachineSheet: View {
         .font(.stim(.footnote)).foregroundStyle(Palette.warning)
     }
     Text(
-      "A pairing lets this Mac see what the machine's server shows a phone: workspace paths, status and logs, changed files including .env files, the doctor report and the live screens of its devices. A code from stim-server pair can only read."
+      "A pairing lets this Mac see what the machine's server shows a phone: workspace paths, status and logs, changed files including .env files, the doctor report and the live screens of its devices. A code from a plain stim-server pair can only read."
     )
     .font(.stim(.footnote)).foregroundStyle(Palette.tertiary).fixedSize(horizontal: false, vertical: true)
   }

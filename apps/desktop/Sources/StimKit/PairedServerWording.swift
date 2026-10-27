@@ -101,10 +101,12 @@ public enum PairedServerWording {
         tone: .error, title: "Stim Desktop cannot use this pairing's key",
         detail: "The key stored for it is damaged. Forget this pairing and pair again.", command: nil)
     case "timeout", "unreachable":
+      let unresolved = error.message.contains("NoSuchRecord")
       return PairedServerNotice(
         tone: .error, title: "Can't reach \(machine)",
-        detail:
-          "\(error.message) Check that Tailscale is on, that \(machine) is on the tailnet and that stim-server is running there.",
+        detail: unresolved
+          ? "This Mac could not resolve its name. Check that Tailscale is on and that its DNS settings let this Mac resolve names on that tailnet. \(error.message.sentence)"
+          : "\(error.message.sentence) Check that Tailscale is on, that \(machine) is on the tailnet and that stim-server is running there.",
         command: nil)
     default:
       return PairedServerNotice(tone: .error, title: "The pairing did not work", detail: error.message, command: nil)
@@ -132,6 +134,7 @@ public enum PairedServerWording {
 }
 
 extension String {
+  fileprivate var sentence: String { hasSuffix(".") ? self : self + "." }
   fileprivate var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }
 

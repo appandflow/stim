@@ -116,16 +116,26 @@ struct StoredPairings: Equatable {
   }
 
   static let service = "dev.stim.desktop.paired-server"
+  static let probeService = "dev.stim.desktop.paired-server-probe"
 
   /// The Keychain store when this build can use the data-protection keychain, otherwise an in-memory one. An ad-hoc
-  /// build has no application-identifier, so the keychain answers `errSecMissingEntitlement`.
+  /// build has no application-identifier: a read answers `errSecItemNotFound` as it would for a build that can use
+  /// the keychain, and only a write answers `errSecMissingEntitlement`, so this writes a probe item and removes it.
   public static func make() -> PairedServerStore {
-    let store = KeychainPairedServerStore()
-    var query = store.query()
-    query[kSecMatchLimit as String] = kSecMatchLimitOne
-    let status = SecItemCopyMatching(query as CFDictionary, nil)
-    guard status != errSecMissingEntitlement else { return InMemoryPairedServerStore() }
-    return store
+    let probe: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecUseDataProtectionKeychain as String: true,
+      kSecAttrService as String: probeService,
+      kSecAttrAccount as String: "probe",
+    ]
+    var item = probe
+    item[kSecValueData as String] = Data("probe".utf8)
+    item[kSecAttrSynchronizable as String] = false
+    SecItemDelete(probe as CFDictionary)
+    let added = SecItemAdd(item as CFDictionary, nil)
+    if added == errSecSuccess { SecItemDelete(probe as CFDictionary) }
+    guard added != errSecMissingEntitlement else { return InMemoryPairedServerStore() }
+    return KeychainPairedServerStore()
   }
 
   private init() {}
