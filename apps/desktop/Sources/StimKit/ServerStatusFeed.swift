@@ -17,7 +17,8 @@ import Foundation
 /// followed workspace, whose full environment replaces its summary. Each change yields one payload shaped like
 /// `stim status --json`. `onDelivering(true)` runs with the first payload and `onDelivering(false)` when a view ends,
 /// errors or is dropped, so the caller can mark its retained status as unavailable. `onPayload` includes its authenticated
-/// client and transport generation so consumers can reject retained snapshots after reconnect.
+/// client and transport generation so consumers can reject retained snapshots after reconnect. For a paired server's
+/// client, the debug log gets no server-supplied text: only fixed messages and a decode failure's sanitized path.
 @MainActor public final class ServerStatusFeed {
   private let onPayload: @MainActor (Result<StatusPayload, Error>, ServerClient, Int) -> Void
   private let onDelivering: @MainActor (Bool) -> Void
@@ -34,6 +35,7 @@ import Foundation
   private var issued = 0
   private var shown = 0
   private var failures: [String: Error] = [:]
+  private var loggedDecodeFailure: String?
   private var refreshing = false
   private var refreshPending = false
   private var delivering = false {
@@ -146,7 +148,11 @@ import Foundation
   /// Reports an ended view while the client handles resubscription, retaining the last delivered payload.
   private func ended(_ event: ServerEvent, view: String) -> Bool {
     guard event.name == "error" else { return false }
-    DebugLog.warning(.server, "a status view ended with an error: \(event.error?.code ?? "unknown")")
+    if client?.isRemote == true {
+      DebugLog.warning(.server, "a paired server's status view ended with an error")
+    } else {
+      DebugLog.warning(.server, "a status view ended with an error: \(event.error?.code ?? "unknown")")
+    }
     failed(view, error: event.error ?? ServerError(code: "status-failed", message: "Stim server status is unavailable."))
     return true
   }
@@ -202,6 +208,7 @@ import Foundation
     archivesRead?.cancel()
     let generation = generation
     let connectionGeneration = client.generation
+    let remote = client.isRemote
     archivesRead = Task { [weak self] in
       var archived: [JSONValue] = []
       var usage: JSONValue?
@@ -220,7 +227,8 @@ import Foundation
           before = fields["next"]?.string
         } while before != nil && !Task.isCancelled
       } catch {
-        DebugLog.warning(.server, "archived.list failed: \(error.localizedDescription)")
+        DebugLog.warning(
+          .server, remote ? "a paired server's archived.list failed" : "archived.list failed: \(error.localizedDescription)")
         self?.archivesFailed(
           summary, generation: generation, client: client, connectionGeneration: connectionGeneration, error: error)
         return
@@ -253,7 +261,11 @@ import Foundation
     let payload = views.payload()
     let local = !client.isRemote
     Task.detached(priority: .userInitiated) { [weak self] in
-      let result = Result { try decodeReporting(StatusPayload.self, from: payload, source: .server) }
+      let result = Result {
+        local
+          ? try decodeReporting(StatusPayload.self, from: payload, source: .server)
+          : try JSONDecoder().decode(StatusPayload.self, from: JSONEncoder().encode(payload))
+      }
       if local { await LaunchMilestones.reach("first-server-payload-decoded") }
       await self?.show(
         result, sequence: sequence, generation: generation, client: client, connectionGeneration: connectionGeneration)
@@ -267,6 +279,12 @@ import Foundation
       connectionGeneration == client.generation
     else { return }
     shown = sequence
+    if case .failure(let error) = result, client.isRemote {
+      let (reason, path) = Diagnostics.describe(error)
+      let line = "a paired server's status did not decode: \(reason) at \(path)"
+      if line != loggedDecodeFailure { DebugLog.warning(.server, line) }
+      loggedDecodeFailure = line
+    }
     if case .success = result { delivering = true } else { delivering = false }
     onPayload(result, client, connectionGeneration)
     if refreshing {
