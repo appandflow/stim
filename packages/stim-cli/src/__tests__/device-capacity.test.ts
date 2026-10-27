@@ -9,6 +9,7 @@ import {
   withDeviceBootAdmission,
   deviceSlotWaitingLine,
   countLiveOwnedDevices,
+  countLiveOwnedDevicesByPlatform,
   countLiveOwnedDevicesFrom,
   deviceSlotUsage,
   type DeviceSlotWaitPolicy,
@@ -47,6 +48,20 @@ test('local device counts exclude hosted simulator identities without excluding 
   };
   expect(countLiveOwnedDevices(inventory)).toBe(2);
   expect(countLiveOwnedDevices(inventory, { exclude: [{ platform: 'ios', key: 'hosted' }] })).toBe(1);
+});
+
+test('local device counts split by platform and sum to the total, with a booting emulator counted as android', () => {
+  const inventory = {
+    ...empty,
+    sims: [...occupied, makeIosSim({ udid: 'second', name: 'stim-second', state: 'Booting' })],
+    booting: [{ platform: 'android', key: 'stim-avd' }],
+  };
+  expect(countLiveOwnedDevicesByPlatform(inventory)).toEqual({ ios: 2, android: 1 });
+  expect(countLiveOwnedDevices(inventory)).toBe(3);
+  expect(countLiveOwnedDevicesByPlatform(inventory, { exclude: [{ platform: 'android', key: 'stim-avd' }] })).toEqual({
+    ios: 2,
+    android: 0,
+  });
 });
 
 function deferred<T>() {

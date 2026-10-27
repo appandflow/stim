@@ -38,7 +38,13 @@ import { deviceReclaimIdleMinutesSetting } from '../workspace/settings.ts';
 import { workspaceDisplayLabel, workspaceLabels } from '../workspace/display-label.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
 import type { StimContext } from '@stim-cli/core';
-import type { BuildWaitingFor, SettingScope, StatusDeviceSlotHolder, StatusDeviceSlots } from '@stim-cli/core/state';
+import type {
+  BuildWaitingFor,
+  HostedLocalPlatformCounts,
+  SettingScope,
+  StatusDeviceSlotHolder,
+  StatusDeviceSlots,
+} from '@stim-cli/core/state';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
 type DeviceTypeInfo = ReturnType<typeof listIosDeviceTypes>[number];
@@ -347,9 +353,20 @@ export function countLiveOwnedDevices(
   sources: InventorySources = {},
   { exclude = [] }: { exclude?: DeviceCountExclusion[] } = {},
 ): number | { unknown: string } {
+  const counts = countLiveOwnedDevicesByPlatform(sources, { exclude });
+  return 'unknown' in counts ? counts : counts.ios + counts.android;
+}
+
+/** The counts of {@link countLiveOwnedDevices} split by platform. */
+export function countLiveOwnedDevicesByPlatform(
+  sources: InventorySources = {},
+  { exclude = [] }: { exclude?: DeviceCountExclusion[] } = {},
+): HostedLocalPlatformCounts | { unknown: string } {
   try {
     const inventory = readInventory(sources);
-    return 'code' in inventory ? { unknown: inventory.message } : inventoryKeys(inventory, exclude).size;
+    if ('code' in inventory) return { unknown: inventory.message };
+    const keys = inventoryKeys(inventory, exclude);
+    return { ios: platformCount(keys, 'ios'), android: platformCount(keys, 'android') };
   } catch (error) {
     if (isClaimRefusal(error)) return { unknown: error.message };
     throw error;
