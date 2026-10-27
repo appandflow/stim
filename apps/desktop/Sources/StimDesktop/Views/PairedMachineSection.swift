@@ -37,7 +37,8 @@ struct PairedMachineSection: View {
   }
 
   private var subtitle: String {
-    var parts = ["\(entry.status.title) \u{00B7} View only"]
+    let access = entry.pairing?.capabilities.contains("control") == true ? "View and control" : "View only"
+    var parts = ["\(entry.status.title) \u{00B7} \(access)"]
     if let since = session?.offlineSince, status?.payload != nil {
       parts.append("offline since \(since.formatted(date: .omitted, time: .shortened))")
     }
