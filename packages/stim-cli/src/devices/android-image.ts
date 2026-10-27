@@ -270,6 +270,7 @@ export async function installSystemImage({
         timeoutMs: IMAGE_INSTALL_TIMEOUT_MS,
         input: 'n\n',
         signal,
+        containProcessTree: true,
         onSpawn: (child) => {
           if (child.pid === undefined) return;
           const captured = captureProcessIdentity(child.pid);
