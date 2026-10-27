@@ -23,6 +23,7 @@ const native = vi.hoisted(() => ({
   image: vi.fn<() => string | null>(),
   resolved: vi.fn<() => { notRunning?: true; missing?: true; notOwned?: true; serial?: string }>(),
 }));
+vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => null }));
 vi.mock('../devices/android.ts', () => ({
   DEFAULT_AVD_DEVICE_PROFILE: 'pixel_6',
   hostSystemImageArch: () => 'arm64-v8a',
@@ -94,6 +95,10 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.STIM_HOME;
   rmSync(area, { recursive: true, force: true });
+});
+
+test('prepare trusts the offer instead of sampling memory pressure again', async () => {
+  expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({ state: 'ready' });
 });
 
 test('persists exact ownership before a viewer-free boot and stops only that AVD', async () => {

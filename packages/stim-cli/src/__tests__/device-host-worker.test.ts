@@ -99,6 +99,7 @@ test('refuses an unknown inventory before creation', async () => {
 test('prepare and adoption trust the offer instead of sampling memory pressure again', async () => {
   native.pressure.mockReturnValue(null);
   await parkedSimulator();
+  expect(native.create).toHaveBeenCalledOnce();
   native.apps.mockImplementation(() => []);
   expect(await runHostedDevice('adopt', {})).toMatchObject({ state: 'ready', device: { udid } });
 });

@@ -95,9 +95,7 @@ export type HostedNativeOffer = {
 );
 
 /** Why a host's memory pressure refuses a hosted session, or null when it is `normal`. A missing sample is its own reason. */
-export function hostedMemoryRefusal(
-  pressure: HostedNativeOffer['resources']['memoryPressure'] | undefined,
-): string | null {
+export function hostedMemoryRefusal(pressure: unknown): string | null {
   if (pressure === 'normal') return null;
   return pressure === 'warning' || pressure === 'critical'
     ? `Host memory pressure is ${pressure}; hosted sessions wait until it is normal.`

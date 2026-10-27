@@ -480,8 +480,6 @@ script such as mini-desktop.sh use these instead:
                              from simulators and emulators; one bundle id
                              slot per session
 
-The host's own owned devices count toward concurrency.maxDevices.
-
 The agent-device rows work once the host's agent field names agent-device.
 
 On macOS 27, agent-device screenshot of a hosted app can return an image of the

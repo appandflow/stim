@@ -135,7 +135,6 @@ const refused = (code: ProtocolError['code'], message: string): { error: Protoco
   error: { code, message },
 });
 
-/** iOS simulators of live hosted sessions: the recorded device, else what the session home's ledger lists while the device is still being prepared. A session whose ledger is unreadable excludes nothing, which only over-counts. */
 function hostedDeviceExclusions(records: HostedDeviceSession[]) {
   return records.flatMap((record) => {
     if (record.platform !== 'ios' || record.state === 'stopped') return [];
@@ -148,7 +147,6 @@ function hostedDeviceExclusions(records: HostedDeviceSession[]) {
   });
 }
 
-/** macOS app sessions are counted against `concurrency.maxDevices` among themselves; simulators and emulators share the other pool. */
 function occupiedBy(records: HostedDeviceSession[], platform: HostedDeviceSession['platform']): number {
   return records.filter(
     (record) => record.state !== 'stopped' && (record.platform === 'macos') === (platform === 'macos'),
