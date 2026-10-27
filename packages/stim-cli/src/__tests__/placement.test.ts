@@ -316,7 +316,7 @@ describe('remote and remote-only placement', () => {
   it('remote-only tells a host that is only full or loaded, which is worth waiting for, from one that is out', () => {
     const occupied = offered('occupied', 0.5, 100, { available: 0, declined: 'reservations are occupied' });
     const strained = offered('strained', 0.5, 100, {
-      declined: 'Host memory pressure is unknown or elevated.',
+      declined: 'Host memory pressure could not be read; retry shortly.',
       memoryPressure: 'warning',
     });
     const paused = offered('paused', 0.5, 100, { declined: 'Hosted sessions are paused' });

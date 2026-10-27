@@ -220,6 +220,18 @@ test('Android doctor targets use the requesting client JDK instead of the host e
   }
 });
 
+test('a host without Xcode still judges remote Macs for the iOS app', async () => {
+  mkdirSync(join(root, 'ios'));
+  const operation = reportContext(new AbortController().signal);
+  const inspect = reactNativeProjectDoctor(root).offloadTargets?.(
+    { ...targetContext(operation), options: { operation, platform: 'ios', host: 'linux' } },
+    async () => null,
+  );
+  if (!inspect) throw new Error('The iOS doctor target was not selected on a Linux host');
+  const targets = await withAmbientContext(operation, inspect);
+  expect(targets.map((target) => target.platform)).toEqual(['ios']);
+});
+
 test('Swift doctor target probes yield and drain on report cancellation', async () => {
   writeFileSync(join(root, 'Package.swift'), '// swift-tools-version: 5.9\n');
   const integration = projectIntegrations.find((entry) => entry.id === 'swift-package');

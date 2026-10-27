@@ -162,7 +162,7 @@ KEYS STIM READS
                         restores stock services when Stim applied the profile. Absolute paths, root or
                         symlink escapes, and missing files are refused before
                         simulator creation. Remote and unowned simulators are
-                        never changed.
+                        never slimmed.
   ios.signingIdentity   e.g. "Apple Development: Jane (TEAMID5678)" -- the
                         keychain identity to re-seal a \`--device\` build with,
                         overriding the one Stim derives from the artifact's own
@@ -969,6 +969,13 @@ answer, an incompatible Stim build, CPU, Xcode, simulator SDK or CocoaPods, no
 Bundler for an app whose Gemfile.lock pins CocoaPods, no iPhone simulator on
 the runtime \`stim ios\` builds for here, low disk, or busy. With Package.swift
 and no platform selection on a Mac, it also checks the macOS Xcode and SDK.
+A client with no Xcode and no simulator SDK, such as Linux or Windows, has no
+Xcode to match: the Mac's own Xcode, simulator SDK and CocoaPods are the
+build's toolchain, the client leaves pod install to it, and \`stim ios --remote
+<mac> --remote-build <mac>\` runs the app on that Mac's hosted simulator. If
+that pod install changes Podfile.lock or the Xcode project, the build fails
+with fingerprint-mismatch; run pod install once on a Mac and commit the
+result. A client with an Xcode still needs the same one.
 Two machines build for each other when their Stim releases share a build
 compatibility version, which changes only when what a worker builds, how it
 builds, or the build messages change; their Stim builds can differ. A

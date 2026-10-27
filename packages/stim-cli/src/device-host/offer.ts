@@ -1,7 +1,7 @@
 import { statfsSync } from 'node:fs';
 import { availableParallelism, freemem, loadavg } from 'node:os';
 import { configDir } from '@stim-cli/core';
-import type { HostedDeviceOfferRequest, HostedNativeOffer } from '@stim-cli/core/state';
+import { hostedMemoryRefusal, type HostedDeviceOfferRequest, type HostedNativeOffer } from '@stim-cli/core/state';
 import { readHostMemoryPressure } from '../host-memory.ts';
 import { countLiveOwnedDevices, type DeviceCountExclusion } from '../engine/device-capacity.ts';
 import { selectHostedIosDevice } from './worker.ts';
@@ -22,13 +22,14 @@ export async function inspectHostedDevice(
     cpus,
     loadPerCore: loadavg()[1]! / cpus,
     memoryFreeBytes: freemem(),
-    memoryPressure: readHostMemoryPressure(),
+    memoryPressure: readHostMemoryPressure() ?? readHostMemoryPressure(),
     workerDiskFreeBytes,
     ...(options ? { localDevices: countLiveOwnedDevices({}, options) } : {}),
   };
   try {
     if (process.platform !== 'darwin') throw new Error('Hosted device sessions require a Mac.');
-    if (resources.memoryPressure !== 'normal') throw new Error('Host memory pressure is unknown or elevated.');
+    const memoryRefusal = hostedMemoryRefusal(resources.memoryPressure);
+    if (memoryRefusal) throw new Error(memoryRefusal);
     return request.platform === 'macos'
       ? { platform: 'macos', choice: selectHostedMacos(), resources, declined: null }
       : request.platform === 'ios'

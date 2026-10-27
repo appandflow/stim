@@ -282,7 +282,8 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   until it next boots. Media sound changes music and video volume only; alarms
   and ringtones keep their Android settings. It needs Android 15 or later; on
   older images startup warns that it could not mute the emulator. Your Mac's
-  volume, hosted devices and physical phones are unchanged.
+  volume and physical phones are unchanged. Hosted simulators and emulators are
+  muted when the host boots them, but the Sound toggles do not reach them.
 - **Device tools.** The options popover of a local simulator or emulator has a
   **Tools** section while **Control** is on: set or clear a simulated location,
   grant, revoke or reset an app permission, send a test push to an iOS app, and

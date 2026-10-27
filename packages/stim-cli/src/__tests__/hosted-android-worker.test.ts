@@ -22,9 +22,9 @@ const native = vi.hoisted(() => ({
   reset: vi.fn<(_avd: string, _serial: string, keep: string) => Promise<void>>(),
   image: vi.fn<() => string | null>(),
   resolved: vi.fn<() => { notRunning?: true; missing?: true; notOwned?: true; serial?: string }>(),
-  pressure: vi.fn<() => string | null>(),
+  mute: vi.fn<(serial: string, avdName: string) => Promise<void>>(),
 }));
-vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => native.pressure() }));
+vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => null }));
 vi.mock('../devices/android.ts', () => ({
   DEFAULT_AVD_DEVICE_PROFILE: 'pixel_6',
   hostSystemImageArch: () => 'arm64-v8a',
@@ -52,6 +52,9 @@ vi.mock('../devices/android.ts', () => ({
   resetAdoptedAvd: (avd: string, serial: string, keep: string) => native.reset(avd, serial, keep),
   avdPathExists: (path: string) => existsSync(path),
 }));
+vi.mock('../engine/device-android.ts', () => ({
+  muteBootedEmulator: (serial: string, avdName: string) => native.mute(serial, avdName),
+}));
 vi.mock('../devices/teardown.ts', () => ({
   teardownOwnedAvd: (...args: Parameters<typeof native.teardown>) => native.teardown(...args),
 }));
@@ -67,7 +70,6 @@ beforeEach(() => {
   home = join(area, 'home');
   mkdirSync(home);
   process.env.STIM_HOME = home;
-  native.pressure.mockReturnValue('normal');
   native.wait.mockResolvedValue({ ok: true });
   native.image.mockReturnValue('system-images;android-30;google_apis;arm64-v8a');
   native.resolved.mockReturnValue({ notRunning: true });
@@ -99,6 +101,10 @@ afterEach(() => {
   rmSync(area, { recursive: true, force: true });
 });
 
+test('prepare trusts the offer instead of sampling memory pressure again', async () => {
+  expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({ state: 'ready' });
+});
+
 test('persists exact ownership before a viewer-free boot and stops only that AVD', async () => {
   native.boot.mockImplementation(() => {
     expect(JSON.parse(readFileSync(join(home, 'hosted-device.json'), 'utf8'))).toMatchObject({
@@ -116,6 +122,36 @@ test('persists exact ownership before a viewer-free boot and stops only that AVD
   expect(native.create).toHaveBeenCalledTimes(1);
   expect(await runHostedAndroidDevice('stop', request)).toMatchObject({ state: 'stopped', device: { avdName: avd } });
   expect(native.teardown).toHaveBeenCalledExactlyOnceWith(avd, { del: true });
+});
+
+test('mutes the exact emulator after boot on prepare and after the adoption reset', async () => {
+  const order: string[] = [];
+  native.boot.mockImplementation((_avd, port) => {
+    order.push(`boot:${String(port)}`);
+    native.name.mockReturnValue(avd);
+  });
+  native.reset.mockImplementation(async () => {
+    order.push('reset');
+  });
+  native.mute.mockImplementation(async (serial, avdName) => {
+    order.push(`mute:${serial}:${avdName}`);
+  });
+  await runHostedAndroidDevice('prepare', request);
+  expect(order).toEqual(['boot:5554', `mute:emulator-5554:${avd}`]);
+  native.teardown.mockImplementation(() => {
+    native.name.mockReturnValue(null);
+    return { status: 'torn-down' };
+  });
+  await runHostedAndroidDevice('park', request);
+  order.length = 0;
+  await runHostedAndroidDevice('adopt', { ...request, consolePort: 5556 });
+  expect(order).toEqual(['boot:5556', 'reset', `mute:emulator-5556:${avd}`]);
+});
+
+test('does not mute an emulator whose boot was not verified', async () => {
+  native.wait.mockResolvedValue({ ok: false });
+  await runHostedAndroidDevice('prepare', request);
+  expect(native.mute).not.toHaveBeenCalled();
 });
 
 test('an occupied console port refuses before any native creation', async () => {

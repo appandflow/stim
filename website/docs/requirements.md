@@ -51,8 +51,12 @@ version. The tools Stim starts inherit the override.
   need an installed iOS Simulator runtime.
 - A compatible Ruby and CocoaPods setup when the project uses pods. Install
   Bundler when the project pins CocoaPods in `Gemfile.lock`.
-- From Linux or Windows, iOS runs through an EAS build and an EAS Simulator
-  session: `stim ios --remote eas --eas-profile <profile>`. See
+- From Linux or Windows, a React Native or Expo app builds and runs on a paired
+  Mac approved for builds and hosted simulators:
+  `stim ios --remote <mac> --remote-build <mac>`. See
+  [Remote machines](./remote-machines.md#requirements). It can also run through
+  an EAS build and an EAS Simulator session:
+  `stim ios --remote eas --eas-profile <profile>`. See
   [From Windows or Linux](./owned-devices.md#from-windows-or-linux).
 
 ## Android
