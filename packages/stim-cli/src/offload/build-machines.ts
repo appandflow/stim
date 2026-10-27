@@ -160,6 +160,7 @@ const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
 };
 
 const NOTE_TITLES: Partial<Record<OffloadProblem['code'], string>> = {
+  jdk: 'builds Android with its own JDK',
   ndk: "downloads this project's NDK on its first Android build",
   'build-tools': "downloads this project's Android build-tools on its first Android build",
   'compile-sdk': "downloads this project's Android compile platform on its first Android build",

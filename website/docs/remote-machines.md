@@ -417,7 +417,11 @@ when its default JDK is another one, so no restart is needed, and the fix for a
 missing major is the install command for the worker's OS (for example
 `brew install --cask zulu@17`). Gradle, AGP and Kotlin support only some JDK
 majors and the build cache and artifacts assume one JDK, so a nearby major does
-not count. The worker also needs the package manager of the project's lockfile
+not count. A client with no JDK has no major to match: the worker's default JDK
+is the build's JDK, and `stim doctor` notes which one. A client with no JDK and
+no Android SDK runs the app on an emulator that machine hosts with
+`stim android --remote <machine> --remote-build <machine>`, while Metro stays
+on the client. The worker also needs the package manager of the project's lockfile
 (`pnpm`, `yarn` or `npm`) on the `PATH` of its stim-server service. Also, the
 worker needs the project's NDK, build-tools and
 compile SDK, or the Android SDK licenses accepted so Gradle downloads what is
