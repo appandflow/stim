@@ -26,6 +26,7 @@ import {
   artifactIn,
   buildCacheKey,
   filesystemBuildCapability,
+  changedOnlyInside,
   compareSourceLists,
   diffFingerprintSources,
   entryDir,
@@ -711,6 +712,36 @@ test('compareSourceLists reports changed, added and removed names, current order
 test('compareSourceLists is empty when nothing moved, and ignores unnamed sources', () => {
   const sources = [{ filePath: 'a', hash: '1' }, { hash: 'anonymous' }];
   expect(compareSourceLists(sources, sources)).toEqual([]);
+});
+
+test('changedOnlyInside accepts a difference confined to the iOS project and nothing else', () => {
+  const client = [
+    { id: 'ios', hash: 'aa' },
+    { id: 'expoConfig', hash: 'bb' },
+  ];
+  const changed = (ios: string, config: string) => [
+    { type: 'dir', filePath: 'ios', hash: ios },
+    { type: 'contents', id: 'expoConfig', hash: config },
+  ];
+  expect(changedOnlyInside(client, changed('a2', 'bb'), 'ios')).toBe(true);
+  expect(changedOnlyInside(client, [...changed('aa', 'bb'), { filePath: 'ios/Podfile.lock', hash: 'cc' }], 'ios')).toBe(
+    true,
+  );
+  expect(changedOnlyInside(client, changed('a2', 'b2'), 'ios')).toBe(false);
+  expect(changedOnlyInside(client, changed('aa', 'bb'), 'ios')).toBe(false);
+  expect(changedOnlyInside(client, [...changed('aa', 'bb'), { filePath: 'ios-extra', hash: 'cc' }], 'ios')).toBe(false);
+  expect(changedOnlyInside(client, changed('a2', 'bb'), '.')).toBe(false);
+  const packageOutside = [...client, { id: 'node_modules/native-lib/package.json', hash: 'dd' }];
+  const packageMovedInside = [
+    ...changed('aa', 'bb'),
+    { filePath: 'ios/node_modules/native-lib/package.json', hash: 'ee' },
+  ];
+  expect(changedOnlyInside(packageOutside, packageMovedInside, 'ios')).toBe(false);
+  for (const escaping of [
+    { filePath: 'ios/../shared/NativeConfig.h', hash: 'ff' },
+    { type: 'contents', id: 'ios/nativeConfig', hash: 'ff' },
+  ])
+    expect(changedOnlyInside(client, [...changed('aa', 'bb'), escaping], 'ios')).toBe(false);
 });
 
 test('diffFingerprintSources prefers the project differ and falls back when it throws or misbehaves', () => {

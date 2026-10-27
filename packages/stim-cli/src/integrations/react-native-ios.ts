@@ -600,6 +600,7 @@ function reactNativeIosArtifact(
         });
         return Boolean(after && !after.moved);
       },
+      rekeyed: (hash) => ({ hash, key: buildCacheKey(PLATFORM, hash, keyOptions) }),
     },
   };
 }

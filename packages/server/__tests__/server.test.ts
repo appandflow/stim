@@ -2623,6 +2623,7 @@ describe('offloaded builds', () => {
         fingerprintSources,
         fingerprintIgnored,
         fingerprintTracked,
+        podsOnWorker: true,
       });
       expect(started).toMatchObject({ result: { job: expect.any(String) } });
       const job = (started as { result: { job: string } }).result.job;
@@ -2650,6 +2651,7 @@ describe('offloaded builds', () => {
         expectedSources: fingerprintSources,
         expectedIgnored: fingerprintIgnored,
         expectedTracked: fingerprintTracked,
+        podsOnWorker: true,
         runtime: 'iOS-27-0',
       });
       expect(ran.job.manifest.map((entry: { path: string }) => entry.path).toSorted()).toEqual([

@@ -635,9 +635,23 @@ export async function acquireIosArtifact(
     let stored: string | null = null;
     let reason = outcome.ok ? null : outcome.reason;
     if (outcome.ok) {
+      const rekeyed = outcome.builtFingerprint ? recipe.offload?.rekeyed?.(outcome.builtFingerprint) : undefined;
       if (!(await recipe.offload!.unchanged())) {
         reason = 'the checkout here changed while it built';
       } else {
+        if (rekeyed) {
+          note(
+            chalk.dim(
+              phaseLine(
+                'fingerprint',
+                `${shortHash(storeHash)} -> ${shortHash(rekeyed.hash)} (as ${outcome.machine} built it)`,
+              ),
+            ),
+          );
+          storeHash = rekeyed.hash;
+          storeKey = rekeyed.key;
+          buildFailure = { ...buildFailure, fingerprint: storeHash, cacheKey: storeKey };
+        }
         try {
           stored =
             (await recipe

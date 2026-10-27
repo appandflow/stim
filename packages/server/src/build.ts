@@ -1213,8 +1213,8 @@ export class BuildHost {
               query &&
               metadata &&
               isJsonObject(metadata.identity) &&
-              query.fingerprint === job.expectedFingerprint &&
-              entry.outcome.fingerprint === job.expectedFingerprint &&
+              query.fingerprint === entry.outcome.fingerprint &&
+              (entry.outcome.fingerprint === job.expectedFingerprint || job.podsOnWorker === true) &&
               query.project === job.project &&
               query.platform === job.platform
             ) {
@@ -1656,6 +1656,7 @@ export class BuildSession {
         project: params.project,
         isExpo: params.isExpo === true,
         cacheArtifact: params.cacheArtifact === true,
+        ...(params.podsOnWorker === true ? { podsOnWorker: true } : {}),
         stimBuild: params.stimBuild,
         ...(compat !== undefined && toolchain.compat !== undefined ? { compat } : {}),
         ...(typeof params.jdk === 'string' ? { jdk: params.jdk } : {}),

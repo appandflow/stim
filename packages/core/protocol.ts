@@ -1234,6 +1234,12 @@ export interface BuildStartParams {
   /** The JDK major the client's Android build ran on; a machine with the `build-jdk` feature builds on a JDK of that major. */
   jdk?: string;
   cacheArtifact?: boolean;
+  /**
+   * The client has no Xcode and left pod install to the machine. When the machine's fingerprint after pod install
+   * differs from `fingerprint` only in `fingerprintSources` inside the iOS project directory, it builds under and
+   * reports its own instead of refusing. An older machine ignores it.
+   */
+  podsOnWorker?: boolean;
 }
 
 export interface BuildJobParams {

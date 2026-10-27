@@ -59,6 +59,7 @@ import { reactNativeBuildQuery } from './react-native-artifact.ts';
 import { namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import {
+  buildsOnlyOnWorker,
   toolchainMismatches,
   toolchainNotes,
   cocoapodsDifference,
@@ -747,6 +748,8 @@ export type OffloadOutcome =
       /** The `.app` directory or the `.apk` file, under the staging directory. */
       artifactPath: string;
       cacheHit?: boolean;
+      /** The fingerprint the machine built under after its own pod install, when it differs from the requested one. */
+      builtFingerprint?: string;
       androidPackage?: string;
       compilationCache: CompilationCacheActivity;
       ccache: CcacheActivity;
@@ -798,6 +801,7 @@ const unsupportedNative = (provider: 'xcode' | 'gradle'): string =>
   `This worker does not support native ${provider === 'xcode' ? 'Xcode' : 'Gradle'} builds.`;
 
 const ANDROID_PACKAGE = /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/;
+const FINGERPRINT = /^[0-9a-f]{40,128}$/;
 
 function nativeTransferInput(
   native: Extract<BuildRequest, { platform: 'ios' | 'android' }>['native'],
@@ -1081,6 +1085,31 @@ function startJdk(choice: OffloadChoice): { jdk?: string } {
 
 function startCompat(choice: OffloadChoice): { compat?: number } {
   return choice.connection.supports('build-compat') ? { compat: choice.target.local.compat } : {};
+}
+
+function leavesPodsToWorker(choice: OffloadChoice, request: BuildRequest): boolean {
+  const { target } = choice;
+  return request.platform === 'ios' && !request.native && target.platform === 'ios' && buildsOnlyOnWorker(target.local);
+}
+
+function startPods(choice: OffloadChoice, request: BuildRequest): { podsOnWorker?: true } {
+  return leavesPodsToWorker(choice, request) ? { podsOnWorker: true } : {};
+}
+
+/**
+ * The fingerprint the machine built under after its own pod install, when it differs from the requested one; null
+ * when it reports another fingerprint it may not.
+ */
+function rebuiltFingerprint(
+  choice: OffloadChoice,
+  request: BuildRequest,
+  fingerprint: unknown,
+  expected: string | null | undefined,
+): string | null | undefined {
+  if (request.platform === 'macos' || fingerprint === expected) return undefined;
+  return leavesPodsToWorker(choice, request) && typeof fingerprint === 'string' && FINGERPRINT.test(fingerprint)
+    ? fingerprint
+    : null;
 }
 
 /** Peer artifact queries carry `compat`, which a stim-server without `build-compat` refuses. */
@@ -1718,6 +1747,7 @@ export async function offloadBuild(
         stimBuild: choice.target.local.stimBuild,
         ...startCompat(choice),
         ...startJdk(choice),
+        ...startPods(choice, request),
       });
       checkCancelled();
       if ('result' in reply) {
@@ -1744,6 +1774,8 @@ export async function offloadBuild(
       return keepCorruptCacheMessage(fail(workerFailureReason(result.code, result.message)), result);
     if (!cacheHit && native && (result.sourceDigest !== sourceDigest || result.fingerprint !== expectedFingerprint))
       return fail('The worker returned a different native source or artifact identity.');
+    const rebuilt = rebuiltFingerprint(choice, request, result.fingerprint, expectedFingerprint);
+    if (rebuilt === null) return fail('The worker returned a different fingerprint.');
     if (native?.provider === 'gradle' && !ANDROID_PACKAGE.test(String(result.androidPackage ?? '')))
       return fail('The worker returned no verified native APK package.');
     const artifact = result.artifact as { name?: unknown; size?: unknown; sha256?: unknown };
@@ -1789,6 +1821,7 @@ export async function offloadBuild(
     return {
       ok: true,
       ...(cacheHit ? { cacheHit: true } : {}),
+      ...(rebuilt ? { builtFingerprint: rebuilt } : {}),
       machine,
       artifactPath,
       ...(typeof declared.handoff === 'string' && /^[0-9a-f]{64}$/.test(declared.handoff)
