@@ -398,14 +398,16 @@ the worker's Xcode, simulator SDK and CocoaPods are the build's toolchain, the
 client skips `pod install` and leaves it to the worker, and
 `stim ios --remote <mac> --remote-build <mac>` runs the app on a simulator that
 Mac hosts while Metro stays on the client. When the worker's `pod install`, or
-a file it generates there such as the `.xcworkspace`, changes what the
-fingerprint covers, the worker fingerprints again and builds and stores the app
-under its own fingerprint after `pod install`, and the client stores it under
-that key too. The client's own fingerprint does not compute that key, so each
-run builds on the worker again. A stale `Podfile.lock` is then worth
-regenerating on a Mac and committing. A client with Xcode runs `pod install`
-itself, so there a change on the worker fails with `fingerprint-mismatch`.
-Native Xcode apps without React Native still need Xcode on the client. When the worker has no
+a file it generates there such as the `.xcworkspace`, changes only
+fingerprint sources in the iOS project, the worker fingerprints again and builds
+and stores the app under its own fingerprint after `pod install`, and the client
+stores it under that key too. The client's own fingerprint does not compute
+that key, so each run builds on the worker again; a stale `Podfile.lock` is
+worth regenerating on a Mac and committing. Any other difference, such as the
+app config, still fails with `fingerprint-mismatch`. A client with Xcode runs
+`pod install` itself, so there a change on the worker fails with
+`fingerprint-mismatch`. Native Xcode apps without React Native still need Xcode
+on the client. When the worker has no
 usable Xcode, `stim doctor` and the Tools step say why and give the command to
 run on the worker: `sudo xcode-select -s /Applications/<Xcode>.app/Contents/Developer`
 when an Xcode is installed but the Command Line Tools (which Homebrew selects)

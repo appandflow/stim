@@ -1235,8 +1235,9 @@ export interface BuildStartParams {
   jdk?: string;
   cacheArtifact?: boolean;
   /**
-   * The client has no Xcode and left pod install to the machine, which builds under and reports its own fingerprint
-   * from after that pod install instead of refusing one that differs from `fingerprint`. An older machine ignores it.
+   * The client has no Xcode and left pod install to the machine. When the machine's fingerprint after pod install
+   * differs from `fingerprint` only in `fingerprintSources` inside the iOS project directory, it builds under and
+   * reports its own instead of refusing. An older machine ignores it.
    */
   podsOnWorker?: boolean;
 }

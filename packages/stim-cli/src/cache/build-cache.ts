@@ -723,6 +723,12 @@ export function compareSourceLists(previous: unknown[], current: unknown[]): Sou
   return mergeMovedPackages(changes);
 }
 
+/** Whether `current` differs from `previous` in at least one source, and only in sources inside `dir`. */
+export function changedOnlyInside(previous: unknown[], current: unknown[], dir: string): boolean {
+  const changes = compareSourceLists(previous, current);
+  return dir !== '.' && changes.length > 0 && changes.every(({ name }) => name === dir || name.startsWith(`${dir}/`));
+}
+
 export function diffFingerprintSources({
   previous,
   previousHash = null,

@@ -31,7 +31,12 @@ import {
 import { basename, delimiter, dirname, join, relative, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
-import { compareSourceLists, fingerprintProject, refingerprintAfterMutation } from '../cache/build-cache.ts';
+import {
+  changedOnlyInside,
+  compareSourceLists,
+  fingerprintProject,
+  refingerprintAfterMutation,
+} from '../cache/build-cache.ts';
 import { buildIos, buildAndroid, gradlewPath } from '../integrations/react-native-build.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../cache/compilation-cache-corruption.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
@@ -134,7 +139,7 @@ export interface WorkerJob {
   /** The top-level entries the client counted although an ignore pattern matches them; this checkout has no index. */
   expectedTracked?: string[];
   cacheArtifact?: boolean;
-  /** The client has no Xcode and left pod install to this machine, which builds under its own fingerprint after it. */
+  /** The client has no Xcode and left pod install to this machine, which may then rekey sources in the iOS project. */
   podsOnWorker?: boolean;
   stimBuild?: string;
   compat?: number;
@@ -476,14 +481,18 @@ function fingerprintMismatch(
 
 /**
  * Why the synced checkout does not build under the client's fingerprint, or null. A client without Xcode left pod
- * install to this machine and cannot have the files it generates, so this machine's fingerprint stands.
+ * install to this machine and cannot have the files it rewrites or generates in `iosDir`, so a fingerprint that
+ * differs only in sources there stands; any other difference, such as the app config, still refuses.
  */
 function fingerprintRefusal(
   job: WorkerJob,
+  iosDir: string,
   built: { hash: string; sources: readonly unknown[] },
   mutated: () => { steps: readonly string[]; files: readonly string[] },
 ): string | null {
-  if (job.podsOnWorker || built.hash === job.expectedFingerprint) return null;
+  if (built.hash === job.expectedFingerprint) return null;
+  if (job.podsOnWorker && job.expectedSources && changedOnlyInside(job.expectedSources, [...built.sources], iosDir))
+    return null;
   return fingerprintMismatch(job, built.hash, built.sources, mutated());
 }
 
@@ -789,7 +798,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       sources = after.sources;
       if (mutations.includes('expo prebuild')) recordPrebuild(realRoot, platform, after.hash);
     }
-    const refused = fingerprintRefusal(job, { hash: fingerprint, sources }, () => ({
+    const refused = fingerprintRefusal(job, iosProject.relative, { hash: fingerprint, sources }, () => ({
       steps: mutations,
       files: mutations.length ? rewrittenFiles(src, job.manifest, mirrored.record) : [],
     }));
