@@ -122,6 +122,13 @@ function licenseAccepted(sdk: string): boolean {
   }
 }
 
+// sdkmanager (AbstractPackageOperation in cmdline-tools' tools.repository.jar) keeps `.installer/.installData` in a
+// package's destination while it installs and deletes it when done; package.xml is present in a complete package.
+function imageComplete(sdk: string, pkg: string): boolean {
+  const directory = join(sdk, ...pkg.split(';'));
+  return existsSync(join(directory, 'package.xml')) && !existsSync(join(directory, '.installer'));
+}
+
 function claimRoot(sdk: string): string {
   let canonical = sdk;
   try {
@@ -177,7 +184,8 @@ export async function ensureSystemImage({
   const decision = decideSystemImage({ requested, installed: listImages(undefined, env), policy, env });
   if (decision.kind === 'refuse')
     return { ok: false, code: decision.code, message: decision.message, remedy: decision.remedy };
-  if (decision.kind === 'installed') return { ok: true, installed: false };
+  if (decision.kind === 'installed' && imageComplete(androidHome(env), decision.pkg))
+    return { ok: true, installed: false };
   const result = await installSystemImage({ pkg: decision.pkg, env, signal, note });
   return result.ok ? { ok: true, installed: true } : result;
 }
@@ -254,8 +262,7 @@ export async function installSystemImage({
   const held = claim;
   let unresolved = false;
   try {
-    if (listInstalledSystemImages(undefined, env).some((image) => image.pkg === pkg))
-      return { ok: true, installed: false };
+    if (imageComplete(sdk, pkg)) return { ok: true, installed: false };
     const problem = systemImageInstallProblem(pkg, env);
     if (problem) return { ok: false, ...problem };
     note(`installing ${pkg} with sdkmanager (about 2 GB)`);
@@ -290,7 +297,7 @@ export async function installSystemImage({
     }
     if (LICENSE_NOT_ACCEPTED.test(output)) return licenses();
     const directory = join(sdk, ...pkg.split(';'));
-    if (!existsSync(directory))
+    if (!imageComplete(sdk, pkg))
       return refuse(
         `sdkmanager finished without installing ${pkg}: ${failureLine(output) || 'it printed no error'}`,
         `Run \`${manual}\` on this machine to see the full output, then try again.`,

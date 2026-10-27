@@ -73,7 +73,9 @@ test.skipIf(!roomToInstall)(
         calls.push(args);
         stdin.push(options.input);
         await new Promise((resolve) => setTimeout(resolve, 2500));
-        mkdirSync(join(sdk, 'system-images', 'android-36', 'google_apis', hostSystemImageArch()), { recursive: true });
+        const installed = join(sdk, 'system-images', 'android-36', 'google_apis', hostSystemImageArch());
+        mkdirSync(installed, { recursive: true });
+        writeFileSync(join(installed, 'package.xml'), '<package/>');
         return 'done';
       },
     });
@@ -115,3 +117,22 @@ test.skipIf(!roomToInstall)(
     expect(existsSync(join(sdk, 'system-images'))).toBe(false);
   },
 );
+
+test.skipIf(!roomToInstall)('an image directory sdkmanager left mid-install is installed again, not used', async () => {
+  const partial = join(sdk, 'system-images', 'android-36', 'google_apis', hostSystemImageArch());
+  mkdirSync(join(partial, '.installer'), { recursive: true });
+  const calls: string[][] = [];
+  setExecutor({
+    runFileAsync: async (_file: string, args: string[]) => {
+      calls.push(args);
+      rmSync(join(partial, '.installer'), { recursive: true });
+      writeFileSync(join(partial, 'package.xml'), '<package/>');
+      return 'done';
+    },
+  });
+  expect(await ensureSystemImage({ requested: HOST, policy: 'auto', env, note: () => {} })).toEqual({
+    ok: true,
+    installed: true,
+  });
+  expect(calls).toEqual([[`--sdk_root=${sdk}`, '--install', HOST]]);
+});
