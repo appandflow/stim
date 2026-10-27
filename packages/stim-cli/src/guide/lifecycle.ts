@@ -1,6 +1,17 @@
 import { WATCH_CPU_STEP_PERCENT, WATCH_LOAD_STEP_PER_CORE, WATCH_MEMORY_STEP_MB } from '../status-watch.ts';
 import type { GuideTopic } from './types.ts';
 
+const HOSTED_RECORDING = (noun: 'simulator' | 'emulator') => `\
+agent-device record start [path] --remote-config <file> records the ${noun};
+record stop downloads the video to path, or ./recording-<time>.mp4, on this
+machine. The host writes it only under the session's private agent-device state
+and deletes it after the download, on stop, on revocation and when its daemon
+restarts. One recording runs per session; a second start, a host output path
+and record inside batch are refused. The host stops a recording after 10
+minutes, and the next record stop downloads it. A finished recording over
+512 MiB is deleted instead. A host whose Stim predates hosted recording refuses
+record as a command outside its allowed list.`;
+
 const lifecycle: GuideTopic = {
   summary:
     'The full worktree -> start -> ios/android -> logs -> teardown flow, with sections for builds, devices and flags',
@@ -589,12 +600,15 @@ session's tenant. devices is permitted for the client's open flow; inventory
 contains only this emulator. Never use its serial with a local agent-device.
 Allowed commands are devices, open, close, snapshot, diff, wait, find, get, is,
 click, fill, press, type, focus, scroll, screenshot, longpress, swipe, back, home,
-orientation, appstate, alert and batch. Stim installs; install, reinstall,
-uninstall, boot, shutdown, close --shutdown, record, logs, uploads and device-wide
-actions are refused. Other serials in commands, flags, inputs, nested batches or
-lease requests are refused. Ambient client paths and owner fields are stripped;
-the host pins platform, serial, tenant, runId, clientId, deviceKey and backend.
-Host paths and launch inputs are refused. Screenshots use only remote artifacts.
+orientation, appstate, alert, batch, record start and record stop. Stim installs;
+install, reinstall, uninstall, boot, shutdown, close --shutdown, logs, uploads and
+device-wide actions are refused. Other serials in commands, flags, inputs, nested
+batches or lease requests are refused. Ambient client paths and owner fields are
+stripped; the host pins platform, serial, tenant, runId, clientId, deviceKey and
+backend. Host paths and launch inputs are refused. Screenshots use only remote
+artifacts.
+
+${HOSTED_RECORDING('emulator')}
 
 Stop closes the matching agent-device connection and removes the slot file only
 once the host confirms stop or revocation. Reinstall, stop, revocation and server
@@ -900,13 +914,13 @@ targeting its exact simulator UDID before deleting the simulator, even without c
 
 Allowed: devices, open, close, snapshot, diff, wait, find, get, is, click, fill,
 press, type, focus, scroll, screenshot, longpress, swipe, back, home, orientation,
-appstate, alert and batch. These inspect or interact with the simulator and
-installed apps. devices lists only the session's simulator, filtered by the
+appstate, alert, batch, record start and record stop. These inspect, interact with
+or record the simulator and installed apps. devices lists only the session's simulator, filtered by the
 daemon policy. Its device claims are session-local and record / as the workspace;
 a host-side agent-device using the same simulator is not visible to the hosted daemon.
 Client device selectors are stripped and requests are pinned to iOS and that
 UDID; an explicitly named foreign UDID is refused. Selecting another device,
-boot/shutdown/erase, installs, uninstall, uploads, push, record, logs, network,
+boot/shutdown/erase, installs, uninstall, uploads, push, logs, network,
 perf, trace, clipboard and settings are refused. Stim installs; the agent cannot
 enumerate other host devices or write host files. Ambient client fields (cwd,
 stateDir, config and remoteConfig) are stripped, including inside batch steps.
@@ -915,6 +929,8 @@ installSource and similar fields) are refused, including inside batch steps.
 Only agent-device's generated screenshot temp artifact is accepted and returned
 to the client; arbitrary host screenshot destinations are refused. Runtime
 hints are dropped and only reporting/artifact metadata passes through.
+
+${HOSTED_RECORDING('simulator')}
 
 If hosting.agentDriver is none, the driver cannot enforce its policy, or the
 host does not advertise hosted-ios-agent, agent reports

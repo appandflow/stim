@@ -1062,6 +1062,8 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(android).toContain('agent-device <command> --remote-config <file>');
   expect(android).toContain('close --shutdown');
   expect(renderTopic('agent')).toContain('--remote-config');
+  for (const body of [hosted, android])
+    expect(body).toContain('agent-device record start [path] --remote-config <file>');
 });
 
 test('native Xcode and Gradle apps route to their lifecycle sections', () => {

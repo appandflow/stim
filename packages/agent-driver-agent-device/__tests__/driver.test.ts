@@ -524,6 +524,12 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
         flags: { platform: 'macos' },
         input: {},
       });
+      const record = await rpc({
+        method: 'agent_device.command',
+        params: { command: 'record', positionals: ['start'] },
+      });
+      expect(record.status).toBe(400);
+      expect(JSON.parse(record.text).error.message).toContain('macos-app lease does not allow screen recording');
       const bareOpen = await rpc({ method: 'agent_device.command', params: { command: 'open' } });
       expect(bareOpen.upstream?.params.flags).toEqual({ platform: 'macos' });
       for (const denied of ['session_list', 'lease_release', 'install', 'devices', 'diff', undefined])

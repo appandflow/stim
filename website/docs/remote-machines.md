@@ -278,12 +278,22 @@ agent-device click <ref> --remote-config <file>
 
 Use the returned config, keeping the host serial on the host. One daemon per
 session pins the exact owned emulator serial; its inventory lists only that
-emulator. It allows inspection and interaction with installed apps and refuses
-install, reinstall, uninstall, boot, shutdown, `close --shutdown`, record, logs,
-other devices and host paths. Stim installs the app. An unavailable or older
+emulator. It allows inspection of, interaction with and recording of installed
+apps, and refuses install, reinstall, uninstall, boot, shutdown,
+`close --shutdown`, logs, other devices and host paths. Stim installs the app. An unavailable or older
 driver reports `none` with the host's reason. Stop closes the matching agent
 connection and stops the daemon and its helpers before parking or deleting the emulator.
 An unresolved daemon claim blocks replacement and deletion.
+
+`agent-device record start [path] --remote-config <file>` records the emulator, and
+`record stop` downloads the video to that path, or `./recording-<time>.mp4`, on
+your machine. The hosting Mac writes the recording only in the session's private
+agent-device state and deletes it after the download, on stop, on revocation and
+when the session's daemon restarts. One recording runs per session; a second
+`record start`, a host output path and `record` inside `batch` are refused. The
+host stops a recording after 10 minutes, and the next `record stop` downloads it.
+A finished recording over 512 MiB is deleted instead. A hosting Mac whose Stim
+predates hosted recording refuses `record` as a command outside its allowed list.
 
 Copy this prompt to try it: "Run this app with `stim android --remote <machine>`.
 Read `android.host.agent` from `stim status --json`, open the installed package
