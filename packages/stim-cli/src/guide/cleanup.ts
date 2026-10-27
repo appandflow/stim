@@ -50,7 +50,7 @@ status's maintenance block and the maintenance log.
 
 IDLE STOP: the idle check, and gc --delete unless maintenance.mode is off (its
 dry run lists them in the maintenance plan), stop a workspace whose dev server
-runs or whose owned simulator or emulator is booted once it has had no real
+runs, whose owned simulator or emulator is booted, or whose device is hosted on a remote Mac once it has had no real
 activity for maintenance.idleStopHours (default 6; 0 never; machine or project
 layers; STIM_MAINTENANCE_IDLE_STOP_HOURS overrides; fractions work). Six hours
 outlasts a lunch break, a meeting or an agent's pause between tasks, and still
@@ -65,7 +65,7 @@ only stays connected does not either. The stop is stim stop's: the dev
 server stops, the owned devices shut down through centralized teardown
 (never deleted), and the port is released; device leases stay. A build, a
 held native-run or metro-start lock, a build lock or slot, a running macOS
-app, a hosted or remote session, an unexpired device lease, a managed tunnel
+app, a remote (EAS) session, an unexpired device lease, a managed tunnel
 or remote lock, a running owned Chrome, a device driver other than
 agent-device, a live agent-device claim with no session activity to judge,
 device activity, an emulator list or an emulator's AVD name that cannot be read keeps
@@ -78,7 +78,21 @@ after stim stop, and the supervisor_stopped line in metro.ndjson names
 automatic maintenance and the idle time as the requester. The next start, ios or android starts it
 again. An owned emulator the activity check missed keeps the workspace while
 adb lists it, and so does any emulator adb lists without an AVD name, such as
-a stale offline entry that adb kill-server clears. A dev server that may still run after its supervisor
+a stale offline entry that adb kill-server clears. A workspace whose iOS, Android or macOS device is hosted on a remote Mac is
+stopped the same way once the host confirms the session is ready; stim stop's
+hosted path ends the session and the host parks or tears down the device. A host
+that does not answer, a session it cannot confirm (unknown, as after a worker
+crash) and a placement that cannot be read keep the workspace, and a live view of
+the hosted device is not seen here. On the host, stim-server stops a ready session
+whose client has had no connection, live stream or Metro link and sent no
+agent-device request for the host's own machine maintenance.idleStopHours (default 6; 0
+never; STIM_MAINTENANCE_IDLE_STOP_HOURS overrides), only while its maintenance.mode is on;
+a project value or maintenance.keep on the client does not reach it. Server downtime is not
+counted. It uses the stop a person uses, never touches a session whose journal state is
+preparing, stopping or unknown, or one with a native operation or a claim it cannot prove free
+(a session a crashed server left ready counts once its claim is proven free),
+and writes the reason to the server log and the session's idleStop journal field.
+The count is per client, not per session. A dev server that may still run after its supervisor
 exited is kept until stim stop ends it. So is a dev server whose requests Stim
 does not record: an Expo project before SDK 54, which cannot load Stim's Metro config
 adapter, or a dev server an older Stim started, until stim stop and stim start

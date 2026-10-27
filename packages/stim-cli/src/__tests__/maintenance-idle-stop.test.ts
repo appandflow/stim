@@ -13,6 +13,8 @@ import { dirname, join } from 'node:path';
 import { deviceViewersDir, readMaintenanceState, type DeviceActivity } from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { collectOwnedDeviceActivity, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
+import * as hostedClient from '../device-host/hosted-client.ts';
+import * as stopCommand from '../commands/stop.ts';
 import * as ios from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import { resolveBudget } from '../budget.ts';
@@ -655,4 +657,123 @@ test.each<[string, number, () => string | undefined, boolean]>([
   expect(skips.map((skip) => skip.reason)).toEqual(
     kept ? [`its dev server (pid ${serverPid}) may still run after its supervisor exited; stim stop ends it`] : [],
   );
+});
+
+const SESSION = '12345678-1234-1234-1234-123456789abc';
+
+function hostedWorkspace(name: string, usedAgoMs: number, placement: 'ios' | 'macos' | 'unreadable' = 'ios') {
+  const root = join(projects, name);
+  mkdirSync(root, { recursive: true });
+  ensureWorkspaceStorage(root);
+  upsertProject(root, { metroPort: null, platforms: {} });
+  recordWorkspaceUse(root, new Date(Date.now() - usedAgoMs));
+  const agent = { driver: 'none', setting: 'hosting.agentDriver' };
+  if (placement === 'macos')
+    writeWorkspaceState(root, {
+      macos: {
+        launchId: 'launch',
+        arguments: [],
+        product: 'App',
+        bundle: '/tmp/App.app',
+        bundleId: 'dev.app.hosted3',
+        executable: 'App',
+        build: { state: 'ok', startedAt: new Date().toISOString() },
+        hostLaunched: true,
+        host: { machine: 'mini', session: SESSION, appSlot: 3, appAttempt: 'a', bundleId: 'dev.app.hosted3', agent },
+      },
+    });
+  else
+    writeWorkspaceState(root, {
+      ios: {
+        host: placement === 'ios' ? { machine: 'mini', session: SESSION, appAttempt: 'a', agent } : { machine: 5 },
+      },
+    });
+  return root;
+}
+
+function stopFirst(actions: Awaited<ReturnType<typeof plan>>['actions']) {
+  const [action] = actions;
+  if (!action) throw new Error('nothing was planned');
+  return stopIdleWorkspace(action, { protectedRoot: PROTECTED, devices: () => realDevices });
+}
+
+describe('a workspace whose device is hosted on a remote Mac', () => {
+  const probe = (state: Awaited<ReturnType<typeof hostedClient.probeHostedSession>>) =>
+    vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue(state);
+
+  test.each(['ios', 'macos'] as const)(
+    'is planned for a stop once idle and the host confirms the %s session is ready',
+    async (placement) => {
+      const root = hostedWorkspace('hosted', 7 * HOUR_MS, placement);
+      const probed = probe({ state: 'ready' });
+
+      const { actions, skips } = await plan();
+
+      expect(skips).toEqual([]);
+      expect(actions).toEqual([expect.objectContaining({ kind: 'would-stop-workspace', check: 'idle', target: root })]);
+      expect(probed).toHaveBeenCalledWith(expect.objectContaining({ machine: 'mini', session: SESSION }), { ttlMs: 0 });
+    },
+  );
+
+  test('is not probed or planned while it had activity within maintenance.idleStopHours', async () => {
+    hostedWorkspace('busy', HOUR_MS);
+    const probed = probe({ state: 'ready' });
+
+    const { actions, skips } = await plan();
+
+    expect([actions, skips]).toEqual([[], []]);
+    expect(probed).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    [
+      { state: 'unknown', notice: 'The previous session owner is not attached to this server.' } as const,
+      /not attached/,
+    ],
+    [{ state: 'unreachable', reason: 'timed out' } as const, /did not answer: timed out/],
+  ])('is kept when the host cannot confirm the session (%j)', async (answer, reason) => {
+    const root = hostedWorkspace('unconfirmed', 7 * HOUR_MS);
+    probe(answer);
+
+    const { actions, skips } = await plan();
+
+    expect(actions).toEqual([]);
+    expect(skips).toEqual([expect.objectContaining({ target: root, reason: expect.stringMatching(reason) })]);
+  });
+
+  test('is kept when its recorded placement cannot be read', async () => {
+    const root = hostedWorkspace('garbled', 7 * HOUR_MS, 'unreadable');
+    const probed = probe({ state: 'ready' });
+
+    const { actions, skips } = await plan();
+
+    expect(actions).toEqual([]);
+    expect(skips).toEqual([expect.objectContaining({ target: root, reason: expect.stringMatching(/unreadable/) })]);
+    expect(probed).not.toHaveBeenCalled();
+  });
+
+  test('is stopped through the normal stop, which ends the hosted session, when it is still idle', async () => {
+    const root = hostedWorkspace('stopping', 7 * HOUR_MS);
+    probe({ state: 'ready' });
+    const stopped = vi.spyOn(stopCommand, 'runStop').mockResolvedValue({ ok: true, summary: 'Stopped' } as never);
+    const { actions } = await plan();
+
+    const outcome = await stopFirst(actions);
+
+    expect(outcome).toEqual({ status: 'done', bytes: 0, detail: 'Stopped' });
+    expect(stopped).toHaveBeenCalledWith(expect.objectContaining({ root }));
+  });
+
+  test('is kept at stop time when the host stops confirming the session after the plan', async () => {
+    hostedWorkspace('lost', 7 * HOUR_MS);
+    const probed = probe({ state: 'ready' });
+    const stopped = vi.spyOn(stopCommand, 'runStop');
+    const { actions } = await plan();
+    probed.mockResolvedValue({ state: 'unreachable', reason: 'offline' });
+
+    const outcome = await stopFirst(actions);
+
+    expect(outcome).toEqual(expect.objectContaining({ status: 'kept', detail: expect.stringMatching(/offline/) }));
+    expect(stopped).not.toHaveBeenCalled();
+  });
 });

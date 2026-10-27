@@ -35,6 +35,7 @@ import {
 } from '@stim-cli/core/state';
 import {
   claimRemoveCommand,
+  exclusiveClaimDir,
   processGroupAlive,
   readClaimSet,
   tryAcquireClaim,
@@ -207,6 +208,7 @@ const agents = {
 let home: string;
 let host: DeviceHost;
 let allowed: Set<string>;
+let connected: Set<string>;
 let hostEnv: NodeJS.ProcessEnv;
 const request = { workspace: '/client/worktree', slot: 'default', platform: 'ios', attempt: 'first' };
 
@@ -219,12 +221,14 @@ beforeEach(() => {
   const worker = join(home, 'worker.mjs');
   writeFileSync(worker, WORKER);
   allowed = new Set(['client', 'other']);
+  connected = new Set();
   hostEnv = { ...process.env, STIM_MAX_DEVICES: '1' };
   host = new DeviceHost({
     worker,
     env: hostEnv,
     agents,
     allowed: (client) => allowed.has(client),
+    connected: (client) => connected.has(client),
     limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
   });
 });
@@ -940,6 +944,167 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
+
+const IDLE_WINDOW_MS = 3_600_000;
+
+function recordAbsence(id: string, absentMs: number) {
+  const file = join(deviceHostRoot(), 'sessions.json');
+  const journal: { sessions: HostedDeviceSession[] } = JSON.parse(readFileSync(file, 'utf8'));
+  for (const record of journal.sessions) if (record.id === id) record.clientAbsentMs = absentMs;
+  writeFileSync(file, JSON.stringify(journal));
+}
+
+describe('a hosted session whose client is gone', () => {
+  beforeEach(() => {
+    hostEnv.STIM_MAINTENANCE = 'on';
+    hostEnv.STIM_MAINTENANCE_IDLE_STOP_HOURS = '1';
+  });
+
+  test('stops after maintenance.idleStopHours through the normal stop, and the journal says why', async () => {
+    const first = await reserve();
+    await state(first.id, 'ready');
+    recordAbsence(first.id, IDLE_WINDOW_MS);
+
+    host.sweepIdle();
+
+    const stopped = await state(first.id, 'stopped');
+    expect(stopped.idleStop?.reason).toMatch(
+      /^its client had no connection for 1h 0m, over maintenance\.idleStopHours$/,
+    );
+    expect(stopped.clientAbsentMs).toBeUndefined();
+    expect(readFileSync(join(deviceHostArea(first.id), 'home', 'modes'), 'utf8')).toContain('stop');
+  });
+
+  test('keeps a session whose client is connected and forgets its earlier absence', async () => {
+    const first = await reserve();
+    await state(first.id, 'ready');
+    recordAbsence(first.id, 5 * IDLE_WINDOW_MS);
+    connected.add('client');
+
+    host.sweepIdle();
+
+    const kept = await state(first.id, 'ready');
+    expect(kept.clientAbsentMs).toBeUndefined();
+    expect(kept.idleStop).toBeUndefined();
+  });
+
+  test('keeps a session whose client connected and disconnected between two sweeps', async () => {
+    const first = await reserve();
+    await state(first.id, 'ready');
+    recordAbsence(first.id, 5 * IDLE_WINDOW_MS);
+
+    host.clientSeen('client');
+    host.sweepIdle();
+
+    const kept = await state(first.id, 'ready');
+    expect(kept.clientAbsentMs).toBeUndefined();
+    expect(kept.idleStop).toBeUndefined();
+  });
+
+  test('stops a session a crashed server left ready once its claim is free, and not before', async () => {
+    const crashed = seedHosted({ state: 'ready', attempt: 'crashed', workspace: '/client/crashed' });
+    recordAbsence(crashed.id, IDLE_WINDOW_MS);
+    const claim = tryAcquireClaim({
+      root: join(deviceHostRoot(), `${crashed.id}.claims`),
+      mode: 'exclusive',
+      label: 'hosted device session',
+      details: { session: crashed.id, client: 'client' },
+    });
+    if (!claim.acquired) throw new Error('the test claim was not taken');
+
+    host.sweepIdle();
+    expect(readHostedSessions().find((record) => record.id === crashed.id)).toMatchObject({ state: 'ready' });
+
+    releaseClaim(claim.acquired);
+    host.sweepIdle();
+    expect((await state(crashed.id, 'stopped')).idleStop?.reason).toMatch(/no connection/);
+  });
+
+  test('keeps one session whose claim cannot be read and still stops another that is due', async () => {
+    const unreadable = seedHosted({ state: 'ready', attempt: 'unreadable', workspace: '/client/unreadable' });
+    const due = seedHosted({ state: 'ready', attempt: 'due', workspace: '/client/due' });
+    recordAbsence(unreadable.id, IDLE_WINDOW_MS);
+    recordAbsence(due.id, IDLE_WINDOW_MS);
+    const claims = exclusiveClaimDir(join(deviceHostRoot(), `${unreadable.id}.claims`));
+    mkdirSync(claims, { recursive: true });
+    writeFileSync(join(claims, 'stray'), 'not a claim');
+    const written = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      host.sweepIdle();
+
+      expect((await state(due.id, 'stopped')).idleStop).toBeDefined();
+      expect(readHostedSessions().find((record) => record.id === unreadable.id)).toMatchObject({ state: 'ready' });
+      expect(written.mock.calls.some(([line]) => String(line).includes(`Hosted session ${unreadable.id} kept`))).toBe(
+        true,
+      );
+    } finally {
+      written.mockRestore();
+    }
+  });
+
+  test('never touches a session that is still preparing', async () => {
+    const first = await reserve({ deviceType: 'hang' });
+    await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'entered'))).toBe(true));
+    recordAbsence(first.id, 5 * IDLE_WINDOW_MS);
+
+    host.sweepIdle();
+
+    expect(readHostedSessions().find((record) => record.id === first.id)).toMatchObject({ state: 'preparing' });
+  });
+
+  test.each([
+    ['maintenance.mode is off', { STIM_MAINTENANCE: 'off' }],
+    ['maintenance.mode is report', { STIM_MAINTENANCE: 'report' }],
+    ['maintenance.idleStopHours is invalid', { STIM_MAINTENANCE_IDLE_STOP_HOURS: '-1' }],
+  ])('stops nothing when %s', async (_, env) => {
+    Object.assign(hostEnv, env);
+    const first = await reserve();
+    await state(first.id, 'ready');
+    recordAbsence(first.id, 5 * IDLE_WINDOW_MS);
+
+    host.sweepIdle();
+
+    expect((await state(first.id, 'ready')).idleStop).toBeUndefined();
+  });
+
+  test('stops nothing when maintenance.idleStopHours is 0', async () => {
+    hostEnv.STIM_MAINTENANCE_IDLE_STOP_HOURS = '0';
+    const first = await reserve();
+    await state(first.id, 'ready');
+    recordAbsence(first.id, 5 * IDLE_WINDOW_MS);
+
+    host.sweepIdle();
+
+    expect((await state(first.id, 'ready')).idleStop).toBeUndefined();
+  });
+
+  test('neither counts nor stops a session whose owner is another live server', async () => {
+    const first = await reserve();
+    await state(first.id, 'ready');
+    recordAbsence(first.id, IDLE_WINDOW_MS);
+    const other = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents: noAgents,
+      allowed: () => true,
+      connected: () => false,
+    });
+    const written = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      other.sweepIdle();
+      other.sweepIdle();
+
+      const untouched = await state(first.id, 'ready');
+      expect(untouched.idleStop).toBeUndefined();
+      expect(untouched.clientAbsentMs).toBe(IDLE_WINDOW_MS);
+      expect(written).not.toHaveBeenCalled();
+      expect(host.attach('client', { session: first.id })).toHaveProperty('result.state', 'ready');
+    } finally {
+      written.mockRestore();
+      await other.close();
+    }
+  });
+});
 
 test('revocation stops a live owned device and rejects subsequent client methods', async () => {
   const first = await reserve();
@@ -3459,6 +3624,22 @@ test('a clean server close parks and a restarted host adopts, while crashed runn
     await host.reserve('client', { ...request, workspace: '/client/crashed', attempt: 'replacement' }),
   ).toHaveProperty('error.code', 'device-busy');
   expect(hostedModes(crashed.id)).toEqual([]);
+});
+
+test('adopting a parked session drops the idle stop and absence the previous run recorded', async () => {
+  parkingLimits();
+  const parked = seedHosted({
+    parked: { at: '2026-10-01T00:00:00.000Z' },
+    idleStop: { at: '2026-10-01T00:00:00.000Z', reason: 'its client had no connection' },
+    clientAbsentMs: 5,
+  });
+
+  const adopted = await reserve({ attempt: 'again' });
+
+  expect(adopted.id).toBe(parked.id);
+  const ready = await state(adopted.id, 'ready');
+  expect(ready.idleStop).toBeUndefined();
+  expect(ready.clientAbsentMs).toBeUndefined();
 });
 
 test('a failed Android adoption before rebinding keeps a readable unknown journal and explicit stop retires it', async () => {

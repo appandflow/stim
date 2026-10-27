@@ -547,7 +547,7 @@ Status adds android.host { machine, session, selected, agent, device: { name,
 systemImage, api }, state } per slot. The public name is the profile and API
 level, never the host serial or AVD name. ready, stopped and unverified are
 session probe states; a conflicting local emulator remains visible with a
-warning. A recorded placement keeps the workspace in use and blocks idle stop.
+warning. A recorded placement keeps the workspace in use and blocks the supervisor's idle stop and device reclaim; maintenance.idleStopHours still stops it once the host confirms the session (guide cleanup, IDLE STOP).
 
 stop and worktree remove wait for device-host.stop, park the host's eligible owned
 emulator within pool.androidParkedMax (delete otherwise), close the Metro links and clear placement. stop --json reports

@@ -779,7 +779,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 6,
     env: 'STIM_MAINTENANCE_IDLE_STOP_HOURS',
     description:
-      "Hours with no native run, Metro bundle or HMR request, agent-device command, Stim command or live view before automatic maintenance and gc --delete stop a workspace's dev server and shut down its owned simulators and emulators, as stim stop does; device and app log lines do not count; 0 never",
+      "Hours with no native run, Metro bundle or HMR request, agent-device command, Stim command or live view of a local device before automatic maintenance and gc --delete stop a workspace's dev server and shut down its owned or hosted simulators and emulators, as stim stop does, and stim-server stops a hosted session whose client has been gone that long; device and app log lines do not count; 0 never",
   },
   {
     key: 'maintenance.sweepHours',

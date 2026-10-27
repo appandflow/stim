@@ -1,7 +1,9 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { configDir } from '../index.ts';
+import { loadConfig } from './config.ts';
 import { isJsonObject } from './json-file.ts';
+import { coerceSettingText, settingDefinition, settingValueError } from './settings-registry.ts';
 import {
   hostedMacosAppSlot,
   parseHostedMacosChoice,
@@ -130,11 +132,52 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
   appSlot?: number;
   createdAt: string;
   parked?: { at: string };
+  /** Milliseconds this server ran with no connection from the session's client since it was last connected. */
+  clientAbsentMs?: number;
+  /** Set when stim-server stopped this session because its client was gone for maintenance.idleStopHours. */
+  idleStop?: { at: string; reason: string };
   notice?: string;
   appAttempt?: string;
   agent?: HostedAgentGrant;
   metroPort?: number;
   clientMetroPort?: number;
+}
+
+function machineSetting(key: string, env: NodeJS.ProcessEnv): { value: unknown } | { invalid: string } {
+  const setting = settingDefinition(key);
+  if (!setting?.env) return { invalid: `${key} is not in the settings registry` };
+  const raw = env[setting.env];
+  const fromEnv = raw !== undefined && raw !== '';
+  let value: unknown;
+  if (fromEnv) value = coerceSettingText(setting, raw);
+  else if (env.STIM_HOME && setting.scopedHomeValue !== undefined) value = setting.scopedHomeValue;
+  else if (env.CI && setting.ciValue !== undefined) value = setting.ciValue;
+  else {
+    const [group = '', name = ''] = key.split('.');
+    const container = loadConfig()?.[group];
+    if (container !== undefined && !isJsonObject(container))
+      return { invalid: `${group} in the config is not an object` };
+    const configured = container?.[name];
+    value = configured === undefined ? setting.default : configured;
+  }
+  const error = settingValueError(setting, value);
+  return error ? { invalid: `${fromEnv ? setting.env : key} is invalid: expected ${error}` } : { value };
+}
+
+/**
+ * The window after which stim-server stops a hosted session whose client is gone: the machine-scope
+ * `maintenance.idleStopHours` of the home it runs in, 0 unless `maintenance.mode` is on. An invalid value is reported
+ * so the caller stops nothing.
+ */
+export function hostedIdleStopHours(env: NodeJS.ProcessEnv): { hours: number } | { invalid: string } {
+  const mode = machineSetting('maintenance.mode', env);
+  if ('invalid' in mode) return mode;
+  if (mode.value !== 'on') return { hours: 0 };
+  const hours = machineSetting('maintenance.idleStopHours', env);
+  if ('invalid' in hours) return hours;
+  return typeof hours.value === 'number'
+    ? { hours: hours.value }
+    : { invalid: 'maintenance.idleStopHours is not a number' };
 }
 
 export function deviceHostRoot(): string {
@@ -406,6 +449,15 @@ export function readHostedSessions(): HostedDeviceSession[] {
           new Date(entry.parked.at).toISOString() !== entry.parked.at ||
           entry.state !== 'stopped' ||
           entry.platform === 'macos')) ||
+      (entry.clientAbsentMs !== undefined &&
+        (typeof entry.clientAbsentMs !== 'number' ||
+          !Number.isFinite(entry.clientAbsentMs) ||
+          entry.clientAbsentMs < 0)) ||
+      (entry.idleStop !== undefined &&
+        (!isJsonObject(entry.idleStop) ||
+          typeof entry.idleStop.at !== 'string' ||
+          !Number.isFinite(Date.parse(entry.idleStop.at)) ||
+          typeof entry.idleStop.reason !== 'string')) ||
       (entry.notice !== undefined && typeof entry.notice !== 'string') ||
       (entry.appAttempt !== undefined &&
         (typeof entry.appAttempt !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(entry.appAttempt))) ||

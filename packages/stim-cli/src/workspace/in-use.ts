@@ -36,6 +36,7 @@ interface InUseChecks {
   devServer?: boolean;
   managedLocks?: boolean;
   hosted?: boolean;
+  hostedMacos?: boolean;
 }
 
 export function workspaceInUse(
@@ -45,6 +46,7 @@ export function workspaceInUse(
     devServer = true,
     managedLocks = true,
     hosted = true,
+    hostedMacos = true,
     nativeRun = true,
   }: InUseChecks & { nativeRun?: boolean } = {},
   bundleInstances: (root: string) => number[] = bundleInstancePids,
@@ -68,8 +70,9 @@ export function workspaceInUse(
   }
   if (supervisor) {
     const macos = macosAppState(readMacosRecord(root));
-    if (macos?.host) reasons.push(`its macOS app runs on ${macos.host.machine}`);
-    else if (macos?.state === 'running' || macos?.state === 'orphaned' || macos?.build.state === 'running')
+    if (macos?.host) {
+      if (hostedMacos) reasons.push(`its macOS app runs on ${macos.host.machine}`);
+    } else if (macos?.state === 'running' || macos?.state === 'orphaned' || macos?.build.state === 'running')
       reasons.push('its macOS app or build is running');
     else if (macos?.state === 'unverified' || (!macos && readWorkspaceState(root)?.macos !== undefined))
       reasons.push('its macOS process owner cannot be verified');

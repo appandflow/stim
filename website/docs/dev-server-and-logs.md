@@ -129,8 +129,8 @@ read when the supervisor is launched.
 ## Idle workspace stop
 
 Automatic maintenance, in its idle check every `maintenance.idleCheckMinutes`
-(5), and `stim gc --delete` while `maintenance.mode` is not `off`, stop a workspace whose dev server runs or whose
-owned simulator or emulator is booted once it has had no real activity for
+(5), and `stim gc --delete` while `maintenance.mode` is not `off`, stop a workspace whose dev server runs, whose
+owned simulator or emulator is booted, or whose device is hosted on a remote Mac once it has had no real activity for
 `maintenance.idleStopHours`: 6 hours by default, `0` never. Six hours outlasts
 a lunch break, a meeting or an agent's pause between tasks, and still frees the
 memory overnight. The setting takes machine and project layers, accepts
@@ -154,8 +154,7 @@ for days is idle.
 
 The stop is the one `stim stop` makes: the dev server stops, owned devices shut
 down (never deleted), the port is released, and device leases stay. A build, a
-running `stim ios`, `android`, `stop` or `start`, a running macOS app, a hosted
-or remote session, an unexpired device lease, a managed tunnel, a running owned
+running `stim ios`, `android`, `stop` or `start`, a running macOS app, a remote (EAS) session, an unexpired device lease, a managed tunnel, a running owned
 Chrome, a device driver other than agent-device, a live agent-device claim whose
 session activity Stim cannot find, or device activity, an emulator list or an
 emulator's AVD name that Stim cannot read keeps the workspace. A stale offline
@@ -168,6 +167,14 @@ maintenance and the idle time as the requester. The next
 targets the workspace of the command that started the pass, `stim gc --delete`
 included; a pass that a dev server supervisor or `stim status --watch` starts on
 its timer can stop its own workspace.
+
+A workspace whose iOS, Android or macOS device is hosted on a remote Mac is
+stopped the same way, once the host confirms the session is `ready`. The stop
+ends the hosted session on the host. A host that does not answer, a session it
+cannot confirm (`unknown`) and a recorded placement Stim cannot read keep the
+workspace. A live view of a hosted device is not visible here; the host counts
+it. See
+[hosted sessions stop when they are idle](./remote-machines.md#hosted-sessions-stop-when-they-are-idle).
 
 A dev server started through `metro.command` is always kept, because Stim sees
 none of its bundle or HMR requests. A dev server that may still run after its
@@ -649,8 +656,8 @@ the simulator makes with one of them, which the supervisor forwards to this
 Metro. The host never connects back to this machine, so a host shared into your
 tailnet, or one your ACLs only let you reach on its stim-server port, works.
 `metro.tunnel` and `metro.publicUrl` are ignored. Non-Debug runs
-skip Metro. A recorded hosted session prevents idle stop; stop or a stopped host
-session closes its links. Native device records are pulled by `stim logs` and
+skip Metro. A recorded hosted session prevents the supervisor's idle stop; stop or a stopped host
+session closes its links. The [idle workspace stop](#idle-workspace-stop) still applies. Native device records are pulled by `stim logs` and
 `stim logs --errors` from adaptive, bounded host queries. Followers share a
 throttled collection without blocking app delivery, view or control. Stop limits each log drain
 to 30 seconds with progress on stderr and a no-progress guard. The host

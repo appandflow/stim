@@ -372,6 +372,10 @@ backend. Reserved names are case-insensitive and trimmed; they refuse with
 STIM_BAD_ARG before state access or a connection. The device pool switches
 (remote.devicePoolDisabled) also apply to automatic macOS placement.
 
+A hosted app is not kept forever: the idle workspace stop ends its hosted session
+after maintenance.idleStopHours without activity, and stim-server stops a session
+whose client has been gone that long (guide cleanup, IDLE STOP).
+
 Logs: the host records the hosted app's stdout, stderr and exit like a local run.
 stim logs, including --errors, --json and --follow, asks the host over the same
 approved connection, copies the records it has not copied yet into the

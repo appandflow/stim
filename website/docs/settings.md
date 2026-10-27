@@ -862,7 +862,8 @@ All of these settings have machine scope except `maintenance.keep`, a project
 setting that pins a workspace: automatic passes never clear its build outputs,
 delete its owned devices or remove its worktree. `maintenance.idleStopHours`
 takes machine and project layers; see
-[idle workspace stop](./dev-server-and-logs.md#idle-workspace-stop). GB and MB below mean GiB and MiB.
+[idle workspace stop](./dev-server-and-logs.md#idle-workspace-stop). On a hosting Mac, stim-server reads its
+machine value to stop a hosted session whose client has been gone that long. GB and MB below mean GiB and MiB.
 
 <MaintenanceSettings />
 

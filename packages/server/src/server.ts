@@ -57,6 +57,7 @@ import { parsePlatformBuild } from './platform-build.ts';
 import { agentActionReaders, configuredAgentDriver, stoppingAgentDriver } from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
+import { HOSTED_IDLE_SWEEP_MS } from './hosted-idle.ts';
 import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
@@ -314,6 +315,10 @@ export interface ServerOptions {
   /** How many offloaded builds run, and for how long; tests shorten them. */
   buildLimits?: Partial<BuildLimits>;
   deviceHostLimits?: Partial<DeviceHostLimits>;
+  /** How often a device-host client connection is pinged, and how long it may stay silent before it is dropped. */
+  clientHeartbeat?: { pingMs: number; silentMs: number };
+  /** How often hosted sessions are checked for a client that is gone. */
+  hostedIdleSweepMs?: number;
   hostedRelay?: HostedRelayOptions;
   service?: {
     label: string | null;
@@ -407,6 +412,8 @@ interface AgentLink {
 }
 const AGENT_PATH = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/;
 const METRO_LINK_PING_MS = 15_000;
+const CLIENT_PING_MS = 60_000;
+const CLIENT_SILENT_MS = 180_000;
 const MAX_AGENT_LINKS = 16;
 const AGENT_LINK_IDLE_MS = 5 * 60_000;
 const METRO_END_MS = 30_000;
@@ -1425,6 +1432,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     limits: options.deviceHostLimits,
     allowed: (client) =>
       readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+    connected: (client) => [...sessions.values()].some((entry) => entry.id === client),
     builtBundle: (client, handoff, sha256) => {
       const host = readDeviceHostClients().find(
         (entry) => entry.id === client && entry.capabilities.includes('device-host'),
@@ -1460,7 +1468,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const header = request.headers['x-agent-device-token'];
     const token = bearer ?? (typeof header === 'string' ? header : null);
     const from = link ? { client: link.client } : { node: peer === 'local' ? null : await peerNode(request, peer) };
-    if (agentDrivers.forward(session, token, request, response, from) === 'forbidden') agentLimiter.record(peer);
+    const verdict = agentDrivers.forward(session, token, request, response, from);
+    if (verdict === 'forbidden') agentLimiter.record(peer);
+    else if (verdict === 'ok') hostedDevices.clientActed(session);
   }
   const agentHttp = createServer((request, response) => {
     const link = agentLinks.get(request.socket);
@@ -1635,6 +1645,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   let watcher: FSWatcher | null = null;
   let revocationPoll: NodeJS.Timeout | null = null;
+  let hostedIdleSweep: NodeJS.Timeout | null = null;
   let retireOnce: Promise<void> | undefined;
   const becomeReady = () => {
     mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
@@ -1646,6 +1657,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     });
     // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
     revocationPoll ??= setInterval(checkRevocations, 1000).unref();
+    hostedIdleSweep ??= setInterval(
+      () => hostedDevices.sweepIdle(),
+      options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS,
+    ).unref();
     push.refresh();
     retireOnce ??= hostedDevices.reconcileStopped().catch((error: unknown) => {
       process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
@@ -1709,6 +1724,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     let metroLink: MetroLink | null = null;
     let metroStream: Duplex | null = null;
     let metroPing: NodeJS.Timeout | undefined;
+    let clientPing: NodeJS.Timeout | undefined;
     let queue = Promise.resolve();
     let archiveReads = Promise.resolve();
     const relay = new HostedRelay(
@@ -1772,6 +1788,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       device = chosen;
       if (!local) touchDevice(device.id);
+      if (access === 'device-host' && !local) {
+        hostedDevices.clientSeen(device.id);
+        let heardAt = Date.now();
+        let late = false;
+        const hear = () => (heardAt = Date.now());
+        socket.on('pong', hear);
+        socket.on('message', hear);
+        const { pingMs, silentMs } = options.clientHeartbeat ?? { pingMs: CLIENT_PING_MS, silentMs: CLIENT_SILENT_MS };
+        clientPing = setInterval(() => {
+          if (Date.now() - heardAt > silentMs) {
+            if (late) return void socket.terminate();
+            late = true;
+          } else late = false;
+          socket.ping();
+        }, pingMs);
+        clientPing.unref();
+      }
       if (local && params.desktopBootstrap === true) desktopChallenge = options.desktopBootstrap?.challenge() ?? null;
       tracker.identify({ id: device.id, runId });
       sessions.set(socket, device);
@@ -4607,6 +4640,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     });
     socket.on('close', (code) => {
       clearInterval(metroPing);
+      clearInterval(clientPing);
       if (metroLink) hostedDevices.metroUnlink(metroLink);
       const stream = metroStream;
       if (stream && code === 1000 && !stream.destroyed) {
@@ -4823,6 +4857,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     startupProbe?.cancel();
     watcher?.close();
     if (revocationPoll) clearInterval(revocationPoll);
+    if (hostedIdleSweep) clearInterval(hostedIdleSweep);
     if (revocationCheck) clearTimeout(revocationCheck);
     await settle(builds.close());
     for (const client of [...wss.clients, ...localWss.clients]) client.terminate();

@@ -234,7 +234,33 @@ when it reconciles the empty ledger.
 A clean `stim-server` close parks eligible devices, which persist across restart
 and can be adopted by the next reserve. The server never re-attaches to a booted
 device after restart. A running session left by a crashed server stays `unknown`
-until an explicit `stim stop` reconciles it.
+until an explicit `stim stop` reconciles it, or until its client has been gone for
+[`maintenance.idleStopHours`](./dev-server-and-logs.md#idle-workspace-stop) and the
+server proves the session's ownership claim is free.
+
+### Hosted sessions stop when they are idle
+
+Hosted sessions are not kept forever. `maintenance.idleStopHours` (6 hours by
+default, `0` never) applies on both Macs, each from its own settings:
+
+- On the client, the idle workspace stop also stops a workspace whose iOS,
+  Android or macOS device is hosted on a remote Mac, once the host confirms the
+  session is `ready`. It is `stim stop`: the host's stop call ends the session
+  and the host parks or deletes the device as it does for any stop. A host that
+  does not answer, cannot confirm the session (`unknown`) or a placement Stim
+  cannot read keeps the workspace.
+- On the host, stim-server stops a `ready` session whose client has had no
+  connection, no live view or control and no Metro link, and sent no agent-device
+  request, for the host's own machine-scope `maintenance.idleStopHours`, and only while the host's
+  `maintenance.mode` is `on`; a project value or `maintenance.keep` on the client does not reach it. This covers a client
+  that vanished without stopping: a closed laptop, a crash, a lost network. Time
+  the server was not running is not counted, and the count survives a restart.
+  The server stops the session the way a person's stop on the host does, never
+  touches a session whose journal state is preparing, stopping or `unknown`, or one with a native
+  operation or an ownership claim it cannot prove free, and records the reason in
+  its log and in the session journal. The count is per client: a client that is
+  still connected for another workspace keeps all of its sessions, and the client
+  side stops the idle ones.
 
 ## Run Android on a hosting Mac
 
