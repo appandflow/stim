@@ -459,6 +459,7 @@ async function start(
     history?: boolean;
     pushEndpoint?: string;
     buildLimits?: ServerOptions['buildLimits'];
+    clientHeartbeat?: ServerOptions['clientHeartbeat'];
     hostedRelay?: ServerOptions['hostedRelay'];
     startupProbeMs?: number;
     startupRetryMs?: number;
@@ -524,6 +525,7 @@ async function start(
     pushEndpoint: overrides.pushEndpoint ?? 'http://127.0.0.1:9/push',
     pullRequests: async () => new Map(),
     buildLimits: overrides.buildLimits,
+    clientHeartbeat: overrides.clientHeartbeat,
     hostedRelay: overrides.hostedRelay,
     requestLog: overrides.requestLog,
     desktopBootstrap:
@@ -2046,6 +2048,21 @@ describe('hosted device sessions', () => {
       reader.socket.resume?.();
       await vi.waitFor(() => expect(read).toBe(upload), { timeout: 20_000 });
       uploader.destroy();
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'drops a device-host connection whose peer stops answering pings and keeps one that answers',
+    async () => {
+      const port = await start({ clientHeartbeat: { pingMs: 50, silentMs: 400 } });
+      const { client, link } = await linkedSession(port);
+      const silent = await link();
+      silent.socket.pause?.();
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      silent.socket.resume?.();
+
+      expect(await silent.closed).toBe(1006);
+      expect(client.socket.readyState).toBe(1);
     },
   );
 

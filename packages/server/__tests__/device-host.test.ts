@@ -206,6 +206,7 @@ const agents = {
 let home: string;
 let host: DeviceHost;
 let allowed: Set<string>;
+let connected: Set<string>;
 let hostEnv: NodeJS.ProcessEnv;
 const request = { workspace: '/client/worktree', slot: 'default', platform: 'ios', attempt: 'first' };
 
@@ -218,12 +219,14 @@ beforeEach(() => {
   const worker = join(home, 'worker.mjs');
   writeFileSync(worker, WORKER);
   allowed = new Set(['client', 'other']);
+  connected = new Set();
   hostEnv = { ...process.env, STIM_MAX_DEVICES: '1' };
   host = new DeviceHost({
     worker,
     env: hostEnv,
     agents,
     allowed: (client) => allowed.has(client),
+    connected: (client) => connected.has(client),
     limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
   });
 });
@@ -939,6 +942,91 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
+
+const IDLE_WINDOW_MS = 3_600_000;
+
+function recordAbsence(id: string, absentMs: number) {
+  const file = join(deviceHostRoot(), 'sessions.json');
+  const journal: { sessions: HostedDeviceSession[] } = JSON.parse(readFileSync(file, 'utf8'));
+  for (const record of journal.sessions) if (record.id === id) record.clientAbsentMs = absentMs;
+  writeFileSync(file, JSON.stringify(journal));
+}
+
+describe('a hosted session whose client is gone', () => {
+  beforeEach(() => {
+    hostEnv.STIM_MAINTENANCE_IDLE_STOP_HOURS = '1';
+  });
+
+  test('stops after maintenance.idleStopHours through the normal stop, and the journal says why', async () => {
+    const first = await reserve();
+    await state(first.id, 'ready');
+    recordAbsence(first.id, IDLE_WINDOW_MS);
+
+    host.sweepIdle();
+
+    const stopped = await state(first.id, 'stopped');
+    expect(stopped.idleStop?.reason).toMatch(
+      /^its client had no connection for 1h 0m, over maintenance\.idleStopHours$/,
+    );
+    expect(stopped.clientAbsentMs).toBeUndefined();
+    expect(readFileSync(join(deviceHostArea(first.id), 'home', 'modes'), 'utf8')).toContain('stop');
+  });
+
+  test('keeps a session whose client is connected and forgets its earlier absence', async () => {
+    const first = await reserve();
+    await state(first.id, 'ready');
+    recordAbsence(first.id, 5 * IDLE_WINDOW_MS);
+    connected.add('client');
+
+    host.sweepIdle();
+
+    const kept = await state(first.id, 'ready');
+    expect(kept.clientAbsentMs).toBeUndefined();
+    expect(kept.idleStop).toBeUndefined();
+  });
+
+  test('never touches a session that is still preparing', async () => {
+    const first = await reserve({ deviceType: 'hang' });
+    await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'entered'))).toBe(true));
+    recordAbsence(first.id, 5 * IDLE_WINDOW_MS);
+
+    host.sweepIdle();
+
+    expect(readHostedSessions().find((record) => record.id === first.id)).toMatchObject({ state: 'preparing' });
+  });
+
+  test('stops nothing when maintenance.idleStopHours is 0', async () => {
+    hostEnv.STIM_MAINTENANCE_IDLE_STOP_HOURS = '0';
+    const first = await reserve();
+    await state(first.id, 'ready');
+    recordAbsence(first.id, 5 * IDLE_WINDOW_MS);
+
+    host.sweepIdle();
+
+    expect((await state(first.id, 'ready')).idleStop).toBeUndefined();
+  });
+
+  test('leaves a session whose owner is another live server, since its claim is not free', async () => {
+    const first = await reserve();
+    await state(first.id, 'ready');
+    recordAbsence(first.id, IDLE_WINDOW_MS);
+    const other = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents: noAgents,
+      allowed: () => true,
+      connected: () => false,
+    });
+    try {
+      other.sweepIdle();
+
+      expect((await state(first.id, 'ready')).idleStop).toBeUndefined();
+      expect(host.attach('client', { session: first.id })).toHaveProperty('result.state', 'ready');
+    } finally {
+      await other.close();
+    }
+  });
+});
 
 test('revocation stops a live owned device and rejects subsequent client methods', async () => {
   const first = await reserve();

@@ -1,7 +1,9 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { configDir } from '../index.ts';
+import { loadConfig } from './config.ts';
 import { isJsonObject } from './json-file.ts';
+import { coerceSettingText, settingDefinition, settingValueError } from './settings-registry.ts';
 import {
   hostedMacosAppSlot,
   parseHostedMacosChoice,
@@ -115,11 +117,33 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
   appSlot?: number;
   createdAt: string;
   parked?: { at: string };
+  /** Milliseconds this server ran with no connection from the session's client since it was last connected. */
+  clientAbsentMs?: number;
+  /** Set when stim-server stopped this session because its client was gone for maintenance.idleStopHours. */
+  idleStop?: { at: string; reason: string };
   notice?: string;
   appAttempt?: string;
   agent?: HostedAgentGrant;
   metroPort?: number;
   clientMetroPort?: number;
+}
+
+/**
+ * The machine-scope `maintenance.idleStopHours` of the home stim-server runs in: the environment override, the machine
+ * config, then the default. An invalid value is reported so the caller can stop nothing.
+ */
+export function hostedIdleStopHours(env: NodeJS.ProcessEnv): { hours: number } | { invalid: string } {
+  const setting = settingDefinition('maintenance.idleStopHours');
+  if (!setting?.env) return { invalid: 'maintenance.idleStopHours is not in the settings registry' };
+  const raw = env[setting.env];
+  const fromEnv = raw !== undefined && raw !== '';
+  const configured = loadConfig()?.maintenance;
+  const fromConfig = isJsonObject(configured) ? configured.idleStopHours : undefined;
+  const value = fromEnv ? coerceSettingText(setting, raw) : (fromConfig ?? setting.default);
+  const error = settingValueError(setting, value);
+  return error || typeof value !== 'number'
+    ? { invalid: `${fromEnv ? setting.env : 'maintenance.idleStopHours'} is invalid: expected ${error ?? 'a number'}` }
+    : { hours: value };
 }
 
 export function deviceHostRoot(): string {
@@ -378,6 +402,15 @@ export function readHostedSessions(): HostedDeviceSession[] {
           new Date(entry.parked.at).toISOString() !== entry.parked.at ||
           entry.state !== 'stopped' ||
           entry.platform === 'macos')) ||
+      (entry.clientAbsentMs !== undefined &&
+        (typeof entry.clientAbsentMs !== 'number' ||
+          !Number.isFinite(entry.clientAbsentMs) ||
+          entry.clientAbsentMs < 0)) ||
+      (entry.idleStop !== undefined &&
+        (!isJsonObject(entry.idleStop) ||
+          typeof entry.idleStop.at !== 'string' ||
+          !Number.isFinite(Date.parse(entry.idleStop.at)) ||
+          typeof entry.idleStop.reason !== 'string')) ||
       (entry.notice !== undefined && typeof entry.notice !== 'string') ||
       (entry.appAttempt !== undefined &&
         (typeof entry.appAttempt !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(entry.appAttempt))) ||

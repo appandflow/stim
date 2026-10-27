@@ -31,6 +31,7 @@ import {
   deviceHostRoot,
   getConcurrencyLimits,
   getParkedMax,
+  hostedIdleStopHours,
   isJsonObject,
   parseHostedPlatformDevice,
   hostedDeviceId,
@@ -74,6 +75,7 @@ import {
 import { readDeviceHostClients, writeJson } from './registry.ts';
 import { readHostedSessionRows } from './hosted-sessions.ts';
 import { takeHostedInputClaim } from './hosted-input.ts';
+import { planHostedIdleStops } from './hosted-idle.ts';
 import { adbPath } from './frame-helper.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
 import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp, handOverHostedApp } from './hosted-app.ts';
@@ -110,6 +112,8 @@ export interface DeviceHostOptions {
   worker: string;
   env: NodeJS.ProcessEnv;
   allowed: (client: string) => boolean;
+  /** Whether `client` has an authenticated connection now; without it no client counts as gone. */
+  connected?: (client: string) => boolean;
   /** Issues and revokes session-scoped agent control for installed hosted apps. */
   agents: Pick<HostedAgentHost, 'appRunning' | 'appStopped' | 'access'>;
   /** Takes the native app a build on this machine retained under `handoff`, when `client` may have it, or says why not. */
@@ -166,6 +170,9 @@ export class DeviceHost {
   private readonly revoked = new Set<string>();
   private readonly probes = new Map<WorkerRun, string>();
   private closed = false;
+  private lastIdleSweep: number | undefined;
+  private clientActive = new Set<string>();
+  private readonly idleKept = new Map<string, string>();
   private reconciling?: Promise<void>;
   private draining: string | null = null;
   private readonly limits: DeviceHostLimits;
@@ -1543,6 +1550,94 @@ export class DeviceHost {
 
   active(): number {
     return this.owned.size;
+  }
+
+  /** Notes that the session's client acted through a path that is not a connection, such as an agent-device request. */
+  clientActed(session: string): void {
+    this.clientActive.add(session);
+  }
+
+  /**
+   * Stops each ready session whose client has been gone for maintenance.idleStopHours, through the stop a person
+   * uses. A session with work in flight or a claim that is not provably free stays.
+   */
+  sweepIdle(): void {
+    if (this.closed) return;
+    const now = Date.now();
+    const elapsedMs = this.lastIdleSweep === undefined ? 0 : now - this.lastIdleSweep;
+    this.lastIdleSweep = now;
+    const active = this.clientActive;
+    this.clientActive = new Set();
+    try {
+      const setting = hostedIdleStopHours(this.options.env);
+      if ('invalid' in setting) this.logIdleKept('setting', `${setting.invalid}; hosted sessions are not idle-stopped`);
+      const windowMs = 'hours' in setting ? setting.hours * 3_600_000 : 0;
+      const connected = this.options.connected ?? (() => true);
+      const records = readHostedSessions();
+      const plan = planHostedIdleStops({
+        sessions: records,
+        connected,
+        active,
+        elapsedMs,
+        windowMs,
+        unresolved: (id) => this.idleUnresolved(id),
+      });
+      if (plan.updates.length)
+        this.transaction((current) => {
+          for (const { id, absentMs } of plan.updates) {
+            const record = current.find((each) => each.id === id);
+            if (!record) continue;
+            if (absentMs === null) delete record.clientAbsentMs;
+            else record.clientAbsentMs = absentMs;
+          }
+        });
+      for (const { id, reason } of plan.kept) this.logIdleKept(id, reason);
+      for (const { id, reason } of plan.stops) this.stopIdle(id, reason);
+      const due = new Set([...plan.kept, ...plan.stops].map(({ id }) => id));
+      for (const id of this.idleKept.keys()) if (id !== 'setting' && !due.has(id)) this.idleKept.delete(id);
+      if (!('invalid' in setting)) this.idleKept.delete('setting');
+    } catch (error) {
+      this.logIdleKept(
+        'journal',
+        `hosted idle check could not use the journal: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private logIdleKept(key: string, reason: string): void {
+    if (this.idleKept.get(key) === reason) return;
+    this.idleKept.set(key, reason);
+    process.stderr.write(
+      `Hosted session ${key === 'setting' || key === 'journal' ? '' : `${key} `}kept: ${reason.replace(/[\r\n]+/g, ' ')}\n`,
+    );
+  }
+
+  private idleUnresolved(id: string): string | null {
+    const owned = this.owned.get(id);
+    if (!owned) return null;
+    if (owned.stopping || owned.data || owned.installing) return 'it has a native operation in progress';
+    try {
+      releaseClaim(takeHostedInputClaim(owned.claim));
+    } catch (error) {
+      return `its native input is not provably finished (${error instanceof Error ? error.message : String(error)})`;
+    }
+    return null;
+  }
+
+  private stopIdle(id: string, reason: string): void {
+    const record = readHostedSessions().find((each) => each.id === id);
+    if (!record || record.state !== 'ready') return;
+    try {
+      this.beginStop(record);
+    } catch (error) {
+      this.logIdleKept(id, `${error instanceof Error ? error.message : String(error)}; ${reason}`);
+      return;
+    }
+    this.change(id, (current) => {
+      current.idleStop = { at: new Date().toISOString(), reason };
+      delete current.clientAbsentMs;
+    });
+    process.stderr.write(`Hosted session ${id} stopped: ${reason}\n`);
   }
 
   drain(reason: string | null): void {

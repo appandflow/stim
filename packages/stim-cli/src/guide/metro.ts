@@ -34,7 +34,7 @@ HOSTED IOS METRO
   Macs; a running Metro or a pin on a port the host uses refuses the run before
   the build. metro.tunnel and metro.publicUrl are ignored. Supervisor restart
   reopens the recorded links; stop or a stopped hosted session closes them. A recorded
-  hosted session prevents Metro idle stop. Release runs skip the bridge.
+  hosted session prevents Metro idle stop; maintenance.idleStopHours still stops the workspace and its hosted session (guide cleanup). Release runs skip the bridge.
   Hosted Debug runs require a supervisor and a stim-server that support these
   links before reservation. --no-metro-check refuses; restart a missing or older supervisor
   with stim stop; stim start.

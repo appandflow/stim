@@ -880,6 +880,8 @@ command; an unavailable host reports the connection failure.
 
 `devices.idleShutdownMinutes` does not stop hosted
 simulators in this phase; their recorded sessions prevent Metro idle stop.
+`maintenance.idleStopHours` does stop them: see
+[hosted sessions stop when they are idle](./remote-machines.md#hosted-sessions-stop-when-they-are-idle).
 
 For agent control, set `hosting.agentDriver` to `agent-device` on the hosting Mac.
 Both machines need agent-device **0.21.20 or later**, with the daemon policy and remote-config contract.

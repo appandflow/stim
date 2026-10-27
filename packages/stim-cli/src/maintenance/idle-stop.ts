@@ -4,6 +4,10 @@ import { rotatedLogPath, type StimContext } from '@stim-cli/core';
 import {
   coerceSettingText,
   deviceViewersDir,
+  hostedNativeRecords,
+  parseHostedNativePlacement,
+  readMacosRecord,
+  unreadableHostedNative,
   readJsonObject,
   parseNdjsonText,
   settingDefinition,
@@ -22,6 +26,7 @@ import {
   listAdbDevices,
   listAdbDevicesAsync,
 } from '../devices/android.ts';
+import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { leaseIsExpired, listLeaseFiles } from '../engine/device-lease.ts';
 import {
@@ -118,6 +123,45 @@ async function idleStopHours(
   return error || typeof value !== 'number'
     ? { invalid: `${fromEnv ? setting.env : SETTING} is invalid: expected ${error ?? 'a number'}` }
     : { hours: value };
+}
+
+interface HostedPlacementFact {
+  label: string;
+  machine: string;
+  session: string;
+  platform?: 'ios' | 'android';
+}
+
+function hostedFacts(root: string): { placements: HostedPlacementFact[]; unreadable: string[] } {
+  const placements: HostedPlacementFact[] = [];
+  const unreadable: string[] = [];
+  for (const platform of ['ios', 'android'] as const) {
+    for (const [slot, record] of Object.entries(hostedNativeRecords(readWorkspaceState(root), platform))) {
+      const placement = parseHostedNativePlacement(record, platform);
+      if (placement) {
+        const label = platform === 'ios' ? 'iOS simulator' : 'Android emulator';
+        placements.push({ label, machine: placement.machine, session: placement.session, platform });
+      } else unreadable.push(unreadableHostedNative(slot, platform));
+    }
+  }
+  const host = readMacosRecord(root)?.host;
+  if (host) placements.push({ label: 'macOS app', machine: host.machine, session: host.session });
+  return { placements, unreadable };
+}
+
+async function hostedKeepReasons(facts: ReturnType<typeof hostedFacts>): Promise<string[]> {
+  const keep = [...facts.unreadable];
+  if (keep.length) return keep;
+  for (const { label, machine, session, platform } of facts.placements) {
+    const probe = await probeHostedSession({ machine, session, platform }, { ttlMs: 0 });
+    if (probe.state === 'ready' || probe.state === 'stopped') continue;
+    const why =
+      probe.state === 'unreachable'
+        ? `${machine} did not answer: ${probe.reason.replace(/\.+$/, '')}`
+        : `${machine} cannot confirm it${probe.notice ? `: ${probe.notice.replace(/\.+$/, '')}` : ''}`;
+    keep.push(`its hosted ${label} session ${session} is not confirmed: ${why}`);
+  }
+  return keep;
 }
 
 function deviceKeepReason(device: OwnedDeviceActivity, platform: NodeJS.Platform): string | null {
@@ -218,7 +262,7 @@ async function keepReasons(
     operation,
   }: { now: number; platform: NodeJS.Platform; locked: boolean; operation?: StimContext },
 ) {
-  const checks = { devServer: false, nativeRun: !locked };
+  const checks = { devServer: false, nativeRun: !locked, hosted: false, hostedMacos: false };
   const keep = operation
     ? await workspaceInUseAsync(root, checks, operation.signal, operation)
     : workspaceInUse(root, checks);
@@ -238,6 +282,7 @@ async function keepReasons(
   }
   const viewers = devices.length ? unreadableViewers() : null;
   if (viewers) keep.push(viewers);
+  if (!keep.length) keep.push(...(await hostedKeepReasons(hostedFacts(root))));
   return keep;
 }
 
@@ -348,7 +393,9 @@ async function candidate(
   const slots = projectDeviceSlots(project);
   const ownsIos = slots.some(({ platforms }) => platforms.ios?.owned === true);
   const owns = ownsIos || slots.some(({ platforms }) => platforms.android?.owned === true);
-  if (!owns && (supervisor.status === 'none' || supervisor.status === 'stale')) return null;
+  const hosted = hostedFacts(path);
+  const isHosted = hosted.placements.length > 0 || hosted.unreadable.length > 0;
+  if (!owns && !isHosted && (supervisor.status === 'none' || supervisor.status === 'stale')) return null;
   const setting = await idleStopHours(path, env, operation);
   if ('invalid' in setting) return { skip: setting.invalid };
   if (setting.hours === 0) return null;
@@ -374,7 +421,7 @@ async function candidate(
   const avdNames = slots.flatMap(({ platforms }) =>
     platforms.android?.owned && platforms.android.avdName ? [platforms.android.avdName] : [],
   );
-  if (supervisor.status !== 'ours' && booted.length === 0) return null;
+  if (supervisor.status !== 'ours' && booted.length === 0 && !isHosted) return null;
   const orphan = supervisor.status === 'stale' ? survivingServer(readWorkspaceState(path)?.supervisor) : null;
   if (orphan) return { skip: orphan };
   const seen = new Set(booted.flatMap((device) => (device.kind === 'android' ? [device.id] : [])));
@@ -520,7 +567,7 @@ export async function stopIdleWorkspace(
         throw error;
       }
     },
-    { purpose: 'automatic maintenance', devServer: false, operation },
+    { purpose: 'automatic maintenance', devServer: false, hosted: false, hostedMacos: false, operation },
   );
   return run.ran ? run.value : kept(`in use: ${run.reasons.join('; ')}`);
 }
