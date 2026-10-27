@@ -812,7 +812,11 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   then until SpringBoard has finished starting, which \`simctl launch\` needs.
   Booted alone does not end that wait. The failure names the udid and the wait.
   After boot, a process-spawn probe must finish within 30 seconds before
-  installation. If it fails, the refusal includes observed host memory pressure
+  installation. A probe that times out while the simulator still reports Booted
+  is retried for about three minutes, since a loaded host can leave a booted
+  simulator unresponsive for a while; a timeout on a simulator that no longer
+  reports Booted, and any other probe failure, refuse at once. If it
+  fails, the refusal includes observed host memory pressure
   when available. Free memory before retrying under pressure; see
   \`stim guide lifecycle simslim\`. Booted alone does not prove readiness.
   The same probe lists the simulator's launchd jobs and requires a running
@@ -884,6 +888,35 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   no token left in its \`state.json\` (its workspace directory was recreated).
   The remedy for that last one is \`stim device unlock\`, which releases by
   holder rather than by token.`,
+    },
+    STIM_DEVICE_TOOL_TARGET: {
+      summary: 'a device tool found no owned, running simulator or emulator in that slot to act on',
+      body: () => `STIM_DEVICE_TOOL_TARGET
+  \`stim device location|permission|push|network\` act only on this workspace's
+  own local simulator or emulator in the slot. The message says which check
+  failed: the slot's device is hosted on another Mac, the workspace runs an
+  EAS Simulator session, the slot has no owned device (a physical device
+  reached with \`--device\` is never one), the recorded simulator is gone or not
+  owned by this Stim home, or it is not booted or running. Permission and push
+  also refuse when no app is recorded for the device. Run the platform command
+  the remedy names (\`stim ios\` or \`stim android\`, with \`--slot\` for a named
+  slot) and retry. No tool runs before this refusal.`,
+    },
+    STIM_DEVICE_TOOL_UNSUPPORTED: {
+      summary: 'that device tool has no equivalent on that platform',
+      body: () => `STIM_DEVICE_TOOL_UNSUPPORTED
+  The platform lacks the action: Android cannot clear a simulated location
+  (\`adb emu geo fix\` only sets one), iOS has no network switch, and Android
+  has no simulated push. The remedy names the nearest thing.`,
+    },
+    STIM_DEVICE_TOOL_FAILED: {
+      summary: 'simctl or adb failed, or the device did not report the change afterwards',
+      body: () => `STIM_DEVICE_TOOL_FAILED
+  The tool call exited non-zero or timed out, with its output in the message, or
+  the read-back after an Android permission or network change did not show the
+  requested state. For a permission, the app must declare the permission in its
+  manifest; when it declares none of the service's permissions the call refuses
+  with this code. Check the device with \`stim status\` and retry.`,
     },
     STIM_DEVICE_WIRELESS_FAILED: {
       summary: 'an iPhone paired over Wi-Fi timed out or dropped during install or launch; use the cable',

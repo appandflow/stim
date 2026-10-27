@@ -973,12 +973,15 @@ function checkIosHost(platform: DoctorPlatform | undefined, host: NodeJS.Platfor
   if (platform !== 'ios' || host === 'darwin') return null;
   return finding(
     'note',
-    `iOS runs through EAS on this ${host} host`,
+    `iOS runs on a remote Mac or through EAS on this ${host} host`,
     'Xcode, CocoaPods and simctl exist only on macOS, so `stim ios` cannot build or boot a simulator here. ' +
+      '`stim ios --remote <mac> --remote-build <mac>` builds the app on a Mac approved for builds and hosted simulators, ' +
+      "with that Mac's Xcode and CocoaPods, and runs it on a simulator there; Metro stays on this machine. " +
       '`stim ios --remote eas --eas-profile <simulator profile>` downloads a finished EAS development build and runs it ' +
-      'on an EAS Simulator session driven through agent-device; Metro stays on this machine behind a tunnel.',
-    'Install eas-cli and agent-device, then run `stim start --remote` and `stim ios --remote eas --eas-profile <profile>`. ' +
-      'Read `stim guide metro` for the remote device backends.',
+      'on an EAS Simulator session driven through agent-device.',
+    'Add a Mac with `stim doctor --fix` and run `stim ios --remote <mac> --remote-build <mac>`, or install eas-cli and ' +
+      'agent-device and run `stim start --remote` and `stim ios --remote eas --eas-profile <profile>`. ' +
+      'Read `stim guide settings` for remote machines and `stim guide metro` for the remote device backends.',
   );
 }
 

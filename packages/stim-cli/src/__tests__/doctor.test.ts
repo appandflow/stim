@@ -2500,7 +2500,9 @@ test('doctor --platform includes the selection in JSON and suppresses the other 
   expect(payload.findings.some((finding: Finding) => finding.title.includes('Android warm'))).toBe(false);
   const localIos = process.platform === 'darwin';
   expect(payload.findings.some((finding: Finding) => finding.title.includes('iOS warm'))).toBe(localIos);
-  expect(payload.findings.some((finding: Finding) => finding.title.includes('iOS runs through EAS'))).toBe(!localIos);
+  expect(
+    payload.findings.some((finding: Finding) => finding.title.includes('iOS runs on a remote Mac or through EAS')),
+  ).toBe(!localIos);
 });
 
 test.each(['win32', 'linux'] as const)(
@@ -2526,22 +2528,22 @@ test.each(['win32', 'linux'] as const)(
         memoryPressure: () => 'critical' as const,
       };
       const titles = (await runProjectDoctor(project, { ...options, host })).map((finding) => finding.title);
-      expect(titles).toContain(`iOS runs through EAS on this ${host} host`);
+      expect(titles).toContain(`iOS runs on a remote Mac or through EAS on this ${host} host`);
       expect(titles).toContain('The source checkout has no installed dependencies');
       expect(titles.join('\n')).not.toMatch(/CocoaPods|SimSlim|iOS warm|architecture|memory pressure|Android warm/);
       const remote = (await runProjectDoctor(project, { ...options, host })).find((finding) =>
-        finding.title.startsWith('iOS runs through EAS'),
+        finding.title.startsWith('iOS runs on a remote Mac or through EAS'),
       );
       expect(remote?.fix).toContain('stim ios --remote eas --eas-profile');
 
       const mac = (await runProjectDoctor(project, { ...options, host: 'darwin' })).map((finding) => finding.title);
-      expect(mac).not.toContain(`iOS runs through EAS on this ${host} host`);
+      expect(mac).not.toContain(`iOS runs on a remote Mac or through EAS on this ${host} host`);
       expect(mac).toContain('The source checkout CocoaPods state is missing');
 
       const both = (await runProjectDoctor(project, { ...options, platform: undefined, host })).map(
         (finding) => finding.title,
       );
-      expect(both.join('\n')).not.toMatch(/iOS runs through EAS|CocoaPods|iOS warm/);
+      expect(both.join('\n')).not.toMatch(/iOS runs on a remote Mac or through EAS|CocoaPods|iOS warm/);
       expect(both).toContain('The source checkout has no Android warm build output');
     } finally {
       rmSync(project, { recursive: true, force: true });
@@ -2648,7 +2650,7 @@ test.each(['win32', 'linux'] as const)('doctor --platform ios on a %s host runs 
   expect(calls.some((call) => call.includes('xcodebuild'))).toBe(false);
   const payload = JSON.parse(logs[0] as string);
   const titles = payload.findings.map((finding: Finding) => finding.title);
-  expect(titles).toContain(`iOS runs through EAS on this ${host} host`);
+  expect(titles).toContain(`iOS runs on a remote Mac or through EAS on this ${host} host`);
 });
 
 test('on win32 doctor flags CR bytes in ios/.xcode.env whatever core.autocrlf says', async () => {

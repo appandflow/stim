@@ -122,7 +122,7 @@ iOS simulator, use the machine name as the remote target:
 
 <StimTabs code={`stim ios --remote janics-mac-mini`} />
 
-The host's own owned devices count toward `concurrency.maxDevices`.
+The host's own owned devices count toward `concurrency.maxDevices`. Hosted macOS app sessions count against it separately from simulators and emulators.
 
 On the host, `stim-server devices` shows **Hosted here** rows with the client,
 platform, device, installed app, state and time; `--json` includes
@@ -133,7 +133,10 @@ client's session through loopback `device-host.sessions` and
 Desktop control connection. Stop uses the existing cleanup path; remote
 clients keep their own-session-only `device-host.stop` access.
 
-The host boots its owned simulator headless. Debug keeps Metro on this machine
+The host boots its owned simulator headless and mutes it, as a local boot does,
+so the host Mac stays quiet. The mute is best effort and a failure is not
+reported to the client. An Android emulator's media volume is set to zero
+the same way; neither changes the host's own volume. Debug keeps Metro on this machine
 and carries it over connections this machine opens to the host, so the host
 never needs to reach this machine; no `stim start --remote` is needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.
 `--remote-build` independently selects a compatible worker for a Debug cache
@@ -346,7 +349,17 @@ answer its permission prompts. A reused server must speak protocol 2 (stim-serve
 Setup refuses an older Desktop-run server with an update remedy and never
 downgrades a newer server.
 
-For iOS builds, Xcode and the simulator SDK must match. When the worker has no
+For iOS builds, Xcode and the simulator SDK must match. A client with no Xcode
+and no simulator SDK, such as a Linux or Windows machine, has nothing to match:
+the worker's Xcode, simulator SDK and CocoaPods are the build's toolchain, the
+client skips `pod install` and leaves it to the worker, and
+`stim ios --remote <mac> --remote-build <mac>` runs the app on a simulator that
+Mac hosts while Metro stays on the client. The worker's `pod install` must not
+change files the fingerprint covers, so commit `Podfile.lock` and the
+CocoaPods-integrated Xcode project; otherwise the build fails with
+`fingerprint-mismatch`, and the fix is to run `pod install` once on a Mac and
+commit what it changed. Native Xcode apps without React Native still need Xcode
+on the client. When the worker has no
 usable Xcode, `stim doctor` and the Tools step say why and give the command to
 run on the worker: `sudo xcode-select -s /Applications/<Xcode>.app/Contents/Developer`
 when an Xcode is installed but the Command Line Tools (which Homebrew selects)

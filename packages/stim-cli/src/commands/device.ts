@@ -2,6 +2,7 @@ import { deviceSlotKey, parseDeviceSlotOption, projectDeviceSlots } from '../dev
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { clockTime } from '../command-output.ts';
+import { registerDeviceTools } from './device-tools.ts';
 import { runProvision, type ProvisionOptions } from './device-provision.ts';
 import { runProcessOperation } from '../cli-operation.ts';
 import {
@@ -426,7 +427,9 @@ export async function runUnlock(
 export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {}): void {
   const device = program
     .command('device')
-    .description('Lease a connected physical device to this workspace, give it back, or provision iOS signing for it');
+    .description(
+      "Lease a connected physical device to this workspace, give it back, provision iOS signing for it, or change the workspace's own simulator or emulator",
+    );
 
   device
     .command('lock')
@@ -486,6 +489,8 @@ export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {})
       );
       if ('code' in result) process.exit(interrupted ?? 1);
     });
+
+  registerDeviceTools(device);
 }
 
 export default function deviceCommand(program: Command): void {

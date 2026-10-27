@@ -23,6 +23,7 @@ import {
   hostedNativeRecords,
   parseHostedNativePlacement,
   unreadableHostedNative,
+  hostedMemoryRefusal,
 } from '@stim-cli/core/state';
 import {
   call,
@@ -172,8 +173,8 @@ export async function prepareHostedNative(
       );
     if (!isJsonObject(offer.capacity) || offer.capacity.available === 0)
       throw new Error('No hosted device capacity is available.');
-    if (!isJsonObject(offer.resources) || offer.resources.memoryPressure !== 'normal')
-      throw new Error('Host memory pressure is unknown or elevated.');
+    const memoryRefusal = hostedMemoryRefusal(isJsonObject(offer.resources) ? offer.resources.memoryPressure : null);
+    if (memoryRefusal) throw new Error(memoryRefusal);
     return { host, choice, session: null };
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'STIM_BAD_ARG') throw error;

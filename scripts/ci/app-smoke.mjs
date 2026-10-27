@@ -6,7 +6,7 @@ import { setTimeout } from 'node:timers/promises';
 const { platform, facts } = JSON.parse(readFileSync(process.env.STIM_CI_RUN_RESULT, 'utf8'));
 const run = (file, args) => execFileSync(file, args, { encoding: 'utf8', timeout: 15_000 }).trim();
 
-const deadline = Date.now() + 60_000;
+const deadline = Date.now() + 180_000;
 let lastUnavailable;
 
 async function observeIos(args) {

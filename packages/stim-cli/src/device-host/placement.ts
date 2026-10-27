@@ -147,7 +147,12 @@ export function decideDevicePlacement(
       else if (offer.platform !== platform || !offer.choice)
         [code, reason] = ['no-matching-device', `no matching ${platform} device choice`];
       else if (offer.resources.memoryPressure !== 'normal')
-        [code, reason] = ['memory', 'host memory pressure unknown or elevated'];
+        [code, reason] = [
+          'memory',
+          offer.resources.memoryPressure === null
+            ? 'host memory pressure could not be read'
+            : `host memory pressure is ${offer.resources.memoryPressure}`,
+        ];
       else if (offer.capacity.available === 0) [code, reason] = ['no-capacity', 'no hosted device capacity available'];
       else if (offer.resources.loadPerCore !== null && offer.resources.loadPerCore >= ceiling(offer))
         [code, reason] = [

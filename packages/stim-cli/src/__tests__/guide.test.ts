@@ -277,6 +277,7 @@ test('the errors topic documents every code the build commands, the Node check a
   assert(body);
   const commandFiles = [
     'device-provision.ts',
+    'device-tools.ts',
     'ios.ts',
     'android.ts',
     'macos.ts',

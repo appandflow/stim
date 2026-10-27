@@ -110,8 +110,11 @@ SpringBoard is back; an already slim simulator is not touched. Turn sound on
 for one device with Sound (iOS) or Media sound (Android) in its Stim Desktop
 options; the choice lasts until that device next boots. Android 14 and older images have no shell command that can
 set media volume, so startup warns, as it does whenever a mute is not
-confirmed. Host volume, Android alarm and ringtone volumes, hosted devices and
-physical devices are unchanged.
+confirmed. A hosted simulator or emulator on a named Mac is muted the same way
+after the host boots or adopts it (best effort; a failed mute is not reported
+to the client), and Stim Desktop's Sound options do not reach
+it. Host volume, Android alarm and ringtone volumes and physical devices are
+unchanged.
 
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
 that is what Fast Refresh over the running dev server is for. \`stim reload\` is
@@ -2834,6 +2837,60 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   The chosen device is on the phase line and in \`--json\` (\`udid\` or
   \`serial\`, plus \`deviceName\`), so an agent can hand the same id to its
   device tool.`,
+    },
+    tools: {
+      summary: 'device location, permission, push and network: change the owned simulator or emulator and read it back',
+      body: () => `  \`stim device location|permission|push|network\` change the workspace's own
+  simulator or emulator. Each takes the platform first, like \`device lock\`,
+  and \`--slot <name>\` and \`--json\`:
+
+    stim device location <ios|android> --set <lat,lng>   # --set 45.5,-73.6
+    stim device location ios --clear
+    stim device permission <ios|android> <grant|revoke|reset> <service>
+    stim device push ios --payload '<json with an "aps" key>'
+    stim device network android <on|off>
+
+  THE TARGET is the slot's owned, booted simulator or emulator, resolved the
+  way \`reload\` resolves it: the project record says \`owned\`, the ledger
+  agrees, and the serial belongs to the recorded AVD. A hosted device, an EAS
+  Simulator session, a physical device (\`--device\`), a device Stim does not
+  own, and a device that is not running refuse with STIM_DEVICE_TOOL_TARGET and
+  run no tool. An action the platform lacks (Android \`--clear\`, iOS network,
+  Android push) refuses with STIM_DEVICE_TOOL_UNSUPPORTED. A tool call that
+  fails, or a device that disagrees with the change afterwards, is
+  STIM_DEVICE_TOOL_FAILED. A bad value is STIM_BAD_ARG.
+
+  \`--set\` takes latitude and longitude as ONE value so a negative latitude is
+  not read as a flag. Android's \`adb emu geo fix\` takes longitude first; Stim
+  swaps them. The emulator has no way to clear a location.
+
+  \`permission\` acts on the app of the slot's last launch, else the project's
+  bundle id or Android package. iOS services are simctl's own: all, calendar,
+  contacts, contacts-limited, location, location-always, media-library,
+  microphone, motion, photos, photos-add, reminders, siri. iOS notifications
+  and camera are not simctl services. Android services are calendar, camera,
+  contacts, location, microphone, motion, notifications, photos; one service is
+  one or two \`pm\` permissions. A permission the app did not declare is
+  listed in \`skipped\` and the call succeeds when the app declares at least one;
+  an app that declares none is STIM_DEVICE_TOOL_FAILED.
+  \`push\` needs the app to hold notification permission on the simulator, which
+  \`simctl privacy\` cannot grant: without it simctl answers "Source is not
+  authorized" and the call is STIM_DEVICE_TOOL_FAILED; open the app and accept
+  its prompt.
+  Android \`reset\` revokes the permission and clears its user-set flags so
+  the app asks again. A grant needs one of the
+  service's permissions to read back granted; a revoke or reset needs all of
+  them not granted, and a reset also no USER_SET or USER_FIXED flag. Changing a
+  permission can terminate the running app on both platforms.
+
+  \`--json\` prints ONE line: { platform, slot, deviceId, deviceName, tool,
+  action, ..., readBack }. \`readBack\` is read from the device after the change:
+  Android permissions are { permissions: [{ name, granted }] } from
+  \`dumpsys package\`, and Android network is { wifi, data } from \`settings get
+  global wifi_on|mobile_data\`. \`readBack\` is null where the platform has no
+  read: iOS location, permission and push, and Android location. Then the exit
+  status of simctl or adb is the only confirmation; Stim never echoes the
+  request as a read-back.`,
     },
     release: {
       summary: 'Release configurations and ...Release variants: Metro skipped, process-proven launch, the JS swap',

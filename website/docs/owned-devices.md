@@ -341,8 +341,9 @@ rerun on the same boot with an unchanged profile skips SimSlim entirely. A manua
 profile changes. A running
 simulator is slimmed on the next `stim ios`, without a boot first, and Stim mutes
 it again after that reboot. A parked simulator is slimmed when Stim adopts it.
-Hosted simulators on a named Mac are never changed. If `simslim` is not
-installed, `doctor` reports it and `stim ios` boots without it.
+Hosted simulators on a named Mac are muted like local ones but never slimmed.
+If `simslim` is not installed, `doctor` reports it and `stim ios` boots without
+it.
 
 Each boot of an owned iOS simulator writes `ios_boot` records to the workspace's
 device log: boot requested (adopted, created, existing or restart), bootstatus
@@ -538,9 +539,11 @@ refuses with `STIM_LOCK_TIMEOUT`, names that process, and installs nothing.
 
 ### From Windows or Linux
 
-`--remote eas` is the supported way to run iOS from a host without Xcode.
-`stim doctor --platform ios` on such a host points at it instead of at
-CocoaPods and simulators. Install `eas-cli` 21.6.0 or later and `agent-device`, plus `ngrok` or
+From a host without Xcode, iOS runs either on a paired Mac with
+`stim ios --remote <mac> --remote-build <mac>` (see
+[Remote machines](./remote-machines.md#requirements)) or through EAS with
+`--remote eas`. `stim doctor --platform ios` on such a host points at both
+instead of at CocoaPods and simulators. Install `eas-cli` 21.6.0 or later and `agent-device`, plus `ngrok` or
 `cloudflared` for the Metro tunnel, then:
 
 ```bash
