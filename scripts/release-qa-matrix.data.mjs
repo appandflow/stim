@@ -367,6 +367,7 @@ export const pathRules = [
   { path: 'vitest.compat.config.ts', exempt: 'test configuration, covered by the unit suite' },
   { path: 'vitest.setup.ts', exempt: 'test configuration, covered by the unit suite' },
   { path: 'vitest.reap-children.ts', exempt: 'test configuration, covered by the unit suite' },
+  { path: 'vitest.global-tmpdir.ts', exempt: 'test configuration, covered by the unit suite' },
 ];
 
 export const defaultMapping = { rows: qaRows, rules: pathRules };
