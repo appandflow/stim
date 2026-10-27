@@ -7,9 +7,9 @@ import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { basename, dirname, join } from 'path';
-import { getConcurrencyLimits, loadConfig } from './workspace/config.ts';
+import { getConcurrencyLimits, getPlatformDeviceLimits, loadConfig } from './workspace/config.ts';
 import { buildSlotUsage } from './engine/build-slots.ts';
-import { deviceSlotUsage } from './engine/device-capacity.ts';
+import { deviceSlotUsages } from './engine/device-capacity.ts';
 import type { ProjectRecord, SupervisorRecord } from './workspace/config.ts';
 import { getExecutor } from './exec.ts';
 import { isMetroRunning } from './ports.ts';
@@ -183,7 +183,7 @@ export interface StatusSnapshot {
   cwdRoot: string | null;
   tables: DeviceProcessTables;
   machine: MachineUsageState | null;
-  slotUsage: Pick<StatusCapacity, 'builds' | 'devices'>;
+  slotUsage: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices'>;
   roots: WorkspaceProcessRoots[];
   simNames: Record<string, string>;
   probes: StatusProbes;
@@ -476,23 +476,22 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   const busy = sims.some((sim) => sim.state === 'Booted');
   const machine = await readMachineUsage({ states, roots, simNames, tables, busy, probes });
   const { maxBuilds, maxDevices } = getConcurrencyLimits();
+  const platformLimits = getPlatformDeviceLimits();
   const slotUsage: StatusSnapshot['slotUsage'] = {
     ...(maxBuilds > 0 ? { builds: buildSlotUsage(maxBuilds) } : {}),
-    ...(maxDevices > 0
-      ? {
-          devices: await deviceSlotUsage(maxDevices, {
-            config: cfg,
-            sims:
-              process.platform !== 'darwin'
-                ? []
-                : simsAvailable
-                  ? sims
-                  : () => {
-                      throw simctlFailure;
-                    },
-            adb: () => listAdbDevicesAsync({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS }),
-          }),
-        }
+    ...(maxDevices > 0 || platformLimits.ios > 0 || platformLimits.android > 0
+      ? await deviceSlotUsages(maxDevices, platformLimits, {
+          config: cfg,
+          sims:
+            process.platform !== 'darwin'
+              ? []
+              : simsAvailable
+                ? sims
+                : () => {
+                    throw simctlFailure;
+                  },
+          adb: () => listAdbDevicesAsync({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS }),
+        })
       : {}),
   };
   const archives = probes.archives();

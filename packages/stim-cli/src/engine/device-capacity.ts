@@ -42,8 +42,10 @@ import type {
   BuildWaitingFor,
   HostedLocalPlatformCounts,
   SettingScope,
+  StatusCapacity,
   StatusDeviceSlotHolder,
   StatusDeviceSlots,
+  StatusPlatformDeviceSlots,
 } from '@stim-cli/core/state';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
@@ -626,14 +628,43 @@ function deviceHolders(inventory: DeviceInventory, keys: Set<string>): string[] 
  * listing status already read; an unknown count reports why instead of failing.
  */
 export async function deviceSlotUsage(max: number, sources: AsyncInventorySources = {}): Promise<StatusDeviceSlots> {
+  return (await deviceSlotUsages(max, {}, sources)).devices!;
+}
+
+/** {@link deviceSlotUsage} plus the usage of each per-platform cap that is set, from one inventory read. */
+export async function deviceSlotUsages(
+  max: number,
+  platformMax: Partial<Record<CappedPlatform, number>>,
+  sources: AsyncInventorySources = {},
+): Promise<Pick<StatusCapacity, 'devices' | 'platformDevices'>> {
+  const capped = (['ios', 'android'] as const).filter((platform) => (platformMax[platform] ?? 0) > 0);
+  const platformDevices = (count: (platform: CappedPlatform) => Partial<StatusPlatformDeviceSlots>) => ({
+    ...(capped.length
+      ? {
+          platformDevices: Object.fromEntries(
+            capped.map((platform) => [platform, { max: platformMax[platform]!, ...count(platform) }]),
+          ),
+        }
+      : {}),
+  });
   try {
     const inventory = await readInventoryAsync(sources);
-    if ('code' in inventory) return { max, inUse: null, unknown: inventory.message, holders: [] };
+    if ('code' in inventory)
+      return {
+        ...(max > 0 ? { devices: { max, inUse: null, unknown: inventory.message, holders: [] } } : {}),
+        ...platformDevices(() => ({ inUse: null, unknown: inventory.message })),
+      };
     const keys = inventoryKeys(inventory);
-    return { max, inUse: keys.size, holders: slotHolders(inventory, keys) };
+    return {
+      ...(max > 0 ? { devices: { max, inUse: keys.size, holders: slotHolders(inventory, keys) } } : {}),
+      ...platformDevices((platform) => ({ inUse: platformCount(keys, platform) })),
+    };
   } catch (error) {
-    if (isClaimRefusal(error)) return { max, inUse: null, unknown: error.message, holders: [] };
-    throw error;
+    if (!isClaimRefusal(error)) throw error;
+    return {
+      ...(max > 0 ? { devices: { max, inUse: null, unknown: error.message, holders: [] } } : {}),
+      ...platformDevices(() => ({ inUse: null, unknown: error.message })),
+    };
   }
 }
 

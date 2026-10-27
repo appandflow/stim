@@ -718,6 +718,8 @@ export interface StatusCapacity {
   builds?: StatusBuildSlots;
   /** `concurrency.maxDevices` usage; present only while that cap is set. */
   devices?: StatusDeviceSlots;
+  /** `concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` usage; each is present only while its cap is set. */
+  platformDevices?: Partial<Record<'ios' | 'android', StatusPlatformDeviceSlots>>;
   /** This machine's load. Optional only so payloads from releases that predate it still decode. */
   load?: StatusCapacityLoad;
 }
@@ -777,6 +779,13 @@ export interface StatusDeviceSlots {
   inUse: number | null;
   unknown?: string;
   holders: StatusDeviceSlotHolder[];
+}
+
+/** `inUse` is null, with `unknown` saying why, when Stim cannot count the owned devices. */
+export interface StatusPlatformDeviceSlots {
+  max: number;
+  inUse: number | null;
+  unknown?: string;
 }
 
 export interface DeviceLeaseState {

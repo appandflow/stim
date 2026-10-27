@@ -12,6 +12,7 @@ import {
   countLiveOwnedDevicesByPlatform,
   countLiveOwnedDevicesFrom,
   deviceSlotUsage,
+  deviceSlotUsages,
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
@@ -922,6 +923,33 @@ test('status slot usage names the workspace and slot of each counted device and 
       },
     }),
   ).toMatchObject({ max: 3, inUse: null, unknown: expect.stringContaining('simctl timed out'), holders: [] });
+});
+
+test('status reports each per-platform cap that is set, with or without the shared cap, from one inventory', async () => {
+  const sources = {
+    ...empty,
+    sims: [...occupied, makeIosSim({ udid: 'second', name: 'stim-second', state: 'Booted' })],
+  };
+  expect(await deviceSlotUsages(0, { ios: 2, android: 0 }, sources)).toEqual({
+    platformDevices: { ios: { max: 2, inUse: 2 } },
+  });
+  const both = await deviceSlotUsages(5, { ios: 3, android: 1 }, sources);
+  expect(both.devices).toMatchObject({ max: 5, inUse: 2 });
+  expect(both.platformDevices).toEqual({ ios: { max: 3, inUse: 2 }, android: { max: 1, inUse: 0 } });
+  expect(await deviceSlotUsages(5, {}, sources)).not.toHaveProperty('platformDevices');
+  const unknown = await deviceSlotUsages(
+    0,
+    { android: 1 },
+    {
+      ...sources,
+      sims: () => {
+        throw new Error('simctl timed out');
+      },
+    },
+  );
+  expect(unknown.platformDevices).toEqual({
+    android: { max: 1, inUse: null, unknown: expect.stringContaining('simctl timed out') },
+  });
 });
 
 test('the non-binding peek preserves an unknown count for the binding boot admission', async () => {
