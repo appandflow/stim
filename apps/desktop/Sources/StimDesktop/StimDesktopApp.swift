@@ -223,8 +223,12 @@ struct StimDesktopApp: App {
         MainActor.assumeIsolated { store?.useServer(ServerSession.shared.feedConnection) }
       }
     }
-    pairedStatus = PairedServerSessions.shared.$sessions.sink { [weak store] sessions in
-      MainActor.assumeIsolated { store?.usePairedServers(sessions.compactMapValues(\.client)) }
+    pairedStatus = PairedServerSessions.shared.objectWillChange.sink { [weak store] _ in
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+          store?.usePairedServers(PairedServerSessions.shared.sessions.compactMapValues(\.client))
+        }
+      }
     }
     notifier = Notifier(store: store)
     let actions = ActionCenter(cli: cli) { ServerSession.shared.statsConnection }

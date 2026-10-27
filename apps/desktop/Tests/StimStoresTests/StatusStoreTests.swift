@@ -340,8 +340,10 @@ struct StatusStoreTests {
     for client in [floco, mini, socket] { client.start() }
     defer { for client in [floco, mini, socket] { client.stop() } }
 
-    store.usePairedServers(["floco": floco, "mini": mini, "socket": socket])
-    #expect(await until { store.paired["floco"]?.payload != nil && store.paired["mini"]?.payload != nil })
+    let clients = ["floco": floco, "mini": mini, "socket": socket]
+    #expect(await until { floco.isOpen && mini.isOpen && socket.isOpen })
+    store.usePairedServers(clients)
+    #expect(await until { store.paired["floco"]?.delivering == true && store.paired["mini"]?.delivering == true })
     #expect(store.paired["socket"] == nil)
 
     let owned = store.ownedEnvironments
@@ -355,6 +357,15 @@ struct StatusStoreTests {
     #expect(store.paired["floco"]?.payload?.environments.first?.project == Project(root: root.path))
     #expect(await until { store.projects[checkout] != nil })
     #expect(store.projects[checkout] != Project(root: root.path))
+
+    floco.stop()
+    store.usePairedServers(clients)
+    #expect(store.paired["floco"]?.delivering == false)
+    #expect(store.workspace(WorkspaceKey(owner: .paired("floco"), path: checkout))?.workspace.memoryMb == 2)
+    floco.start()
+    #expect(await until { floco.isOpen })
+    store.usePairedServers(clients)
+    #expect(await until { store.paired["floco"]?.delivering == true })
 
     store.usePairedServers(["mini": mini])
     #expect(store.paired["floco"] == nil)

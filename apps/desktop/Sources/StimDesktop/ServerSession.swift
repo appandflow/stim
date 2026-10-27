@@ -166,9 +166,10 @@ import StimKit
   static let shared = PairedServerSessions()
 
   @Published private(set) var sessions: [String: ServerSession] = [:]
+  private var watches: [String: AnyCancellable] = [:]
 
   /// Opens a session for each of `pairings`, keeps a session whose endpoint and name are unchanged, and stops every
-  /// other one. Each connection reads its pairing's key from `store` as it connects, so a forgotten pairing has none
+  /// other one. A change in any session's state publishes a change here. Each connection reads its pairing's key from `store` as it connects, so a forgotten pairing has none
   /// to send.
   func sync(_ pairings: [PairedServer], store: PairedServerStore) {
     var next: [String: ServerSession] = [:]
@@ -185,6 +186,9 @@ import StimKit
         })
     }
     for (id, session) in sessions where next[id] !== session { session.stop() }
+    watches = next.mapValues { session in
+      session.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+    }
     sessions = next
   }
 }

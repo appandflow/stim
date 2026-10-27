@@ -73,24 +73,31 @@ public final class StatusStore: ObservableObject {
     syncServerFeed()
   }
 
-  /// Follows the status of each paired server's client, by `PairedServer.id`, and drops the status of any other. A
-  /// client of this Mac's Unix socket is never followed as a paired server.
+  /// Follows the status of each paired server's client, by `PairedServer.id`, while that client is open with `read`, and
+  /// drops the status of any other. A closed client keeps its last payload, no longer delivering. A client of this
+  /// Mac's Unix socket is never followed as a paired server. Call it again whenever a paired client's state changes.
   public func usePairedServers(_ clients: [String: ServerClient]) {
     for (id, followed) in pairedFeeds where clients[id] !== followed.client {
       pairedFeeds[id] = nil
       followed.feed.use(nil)
       paired[id] = nil
     }
-    for (id, client) in clients where client.isRemote && pairedFeeds[id] == nil {
-      let feed = ServerStatusFeed(
-        onPayload: { [weak self] result, source, _ in self?.acceptPaired(result, id: id, client: source) },
-        onDelivering: { [weak self, weak client] delivering in
-          guard let self, let client, self.pairedFeeds[id]?.client === client else { return }
-          self.paired[id]?.delivering = delivering
-        })
-      pairedFeeds[id] = (client, feed)
-      paired[id] = PairedStatus()
-      feed.use(client)
+    for (id, client) in clients where client.isRemote {
+      if pairedFeeds[id] == nil {
+        let feed = ServerStatusFeed(
+          onPayload: { [weak self] result, source, _ in self?.acceptPaired(result, id: id, client: source) },
+          onDelivering: { [weak self, weak client] delivering in
+            guard let self, let client, self.pairedFeeds[id]?.client === client else { return }
+            self.paired[id]?.delivering = delivering
+          })
+        pairedFeeds[id] = (client, feed)
+        paired[id] = PairedStatus()
+      }
+      guard case .open(let hello) = client.state, hello.capabilities.contains("read") else {
+        pairedFeeds[id]?.feed.use(nil)
+        continue
+      }
+      pairedFeeds[id]?.feed.use(client)
     }
   }
 
