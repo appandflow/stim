@@ -17,12 +17,11 @@ import {
   includesGradleVersions,
 } from './gc/gradle-versions.ts';
 import { existsSync } from 'fs';
-import { isAbsolute } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { loadConfig, removeProject, withConfigLockAsync } from '../workspace/config.ts';
 import { plural, quotedPath } from '../command-output.ts';
-import { directorySizeAsync, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
+import { directorySizeAsync, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { removeExpiredLease } from '../engine/device-lease.ts';
@@ -35,15 +34,15 @@ import {
   type ClaimHandle,
 } from '../ownership-claim.ts';
 import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
-import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
+import { reclaimProject } from '../devices/reclaim.ts';
 import { listAllIosSims, listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { listAvdsAsync, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
-import type { StimConfig } from '@stim-cli/core/state';
-import type { GcSkip, OrphanedDevice } from './gc/types.ts';
+import type { OrphanedDevice } from './gc/types.ts';
 import { gcOptionsOf, openGcLog } from './gc/log.ts';
+import { classifyProjectEntries } from './gc/projects.ts';
 import { createGcResults, GC_OUTPUT, type GcOutput, type GcResult } from './gc/results.ts';
 import { phase } from './gc/progress.ts';
 import {
@@ -243,44 +242,11 @@ function collectGcMemory(scope: MemoryScope, env: NodeJS.ProcessEnv, operation?:
   return memorySweepIsScoped(env) ? Promise.resolve(scopedMemoryReport()) : collectMemoryReport(scope, true, operation);
 }
 
-function classifyProjectEntries(
-  cfg: StimConfig | null,
-  mountedVolumes: string[],
-): { deadProjects: string[]; invalidProjects: string[]; skipped: GcSkip[] } {
-  const deadProjects: string[] = [];
-  const invalidProjects: string[] = [];
-  const skipped: GcSkip[] = [];
-  for (const [path, project] of Object.entries(cfg?.projects || {})) {
-    if (!isAbsolute(path)) {
-      const claimed = describeDereferenced(project);
-      if (claimed.length) {
-        skipped.push({
-          dir: path,
-          reason:
-            `not an absolute path, so this record is invalid; kept because it still claims ${claimed.join(' and ')}; ` +
-            'gc removes it once that claim is gone, or drop the entry from the config file by hand',
-        });
-      } else {
-        invalidProjects.push(path);
-      }
-      continue;
-    }
-    if (existsSync(path)) continue;
-    if (!isOnMountedVolume(path, mountedVolumes)) {
-      const volume = volumeRootFor(path);
-      skipped.push({ dir: path, reason: `volume ${volume} is not mounted` });
-    } else {
-      deadProjects.push(path);
-    }
-  }
-  return { deadProjects, invalidProjects, skipped };
-}
-
 /** The workspace directories an unscoped run removes whole: those of dead projects and orphaned directories. */
 async function removedWholeWorkspaceDirs(operation?: StimContext): Promise<string[]> {
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();
-  const { deadProjects } = classifyProjectEntries(cfg, mountedVolumes);
+  const { deadProjects } = classifyProjectEntries(cfg?.projects ?? {}, mountedVolumes);
   const { orphaned } = await collectOrphanedWorkspaces(Object.keys(cfg?.projects ?? {}), mountedVolumes, {
     measure: false,
     operation,
@@ -397,7 +363,7 @@ export async function collectGcReport(
   }
   const parkedSims = await collectParkedSims(deps, { olderThanDays: olderThan, now });
   const parkedAvds = await collectParkedAvds(deps, { olderThanDays: olderThan, now });
-  const { deadProjects, invalidProjects, skipped } = classifyProjectEntries(cfg, mountedVolumes);
+  const { deadProjects, invalidProjects, skipped } = classifyProjectEntries(cfg?.projects ?? {}, mountedVolumes);
   const workspaceDirs = await collectOrphanedWorkspaces(Object.keys(cfg?.projects ?? {}), mountedVolumes, {
     operation,
   });

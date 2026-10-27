@@ -877,6 +877,7 @@ describe('stim status --watch --json', () => {
     'a state write prints a line within 2 s through the real filesystem watcher; skipped on win32, which cannot run the sh adb shim',
     async () => {
       const app = join(root, 'app');
+      mkdirSync(app);
       saveConfig(makeConfig({ projects: { [app]: { label: 'watched', platforms: {} } } }));
       writeWorkspaceState(app, {});
       const { lines } = startWatch();

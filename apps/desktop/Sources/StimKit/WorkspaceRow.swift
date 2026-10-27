@@ -4,7 +4,7 @@ import Foundation
 /// same rules for the phone's Home list; both replay `Tests/StimKitTests/Fixtures/workspace-row-vectors.json`.
 public struct RowStatus: Equatable, Sendable {
   public enum Kind: String, Sendable {
-    case building, warming, ready, driven, running, idle
+    case building, warming, ready, driven, running, idle, missing
   }
 
   public var kind: Kind
@@ -108,6 +108,10 @@ extension Workspace {
       return RowStatus(
         kind: .warming, text: "Warming \(Format.duration(seconds))",
         label: "Warming for \(Format.spokenDuration(seconds))", tone: .brand)
+    }
+    if pathMissing == true, !isActive {
+      return RowStatus(
+        kind: .missing, text: "Folder missing", label: "Folder missing, run stim gc --delete to remove it", tone: .warning)
     }
     if !isActive {
       guard let seconds = since(metro?.lastStop?.at, now) else {

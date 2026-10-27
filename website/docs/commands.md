@@ -1266,6 +1266,13 @@ carries `phase` (`warming`, `ready`, `live` or `idle`), `phaseSince` and, while
 warming, `warmStep`; see
 [Parallel environments](./worktrees.md#parallel-environments).
 
+A workspace whose folder was deleted outside Stim, for example with
+`git worktree remove` or `rm -rf`, stays registered, so status marks it
+`[folder missing]` and `--json` sets `pathMissing: true` with a phase that is
+never `warming` or `ready`. Status only reports it; `stim worktree remove <path>`
+or `stim gc --delete` removes the entry. A folder on a volume that is not mounted is not reported, since the
+volume may come back.
+
 Each environment also carries `stage`, the conclusion Stim Desktop and the
 phone app show beside the git chip: `{ kind, since, platform, closedApps }`.
 `kind` is the first of these that applies: `building` while a build runs,

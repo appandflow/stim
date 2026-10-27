@@ -138,11 +138,13 @@ test('status tags owned devices and leaves unowned devices untagged', async () =
 });
 
 test('status says nothing extra for a project that has only a Metro port', async () => {
+  const project = join(tmpHome, 'proj-a');
+  mkdirSync(project);
   saveConfig(
     makeConfig({
       version: 2,
       projects: {
-        '/proj/a': {
+        [project]: {
           label: 'agent-1',
           metroPort: 8083,
           platforms: {},
@@ -854,13 +856,48 @@ test('a running build reports what its build tool is doing only while it compile
 });
 
 test('a workspace a warm just prepared reports phase ready in --json and [ready] in the human view', async () => {
-  saveConfig(makeConfig({ version: 2, projects: { '/wt/warmed': { platforms: {} } } }));
-  writeWorkspaceState('/wt/warmed', { warm: { phase: 'ready', at: new Date().toISOString() } });
+  const warmed = join(tmpHome, 'warmed');
+  mkdirSync(warmed);
+  saveConfig(makeConfig({ version: 2, projects: { [warmed]: { platforms: {} } } }));
+  writeWorkspaceState(warmed, { warm: { phase: 'ready', at: new Date().toISOString() } });
 
   const payload = await runStatusJson();
   expect(payload.environments[0]).toMatchObject({ live: false, phase: 'ready' });
+  expect(payload.environments[0]).not.toHaveProperty('pathMissing');
   expect((await runStatus()).some((line) => line.includes('warmed [ready]'))).toBe(true);
 });
+
+test('a workspace whose folder was deleted reports pathMissing and no ready phase, and stays registered', async () => {
+  const gone = join(tmpHome, 'gone');
+  mkdirSync(gone);
+  saveConfig(makeConfig({ version: 2, projects: { [gone]: { platforms: {} } } }));
+  writeWorkspaceState(gone, { warm: { phase: 'ready', at: new Date().toISOString() } });
+  rmSync(gone, { recursive: true });
+
+  const payload = await runStatusJson();
+  expect(payload.environments[0]).toMatchObject({
+    live: false,
+    phase: 'idle',
+    phaseSince: null,
+    pathMissing: true,
+    stage: { kind: 'stopped' },
+  });
+  const human = await runStatus();
+  expect(human.some((line) => line.includes('gone [folder missing]'))).toBe(true);
+  expect(human.some((line) => line.includes('stim gc --delete'))).toBe(true);
+  expect(Object.keys(loadConfig()?.projects ?? {})).toEqual([gone]);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'a workspace on a volume that is not mounted is not reported as pathMissing',
+  async () => {
+    const unmounted = '/Volumes/StimTestVolumeThatDoesNotExist/app';
+    saveConfig(makeConfig({ version: 2, projects: { [unmounted]: { platforms: {} } } }));
+
+    const payload = await runStatusJson();
+    expect(payload.environments[0]).not.toHaveProperty('pathMissing');
+  },
+);
 
 test('a worktree root that is itself the app is not flagged labelOnly', async () => {
   saveConfig(

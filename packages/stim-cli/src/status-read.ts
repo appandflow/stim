@@ -6,6 +6,7 @@ import { inspectProcessIdentity } from './process-identity.ts';
 import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
+import { isOnMountedVolume, listMountedVolumes } from './fs-util.ts';
 import { basename, dirname, join } from 'path';
 import { getConcurrencyLimits, getPlatformDeviceLimits, loadConfig } from './workspace/config.ts';
 import { buildSlotUsage } from './engine/build-slots.ts';
@@ -329,6 +330,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
 
   const history = readStats().record?.history;
   const states: EnvironmentState[] = [];
+  let mountedVolumes: string[] | undefined;
   const labelOnlyRoots: boolean[] = [];
   const launchesByState: ReturnType<typeof readWorkspaceLaunches>[] = [];
   const easLedger = readEasSessionLedger();
@@ -428,7 +430,10 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
         if (macosFacts.warning) state.warnings.push(macosFacts.warning);
         state.live ||= macos.state === 'running' || macos.state === 'orphaned' || macos.build.state === 'running';
       }
-      Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }), {
+      const missing = !existsSync(path) && isOnMountedVolume(path, (mountedVolumes ??= listMountedVolumes()));
+      const phase = workspacePhase(state.live, saved, { now: leaseNow });
+      Object.assign(state, builds, missing && phase.phase !== 'live' ? { phase: 'idle', phaseSince: null } : phase, {
+        ...(missing ? { pathMissing: true as const } : {}),
         platforms: (() => {
           const context = {
             projectPath: path,

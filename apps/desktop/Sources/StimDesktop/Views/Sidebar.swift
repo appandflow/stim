@@ -494,6 +494,9 @@ struct WorkspaceRowContent: View {
 
   private func context(_ devices: RowDevices) -> Text? {
     var parts: [Text] = []
+    if env.pathMissing == true, !env.isActive {
+      parts.append(Text("Run stim gc --delete to remove").foregroundStyle(Palette.warning))
+    }
     if let names = devices.names { parts.append(Text(names).foregroundStyle(Palette.secondary)) }
     if let drivers = devices.drivers {
       parts.append(Text("\(Image(systemName: "cursorarrow.rays")) \(drivers)").foregroundStyle(Palette.primary))

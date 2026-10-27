@@ -1272,6 +1272,16 @@ result as proof instead of requiring an unrelated screenshot.`,
   is never touched: \`Reclaimed the environment; the working tree stays (it
   is the source checkout).\`
 
+  A worktree deleted outside Stim stays registered. Pass its path to
+  \`worktree remove\`: when the folder is gone from a mounted volume, the
+  command drops the record of that path and of the projects registered under
+  it, with the same \`device\`, \`lease\` and \`workspace\` lines, ending with
+  \`Reclaimed the environment of the deleted folder (its folder is already
+  gone).\` A path on a volume that is not mounted, or one that cannot be
+  resolved, is kept and refused with the reason, since the folder may come
+  back. A missing path with no registered project says \`No such worktree\`.
+  \`stim status\` reports such a workspace as pathMissing.
+
   \`gc\` names each slow step on stderr as it starts, in every mode; its
   report stays on stdout, and with \`--json\` stdout carries only the payload:
 
