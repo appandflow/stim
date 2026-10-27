@@ -1392,6 +1392,41 @@ export class DeviceHost {
       this.beginStop(record);
       return;
     }
+    if (record.platform === 'android' && !owned.adopting && record.systemImage) {
+      const image = this.runWorker({
+        cwd: dirname(this.options.worker),
+        env: this.options.env,
+        input: { mode: 'image', systemImage: record.systemImage },
+        claim: owned.claim,
+        timeoutMs: this.limits.imageInstallMs,
+        maxOutputBytes: 16_384,
+      });
+      owned.run = image;
+      const installed = await image.done;
+      if (owned.stopping) return;
+      if (
+        !installed.settled ||
+        installed.notice ||
+        !isJsonObject(installed.value) ||
+        installed.value.state !== 'ready'
+      ) {
+        const value = installed.value;
+        this.change(record.id, (current) => {
+          current.state = installed.settled ? 'stopped' : 'unknown';
+          current.notice =
+            installed.notice ??
+            (isJsonObject(value) && typeof value.notice === 'string'
+              ? value.notice
+              : 'The Android system image install did not finish.');
+          if (current.state === 'stopped') this.release(record.id, owned);
+        });
+        return;
+      }
+      if (!this.options.allowed(record.client) || this.closed) {
+        this.beginStop(record);
+        return;
+      }
+    }
     const run = this.run(record, owned, owned.adopting ? 'adopt' : 'prepare');
     owned.run = run;
     const outcome = await run.done;

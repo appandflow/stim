@@ -790,6 +790,15 @@ selected SDK `choice` (runtime/model/image and host architecture), `resources`,
 with a reason; elevated memory pressure, or a sample that cannot be read after one retry, declines with its own reason. The query creates
 no session, simulator, AVD or ownership claim.
 
+An Android offer whose image is not installed on the host carries
+`installImage`, the sdkmanager package the host installs before it creates the
+AVD, when the host's machine `android.installImages` is `auto`, the image
+matches its ABI, its SDK licenses are accepted and it has cmdline-tools and
+8 GB free. Otherwise the offer declines with the command to run on the host.
+Reserve then runs the install in the server's own Stim home and `ANDROID_HOME`,
+for up to 30 minutes, while the session stays `preparing`; an install that
+fails stops the session with the refusal as its `notice`.
+
 `capacity.running` counts every simulator or emulator reservation not confirmed
 stopped, including unresolved sessions, plus the host's own booted `stim-*`
 devices in `capacity.local`. A session's simulator counts once, whether or not

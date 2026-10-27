@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { workspaceDir } from '../workspace/paths.ts';
+import { phaseLine } from '../command-output.ts';
 import { agentAccess, removeAgentAccess } from './hosted-agent.ts';
 import { closeAgentConnection } from './agent-connection.ts';
 import { randomUUID } from 'node:crypto';
@@ -41,6 +42,7 @@ import {
   POLL_MS,
   SESSION_TIMEOUT_MS,
   PREPARE_TIMEOUT_MS,
+  IMAGE_INSTALL_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
   OFFER_TIMEOUT_MS,
   RESERVE_TIMEOUT_MS,
@@ -67,6 +69,7 @@ export interface HostedNativeTarget {
   choice: HostedIosChoice | HostedAndroidChoice;
   session: HostedSession | null;
   selection?: { selected: string; reason?: string };
+  installImage?: string;
 }
 
 export const androidAgentRemoteConfig = (root: string, slot: string): string =>
@@ -175,7 +178,8 @@ export async function prepareHostedNative(
       throw new Error('No hosted device capacity is available.');
     const memoryRefusal = hostedMemoryRefusal(isJsonObject(offer.resources) ? offer.resources.memoryPressure : null);
     if (memoryRefusal) throw new Error(memoryRefusal);
-    return { host, choice, session: null };
+    const installImage = parsedOffer?.platform === 'android' ? parsedOffer.installImage : undefined;
+    return { host, choice, session: null, ...(installImage ? { installImage } : {}) };
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'STIM_BAD_ARG') throw error;
     throw hostingRefusal(machine, error);
@@ -347,11 +351,18 @@ async function placeHostedNativeOnce(
       agent: { driver: 'none', setting: 'hosting.agentDriver' },
     };
     await reserved(placement);
+    if (target.installImage && session.state === 'preparing')
+      note(
+        phaseLine(
+          'image',
+          `installing ${target.installImage} on ${host.machine}; the download can take several minutes`,
+        ),
+      );
     session = await settle(
       host,
       session,
       ['preparing'],
-      PREPARE_TIMEOUT_MS,
+      PREPARE_TIMEOUT_MS + (target.installImage ? IMAGE_INSTALL_TIMEOUT_MS : 0),
       platform,
       runCancellationSignal(ambientContext()),
     );

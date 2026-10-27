@@ -5,7 +5,7 @@ import { hostedMemoryRefusal, type HostedDeviceOfferRequest, type HostedNativeOf
 import { readHostMemoryPressure } from '../host-memory.ts';
 import { countLiveOwnedDevicesByPlatform, type DeviceCountExclusion } from '../engine/device-capacity.ts';
 import { selectHostedIosDevice } from './worker.ts';
-import { selectHostedAndroidDevice } from './android.ts';
+import { offerHostedAndroidDevice } from './android.ts';
 import { selectHostedMacos } from './macos.ts';
 
 export async function inspectHostedDevice(
@@ -35,7 +35,7 @@ export async function inspectHostedDevice(
       ? { platform: 'macos', choice: selectHostedMacos(), resources, declined: null }
       : request.platform === 'ios'
         ? { platform: 'ios', choice: await selectHostedIosDevice(request), resources, declined: null }
-        : { platform: 'android', choice: selectHostedAndroidDevice(request), resources, declined: null };
+        : { platform: 'android', ...offerHostedAndroidDevice(request), resources, declined: null };
   } catch (error) {
     return { platform: request.platform, choice: null, resources, declined: (error as Error).message.slice(0, 4000) };
   }

@@ -33,6 +33,7 @@ import {
   waitForBoot,
 } from '../devices/android.ts';
 import { forgetCreatedDeviceAsync } from '../devices/created-devices.ts';
+import { androidImageInstallPolicy, decideSystemImage, systemImageInstallProblem } from '../devices/android-image.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { ensureConfig, loadConfig, withConfigLockAsync } from '../workspace/config.ts';
 import { hostedNotify, type HostedWorkerResult } from './worker.ts';
@@ -44,7 +45,36 @@ async function portIsOccupied(port: number): Promise<boolean> {
   return [...devices.emulators, ...devices.unhealthy].some((device) => device.consolePort === port);
 }
 
-export function selectHostedAndroidDevice(request: HostedDeviceSelectors): HostedAndroidChoice {
+/**
+ * Offers the image this host would use. A missing image is offered with `installImage` when this machine's
+ * android.installImages allows it and sdkmanager could install it now; otherwise the refusal names the host command.
+ */
+export function offerHostedAndroidDevice(request: HostedDeviceSelectors): {
+  choice: HostedAndroidChoice;
+  installImage?: string;
+} {
+  const decided = decideSystemImage({
+    requested: request.systemImage ?? null,
+    installed: listInstalledSystemImages(),
+    policy: androidImageInstallPolicy(loadConfig()),
+  });
+  if (decided.kind === 'refuse') throw new Error(`${decided.message} ${decided.remedy}`);
+  if (decided.kind === 'installed') return { choice: selectHostedAndroidDevice(request) };
+  const problem = systemImageInstallProblem(decided.pkg, process.env);
+  if (problem) throw new Error(`${problem.message} ${problem.remedy}`);
+  const profile = request.deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
+  if (!listAvdDeviceProfiles().includes(profile)) throw new Error('The Android device profile is not installed.');
+  return {
+    choice: {
+      systemImage: decided.pkg,
+      deviceProfile: profile,
+      architecture: hostSystemImageArch() === 'arm64-v8a' ? 'arm64-v8a' : 'x86_64',
+    },
+    installImage: decided.pkg,
+  };
+}
+
+function selectHostedAndroidDevice(request: HostedDeviceSelectors): HostedAndroidChoice {
   const image = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage: request.systemImage });
   if (!image || image.arch !== hostSystemImageArch()) throw new Error('No compatible installed Android image.');
   const profile = request.deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;

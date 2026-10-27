@@ -89,6 +89,10 @@ if(input.mode === 'count') {
   writeFileSync(join(process.env.STIM_HOME,'offer-exclude.json'),JSON.stringify(input.exclude ?? null));
   process.stdout.write(JSON.stringify({platform:request.platform,choice:declined?null:choice,declined,resources:{cpus:4,loadPerCore:0.5,memoryFreeBytes:1000,memoryPressure:'normal',workerDiskFreeBytes:null,...(input.exclude ? {localDevices:'unknown' in localCount() ? localCount() : localCount().ios + localCount().android,localPlatforms:localCount()} : {})}}));
   process.exit(0);
+} else if(input.mode === 'image') {
+  appendFileSync(join(process.env.STIM_HOME,'image-requests'),input.systemImage+'\\n');
+  process.stdout.write(JSON.stringify(input.systemImage.includes('refused') ? {state:'refused',notice:'licenses not accepted. Run sdkmanager --licenses.'} : {state:'ready'}));
+  process.exit(0);
 }
 const home = process.env.STIM_HOME;
 const iosDevice = {udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
@@ -1762,6 +1766,21 @@ test('Android reservations keep distinct ports and platform slots and reconnect 
   expect(readClaimSet(join(deviceHostRoot(), `${android.id}.claims`)).live).toEqual([]);
   expect(host.attach('client', { session: ios.id })).toHaveProperty('result.state', 'ready');
   expect((await reserve({ platform: 'android', attempt: 'replacement' })).consolePort).toBe(5554);
+  expect(readFileSync(join(home, 'image-requests'), 'utf8')).toBe(`${androidRequest.systemImage}\n`);
+});
+
+test('a hosted Android image the host cannot install stops the session with its notice before any device work', async () => {
+  const refused = await reserve({
+    platform: 'android',
+    attempt: 'image-refused',
+    systemImage: 'system-images;android-30;refused;arm64-v8a',
+    deviceProfile: 'pixel_6',
+  });
+  const stopped = await state(refused.id, 'stopped');
+  expect(stopped.notice).toBe('licenses not accepted. Run sdkmanager --licenses.');
+  expect(stopped.device).toBeNull();
+  expect(existsSync(join(deviceHostArea(refused.id), 'home', 'modes'))).toBe(false);
+  expect(readClaimSet(join(deviceHostRoot(), `${refused.id}.claims`)).live).toEqual([]);
 });
 
 test('offers schema-compatible SDK choices without creating a journal, claim, or worker area', async () => {
