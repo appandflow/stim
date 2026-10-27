@@ -50,6 +50,7 @@ import {
 import {
   assertOwnedAvdStoppedAsync,
   avdPathExists,
+  avdStorageExists,
   avdStorageRoots,
   isEmulatorToolAbsent,
   listAdbDevicesAsync,
@@ -539,11 +540,7 @@ async function teardownUnregisteredAvd(
   operation?.signal.throwIfAborted();
   const candidates = surveyed ? [surveyed] : listOrphanedAvdDirectories(avdName);
   if (candidates.length === 0) {
-    if (
-      avdStorageRoots().some(
-        (root) => avdPathExists(join(root, `${avdName}.ini`)) || avdPathExists(join(root, `${avdName}.avd`)),
-      )
-    )
+    if (avdStorageExists(avdName))
       throw new Error(`AVD ${avdName} is not listed but its storage remains; it was kept.`);
     return { status: 'missing' };
   }

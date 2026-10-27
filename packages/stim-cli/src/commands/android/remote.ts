@@ -7,7 +7,7 @@ import type { EasFallbackCheck } from '../../device-host/placement.ts';
 import { prepareHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { readHostedAndroid } from '../../device-host/ios-state.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
-import { isEmulatorToolAbsent, resolveOwnedAvdSerialAsync } from '../../devices/android.ts';
+import { avdStorageExists, isEmulatorToolAbsent, resolveOwnedAvdSerialAsync } from '../../devices/android.ts';
 import { getProject } from '../../workspace/config.ts';
 
 export async function connectAndroidHosting({
@@ -68,7 +68,7 @@ export async function connectAndroidHosting({
       const resolved = await resolveSerial(local.avdName, { timeoutMs: 5000 });
       running = Boolean(resolved.serial) || (!resolved.notRunning && !resolved.missing);
     } catch (error) {
-      running = !isEmulatorToolAbsent(error);
+      running = !isEmulatorToolAbsent(error) || avdStorageExists(local.avdName);
     }
     if (running)
       return {
