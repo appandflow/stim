@@ -1794,14 +1794,30 @@ export function resolveOwnedAvdSerial(avdName: string, opts: { timeoutMs?: numbe
   return ownedAvdSerialResolver(opts)(avdName);
 }
 
+const ANDROID_LOCATION_VARIABLES = [
+  'ANDROID_HOME',
+  'ANDROID_SDK_ROOT',
+  'ANDROID_AVD_HOME',
+  'ANDROID_EMULATOR_HOME',
+  'ANDROID_USER_HOME',
+  'ANDROID_SDK_HOME',
+] as const;
+
 /**
- * True when `error` is the emulator binary failing to spawn on a machine with no Android SDK configured.
- * Nothing Stim started can be running through a tool that does not exist. An explicit ANDROID_HOME or
- * ANDROID_SDK_ROOT may name an unmounted volume, so it keeps the failure.
+ * True when `error` is the emulator binary failing to spawn on a machine with no Android SDK or AVD
+ * location configured. Nothing Stim started can be running through a tool that does not exist. An
+ * explicitly configured location may name an unmounted volume, so it keeps the failure, and so does a
+ * missing adb.
  */
 export function isEmulatorToolAbsent(error: unknown, env: NodeJS.ProcessEnv = ambientEnv()): boolean {
   return (
-    error instanceof Error && 'code' in error && error.code === 'ENOENT' && !env.ANDROID_HOME && !env.ANDROID_SDK_ROOT
+    error instanceof Error &&
+    'code' in error &&
+    error.code === 'ENOENT' &&
+    'path' in error &&
+    typeof error.path === 'string' &&
+    /(?:^|[\\/])emulator(?:\.exe)?$/.test(error.path) &&
+    !ANDROID_LOCATION_VARIABLES.some((name) => env[name])
   );
 }
 

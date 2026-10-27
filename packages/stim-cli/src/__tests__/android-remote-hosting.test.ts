@@ -7,7 +7,8 @@ import { setDevice, upsertProject } from '../workspace/config.ts';
 let home: string;
 let saved: Record<string, string | undefined>;
 const root = () => join(home, 'project');
-const envKeys = ['STIM_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT'];
+const envKeys = ['STIM_HOME', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'ANDROID_AVD_HOME'];
+const enoent = (path: string) => Object.assign(new Error(`spawn ${path} ENOENT`), { code: 'ENOENT', path });
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-android-remote-'));
@@ -15,6 +16,7 @@ beforeEach(() => {
   process.env.STIM_HOME = join(home, 'stim');
   delete process.env.ANDROID_HOME;
   delete process.env.ANDROID_SDK_ROOT;
+  delete process.env.ANDROID_AVD_HOME;
   upsertProject(root(), {});
   setDevice(root(), 'android', { avdName: 'stim-project', owned: true, deviceName: 'stim-project' });
 });
@@ -47,7 +49,7 @@ function connect(error: Error) {
 
 describe('hosting from a workspace whose recorded Android emulator cannot be inspected', () => {
   test('proceeds when the emulator tool does not exist and no SDK is configured', async () => {
-    const result = await connect(Object.assign(new Error('spawn emulator ENOENT'), { code: 'ENOENT' }));
+    const result = await connect(enoent('emulator'));
     expect(result).toMatchObject({ failure: { message: 'reached hosted preparation' } });
   });
 
@@ -56,9 +58,14 @@ describe('hosting from a workspace whose recorded Android emulator cannot be ins
     expect(result).toMatchObject({ failure: { code: 'STIM_BAD_ARG' } });
   });
 
+  test('refuses when the missing tool is adb, since the emulator may still be running', async () => {
+    const result = await connect(enoent('adb'));
+    expect(result).toMatchObject({ failure: { code: 'STIM_BAD_ARG' } });
+  });
+
   test('refuses when ANDROID_HOME names an SDK that may be on an unmounted volume', async () => {
     process.env.ANDROID_HOME = join(home, 'sdk');
-    const result = await connect(Object.assign(new Error('spawn emulator ENOENT'), { code: 'ENOENT' }));
+    const result = await connect(enoent('emulator'));
     expect(result).toMatchObject({ failure: { code: 'STIM_BAD_ARG' } });
   });
 });
