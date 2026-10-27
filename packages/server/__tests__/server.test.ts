@@ -1190,17 +1190,19 @@ describe('pairing', () => {
     const { token } = createPairingToken();
     const client = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
     const hello = await client.request('hello', { client: CLIENT });
-    expect(hello).toMatchObject({
-      result: {
-        features: expect.not.arrayContaining([
-          'macos-window',
-          'macos-windows',
-          'macos-keyboard-extended',
-          'duo-frames',
-          'native-xcode-build',
-        ]),
-      },
-    });
+    for (const mac of [
+      'physical-ios',
+      'macos-window',
+      'macos-windows',
+      'macos-window-select',
+      'macos-window-control',
+      'macos-keyboard-extended',
+      'duo-frames',
+      'native-xcode-build',
+      'native-xcode-toolchain',
+    ]) {
+      expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining([mac]) } });
+    }
     expect(hello).toMatchObject({
       result: {
         features: expect.arrayContaining(['ios-hosted', 'android-hosted', 'macos-hosted', 'device-frames']),

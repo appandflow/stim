@@ -184,6 +184,12 @@ withTailscale('pair with Tailscale running', () => {
     expect(stderr).not.toContain('--https=443');
   });
 
+  it('pairs on the direct tailnet address when tailscale serve status cannot be read', () => {
+    const { endpoint, stderr } = pairWith('not json');
+    expect(endpoint).toBe('ws://100.64.0.1:7787');
+    expect(stderr).toContain('Could not read');
+  });
+
   it('--json prints the same endpoint and still explains it on stderr', () => {
     const { endpoint, stderr } = pairWith(gmailFunnel, '--json');
     expect(endpoint).toBe('ws://100.64.0.1:7787');

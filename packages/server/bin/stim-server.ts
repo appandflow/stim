@@ -111,7 +111,7 @@ function routeNote(route: ServeRoute, port: number): string | null {
     return `No \`tailscale serve\` route reaches port ${port}, so clients connect to this machine's tailnet address directly. For a wss:// endpoint with a certificate, run this once to serve it on a tailnet-only port: \`${serveCommand(route.port, port)}\``;
   }
   if (route.state === 'unknown') {
-    return `Could not read \`tailscale serve status --json\` (${route.reason}); assuming stim-server is served on port ${route.port}.`;
+    return `Could not read \`tailscale serve status --json\` (${route.reason}), so clients connect to this machine's tailnet address directly. For a wss:// endpoint with a certificate, run this once to serve it on a tailnet-only port: \`${serveCommand(route.port, port)}\``;
   }
   if (route.state === 'funneled') {
     const ports = route.ports.join(', ');
@@ -122,7 +122,8 @@ function routeNote(route: ServeRoute, port: number): string | null {
 
 function pairingEndpoint(ips: string[], dnsName: string, route: ServeRoute, port: number) {
   const ip = ips.find((address) => !address.includes(':')) ?? ips[0];
-  if (route.state === 'missing' && ip) return `ws://${ip.includes(':') ? `[${ip}]` : ip}:${port}`;
+  if ((route.state === 'missing' || route.state === 'unknown') && ip)
+    return `ws://${ip.includes(':') ? `[${ip}]` : ip}:${port}`;
   return tailnetEndpoint(dnsName, route.port);
 }
 
