@@ -106,7 +106,7 @@ async function fakeMachine(
       digest: string;
       fingerprint?: string;
       sourceDigest?: string;
-      compilationCache?: object;
+      reused?: true;
     } | null;
     pause?: string | null;
     cachedFetch?: 'hit' | 'miss' | 'corrupt';
@@ -155,7 +155,8 @@ async function fakeMachine(
                 ? {
                     ok: true,
                     artifact: { name: 'Sample.app', size: artifact.archive.length, sha256: artifact.digest },
-                    compilationCache: artifact.compilationCache ?? {},
+                    compilationCache: {},
+                    ...(artifact.reused ? { reused: true } : {}),
                     fingerprint: artifact.fingerprint,
                     sourceDigest: artifact.sourceDigest,
                   }
@@ -984,7 +985,7 @@ test.each([
       offer(0.1),
       { result: { job: 'j1' } },
       {
-        artifact: { archive, digest, fingerprint: 'b'.repeat(40), compilationCache: { status: 'not-run' } },
+        artifact: { archive, digest, fingerprint: 'b'.repeat(40), reused: true },
         hello: () => ({ result: { capabilities: ['build'], features: feature ? ['build-reuse-artifact'] : [] } }),
       },
     );
@@ -1019,7 +1020,10 @@ test.each([
     const start = machine.requests.find((entry) => entry.method === 'build.start');
     expect(start?.params.podsOnWorker).toBe(true);
     expect(start?.params.reuseArtifact).toBe(sent);
-    expect(result.ok && result.compilationCache.status).toBe('not-run');
+    expect(result.ok && { cacheHit: result.cacheHit, compilationCache: result.compilationCache.status }).toEqual({
+      cacheHit: true,
+      compilationCache: 'not-run',
+    });
   },
 );
 

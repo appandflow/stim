@@ -321,7 +321,7 @@ if (process.argv[2].startsWith('offer')) {
     }
     if (job.platform === 'android') writeFileSync(join(job.area, 'out', job.job, 'App.apk'), 'APK bytes');
     const sha256 = createHash('sha256').update(archive).digest('hex');
-    print({ type: 'result', ok: true, artifact: { name: job.platform === 'android' ? 'App.apk' : 'App.app', size: archive.length, sha256 }, fingerprint: job.expectedFingerprint, sourceDigest: job.native?.sourceDigest, compilationCache: { status: 'reported', hits: 3, cacheableTasks: 4, hitRatePercent: 75 }, timings: { buildMs: 5 } });
+    print({ type: 'result', ok: true, artifact: { name: job.platform === 'android' ? 'App.apk' : 'App.app', size: archive.length, sha256 }, fingerprint: job.expectedFingerprint, ...(job.reuseArtifact ? { reused: true } : {}), sourceDigest: job.native?.sourceDigest, compilationCache: { status: 'reported', hits: 3, cacheableTasks: 4, hitRatePercent: 75 }, timings: { buildMs: 5 } });
   }
 }
 `;
@@ -2639,6 +2639,7 @@ describe('offloaded builds', () => {
           outcome: expect.objectContaining({
             ok: true,
             artifact: { name: 'App.app', size: 17, sha256: sha('app archive bytes') },
+            reused: true,
           }),
         },
       ]);

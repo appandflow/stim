@@ -101,7 +101,7 @@ export async function reusedReactNativeArtifact(
   if (!fetched) return null;
   const archive = join(out, 'app.tgz');
   await rename(fetched.path, archive);
-  await getExecutor().runFileAsync('tar', ['-xf', archive, '-C', out], { timeoutMs: 600_000, signal });
+  await getExecutor().runFileAsync('tar', ['-xf', archive, '-C', out], { timeoutMs: 600_000 });
   const { name, size, sha256 } = fetched.artifact;
   return { path: archive, name, size, sha256 };
 }

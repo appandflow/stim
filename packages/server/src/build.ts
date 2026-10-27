@@ -1403,6 +1403,7 @@ function workerOutcome(value: Record<string, unknown>, native?: 'xcode' | 'gradl
         ok: true,
         artifact: { name, size, sha256 },
         fingerprint: native === 'gradle' ? null : String(value.fingerprint),
+        ...(value.reused === true ? { reused: true } : {}),
         ...(androidPackage ? { androidPackage } : {}),
         ...(typeof value.sourceDigest === 'string' ? { sourceDigest: value.sourceDigest } : {}),
         compilationCache: isJsonObject(value.compilationCache) ? value.compilationCache : {},

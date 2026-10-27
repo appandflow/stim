@@ -1827,14 +1827,13 @@ export async function offloadBuild(
     keepStaging = true;
     return {
       ok: true,
-      ...(cacheHit ? { cacheHit: true } : {}),
       ...(rebuilt ? { builtFingerprint: rebuilt } : {}),
       machine,
       artifactPath,
       ...(typeof declared.handoff === 'string' && /^[0-9a-f]{64}$/.test(declared.handoff)
         ? { handoff: { serverKey: choice.credential.serverKey!, token: declared.handoff, sha256: digest } }
         : {}),
-      ...offloadCacheActivity(request.platform, result.compilationCache, cacheHit),
+      ...offloadCacheActivity(request.platform, result.compilationCache, cacheHit || result.reused === true),
       ...(native?.provider === 'gradle' ? { androidPackage: result.androidPackage as string } : {}),
       timings: {
         offerMs: choice.offerMs,
@@ -1861,8 +1860,8 @@ function offloadCacheActivity(
   platform: BuildRequest['platform'],
   activity: unknown,
   cacheHit: boolean,
-): Pick<Extract<OffloadOutcome, { ok: true }>, 'compilationCache' | 'ccache'> {
-  if (cacheHit) return { compilationCache: COMPILATION_CACHE_NOT_RUN, ccache: CCACHE_NOT_RUN };
+): Pick<Extract<OffloadOutcome, { ok: true }>, 'cacheHit' | 'compilationCache' | 'ccache'> {
+  if (cacheHit) return { cacheHit: true, compilationCache: COMPILATION_CACHE_NOT_RUN, ccache: CCACHE_NOT_RUN };
   return {
     compilationCache: platform === 'ios' ? compilationActivity(activity) : COMPILATION_CACHE_UNAVAILABLE,
     ccache: platform === 'android' ? ccacheActivity(activity) : CCACHE_UNAVAILABLE,
@@ -1881,7 +1880,6 @@ function packageName(projectRoot: string): string | null {
 const numberOrNull = (field: unknown): number | null => (typeof field === 'number' ? field : null);
 
 function compilationActivity(value: unknown): CompilationCacheActivity {
-  if (isJsonObject(value) && value.status === 'not-run') return COMPILATION_CACHE_NOT_RUN;
   if (!isJsonObject(value) || value.status !== 'reported') return COMPILATION_CACHE_UNAVAILABLE;
   return {
     status: 'reported',

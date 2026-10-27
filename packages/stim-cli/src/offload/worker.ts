@@ -44,7 +44,6 @@ import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
 import { planPrebuild, recordPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-facts.ts';
 import { CCACHE_UNAVAILABLE, resolveCcache } from '../engine/ccache.ts';
-import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { assembleTaskFor } from '../engine/gradle.ts';
 
 import { getExecutor } from '../exec.ts';
@@ -172,6 +171,7 @@ export type WorkerResult =
       ok: true;
       artifact: { path: string; name: string; size: number; sha256: string };
       fingerprint: string | null;
+      reused?: true;
       androidPackage?: string;
       sourceDigest?: string;
       cacheArtifact?: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt };
@@ -814,8 +814,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     const query = tools ? reactNativeBuildQuery(job, fingerprint, job.project, tools) : null;
     const receipt = query ? reactNativeArtifactReceipt(query, tools) : null;
     const reused = await reuseRetained(job, query, mutations, time);
-    if (reused)
-      return { ok: true, artifact: reused, fingerprint, compilationCache: COMPILATION_CACHE_NOT_RUN, timings };
+    if (reused) return { ok: true, artifact: reused, fingerprint, reused: true, compilationCache: {}, timings };
     compiled =
       platform === 'android'
         ? await compileAndroid(job, realRoot, log, time, androidLayout)

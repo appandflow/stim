@@ -1275,6 +1275,8 @@ export type BuildJobOutcome =
       ok: true;
       artifact: BuildArtifactResult;
       fingerprint: string | null;
+      /** The machine returned the app it retained under `fingerprint` instead of compiling. */
+      reused?: true;
       sourceDigest?: string;
       androidPackage?: string;
       compilationCache: Record<string, unknown>;
