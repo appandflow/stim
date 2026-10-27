@@ -226,7 +226,11 @@ export function liveProbes({
   const androidRuntimeOf = androidRuntimeReader();
   return {
     simulators: () =>
-      simctlListing === null ? listAllIosSimsAsync() : Promise.resolve().then(() => parseSimctlList(simctlListing)),
+      process.platform !== 'darwin'
+        ? Promise.resolve([])
+        : simctlListing === null
+          ? listAllIosSimsAsync()
+          : Promise.resolve().then(() => parseSimctlList(simctlListing)),
     metro: readMetroFacts,
     hostedIos: readHostedIosStatus,
     hostedAndroid: readHostedAndroidStatus,

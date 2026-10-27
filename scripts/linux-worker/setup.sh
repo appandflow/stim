@@ -294,6 +294,8 @@ next_steps() {
 
        stim android --remote-build $name --no-build-cache
 EOF
+  echo
+  echo "To pair the phone app with this machine, run 'stim-server pair' here."
   if [ "$emulator" = 1 ]; then
     echo
     echo "An emulator needs an x86_64 build. 16 GB of memory is tight for an emulator and a warm Gradle daemon; see the Linux worker docs."
