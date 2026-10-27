@@ -243,6 +243,14 @@ import Testing
     #expect(PathNames(path: "/Users/dev/stim/apps/mobile").title == "mobile")
   }
 
+  @Test func doesNotTitleAWorkspaceOutsideItsProjectByTheProject() {
+    let outside = PathNames(
+      path: "/private/tmp/scratch/recipes-71/apps/mobile", project: Project(root: "/Users/dev/appandflow-template"))
+    #expect(outside.title == "mobile")
+    #expect(outside.inCheckout == nil)
+    #expect(PathNames(path: "/Users/dev/stim-two", project: Project(root: "/Users/dev/stim")).title == "stim-two")
+  }
+
   @Test func abbreviatesOnlyPathsThatStartAtHome() {
     #expect(abbreviatingHome("/Users/jan", home: "/Users/jan") == "~")
     #expect(abbreviatingHome("/Users/jan/app/.worktrees/x", home: "/Users/jan") == "~/app/.worktrees/x")

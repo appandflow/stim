@@ -18,6 +18,7 @@ import chalk from 'chalk';
 import { statSync } from 'fs';
 import { totalmem, userInfo } from 'os';
 import { join } from 'path';
+import { quotedPath } from '@stim-cli/core';
 import type { Command } from 'commander';
 import { getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
@@ -124,7 +125,8 @@ function formatGb(mb: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
 
-function phaseMarker({ phase, live, warmStep }: EnvironmentState): string {
+function phaseMarker({ phase, live, warmStep, pathMissing }: EnvironmentState): string {
+  if (pathMissing) return chalk.yellow(' [folder missing]');
   if (phase === 'warming') return chalk.cyan(` [warming: ${warmStep}]`);
   if (phase === 'ready') return chalk.green(' [ready]');
   return live ? '' : chalk.dim(' [idle]');
@@ -294,6 +296,12 @@ function renderStatus(
     for (const device of state.physicalDevices ?? []) out.push(`  ${physicalDeviceLine(device, leaseNow)}`);
     for (const remote of state.remoteDevices ?? []) out.push(`  ${remoteDeviceLine(remote)}`);
     for (const w of state.warnings) out.push(chalk.yellow(`  ! ${w}`));
+    if (state.pathMissing)
+      out.push(
+        chalk.yellow(
+          `  ! the folder is gone; run \`stim worktree remove ${quotedPath(path)}\` or \`stim gc --delete\` to remove the entry`,
+        ),
+      );
     for (const note of state.issues.filter((issue) => issue.severity === 'info')) {
       out.push(chalk.dim(`  - ${note.message}`));
     }

@@ -975,9 +975,8 @@ shared daemon only when that agent-device can lease a single app (its
 notice, and no client is handed the Mac's desktop. STIM_AGENT_DEVICE_BIN in
 stim-server's environment names an agent-device binary to use instead of
 ~/.local/bin/agent-device. Hosted iOS uses one daemon per simulator, pinned by
-its UDID policy; both machines need agent-device 0.21.20 or later. Hosted Android
-uses one daemon per emulator, pinned by its serial policy, with agent-device
-0.21.22 or later on both machines. See guide lifecycle
+its UDID policy. Hosted Android uses one daemon per emulator, pinned by its
+serial policy. Both machines need agent-device 0.21.30 or later. See guide lifecycle
 hosted-ios. \`doctor\` on that Mac notes an installed hosted app that runs while
 the setting is \`none\`.
 
@@ -1185,7 +1184,10 @@ worker's default: its offer lists \`jdks\`, and a build sent with the build-jdk
 feature runs with JAVA_HOME at the one of that major. A major no installed JDK
 has gets the install command for the worker's OS as doctor's fix. A nearby major
 never counts (Gradle, AGP and Kotlin support and the shared build cache assume
-one JDK). Also, its Android SDK must hold the NDK, build-tools and
+one JDK). A client with no JDK sends no major, so the worker's default JDK is
+the build's JDK and doctor notes it; with no Android SDK either, \`stim android
+--remote <machine> --remote-build <machine>\` runs the app on that machine's
+hosted emulator. Also, its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in
 gradle/libs.versions.toml; Gradle and AGP come from the synced project. A
 package the SDK lacks is a note, not a blocker, when its offer reports the SDK

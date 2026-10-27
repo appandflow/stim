@@ -684,7 +684,8 @@ the **Paired machines** flag on:
    the command printed. The sheet shows the machine's name, endpoint and the fingerprint of its key.
    Desktop pairs only with the machine whose key has that fingerprint. It accepts a
    `wss://` endpoint on a `.ts.net` name, or `ws://` to a Tailscale address.
-3. The code works once, for 5 minutes. A pairing made from `stim-server pair` can only read.
+3. The code works once, for 5 minutes. A pairing made from `stim-server pair` can only read;
+   one made from `stim-server pair --control` can also run actions and control devices.
 
 **Forget** deletes this Mac's key for the machine from the macOS Keychain, so the machine's
 record can never connect again, but it does not remove that record. Run
@@ -694,14 +695,31 @@ pairing and pair again. A build of Desktop without the Keychain entitlement, suc
 copy, keeps pairings only until it quits and says so in the sheet.
 
 Once paired, the machine gets its own section in the sidebar, below this Mac's
-projects, with its name, a connection dot and **View Only**. Its workspaces
-open a read-only page that names the machine controlling them, such as
-"Viewing floco · read-only", and where each device and build runs, such as
-"Running on janics-mac-mini-2". Nothing on that page acts on either machine.
+projects, with its name, a connection dot and **View Only**, or **View and Control**
+for a control pairing. Its workspaces open a page that names the machine
+controlling them, such as "Viewing floco · read-only" or "Controlled by floco",
+and where each device and build runs, such as "Running on janics-mac-mini-2".
 **Machines** lists the paired machine after your build machines, with its
 capacity, its hosted devices and its offloaded builds. When the machine is
 offline, Desktop keeps showing its last status with "Offline since" and the
 time. Hiding a paired machine's workspace lasts until Desktop quits.
+
+Select an iOS or Android device on that page, including a hosted one, to open its
+screen in the viewer. Desktop streams it through the paired machine's server,
+which relays hosted devices from the Mac that runs them, so this Mac needs no
+pairing with that Mac.
+
+A control pairing also offers what the machine's server lets a paired device run,
+the same as the phone: **Reload App** and **Stop** for the workspace, and **Control**
+in the viewer, which sends your clicks and keys to the device. Desktop never takes
+control of another machine's device on its own; choose **Control** first. With a
+read-only pairing those buttons are disabled and the page says what to run on the
+machine, `stim-server devices grant <id> --control`. Choose **Reconnect** in
+**Settings > Paired Machines** after the grant. The machine checks its record on
+every request, so `stim-server devices grant <id> --read` ends control at once.
+
+Building, running a device, logs, replay, files, worktrees, cleanup and settings
+stay on the machine itself; Desktop does not start work there.
 
 A pairing lets this Mac see everything the machine's server shows a phone: workspace paths,
 status and logs, changed and untracked text files including `.env` files that

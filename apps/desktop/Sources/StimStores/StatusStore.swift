@@ -18,6 +18,7 @@ public final class StatusStore: ObservableObject {
     }
   }
   private var projectTitleMap: [String: String] = [:]
+  private var resolvedExistence: [String: Bool] = [:]
   private var newestArchiveCache: [ArchivedWorkspace]?
   private var sidebarCache: SidebarCache?
   @Published public private(set) var watching = false
@@ -199,24 +200,34 @@ public final class StatusStore: ObservableObject {
       return
     }
     let known = projects
+    let existed = resolvedExistence
     let reported = Dictionary(
       (payload.unprovisionedWorktrees ?? []).compactMap { w in w.repository.map { (w.path, Project(root: $0)) } },
       uniquingKeysWith: { first, _ in first })
-    let paths = payload.environments.map(\.path) + (payload.unprovisionedWorktrees ?? []).map(\.path)
-    let missing = paths.filter { known[$0] == nil && reported[$0] == nil }
+    let paths = Set(payload.environments.map(\.path) + (payload.unprovisionedWorktrees ?? []).map(\.path))
     Task.detached {
-      let resolved = await withTaskGroup(of: (String, Project).self) { group in
-        for path in Set(missing) { group.addTask { (path, Project.resolve(workspace: path)) } }
-        return await group.reduce(into: [String: Project]()) { $0[$1.0] = $1.1 }
+      let resolved = await withTaskGroup(of: (String, Project, Bool).self) { group in
+        for path in paths where reported[path] == nil {
+          guard known[path] == nil || existed[path] != nil else { continue }
+          let exists = FileManager.default.fileExists(atPath: path)
+          guard known[path] == nil || existed[path] != exists else { continue }
+          group.addTask { (path, Project.resolve(workspace: path), exists) }
+        }
+        return await group.reduce(into: [String: (project: Project, exists: Bool)]()) { $0[$1.0] = ($1.1, $1.2) }
       }
       await MainActor.run {
         DebugLog.debug(
           .server,
-          "status payload environments=\(payload.environments.count) unprovisioned=\(payload.unprovisionedWorktrees?.count ?? 0) archived=\(payload.archived?.count ?? 0) resolvedProjects=\(missing.count)"
+          "status payload environments=\(payload.environments.count) unprovisioned=\(payload.unprovisionedWorktrees?.count ?? 0) archived=\(payload.archived?.count ?? 0) resolvedProjects=\(resolved.count)"
         )
-        var additions = reported.filter { self.projects[$0.key] == nil }
-        additions.merge(resolved.filter { self.projects[$0.key] == nil }) { first, _ in first }
-        if !additions.isEmpty { self.projects.merge(additions) { old, _ in old } }
+        var next = self.projects
+        for (path, project) in reported where next[path] == nil { next[path] = project }
+        for (path, fact) in resolved where self.resolvedExistence[path] == existed[path] {
+          if existed[path] == nil, next[path] != nil { continue }
+          next[path] = fact.project
+          self.resolvedExistence[path] = fact.exists
+        }
+        if next != self.projects { self.projects = next }
         guard sequence > self.shown else { return }
         self.shown = sequence
         var payload = payload

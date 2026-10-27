@@ -10,6 +10,11 @@ public enum Format {
     fileSizeFormatter.string(fromByteCount: bytes)
   }
 
+  /// A byte count another machine reported, held to `Int64`'s range.
+  public static func fileSize(reported bytes: Double) -> String {
+    fileSize(Int64(int(bytes)))
+  }
+
   private nonisolated(unsafe) static let fileSizeFormatter: ByteCountFormatter = {
     let formatter = ByteCountFormatter()
     formatter.countStyle = .file

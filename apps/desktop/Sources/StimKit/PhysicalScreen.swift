@@ -89,6 +89,48 @@ public enum PhysicalScreen: Equatable, Sendable {
     }
   }
 
+  /// A device a paired server reports, which Stim Desktop shows only through that server: its own simulators,
+  /// emulators and phones, and the iOS, Android and macOS sessions it hosts on other Macs. `server` names the paired
+  /// machine. A remedy would be a command for that machine, so none is offered.
+  public init(pairedDevice device: DeviceRef, server: String, link: ServerLink, now: Date) {
+    switch device {
+    case .ios, .android: break
+    case .macos where device.hostedMachine != nil: break
+    default:
+      self = .message("Stim Desktop shows this device only on the Mac that runs it.")
+      return
+    }
+    if let machine = device.hostedMachine {
+      if device.state == "stopped" {
+        self = .message("The \(platformName(device.platform)) session on \(machineName(machine)) stopped.")
+        return
+      }
+    } else if let expires = device.leaseExpiresAt, expires <= now {
+      self = .message("The workspace's lease on this device ended.")
+      return
+    } else if !device.isRunning {
+      self = .message(device.isPhysical ? "Not connected to \(server)." : "Not running on \(server).")
+      return
+    }
+    switch link {
+    case .connecting:
+      self = .message("Connecting to \(server)")
+    case .unavailable(let reason):
+      self = .message(reason)
+    case .open(let features, let capabilities):
+      let feature =
+        device.hostedMachine != nil
+        ? "\(device.platform)-hosted" : device.isPhysical ? "physical-\(device.platform)" : nil
+      if let feature, features?.contains(feature) != true {
+        self = .message("Update stim-server on \(server) to show this device's screen.")
+      } else if device.isPhysical, device.platform == "ios" {
+        self = .stream(control: "stim-server shows an iPhone's screen but does not drive it.")
+      } else {
+        self = .stream(control: capabilities.contains("control") ? nil : "\(server) lets this Mac view only.")
+      }
+    }
+  }
+
   /// A macOS app that `stim macos --remote` runs on another Mac, which this Mac's stim-server relays.
   public init(hostedMacosOn link: ServerLink) {
     switch link {

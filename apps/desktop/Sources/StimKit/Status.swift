@@ -143,6 +143,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var live: Bool
   /// `warming`, `ready`, `live` or `idle`; absent from a `stim` that does not report lifecycle phases.
   public var phase: String?
+  /// True when the workspace folder no longer exists on a mounted volume; `stim worktree remove <path>` removes the entry.
+  public var pathMissing: Bool?
   /// When the warm started (`warming`) or finished (`ready`).
   public var phaseSince: String?
   /// `refresh` or `copy` while `phase` is `warming`.
@@ -186,7 +188,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   enum CodingKeys: String, CodingKey {
     case path, workspaceId, platforms, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android,
       web, metro
-    case macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
+    case pathMissing, macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, worktree, recording
     case agents, endedAgents, disk, tutorial, doctorRuns, agentDevice
     case stageFacts = "stage"
@@ -210,7 +212,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var isWarming: Bool { phase == "warming" }
 
   /// A workspace `stim worktree warm` is preparing or has just prepared, before its first run.
-  public var isSettingUp: Bool { isWarming || phase == "ready" }
+  public var isSettingUp: Bool { pathMissing != true && (isWarming || phase == "ready") }
 
   /// Whether the Live views show the workspace: something runs, a build runs, an EAS session or a leased phone is
   /// held, or it is being set up.

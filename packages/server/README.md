@@ -1086,7 +1086,7 @@ retain the same reconciliation rules as iOS.
 
 With `hosting.agentDriver: agent-device`, each installed Android session gets
 its own daemon and child-aware claim under `device-host/sessions/<session>/agent-device.claims`.
-Both machines need agent-device 0.21.22 or later. The host verifies the serial policy
+Both machines need agent-device 0.21.30 or later. The host verifies the serial policy
 digest and `android-instance` backend and advertises `hosted-android-agent`.
 `device-host.app.attach` and session attach carry a session grant with
 `android:mobile:<serial>` and the same token checks as iOS.
@@ -1095,9 +1095,8 @@ it as `android.host.agent`. Use `agent-device <command> --remote-config <file>`.
 Missing or unsupported agent-device reports `driver: none` with its reason.
 
 The policy pins the ledger-owned serial and filters `devices` to that emulator.
-Inspection and interaction commands match iOS. Installs, reinstall, uninstall,
-boot/shutdown, `close --shutdown`, logs, uploads, other serials (including
-nested batches and leases), and host paths are refused. Ambient fields are
+Commands match iOS. Uploads, other serials (including nested batches and
+leases) and host paths are refused. Ambient fields are
 stripped and replaced with host-owned platform, serial and lease scope.
 Stim installs apps. Android snapshots use one-shot helpers without adb forwards;
 after daemon exit the host stops and verifies only the two fixed agent-device
@@ -1105,13 +1104,39 @@ helper packages on that serial. Their APKs leave with emulator deletion.
 Reinstall, stop, revocation and close await agent teardown before native work;
 unresolved agent claims refuse replacement and deletion after restart too.
 
+Hosted iOS and Android sessions allow the device commands in
+`DEVICE_COMMAND_RULES` (`@stim-cli/agent-driver-agent-device`), and the daemon
+policy names the same list; agent-device 0.21.30 is the first release that knows
+every name, and an older daemon refuses to start with it. The adapter checks
+each request, and each batch step, before it reaches the daemon. A command the
+rules do not name is refused with rule `command`; `REFUSED_DEVICE_COMMANDS`
+gives the reason it returns, such as host files, host-wide sampling or Stim's own
+install and teardown. Every key in `flags` and `input` must be one the rules
+list for that command, or a client connection, selector or session key the
+adapter strips or pins, so a key a newer agent-device adds is refused with rule
+`request` until the rules name it. The host-path key list still refuses `--out`,
+`baseline`, `launchConsole` and similar keys as a second check. Per-command
+positional rules keep `open`, `close`, `push` and `settings` app ids free of
+paths, require an inline JSON object for `push` (agent-device stats a payload
+as a host path first), limit `perf` to `frames` and `memory sample`, keep
+`artifacts` to this session and refuse `settings permission` for macOS host
+permissions. A request carrying agent-device `runtime` hints, which is how
+`open --metro-host`, `--metro-port`, `--bundle-url` and `--launch-url` arrive, is
+refused: the session's Metro endpoint already reaches only its client, and a
+client-chosen address would reach any service the worker can.
+`agent-device-commands.compat.test.ts` compares the rules with the installed
+agent-device's `help` catalog and per-command flags.
+
 Hosted iOS and Android sessions allow `record start` and `record stop`, outside
 `batch`. The adapter accepts no output path but agent-device's remote temp shape
 (`/tmp/agent-device-recording-<ms>-<id>.<ext>`) and requires the client's
 `clientArtifactPaths.outPath`. It replaces the path with
-`device-host/sessions/<session>/agent-device/recordings/<random>/recording.<ext>`
-(directory mode 0700), so the daemon writes the video, its chunks and gesture
-telemetry only there. `record stop` returns them as daemon artifacts, which the
+`<tmpdir>/stim-server-recordings-<hash>/<random>/recording.<ext>` (directory mode
+0700), where `<tmpdir>` is the server's `os.tmpdir()` and `<hash>` derives from
+the session's agent-device state directory, so the daemon writes the video, its
+chunks and gesture telemetry only there. The recording stays off the Stim home
+because the simulator's `SimRenderServer` writes the file, and macOS denies it
+removable volumes such as an external disk holding `~/.stim`. `record stop` returns them as daemon artifacts, which the
 client downloads over `GET /artifacts/<id>` on the same agent route, and the
 daemon deletes each file after its download, or after 15 minutes. One recording
 runs per session; a second start, a stop naming another agent-device session and
@@ -1126,7 +1151,9 @@ client's next `record stop` within 15 minutes with that result. A finished
 recording over 512 MiB, whichever stop finished it, is deleted and `record stop`
 fails with `STIM_RECORDING_TOO_LARGE`. A request the relay cannot process
 answers 500 instead of rejecting. Driver stop and daemon start
-delete the `recordings` directory. Hosted macOS refuses `record`, because
+delete the session's recordings directory, which must be a directory of the
+server's user with no group or other access. `stim gc --delete` run by that user
+without `STIM_HOME` removes one idle for 24 hours as a Stim temp directory. Hosted macOS refuses `record`, because
 agent-device's `macos-app` lease does not allow it.
 
 ### Hosted macOS app sessions

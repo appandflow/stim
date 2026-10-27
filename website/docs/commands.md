@@ -392,7 +392,7 @@ build can compile on a paired remote machine instead: see `remote.build` in
   `auto` places on an approved Mac when this machine is full or busy, falling back
   to the local device queue when no host admits. `remote` tries the approved Macs first, in
   `remote.machines` order, and runs here only when none admits; `remote-only` never runs here and waits for a host with room. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
-  With `hosting.agentDriver=agent-device` on the host and agent-device 0.21.20 or later on both machines,
+  With `hosting.agentDriver=agent-device` on the host and agent-device 0.21.30 or later on both machines,
   `ios.host.agent` returns a per-slot 0600 remote config. Use `agent-device <command> --remote-config <file>`
   from status, starting with `open <bundleId>`. It reaches only that hosted simulator; inventory, installs,
   uploads, device selectors, shutdown and host paths are refused. `stim stop` closes its connection and removes the config.
@@ -1272,6 +1272,13 @@ or `[idle]`. An active workspace (phase `live`) has no marker. In `--json`, each
 carries `phase` (`warming`, `ready`, `live` or `idle`), `phaseSince` and, while
 warming, `warmStep`; see
 [Parallel environments](./worktrees.md#parallel-environments).
+
+A workspace whose folder was deleted outside Stim, for example with
+`git worktree remove` or `rm -rf`, stays registered, so status marks it
+`[folder missing]` and `--json` sets `pathMissing: true` with a phase that is
+never `warming` or `ready`. Status only reports it; `stim worktree remove <path>`
+or `stim gc --delete` removes the entry. A folder on a volume that is not mounted is not reported, since the
+volume may come back.
 
 Each environment also carries `stage`, the conclusion Stim Desktop and the
 phone app show beside the git chip: `{ kind, since, platform, closedApps }`.

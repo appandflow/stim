@@ -21,6 +21,7 @@ import {
   removalBlockers,
   removalPath,
   registerRemove,
+  removeWorktreeTarget,
   removalRemedy,
 } from '../commands/worktree.ts';
 import type { Command } from 'commander';
@@ -974,6 +975,67 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
   expect(process.exitCode).not.toBe(1);
   expect(retryExec.calls.run.some((call) => /update-ref -d refs\/heads\/worktree-feat-x abc123/.test(call))).toBe(true);
   expect(getProject(wtDir)).toBe(null);
+});
+
+test('action: removing a deleted worktree drops the record of its project and the projects inside it', async () => {
+  const app = join(wtDir, 'apps/mobile');
+  upsertProject(wtDir, { worktreeRoot: true });
+  upsertProject(app, { platforms: {} });
+  ensureWorkspaceStorage(app);
+  rmSync(wtDir, { recursive: true, force: true });
+  setExecutor(makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) }));
+
+  await captureAction(registerRemove)(wtDir, {});
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(wtDir)).toBe(null);
+  expect(getProject(app)).toBe(null);
+  expect(existsSync(workspaceDir(app))).toBe(false);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'action: removing a worktree whose volume is not mounted keeps its record and says why',
+  async () => {
+    const unmounted = '/Volumes/StimTestVolumeThatDoesNotExist/wt';
+    upsertProject(unmounted, { platforms: {} });
+    const errs: string[] = [];
+    const original = console.error;
+    console.error = (m) => errs.push(String(m));
+    try {
+      await captureAction(registerRemove)(unmounted, {});
+    } finally {
+      console.error = original;
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(getProject(unmounted)).not.toBe(null);
+    expect(errs.join('\n')).toMatch(/volume \/Volumes\/StimTestVolumeThatDoesNotExist is not mounted/);
+  },
+);
+
+test('removing a deleted worktree for the automatic sweep leaves its record to the sweep', async () => {
+  upsertProject(wtDir, { worktreeRoot: true });
+  rmSync(wtDir, { recursive: true, force: true });
+  setExecutor(makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) }));
+  const output = { error: () => {}, fail: () => {} };
+
+  await removeWorktreeTarget(wtDir, { linkedOnly: true, output });
+
+  expect(getProject(wtDir)).not.toBe(null);
+});
+
+test('action: removing a missing path that no project is registered under still says there is no such worktree', async () => {
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    await captureAction(registerRemove)(join(wtDir, 'gone'), {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(errs.join('\n')).toMatch(/No such worktree/);
 });
 
 test('action: a timed-out worktree list after removal keeps the branch and the retry state', async () => {

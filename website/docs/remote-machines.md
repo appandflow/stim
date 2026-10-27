@@ -298,7 +298,7 @@ host serial and AVD name private. Unreachable cleanup retains the placement;
 retry stop when the host answers.
 
 Set `hosting.agentDriver` to `agent-device` on the hosting Mac and install
-agent-device 0.21.22 or later on both machines. `android.host.agent` in
+agent-device 0.21.30 or later on both machines. `android.host.agent` in
 `stim status --json` reports a private remote-config file per slot:
 
 ```sh
@@ -309,17 +309,17 @@ agent-device click <ref> --remote-config <file>
 
 Use the returned config, keeping the host serial on the host. One daemon per
 session pins the exact owned emulator serial; its inventory lists only that
-emulator. It allows inspection of, interaction with and recording of installed
-apps, and refuses install, reinstall, uninstall, boot, shutdown,
-`close --shutdown`, logs, other devices and host paths. Stim installs the app. An unavailable or older
+emulator. It allows the same commands as a [hosted simulator](./owned-devices.md#run-ios-on-another-mac),
+including `telephony` for incoming calls and SMS, and refuses other devices and
+host paths. Stim installs the app. An unavailable or older
 driver reports `none` with the host's reason. Stop closes the matching agent
 connection and stops the daemon and its helpers before parking or deleting the emulator.
 An unresolved daemon claim blocks replacement and deletion.
 
 `agent-device record start [path] --remote-config <file>` records the emulator, and
 `record stop` downloads the video to that path, or `./recording-<time>.mp4`, on
-your machine. The hosting Mac writes the recording only in the session's private
-agent-device state and deletes the files after the download, on `stim stop` or
+your machine. The hosting Mac writes the recording only in a private directory
+for the session in its temporary directory and deletes the files after the download, on `stim stop` or
 session teardown and when the session's daemon restarts. One recording runs per
 session; a second `record start`, a host output path, `record` inside `batch` and
 a `record stop` from another agent-device session are refused. The host stops a
@@ -422,7 +422,11 @@ when its default JDK is another one, so no restart is needed, and the fix for a
 missing major is the install command for the worker's OS (for example
 `brew install --cask zulu@17`). Gradle, AGP and Kotlin support only some JDK
 majors and the build cache and artifacts assume one JDK, so a nearby major does
-not count. The worker also needs the package manager of the project's lockfile
+not count. A client with no JDK has no major to match: the worker's default JDK
+is the build's JDK, and `stim doctor` notes which one. A client with no JDK and
+no Android SDK runs the app on an emulator that machine hosts with
+`stim android --remote <machine> --remote-build <machine>`, while Metro stays
+on the client. The worker also needs the package manager of the project's lockfile
 (`pnpm`, `yarn` or `npm`) on the `PATH` of its stim-server service. Also, the
 worker needs the project's NDK, build-tools and
 compile SDK, or the Android SDK licenses accepted so Gradle downloads what is

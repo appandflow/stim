@@ -4,14 +4,38 @@ import type { GuideTopic } from './types.ts';
 const HOSTED_RECORDING = (noun: 'simulator' | 'emulator') => `\
 agent-device record start [path] --remote-config <file> records the ${noun};
 record stop downloads the video to path, or ./recording-<time>.mp4, on this
-machine. The host writes it only under the session's private agent-device state
-and deletes the files after the download, on stim stop or session teardown and
+machine. The host writes it only in a private directory for the session in its
+temporary directory and deletes the files after the download, on stim stop or session teardown and
 when its daemon restarts. One recording runs per session; a second start, a host output
 path, record inside batch and a record stop from another agent-device session
 are refused. The host stops a recording after 10 minutes; a record stop within
 the next 15 minutes downloads it. A finished recording over 512 MiB is deleted
 instead. A host whose Stim predates hosted recording refuses
 record as a command outside its allowed list.`;
+
+const HOSTED_COMMANDS = (noun: 'simulator' | 'emulator') => `\
+Allowed commands: devices, open, close, snapshot, diff, wait, find, get, is,
+click, fill, press, type, focus, scroll, screenshot, longpress, swipe, gesture,
+back, home, orientation, fold, appstate, alert, batch, record start and stop,
+action-button, app-switcher, hardware-button, keyboard, apps, capabilities,
+events, network, react-native, telephony and trigger-app-event. Guarded: push
+takes <app id> <inline JSON object>, never a payload file; perf allows only
+frames and memory sample; artifacts lists this session's artifacts and takes no
+provider session; settings refuses permission accessibility, screen-recording
+and input-monitoring, which are permissions of the hosting Mac. Each command
+takes only the flags and input fields Stim lists for it, so a flag a newer
+agent-device adds is refused until Stim allows it. Host paths and launch inputs
+are refused: open refuses --metro-host, --metro-port, --bundle-url,
+--launch-url, --launch-args, --launch-console, --surface and --save-script.
+Stim's Metro bridge already points the app at this machine's Metro; a client
+address would let the hosted app reach any service the hosting Mac can.
+These are refused, each with its reason in the error: install, reinstall,
+install-from-source and uninstall (Stim installs the app and tracks it), boot,
+shutdown and close --shutdown (use stim stop), logs (use stim logs), trace,
+audio, doctor, prepare, replay, test, clipboard (a ${noun} can share the
+clipboard of the hosting Mac), hover, viewport, tv-remote and agent-device's
+client-side commands. Both machines need agent-device 0.21.30 or later; an
+older host reports driver: none.`;
 
 const lifecycle: GuideTopic = {
   summary:
@@ -581,7 +605,7 @@ arrive through local Metro.
 AGENT CONTROL
 
 Set hosting.agentDriver to agent-device on the hosting Mac. Both machines need
-agent-device 0.21.22 or later. The host advertises hosted-android-agent and
+agent-device 0.21.30 or later. The host advertises hosted-android-agent and
 starts one loopback daemon per installed Android session. Its policy allows
 only the exact ledger-owned emulator serial and denies device shutdown.
 The host verifies the policy digest and android-instance backend before granting
@@ -606,15 +630,11 @@ The command shape is agent-device <command> --remote-config <file>. Open leases
 the emulator automatically with android-instance, the proxy provider and this
 session's tenant. devices is permitted for the client's open flow; inventory
 contains only this emulator. Never use its serial with a local agent-device.
-Allowed commands are devices, open, close, snapshot, diff, wait, find, get, is,
-click, fill, press, type, focus, scroll, screenshot, longpress, swipe, back, home,
-orientation, appstate, alert, batch, record start and record stop. Stim installs;
-install, reinstall, uninstall, boot, shutdown, close --shutdown, logs, uploads and
-device-wide actions are refused. Other serials in commands, flags, inputs, nested
-batches or lease requests are refused. Ambient client paths and owner fields are
-stripped; the host pins platform, serial, tenant, runId, clientId, deviceKey and
-backend. Host paths and launch inputs are refused. Screenshots use only remote
-artifacts.
+${HOSTED_COMMANDS('emulator')}
+Uploads and other serials in commands, flags, inputs, nested batches or lease
+requests are refused. Ambient client paths and owner fields are stripped; the
+host pins platform, serial, tenant, runId, clientId, deviceKey and backend.
+Screenshots use only remote artifacts.
 
 ${HOSTED_RECORDING('emulator')}
 
@@ -886,7 +906,7 @@ host gets an update note, uses uploads and shows logs already copied here.
 AGENT CONTROL
 
 On the hosting Mac, set hosting.agentDriver to agent-device. Both machines need
-agent-device 0.21.20 or later (the policy and remote-config contract). The host
+agent-device 0.21.30 or later (the policy, command list and remote-config contract). The host
 starts one loopback daemon per installed iOS session under a child-aware
 ownership claim. Its daemon policy pins exactly that simulator UDID and denies
 shutdown. Stop, close, revocation, reinstall and graceful server close end its
@@ -920,23 +940,20 @@ and removes that slot's config after the host confirms stop or revocation.
 The host stops the session daemon and identity-checked agent-device runners
 targeting its exact simulator UDID before deleting the simulator, even without close.
 
-Allowed: devices, open, close, snapshot, diff, wait, find, get, is, click, fill,
-press, type, focus, scroll, screenshot, longpress, swipe, back, home, orientation,
-appstate, alert, batch, record start and record stop. These inspect, interact
-with or record the simulator and installed apps. devices lists only the
+${HOSTED_COMMANDS('simulator')}
+These inspect, interact with or record the simulator and installed apps. devices lists only the
 session's simulator, filtered by the daemon policy. Its device claims are session-local and record / as the workspace;
 a host-side agent-device using the same simulator is not visible to the hosted daemon.
 Client device selectors are stripped and requests are pinned to iOS and that
 UDID; an explicitly named foreign UDID is refused. Selecting another device,
-boot/shutdown/erase, installs, uninstall, uploads, push, logs, network,
-perf, trace, clipboard and settings are refused. Stim installs; the agent cannot
-enumerate other host devices or write host files. Ambient client fields (cwd,
+erase and uploads are refused. The agent cannot enumerate other host devices
+or write host files. Ambient client fields (cwd,
 stateDir, config and remoteConfig) are stripped, including inside batch steps.
 Host paths and launch inputs (--out, baseline, launchConsole, developerDir,
 installSource and similar fields) are refused, including inside batch steps.
 Only agent-device's generated screenshot temp artifact is accepted and returned
 to the client; arbitrary host screenshot destinations are refused. Runtime
-hints are dropped and only reporting/artifact metadata passes through.
+hints are refused and only reporting/artifact metadata passes through.
 
 ${HOSTED_RECORDING('simulator')}
 
@@ -1278,6 +1295,16 @@ result as proof instead of requiring an unrelated screenshot.`,
   with a sentence instead of a \`removed\` line, because the checkout itself
   is never touched: \`Reclaimed the environment; the working tree stays (it
   is the source checkout).\`
+
+  A worktree deleted outside Stim stays registered. Pass its path to
+  \`worktree remove\`: when the folder is gone from a mounted volume, the
+  command drops the record of that path and of the projects registered under
+  it, with the same \`device\`, \`lease\` and \`workspace\` lines, ending with
+  \`Reclaimed the environment of the deleted folder (its folder is already
+  gone).\` A path on a volume that is not mounted, or one that cannot be
+  resolved, is kept and refused with the reason, since the folder may come
+  back. A missing path with no registered project says \`No such worktree\`.
+  \`stim status\` reports such a workspace as pathMissing.
 
   \`gc\` names each slow step on stderr as it starts, in every mode; its
   report stays on stdout, and with \`--json\` stdout carries only the payload:

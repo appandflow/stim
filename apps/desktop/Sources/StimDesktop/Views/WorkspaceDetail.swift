@@ -518,10 +518,7 @@ struct WorkspaceDetail: View {
     _ device: DeviceRef, focused: Bool, cardWidth: CGFloat, cardHeight: CGFloat, owner: Workspace? = nil, project: String? = nil
   ) -> some View {
     let workspace = owner ?? self.workspace
-    let canControl =
-      OwnedDevice(owner: .local, ref: device).isInteractive
-      && ((!device.isPhysical && device.hostedMachine == nil)
-        || PhysicalScreen(device: device, link: server.link, now: Date()).canControl)
+    let canControl = OwnedDevice(owner: .local, ref: device).offersControl(link: server.link, now: Date())
     let build = workspace.runningBuild(for: device)
     let status = DeviceTileStatus(device: device, canControl: canControl, building: build != nil)
     let tile = DeviceTile(

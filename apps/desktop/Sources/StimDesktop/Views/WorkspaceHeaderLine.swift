@@ -352,7 +352,7 @@ struct UsageFigures: View {
       figure("memorychip", Format.memoryMb(memory), help: "Memory, as Activity Monitor counts it")
     }
     if let disk = usage.diskBytes {
-      figure("internaldrive", Format.fileSize(Int64(disk)), help: "Disk: the worktree and Stim's build folder", minor: true)
+      figure("internaldrive", Format.fileSize(reported: disk), help: "Disk: the worktree and Stim's build folder", minor: true)
     }
   }
 

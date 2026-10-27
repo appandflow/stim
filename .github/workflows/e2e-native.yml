@@ -773,7 +773,7 @@ jobs:
           cache-disabled: true
       - name: Install pinned remote UI driver
         run: |
-          npm install --global --prefix "$HOME/.local" agent-device@0.21.22
+          npm install --global --prefix "$HOME/.local" agent-device@0.21.31
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Prepare native fixture and record source
         run: |

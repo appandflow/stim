@@ -793,6 +793,13 @@ ORPHANED WORKSPACE DIRECTORIES
   it. A directory with a missing or unparseable workspace.json, or a root on
   an unmounted volume, is reported under Skipped and never deleted.
 
+DELETED WORKTREES STILL REGISTERED
+  A worktree deleted outside Stim keeps its registry entry; \`stim status\`
+  marks it pathMissing. \`gc --delete\` prunes every such entry whose folder is
+  gone from a mounted volume. \`stim worktree remove <path>\` prunes one entry,
+  and the projects registered under that path, the same way. Both keep an
+  entry whose volume is not mounted, since the folder may come back.
+
 TMPDIR LEFTOVERS
   \`gc\` without --cache reports recognized entries directly in the user's TMPDIR
   under "TMPDIR leftovers", with their count, size and a remedy: Stim temp

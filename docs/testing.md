@@ -10,13 +10,13 @@ requires macOS, Xcode with the iOS and iOS Simulator SDKs, `codesign`, `security
 `clang`, `openssl`, Google Chrome or Chromium, and a paired, unlocked iPhone
 with Developer Mode enabled. Set `STIM_COMPAT_IOS_UDID` to the test iPhone's UDID
 so the process probe targets only that phone. It also requires agent-device source
-from tag `v0.21.28` (`542fb77b324e522b121b18550307e457ba9be471`). Set
+from tag `v0.21.31` (`f3d2619abed42c69e60c80cf2e2dc0f626c37284`). Set
 `STIM_AGENT_DEVICE_SOURCE` to that source root, with its workspace dependencies
 installed. The tag pins the internal modules imported by the hosted iOS policy probe,
 which uses the real upstream parser, digest and inventory filter; it starts only a
 local fixture process and does not drive a simulator. Missing source fails this
 stage and never affects unit discovery. The hosted Android daemon probe requires
-agent-device 0.21.22 or later installed at the host's fixed binary location
+agent-device 0.21.30 or later installed at the host's fixed binary location
 (or `STIM_AGENT_DEVICE_BIN`) and `STIM_AGENT_DEVICE_ANDROID_SERIAL` naming a
 booted emulator created and owned exclusively by this validation. It starts a
 private real daemon, verifies its policy digest, backend, filtered inventory and
@@ -25,6 +25,11 @@ the daemon and its fixed helpers only on that serial. It does not create or
 delete the emulator; retain the validation fixture record and clean it through
 centralized Stim teardown. Missing binary, serial, adb or emulator fails the
 explicit stage and is unavailable validation, never a compatibility pass.
+The hosted command probe uses the same agent-device binary. It reads
+`agent-device help commands` and `agent-device help <command>` and fails when a
+command is neither a hosted device command nor refused with a reason, when a
+hosted command is missing from the catalog, or when a hosted command's flags
+differ from the committed classification. It starts no daemon or device.
 It builds generated scratch projects, signs temporary apps ad hoc, decodes
 fixture provisioning profiles, reads signing identities, and queries devices and
 processes through `devicectl`. It launches the installed Chrome headless with a

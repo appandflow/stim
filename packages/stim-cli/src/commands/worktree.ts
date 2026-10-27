@@ -33,6 +33,8 @@ import { isMobileProject, findProjectRoot } from '../workspace/project.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
+import { classifyProjectEntries } from './gc/projects.ts';
+import { listMountedVolumes } from '../fs-util.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { SERVICE_IN_USE, serviceRunningFrom, stimCliEntries, stimCliUseOf } from '../workspace/service-guard.ts';
 import {
@@ -876,7 +878,13 @@ async function reclaimEnvironment(
           for (const s of result.skippedDevices) {
             output.error(chalk.yellow(phaseLine('device', `kept ${describeKeptDevice(s)} (${s.reason})`)));
           }
-          output.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
+          output.error(
+            chalk.green(
+              existsSync(root)
+                ? `Reclaimed the environment; the working tree stays (${why}).`
+                : `Reclaimed the environment of the deleted folder (${why}).`,
+            ),
+          );
         },
         operation,
         beforeRemove,
@@ -1201,6 +1209,22 @@ async function removeOrRefuse(
         output.error(chalk.dim(`Retry with: stim worktree remove ${path}`));
         output.fail();
       }
+      return;
+    }
+    const registered = Object.fromEntries(
+      Object.entries(loadConfig()?.projects ?? {}).filter(([key]) => isPathPrefix(path, key)),
+    );
+    const { deadProjects, skipped } = opts.linkedOnly
+      ? { deadProjects: [], skipped: [] }
+      : classifyProjectEntries(registered, listMountedVolumes());
+    if (skipped.length) {
+      for (const kept of skipped) output.error(chalk.red(`Refusing to remove ${kept.dir}: ${kept.reason}.`));
+      output.error(chalk.dim('Its absence cannot be confirmed, so its record is kept.'));
+      output.fail();
+      return;
+    }
+    if (deadProjects.length) {
+      await reclaimEnvironment(path, 'its folder is already gone', output, opts.operation, opts.beforeRemove);
       return;
     }
     output.error(chalk.red(`No such worktree: ${path}`));

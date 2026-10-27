@@ -4,7 +4,7 @@ import Foundation
 /// same rules for the phone's Home list; both replay `Tests/StimKitTests/Fixtures/workspace-row-vectors.json`.
 public struct RowStatus: Equatable, Sendable {
   public enum Kind: String, Sendable {
-    case building, warming, ready, driven, running, idle
+    case building, warming, ready, driven, running, idle, missing
   }
 
   public var kind: Kind
@@ -81,6 +81,9 @@ extension Format {
 }
 
 extension Workspace {
+  /// The command that drops this workspace's record once its folder is gone.
+  public var removalCommand: String { "stim worktree remove \(shellQuote(path))" }
+
   private var settingUp: Bool { !live && isSettingUp }
 
   /// The running local devices in `orderedDevices` order; EAS sessions are counted apart.
@@ -108,6 +111,10 @@ extension Workspace {
       return RowStatus(
         kind: .warming, text: "Warming \(Format.duration(seconds))",
         label: "Warming for \(Format.spokenDuration(seconds))", tone: .brand)
+    }
+    if pathMissing == true, !isActive {
+      return RowStatus(
+        kind: .missing, text: "Folder missing", label: "Folder missing, run \(removalCommand) to drop it", tone: .warning)
     }
     if !isActive {
       guard let seconds = since(metro?.lastStop?.at, now) else {

@@ -75,6 +75,11 @@ android` reports it and `stim android` refuses with `STIM_BUILD_FAILED`
   `cmdline-tools/latest/bin/sdkmanager`, which needs the SDK licenses accepted
   (`sdkmanager --licenses`) and 8 GB free.
 - A working Java and Gradle setup for the project.
+- Without a JDK or the Android SDK, a React Native or Expo app builds and runs
+  on a paired machine approved for builds and hosted emulators:
+  `stim android --remote <machine> --remote-build <machine>`. That machine's
+  JDK and Android SDK are the build's. See
+  [Remote machines](./remote-machines.md#requirements).
 - On Windows, a project root short enough for the NDK's object paths: its
   ninja cannot open a path of 260 characters or more, and a React Native
   codegen object path only fits when CMake can shorten it. A project with

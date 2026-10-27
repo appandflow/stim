@@ -146,13 +146,38 @@ struct NoiseInteropTests {
       try? FileManager.default.removeItem(at: home)
     }
 
-    func payload() async throws -> PairingPayload {
-      let pair = try Child([script, "pair", "--port", String(port)], environment: environment)
+    func payload(control: Bool = false) async throws -> PairingPayload {
+      let pair = try Child(
+        [script, "pair", "--port", String(port)] + (control ? ["--control"] : []), environment: environment)
       pair.process.waitUntilExit()
       let code = try await pair.line(0)
       let token = try #require(code["pairingToken"]?.string)
       let fingerprint = try #require(code["fingerprint"]?.string)
       return try NoiseInteropTests.payload(port: port, token: token, fingerprint: fingerprint)
+    }
+
+    func registerWorkspace() throws -> String {
+      let directory = home.appendingPathComponent("workspace")
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      let path = try #require(realpath(directory.path, nil).map { String(cString: $0) })
+      let config = try JSONEncoder().encode(["projects": [path: [String: String]()]])
+      try config.write(to: home.appendingPathComponent(".stim/config.json"))
+      return path
+    }
+
+    func grant(_ deviceID: String, _ scope: String) async throws {
+      let grant = try Child([script, "devices", "grant", deviceID, scope], environment: environment)
+      grant.process.waitUntilExit()
+      #expect(grant.process.terminationStatus == 0)
+    }
+  }
+
+  static func code(_ work: () async throws -> JSONValue) async -> String? {
+    do {
+      _ = try await work()
+      return nil
+    } catch {
+      return (error as? ServerError)?.code ?? "\(error)"
     }
   }
 
@@ -201,6 +226,36 @@ struct NoiseInteropTests {
       return
     }
     #expect(error["code"] == .string("forbidden"))
+  }
+
+  @Test func onlyAControlPairingRunsTheServersActionsAndLosesThemOnceTheServerTakesControlBack() async throws {
+    let server = try await RunningServer()
+    defer { server.stop() }
+    let workspace = try server.registerWorkspace()
+    let stop: [String: JSONValue] = ["action": .string("stop"), "workspace": .string(workspace)]
+    let begin: [String: JSONValue] = ["workspace": .string(workspace), "platform": .string("ios"), "slot": .string("default")]
+
+    let reading = try await Self.pair(try await server.payload(), store: InMemoryPairedServerStore())
+    let reader = await Self.connect(reading, endpoint: reading.endpoint)
+    defer { reader.stop() }
+    #expect(PairedAccess(state: reader.state, server: "s", deviceID: nil).actions.isEmpty)
+    #expect(await Self.code { try await reader.request("action", stop) } == "forbidden")
+    #expect(await Self.code { try await reader.request("control.begin", begin) } == "forbidden")
+
+    let controlling = try await Self.pair(try await server.payload(control: true), store: InMemoryPairedServerStore())
+    let controller = await Self.connect(controlling, endpoint: controlling.endpoint)
+    defer { controller.stop() }
+    guard case .open(let hello) = controller.state, let deviceID = hello.device?.id else {
+      Issue.record("the control pairing ended \(controller.state)")
+      return
+    }
+    #expect(PairedAccess(state: controller.state, server: "s", deviceID: deviceID).actions == ["reload", "stop"])
+    let stopped = try await controller.request("action", stop)
+    #expect(stopped.objectValue?["action"] == .string("stop"))
+    #expect(stopped.objectValue?["workspace"] == .string(workspace))
+
+    try await server.grant(deviceID, "--read")
+    #expect(await Self.code { try await controller.request("action", stop) } == "forbidden")
   }
 
   @Test func onlyAMatchingFingerprintReachesMessage3AndAPairingPastItIsKept() async throws {

@@ -107,12 +107,7 @@ struct DeviceViewer: View {
       watchEscape()
       recordedInput = false
       if let udid = owned?.localSimulatorUDID { TutorialViewerEvents.shared.opened(udid) }
-      takenOver =
-        device.map {
-          OwnedDevice(owner: owner, ref: $0).isInteractive
-            && ((!$0.isPhysical && $0.hostedMachine == nil)
-              || PhysicalScreen(device: $0, link: ServerSession.link(for: owner), now: Date()).canControl)
-        } ?? false
+      takenOver = owner.isLocal && owned?.offersControl(link: ServerSession.link(for: owner), now: Date()) == true
       actionsFocused = !takenOver
     }
     .onDisappear(perform: unwatchEscape)
@@ -143,7 +138,7 @@ struct DeviceViewer: View {
         scalingMode: $scalingMode, scalingModes: scalingModes(device, replaying: replaying),
         windowChoice: windowChoice, close: close)
       Rectangle().fill(Palette.border).frame(height: 1)
-      if let run = actions.latest(for: env.path) {
+      if owner.isLocal, let run = actions.latest(for: env.path) {
         ViewerRunNotice(run: run, openedAt: openedAt)
       }
       HStack(spacing: 0) {
@@ -242,7 +237,9 @@ struct DeviceViewer: View {
     case .ios, .android: break
     case .remote, .web, .macos: return [.fit]
     }
-    guard !replaying, device.isRunning, !device.isPhysical, device.hostedMachine == nil, device.formFactor != .dual else {
+    guard !replaying, device.isRunning, owner.isLocal, !device.isPhysical, device.hostedMachine == nil,
+      device.formFactor != .dual
+    else {
       return [.fit]
     }
     return DeviceScalingMode.allCases.filter {
@@ -284,7 +281,7 @@ struct DeviceViewer: View {
   private func replayTarget(_ device: DeviceRef) -> ReplayTarget? {
     switch device {
     case .remote, .macos: return nil
-    case _ where device.isPhysical || device.hostedMachine != nil: return nil
+    case _ where device.isPhysical || device.hostedMachine != nil || !owner.isLocal: return nil
     default: return ReplayTarget(workspace: env.path, platform: device.platform, slot: device.slot)
     }
   }
