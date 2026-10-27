@@ -315,9 +315,9 @@ struct PairPhoneSheet: View {
           Label("Drives simulators and emulators, and runs Reload and Stop", systemImage: "checkmark.circle.fill")
             .foregroundStyle(Palette.success)
         } else {
-          Text("View only. You can allow control in Settings > Phones.").foregroundStyle(Palette.secondary)
+          Text("View only. You can allow control in Settings > Paired Devices.").foregroundStyle(Palette.secondary)
         }
-        Text("Manage it in Settings > Phones.").foregroundStyle(Palette.secondary)
+        Text("Manage it in Settings > Paired Devices.").foregroundStyle(Palette.secondary)
         if let openPhones {
           Button("Open Phones") {
             openPhones()

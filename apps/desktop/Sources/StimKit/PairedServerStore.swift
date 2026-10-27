@@ -77,8 +77,6 @@ public struct PairedServer: Codable, Equatable, Sendable, Identifiable {
   public func forget(id: String) throws { stored[id] = nil }
 }
 
-/// The Keychain items read as pairings, and the ids of those that could not be, such as an item a later version wrote
-/// with a field this one does not know.
 struct StoredPairings: Equatable {
   var pairings: [PairedServer]
   var unreadable: [String]

@@ -10,7 +10,7 @@ import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
 :::note[Phone app feature flag]
 Stim Desktop hides everything about the phone app unless the **Phone app**
-feature flag is on: the Phones page, **Serve to phones**, pairing, the phone
+feature flag is on: the Paired Devices page, **Serve to phones**, pairing, the phone
 steps of the setup guide and tutorial, and phone suggestions. Turn it on in
 **Settings > Advanced > Feature flags**. A Mac that already serves phones or has
 a paired phone starts with it on. Turning the flag off does not stop a running
@@ -60,7 +60,7 @@ bring back a welcome screen you have already dismissed or completed.
 
 ## Serve to phones
 
-On the Mac, open **Stim > Settings > Phones > Pair a Phone...**, or choose
+On the Mac, open **Stim > Settings > Paired Devices > Pair a Phone...**, or choose
 **Pair a Phone...** in the first-run guide's **Pair Your Phone** step. The wizard
 walks through getting Stim Mobile and Tailscale on your phone, connecting both
 devices to the same tailnet, turning on serving, scanning a code, and confirming
@@ -136,7 +136,7 @@ replay. With workspace diff support, it can also read changed and untracked
 text files in registered workspaces, including non-ignored `.env` files.
 
 To allow input, choose **Allow Control** from the phone's menu in Desktop's
-**Settings > Phones**, or run `stim-server devices grant <id> --control` on
+**Settings > Paired Devices**, or run `stim-server devices grant <id> --control` on
 the Mac. Use `--read` to take control away while retaining viewing access.
 The server's npx prefix is shown above. The phone's **Allow Control** action
 explains this Mac-side change; it cannot grant itself access. **Reconnect**
@@ -168,7 +168,7 @@ servers that support it.
 
 ## Revoke access
 
-In Desktop's **Settings > Phones**, choose **Revoke...** from the phone's menu, or run
+In Desktop's **Settings > Paired Devices**, choose **Revoke...** from the phone's menu, or run
 `stim-server devices revoke <id>` on the Mac. Revocation closes its active
 connections; the server checks registrations on changes and once a second.
 The phone must pair again to reconnect.

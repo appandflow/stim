@@ -340,12 +340,8 @@ public enum NoiseCredential: Sendable {
         try? store.forget(id: saved.id)
         throw error
       }
-      let name = saved.name.isEmpty ? "The machine" : saved.name
-      throw ServerError(
-        code: "pairing-unconfirmed",
-        message:
-          "\(name) did not confirm the pairing: \(error.localizedDescription) Stim Desktop kept it; reconnect to finish, or forget it and run `stim-server devices revoke` there for this Mac."
-      )
+      let cause = error is CancellationError ? "The pairing was cancelled." : error.localizedDescription
+      throw ServerError(code: "pairing-unconfirmed", message: cause)
     }
   }
 

@@ -258,7 +258,7 @@ Advanced > Feature flags** lists them with **Reset to Defaults**. Code asks `Fea
 (StimKit), or `FeatureFlagStore.shared` from a view. A launch argument such as `-featureFlag.phoneApp YES` sets a
 flag for one run.
 
-**Phone app** is off by default. Off, Desktop hides the Phones page, the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
+**Phone app** is off by default. Off, Desktop hides the Paired Devices page, the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
 phones in copy. It never revokes a pairing. Desktop's own stim-server then listens on loopback only. A Mac that already serves phones or has a
 paired phone gets the flag on at first launch with flags. The phone app is documented in
 `website/docs/phone-app.md`.
@@ -305,7 +305,7 @@ expiry means nothing was kept. Recording expiry is a label: retained replay span
 available regardless of the client clock. Archived pages offer
 no live device or workspace actions. An older server shows an update hint for archive
 requests that require a workspace instead of an archive; other refusals show the server's
-message. Connect through the Phones page to read logs and replay.
+message. Connect through the Paired Devices page to read logs and replay.
 
 Each of Logs, Recordings and Agent actions has a **Clear** button that, after a confirmation, deletes that kind of that archive through
 `stim gc --delete --cache archived-logs:<id>` (`archived-recordings:<id>`, `archived-agent:<id>`) and keeps the record; the row then reads Cleared until the page is left, and None kept after.
@@ -1160,7 +1160,7 @@ scripts in `~/Library/Caches/<bundle id>/node-compile-cache`; it removes
 `NODE_COMPILE_CACHE` from its environment before it starts anything, so commands it
 runs, such as Metro or Gradle, never write there. A test copy can move the port from 7787 with
 `defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
-the Mac's own server. While a server runs, the Phones tab re-checks it every 5
+the Mac's own server. While a server runs, the Paired Devices tab re-checks it every 5
 seconds and the app every 10 seconds while it is active, otherwise every 60
 seconds. When a server the app did not start misses two checks in a row, the app starts its
 own. With the Phone app on and **Serve to phones** on, Desktop starts its server without
@@ -1189,7 +1189,7 @@ server the app started in loopback-only mode and never touches one it did not st
 turning it on after a failed start tries again.
 
 A server answering health with HTTP 503 appears as **Starting** or
-**Degraded** with its reason in the Phones page (or **Settings > Advanced** with the Phone app off); the footer icon shows only Degraded. Desktop keeps
+**Degraded** with its reason in the Paired Devices page (or **Settings > Advanced** with the Phone app off); the footer icon shows only Degraded. Desktop keeps
 checking it without starting another server or terminating one it launched.
 For a server it launches, Desktop checks every 250 milliseconds until it is
 ready or the 15-second startup deadline passes, then uses its regular poller.
@@ -1228,7 +1228,7 @@ stays valid until it expires. **Can't Scan? Enter the Endpoint and Token** shows
 copyable **Endpoint** and **Token** fields, with the token hidden until revealed. The wizard
 waits for the phone and shows its name and access on the success screen.
 
-The Phones tab lists paired phones from `stim-server devices --json`: each
+The Paired Devices tab lists paired phones from `stim-server devices --json`: each
 phone's name, when it was last seen and a **View Only** or **Can control**
 badge. Its menu has **Allow Control** or **View Only**, which runs
 `stim-server devices grant <id> --control` or `--read`, and **Revoke...**,
@@ -1238,7 +1238,7 @@ problem that stops phones from connecting shows as one line above the list:
 serving off (**Turn On**), or Tailscale off, a missing route or a Funneled
 route (**Fix...**, which opens the wizard at its Tailscale step). Below the
 list, the **Server** section holds **Serve to phones** and the server's version
-and port. With the Phone app flag off there is no Phones tab. **Settings >
+and port. With the Phone app flag off there is no Paired Devices tab. **Settings >
 Advanced** holds **Record device screens for replay** and a **stim-server**
 section with the server's status, **Try Again** after a failure and the
 executable override.

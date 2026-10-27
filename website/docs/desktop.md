@@ -214,7 +214,7 @@ show refusals for removals started from its own workspace actions.
 
 :::note[Phone app feature flag]
 Stim Desktop hides everything about the phone app unless the **Phone app**
-feature flag is on: the Phones page, **Serve to phones**, pairing, the phone
+feature flag is on: the Paired Devices page, **Serve to phones**, pairing, the phone
 steps of the setup guide and tutorial, and phone suggestions. Turn it on in
 **Settings > Advanced > Feature flags**. A Mac that already serves phones or has
 a paired phone starts with it on. Turning the flag off revokes no pairings;
@@ -656,7 +656,7 @@ stim ios`}
    shows in the app instead of a separate Simulator window.
 2. Click a device to open its viewer. **Take over** lets you use it; Escape
    gives it back.
-3. To use the phone app, open **Stim > Settings > Phones** and choose **Pair a
+3. To use the phone app, open **Stim > Settings > Paired Devices** and choose **Pair a
    Phone…**. The wizard checks Tailscale, turns on serving, sets up a private
    tailnet route, shows a code and waits for the phone. Setup keeps existing
    Tailscale routes and never enables Funnel. If Tailscale asks to enable HTTPS,

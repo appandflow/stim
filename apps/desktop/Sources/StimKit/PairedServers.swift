@@ -53,12 +53,18 @@ public final class PairedServers {
     public var pair: @MainActor (PairingPayload) async throws -> PairedServer
     /// `hello.server.id` of the server on this Mac, which a pairing must not be with.
     public var localServerID: @MainActor () -> String?
+    /// How long a connection may stay `connecting` before it is closed and tried again.
+    public var connectTimeout: TimeInterval
+    public var schedule: ServerScheduler
 
     public init(
       store: PairedServerStore, makeClient: @escaping @MainActor (PairedServer) -> ServerClient,
       pair: @escaping @MainActor (PairingPayload) async throws -> PairedServer,
-      localServerID: @escaping @MainActor () -> String?
+      localServerID: @escaping @MainActor () -> String?, connectTimeout: TimeInterval = 20,
+      schedule: @escaping ServerScheduler = ServerClient.dispatchAfter
     ) {
+      self.connectTimeout = connectTimeout
+      self.schedule = schedule
       self.store = store
       self.makeClient = makeClient
       self.pair = pair
@@ -74,6 +80,7 @@ public final class PairedServers {
 
   private let dependencies: Dependencies
   private var clients: [String: ServerClient] = [:]
+  private var timeouts: [String: () -> Void] = [:]
   private var opened: Set<String> = []
   private var started = false
 
@@ -129,7 +136,9 @@ public final class PairedServers {
   public func stop() {
     started = false
     for client in clients.values { client.stop() }
+    for cancel in timeouts.values { cancel() }
     clients = [:]
+    timeouts = [:]
     opened = []
     entries = entries.map { entry in
       var entry = entry
@@ -140,21 +149,19 @@ public final class PairedServers {
 
   public func reconnect(id: String) {
     guard started, let pairing = entry(id)?.pairing else { return }
-    clients[id]?.stop()
-    clients[id] = nil
+    drop(id)
     connect(pairing)
   }
 
   public func forget(id: String) {
     guard !isPairing, let entry = entry(id) else { return }
-    clients[id]?.stop()
-    clients[id] = nil
     do {
       try dependencies.store.forget(id: id)
     } catch {
       storeError = error.localizedDescription
       return
     }
+    drop(id)
     if let pairing = entry.pairing {
       forgotten = Forgotten(
         name: pairing.name.isEmpty ? "the machine" : pairing.name,
@@ -182,6 +189,12 @@ public final class PairedServers {
       pairingState = .failed(PairedServerWording.notice(for: problem))
       return
     }
+    guard !entries.contains(where: { $0.kind == .unreadable && $0.id == payload.fingerprint }) else {
+      pairingState = .failed(
+        PairedServerWording.notice(
+          for: ServerError(code: "unreadable-pairing", message: ""), context: .pairing, name: payload.name))
+      return
+    }
     isPairing = true
     pairingState = .pairing(payload)
     forgotten = nil
@@ -192,7 +205,11 @@ public final class PairedServers {
     do {
       let pairing = try await dependencies.pair(payload)
       if let local = dependencies.localServerID(), pairing.serverID == local {
-        try? dependencies.store.forget(id: pairing.id)
+        do {
+          try dependencies.store.forget(id: pairing.id)
+        } catch {
+          storeError = error.localizedDescription
+        }
         let revoke = PairedServerWording.revokeCommand(deviceID: pairing.deviceID)
         pairingState = .failed(
           PairedServerWording.notice(
@@ -213,10 +230,7 @@ public final class PairedServers {
 
   private func connectMissing() {
     let ids = Set(entries.compactMap { $0.pairing?.id })
-    for id in clients.keys where !ids.contains(id) {
-      clients[id]?.stop()
-      clients[id] = nil
-    }
+    for id in clients.keys where !ids.contains(id) { drop(id) }
     for case .pairing(let pairing) in entries.map(\.kind) where clients[pairing.id] == nil { connect(pairing) }
   }
 
@@ -232,7 +246,24 @@ public final class PairedServers {
     client.start()
   }
 
+  private func drop(_ id: String) {
+    clients[id]?.stop()
+    clients[id] = nil
+    timeouts[id]?()
+    timeouts[id] = nil
+  }
+
+  private func watchConnecting(_ id: String) {
+    timeouts[id]?()
+    timeouts[id] = dependencies.schedule(dependencies.connectTimeout) { [weak self] in
+      guard let self, self.entry(id)?.connection == .connecting, let pairing = self.entry(id)?.pairing else { return }
+      self.drop(id)
+      self.connect(pairing)
+    }
+  }
+
   private func apply(_ state: ServerClient.State, for id: String) {
+    if case .connecting = state { watchConnecting(id) } else { timeouts[id]?() }
     switch state {
     case .idle: set(id, .idle)
     case .connecting: set(id, .connecting)
@@ -246,8 +277,6 @@ public final class PairedServers {
     }
   }
 
-  /// Records what a `hello` says about the pairing, which also finishes a pairing kept as unconfirmed. It never
-  /// stores a pairing that was forgotten while the connection was opening.
   private func confirm(_ id: String, _ hello: HelloResult) {
     guard var pairing = (try? dependencies.store.pairings())?.first(where: { $0.id == id }) else { return }
     let before = pairing

@@ -18,7 +18,8 @@ public enum PairedServerWording {
 
   /// The local codes only `NoisePairing` and the paired-server list produce, beside `ServerProtocol.refusalCodes`.
   public static let localCodes = [
-    "already-paired", "pairing-not-saved", "pairing-unconfirmed", "pairing-in-progress", "own-server", "key-unusable",
+    "already-paired", "unreadable-pairing", "pairing-not-saved", "pairing-unconfirmed", "pairing-in-progress", "own-server",
+    "key-unusable",
   ]
 
   /// `name` is the pairing's name, or empty when the person has not named it yet.
@@ -74,8 +75,12 @@ public enum PairedServerWording {
       return PairedServerNotice(
         tone: .warning, title: "This Mac is already paired with \(machine)",
         detail:
-          "Stim Desktop stopped before using the code, so it is still valid. To pair again, forget the existing pairing first.",
+          "This attempt did not use the code. To pair again, forget the existing pairing first.",
         command: nil)
+    case "unreadable-pairing":
+      return PairedServerNotice(
+        tone: .warning, title: "An unreadable pairing for this machine is in the Keychain",
+        detail: "Forget the unreadable item first, then pair again. This attempt did not use the code.", command: nil)
     case "pairing-in-progress":
       return PairedServerNotice(
         tone: .warning, title: "Already pairing with this machine",
@@ -88,7 +93,7 @@ public enum PairedServerWording {
       return PairedServerNotice(
         tone: .warning, title: "\(machine.capitalizedFirst) did not confirm the pairing",
         detail:
-          "The code may be used up, and \(machine) may have recorded this Mac. Stim Desktop kept the pairing, and it finishes when \(machine) answers. To undo it instead, forget it here and revoke this Mac on \(machine). \(error.message)",
+          "\(error.message.sentence) The code may be used up and \(machine) may have recorded this Mac, so Stim Desktop kept the pairing. It finishes when \(machine) answers. To undo it, forget it here, then find this Mac in the list on \(machine) and revoke it.",
         command: "stim-server devices")
     case "own-server":
       return PairedServerNotice(
@@ -128,7 +133,9 @@ public enum PairedServerWording {
 
   /// The command that removes this Mac's record on the server, which Forget does not do.
   public static func revokeCommand(deviceID: String?) -> String {
-    guard let deviceID else { return "stim-server devices" }
+    guard let deviceID, !deviceID.isEmpty, deviceID.count <= 64,
+      deviceID.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
+    else { return "stim-server devices" }
     return "stim-server devices revoke \(deviceID)"
   }
 }
@@ -168,6 +175,11 @@ extension PairedServers.Entry {
         tone: .warning,
         title: hadOpened ? "Offline \u{00B7} retrying in \(seconds) s" : "Can't reach \(name) \u{00B7} retrying in \(seconds) s",
         detail: [reason, unconfirmed].compactMap { $0 }.joined(separator: " "), command: nil)
+    case .refused(let error) where error.code == "unauthorized" && !pairing.isConfirmed:
+      let name = pairing.name.isEmpty ? "The machine" : pairing.name
+      return PairedServerStatus(
+        tone: .error, title: "\(name) never recorded this Mac",
+        detail: "It refused this pairing, so it cannot finish. Forget it and pair again with a new code.", command: nil)
     case .refused(let error):
       let notice = PairedServerWording.notice(for: error, context: .connection, name: pairing.name)
       return PairedServerStatus(tone: notice.tone, title: notice.title, detail: notice.detail, command: notice.command)
