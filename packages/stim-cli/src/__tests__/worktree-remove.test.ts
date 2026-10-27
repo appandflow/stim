@@ -21,6 +21,7 @@ import {
   removalBlockers,
   removalPath,
   registerRemove,
+  removeWorktreeTarget,
   removalRemedy,
 } from '../commands/worktree.ts';
 import type { Command } from 'commander';
@@ -1011,6 +1012,17 @@ test.skipIf(process.platform === 'win32')(
     expect(errs.join('\n')).toMatch(/volume \/Volumes\/StimTestVolumeThatDoesNotExist is not mounted/);
   },
 );
+
+test('removing a deleted worktree for the automatic sweep leaves its record to the sweep', async () => {
+  upsertProject(wtDir, { worktreeRoot: true });
+  rmSync(wtDir, { recursive: true, force: true });
+  setExecutor(makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) }));
+  const output = { error: () => {}, fail: () => {} };
+
+  await removeWorktreeTarget(wtDir, { linkedOnly: true, output });
+
+  expect(getProject(wtDir)).not.toBe(null);
+});
 
 test('action: removing a missing path that no project is registered under still says there is no such worktree', async () => {
   const errs: string[] = [];

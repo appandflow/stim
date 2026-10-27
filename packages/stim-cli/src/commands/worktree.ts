@@ -1214,7 +1214,9 @@ async function removeOrRefuse(
     const registered = Object.fromEntries(
       Object.entries(loadConfig()?.projects ?? {}).filter(([key]) => isPathPrefix(path, key)),
     );
-    const { deadProjects, skipped } = classifyProjectEntries(registered, listMountedVolumes());
+    const { deadProjects, skipped } = opts.linkedOnly
+      ? { deadProjects: [], skipped: [] }
+      : classifyProjectEntries(registered, listMountedVolumes());
     if (skipped.length) {
       for (const kept of skipped) output.error(chalk.red(`Refusing to remove ${kept.dir}: ${kept.reason}.`));
       output.error(chalk.dim('Its absence cannot be confirmed, so its record is kept.'));

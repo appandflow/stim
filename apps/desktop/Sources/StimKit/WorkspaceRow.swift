@@ -111,7 +111,7 @@ extension Workspace {
     }
     if pathMissing == true, !isActive {
       return RowStatus(
-        kind: .missing, text: "Folder missing", label: "Folder missing, run stim gc --delete to remove it", tone: .warning)
+        kind: .missing, text: "Folder missing", label: "Folder missing, run stim worktree remove to drop it", tone: .warning)
     }
     if !isActive {
       guard let seconds = since(metro?.lastStop?.at, now) else {

@@ -1,7 +1,6 @@
-import { existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { describeDereferenced } from '../../devices/reclaim.ts';
-import { isOnMountedVolume, volumeRootFor } from '../../fs-util.ts';
+import { isAbsentPath, isOnMountedVolume, volumeRootFor } from '../../fs-util.ts';
 import type { ProjectRecord } from '../../workspace/config.ts';
 import type { GcSkip } from './types.ts';
 
@@ -27,7 +26,7 @@ export function classifyProjectEntries(
       }
       continue;
     }
-    if (existsSync(path)) continue;
+    if (!isAbsentPath(path)) continue;
     if (!isOnMountedVolume(path, mountedVolumes)) {
       const volume = volumeRootFor(path);
       skipped.push({ dir: path, reason: `volume ${volume} is not mounted` });

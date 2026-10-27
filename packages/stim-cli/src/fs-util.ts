@@ -116,6 +116,17 @@ function uncShareIsReachable(volume: string, statFn: typeof statSync): boolean {
   }
 }
 
+/** Whether `stat` proves `path` absent: ENOENT or ENOTDIR. Any other failure, such as EACCES, proves nothing. */
+export function isAbsentPath(path: string): boolean {
+  try {
+    statSync(path);
+    return false;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR';
+  }
+}
+
 export function isOnMountedVolume(
   path: string,
   mountedVolumes?: string[],

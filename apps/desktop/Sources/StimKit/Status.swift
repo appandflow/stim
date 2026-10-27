@@ -143,7 +143,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var live: Bool
   /// `warming`, `ready`, `live` or `idle`; absent from a `stim` that does not report lifecycle phases.
   public var phase: String?
-  /// True when the workspace folder no longer exists on a mounted volume; `stim gc --delete` removes the entry.
+  /// True when the workspace folder no longer exists on a mounted volume; `stim worktree remove <path>` removes the entry.
   public var pathMissing: Bool?
   /// When the warm started (`warming`) or finished (`ready`).
   public var phaseSince: String?

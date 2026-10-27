@@ -3,7 +3,7 @@ import { writeHostedNative } from '../device-host/ios-state.ts';
 import type { HostedIosPlacement, HostedAndroidPlacement } from '@stim-cli/core/state';
 import * as hostedClient from '../device-host/hosted-client.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { availableParallelism, loadavg, tmpdir } from 'os';
 import { join } from 'path';
@@ -887,6 +887,23 @@ test('a workspace whose folder was deleted reports pathMissing and no ready phas
   expect(human.some((line) => line.includes('stim gc --delete'))).toBe(true);
   expect(Object.keys(loadConfig()?.projects ?? {})).toEqual([gone]);
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a workspace whose folder cannot be read is not reported as pathMissing',
+  async () => {
+    const parent = join(tmpHome, 'locked');
+    const project = join(parent, 'app');
+    mkdirSync(project, { recursive: true });
+    saveConfig(makeConfig({ version: 2, projects: { [project]: { platforms: {} } } }));
+    chmodSync(parent, 0);
+    try {
+      const payload = await runStatusJson();
+      expect(payload.environments[0]).not.toHaveProperty('pathMissing');
+    } finally {
+      chmodSync(parent, 0o700);
+    }
+  },
+);
 
 test.skipIf(process.platform === 'win32')(
   'a workspace on a volume that is not mounted is not reported as pathMissing',
