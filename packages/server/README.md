@@ -986,8 +986,8 @@ base64 for at most 32 KiB of raw bytes. The reply names the next byte `offset`.
 The server answers one connection's requests in arrival order and accepts a
 chunk only at the received length, so a client may keep chunks in flight if it
 sends each file's chunks in offset order. Replay of the same bytes is safe after
-a lost reply. Re-offer to learn received
-offsets. Upload the manifest first, then re-offer for its missing file content.
+a lost reply. Re-offer to learn received offsets.
+Upload the manifest first, then re-offer for its missing file content.
 The manifest is limited to 8 MiB and 20,000 entries, with at most 1 GiB per file,
 1 KiB per link, and 4 GiB of declared bundle content. An app attempt cannot
 change its identity, mode, arguments or manifest. Complete a receiving attempt or stop the

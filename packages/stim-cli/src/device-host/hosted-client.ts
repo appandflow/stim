@@ -400,10 +400,8 @@ export async function upload(
   });
   const inFlight = new Set<Promise<void>>();
   let failure: Error | undefined;
-  const send = async (digest: string, offset: number, bytes: Buffer): Promise<void> => {
-    const end = Math.min(offset + HOSTED_APP_CHUNK_BYTES, bytes.length);
+  const send = async (digest: string, offset: number, end: number, data: string): Promise<void> => {
     try {
-      const data = bytes.subarray(offset, end).toString('base64');
       const next = (await call(host, 'device-host.app.chunk', { ...ids, sha256: digest, offset, data })).offset;
       if (typeof next !== 'number' || next < end) {
         throw new Error(`${host.machine} did not accept app content at byte ${offset}.`);
@@ -417,11 +415,14 @@ export async function upload(
     const bytes = read();
     let offset = start;
     do {
-      if (failure) break;
       if (inFlight.size >= UPLOAD_WINDOW) await Promise.race(inFlight);
-      const pending = send(digest, offset, bytes).finally(() => inFlight.delete(pending));
+      if (failure) break;
+      const end = Math.min(offset + HOSTED_APP_CHUNK_BYTES, bytes.length);
+      const pending = send(digest, offset, end, bytes.subarray(offset, end).toString('base64')).finally(() =>
+        inFlight.delete(pending),
+      );
       inFlight.add(pending);
-      offset += HOSTED_APP_CHUNK_BYTES;
+      offset = end;
     } while (offset < bytes.length);
   }
   await Promise.all(inFlight);

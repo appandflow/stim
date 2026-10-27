@@ -8,7 +8,6 @@ interface Chunk {
   data: string;
 }
 
-/** Models the stim-server rule: chunks of one file are accepted only at the received length, one request at a time, in arrival order. */
 function fakeHost(options: { refuseAt?: number } = {}): {
   host: HostConnection;
   received: Map<string, Buffer>;
