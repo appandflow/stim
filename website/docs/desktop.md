@@ -693,6 +693,16 @@ after Forget, or `stim-server devices` to find this Mac's record when the machin
 pairing and pair again. A build of Desktop without the Keychain entitlement, such as a development
 copy, keeps pairings only until it quits and says so in the sheet.
 
+Once paired, the machine gets its own section in the sidebar, below this Mac's
+projects, with its name, a connection dot and **View Only**. Its workspaces
+open a read-only page that names the machine controlling them, such as
+"Viewing floco · read-only", and where each device and build runs, such as
+"Running on janics-mac-mini-2". Nothing on that page acts on either machine.
+**Machines** lists the paired machine after your build machines, with its
+capacity, its hosted devices and its offloaded builds. When the machine is
+offline, Desktop keeps showing its last status with "Offline since" and the
+time. Hiding a paired machine's workspace lasts until Desktop quits.
+
 A pairing lets this Mac see everything the machine's server shows a phone: workspace paths,
 status and logs, changed and untracked text files including `.env` files that
 Git does not ignore, the doctor report, and the live screens of every local and hosted

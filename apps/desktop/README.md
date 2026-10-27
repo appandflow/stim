@@ -266,10 +266,23 @@ paired phone gets the flag on at first launch with flags. The phone app is docum
 **Paired machines** is off by default. On, **Settings > Paired Machines** lists this Mac's pairings with other machines'
 stim-servers and opens **Pair with a Machine...**, which takes the output of `stim-server pair` (the bare JSON or the
 `{ qr, expiresAt }` form of `--json`). `PairedServers` (StimKit) holds the list and the pairing in progress: one
-`ServerClient` per pairing while the tab is open, reporting the connection and recording each `hello` back to the store, and one
+`ServerClient` per pairing while the flag is on, reporting the connection and recording each `hello` back to the store, and one
 pairing at a time. Items live in the data-protection Keychain, one per pairing, and an ad-hoc copy
 keeps them in memory only. An item that cannot be decoded shows as unreadable with Forget. Forget deletes the key
-and shows `stim-server devices revoke <id>`; it does not revoke on the machine.
+and shows `stim-server devices revoke <id>`; it does not revoke on the machine. A key the Keychain cannot read
+right now is tried again, not reported as revoked.
+
+`PairedServerSessions` wraps each of those clients in a `ServerSession` (owner `.paired(<pairing id>)`), so a pairing
+has one connection, and `StatusStore.usePairedServers` follows each one's status in memory. Below this Mac's
+projects, the sidebar gets a section per paired server: its name, connection dot, a **View Only** pill, and its
+workspaces with the same grouping and status filter as this Mac's. Hidden, expanded and collapsed state for those
+rows is kept in memory only, keyed by the owner and path, and this Mac's hidden paths never apply to them. A paired
+row opens a read-only page: the status, the path as text, the agent and device lines with the machine each runs on
+("Running on janics-mac-mini-2"), the build and where it compiles, and "Viewing floco · read-only". It has no
+action, no live screen, no logs and no context menu beyond Hide. **Machines** lists each paired server after the
+build machines, with its reported capacity, its hosted devices and its offloaded builds. A hosted session two
+servers report shows once, under the first. A pairing whose server says it is this Mac's own gets no section.
+With the flag off, or with no pairing, nothing connects and the sidebar and Machines page are unchanged.
 
 ## Hiding a workspace
 

@@ -37,15 +37,22 @@ public enum NoiseCredential: Sendable {
   static let closeBadRequest: UInt16 = 4400
 
   /// A factory that resolves the credential at each connection, so a forgotten pairing has nothing to send; a nil
-  /// credential refuses the connection as `unauthorized` without opening one.
+  /// credential refuses the connection as `unauthorized` without opening one. A credential that cannot be read, such as
+  /// a Keychain error, closes the attempt instead, so the client retries.
   public static func factory(
     timeout: TimeInterval = 15,
-    credential: @escaping @MainActor () -> (clientKey: Curve25519.KeyAgreement.PrivateKey, NoiseCredential)?
+    credential: @escaping @MainActor () throws -> (clientKey: Curve25519.KeyAgreement.PrivateKey, NoiseCredential)?
   ) -> ServerTransportFactory {
     { url, onEvent in
-      guard let (clientKey, resolved) = credential() else {
+      let found: (clientKey: Curve25519.KeyAgreement.PrivateKey, NoiseCredential)?
+      do {
+        found = try credential()
+      } catch {
+        return NoiseClientTransport(ending: .closed("Stim Desktop could not read this pairing's key."), onEvent: onEvent)
+      }
+      guard let (clientKey, resolved) = found else {
         let missing = ServerError(code: "unauthorized", message: "Stim Desktop has no key for this pairing. Pair again.")
-        return NoiseClientTransport(refusing: missing, onEvent: onEvent)
+        return NoiseClientTransport(ending: .refused(missing), onEvent: onEvent)
       }
       return NoiseClientTransport(
         url: url, clientKey: clientKey, credential: resolved, timeout: timeout, onEvent: onEvent)
@@ -100,12 +107,12 @@ public enum NoiseCredential: Sendable {
     cancelTimeout = { timer.cancel() }
   }
 
-  private init(refusing refusal: ServerError, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void) {
+  private init(ending event: ServerTransportEvent, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void) {
     credential = .returning(serverKey: Data())
     onVerified = { _ in }
     self.onEvent = onEvent
     finished = true
-    Task { @MainActor in onEvent(.refused(refusal)) }
+    Task { @MainActor in onEvent(event) }
   }
 
   public func send(_ text: String) {

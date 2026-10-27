@@ -10,6 +10,8 @@ struct Sidebar: View {
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
   @ObservedObject private var openRequests = OpenRequests.shared
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
+  @ObservedObject private var pairedState = PairedViewState.shared
   @State private var showsViewOptions = false
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -62,6 +64,11 @@ struct Sidebar: View {
       } header: {
         SectionLabel(title: options.grouping == .project ? "Projects" : "Workspaces")
           .background(PlainSelectionHighlight())
+      }
+      ForEach(pairedSessions.entries) { entry in
+        PairedSidebarSection(
+          entry: entry, session: pairedSessions.sessions[entry.id], status: store.paired[entry.id], options: options,
+          selection: rowSelection.wrappedValue, state: pairedState)
       }
     }
     .scrollContentBackground(.hidden)
@@ -430,7 +437,7 @@ struct WorkspaceRowContent: View {
   var now: Date
   var place: [String]
   var showsGit: Bool
-  var openLogs: (String) -> Void
+  var openLogs: ((String) -> Void)?
   var archive: ArchivedPage? = nil
   var isHidden = false
 
@@ -479,7 +486,7 @@ struct WorkspaceRowContent: View {
         ?? env.rowLabel(now: now, folder: place.isEmpty ? nil : place.joined(separator: ", "), showsGit: showsGit)
     )
     .accessibilityActions {
-      if archive == nil && (env.logs?.errorsSinceMarker ?? 0) > 0 {
+      if let openLogs, archive == nil && (env.logs?.errorsSinceMarker ?? 0) > 0 {
         Button("Show Errors") { openLogs(env.path) }
       }
     }

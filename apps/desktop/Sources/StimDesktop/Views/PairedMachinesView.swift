@@ -41,8 +41,6 @@ struct PairedMachinesView: View {
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
     .background(Palette.background)
-    .task { servers.start() }
-    .onDisappear { servers.stop() }
     .sheet(isPresented: $pairing) { PairMachineSheet(servers: servers) }
     .onQuitRequested { pairing = false }
     .confirmationDialog(

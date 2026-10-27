@@ -367,6 +367,16 @@ struct StatusStoreTests {
     store.usePairedServers(clients)
     #expect(await until { store.paired["floco"]?.delivering == true })
 
+    let replacement = pairedClient("100.64.0.2", memoryMb: 4, path: checkout, udid: "1A2B")
+    defer { replacement.stop() }
+    store.usePairedServers(["floco": replacement, "mini": mini])
+    #expect(store.paired["floco"]?.delivering == false)
+    #expect(store.workspace(WorkspaceKey(owner: .paired("floco"), path: checkout))?.workspace.memoryMb == 2)
+    replacement.start()
+    #expect(await until { replacement.isOpen })
+    store.usePairedServers(["floco": replacement, "mini": mini])
+    #expect(await until { store.workspace(WorkspaceKey(owner: .paired("floco"), path: checkout))?.workspace.memoryMb == 4 })
+
     store.usePairedServers(["mini": mini])
     #expect(store.paired["floco"] == nil)
     #expect(store.ownedEnvironments.map(\.owner) == [.local, .paired("mini")])

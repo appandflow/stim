@@ -71,7 +71,7 @@ struct FormatTests {
     #expect([3_600_000.0, 3_720_000].map(Format.elapsed(ms:)) == ["1h 0m", "1h 2m"])
   }
 
-  @Test func aNumberPastIntsRangeFromAnotherMachineDoesNotTrap() {
+  @Test func aNumberPastIntsRangeFromAnotherMachineDoesNotTrap() throws {
     #expect(Format.clock(ms: 1e300) == "153722867280912930:07")
     #expect(Format.elapsed(ms: .nan) == "0m 0s")
     #expect(Format.roundedDuration(ms: .nan) == "0s")
@@ -79,6 +79,13 @@ struct FormatTests {
     #expect(Format.since(.nan) == "0s")
     #expect(Format.age(-1e300) == "just now")
     #expect(Format.memoryMb(.nan) == "0 MB")
+    #expect(Format.spokenDuration(1e300).hasSuffix(" hours 7 minutes"))
+    #expect(sampleDuration(.nan) == "0:00")
+    let load = try JSONDecoder().decode(
+      CapacityLoad.self, from: Data(#"{"cpus":8,"loadPerCore":1e20,"busyAt":1e20,"limit":1e20,"state":"busy"}"#.utf8))
+    #expect(load.text.hasPrefix("1e+20"))
+    #expect(!load.explanation.isEmpty)
+    #expect(MachineUpdatePhase.sending(.infinity).line == "Sending this Mac's build (\(Int.max)%)\u{2026}")
   }
 
   @Test func ageWordsUnderAMinuteAsJustNow() {

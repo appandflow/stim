@@ -33,7 +33,7 @@ public final class StatusStore: ObservableObject {
   private var payloadSource: (client: ServerClient, generation: Int, payload: StatusPayload)?
   private var serverConnection: (client: ServerClient, home: String)?
   private var pairedFeeds: [String: (client: ServerClient, feed: ServerStatusFeed)] = [:]
-  private var shownWorkspace: String?
+  private var shownWorkspace: WorkspaceKey?
   private lazy var serverFeed = ServerStatusFeed(
     onPayload: { [weak self] result, client, generation in self?.accept(result, source: (client, generation)) },
     onDelivering: { [weak self] in self?.serverDelivering($0) })
@@ -60,7 +60,12 @@ public final class StatusStore: ObservableObject {
     syncServerFeed()
   }
 
-  public func refresh() {
+  /// Reads `owner`'s status again; a paired server's read waits for its connection.
+  public func refresh(_ owner: ServerOwner = .local) {
+    if case .paired(let id) = owner {
+      pairedFeeds[id]?.feed.refresh()
+      return
+    }
     guard readCapableServer(serverConnection, stimHome: stimHome) != nil else {
       accept(.failure(connectionError))
       return
@@ -80,7 +85,7 @@ public final class StatusStore: ObservableObject {
     for (id, followed) in pairedFeeds where clients[id] !== followed.client {
       pairedFeeds[id] = nil
       followed.feed.use(nil)
-      paired[id] = nil
+      if clients[id] == nil { paired[id] = nil } else { paired[id]?.delivering = false }
     }
     for (id, client) in clients where client.isRemote {
       if pairedFeeds[id] == nil {
@@ -91,7 +96,8 @@ public final class StatusStore: ObservableObject {
             self.paired[id]?.delivering = delivering
           })
         pairedFeeds[id] = (client, feed)
-        paired[id] = PairedStatus()
+        if paired[id] == nil { paired[id] = PairedStatus() }
+        if case .paired(id) = shownWorkspace?.owner, let path = shownWorkspace?.path { feed.follow([path]) }
       }
       guard case .open(let hello) = client.state, hello.capabilities.contains("read") else {
         pairedFeeds[id]?.feed.use(nil)
@@ -229,16 +235,20 @@ public final class StatusStore: ObservableObject {
     }
   }
 
-  /// Follows the full environment of `path`, the workspace a screen shows, instead of its summary; nil for none.
-  public func show(workspace path: String?) {
-    guard path != shownWorkspace else { return }
-    shownWorkspace = path
+  /// Follows the full environment of `key`, the workspace a screen shows, on its own server instead of its summary;
+  /// nil for none.
+  public func show(workspace key: WorkspaceKey?) {
+    guard key != shownWorkspace else { return }
+    shownWorkspace = key
     followShown()
+    for (id, followed) in pairedFeeds {
+      if case .paired(id) = key?.owner, let path = key?.path { followed.feed.follow([path]) } else { followed.feed.follow([]) }
+    }
   }
 
   private func followShown() {
     var paths = Set(payload?.environments.filter { $0.tutorial != nil }.map(\.path) ?? [])
-    if let shownWorkspace { paths.insert(shownWorkspace) }
+    if let shownWorkspace, shownWorkspace.owner == .local { paths.insert(shownWorkspace.path) }
     serverFeed.follow(paths)
   }
 
@@ -397,6 +407,13 @@ public struct PairedStatus: Sendable {
   public var error: String?
   public var updatedAt: Date?
   public var delivering = false
+
+  public init(payload: StatusPayload? = nil, error: String? = nil, updatedAt: Date? = nil, delivering: Bool = false) {
+    self.payload = payload
+    self.error = error
+    self.updatedAt = updatedAt
+    self.delivering = delivering
+  }
 }
 
 private struct SidebarCache {

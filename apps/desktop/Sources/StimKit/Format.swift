@@ -24,11 +24,19 @@ public enum Format {
 
   /// `value` truncated to an Int, with NaN as zero and a value past Int's range as its bound, so a number another
   /// machine reports cannot trap.
-  static func int(_ value: Double) -> Int {
+  public static func int(_ value: Double) -> Int {
     if value.isNaN { return 0 }
     if value >= 0x1p63 { return .max }
     if value <= -0x1p63 { return .min }
     return Int(value)
+  }
+
+  /// The sum of counts another machine reports, at `Int.max` instead of trapping when it overflows.
+  public static func sum(_ values: some Sequence<Int>) -> Int {
+    values.reduce(0) { total, value in
+      let (sum, overflow) = total.addingReportingOverflow(value)
+      return overflow ? (value < 0 ? .min : .max) : sum
+    }
   }
 
   /// `value` with one decimal, a tie rounded up the way the phone app's `toFixed(1)` does.
