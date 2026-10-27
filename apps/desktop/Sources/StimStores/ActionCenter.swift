@@ -151,6 +151,11 @@ public final class ActionCenter: ObservableObject {
 
   public func latest(for key: String) -> ActionRun? { runs[key] }
 
+  /// Runs one device tool through the CLI in `cwd`, the workspace whose own simulator or emulator it changes.
+  public func deviceTool(_ tool: DeviceTool, platform: String, slot: String, cwd: String) async throws -> DeviceToolResult {
+    try await cli.value.deviceTool(tool, platform: platform, slot: slot, cwd: cwd)
+  }
+
   public func run(_ title: String, _ command: StimCommand, key: String? = nil) {
     run(title, steps: [command], key: key)
   }

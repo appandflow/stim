@@ -970,7 +970,17 @@ Reduce transparency or Show button borders. Each change reads the device back;
 **Control** is on, outside replay; it closes when control is released. Without Control the popover shows only **Show device frame**. These are
 the simulator's settings, not Desktop preferences. This requires an Xcode whose
 `devicectl device info|settings appearance` supports that simulator. Audio,
-location, VoiceOver, color filters and Liquid Glass controls are not included.
+VoiceOver, color filters and Liquid Glass controls are not included.
+
+The options popover's **Tools** section runs `stim device location|permission|push|network`
+through the CLI for the workspace's own local simulator or emulator, only while **Control** is on
+and outside replay. **Location** sets `latitude, longitude` (or a preset place) and, on iOS, clears
+it. **Permission** grants, revokes or resets one service for the workspace's app. **Test push**
+sends a title and message to the iOS app. **Network** turns an Android emulator's Wi-Fi and mobile
+data off or on. The line under the buttons shows what the CLI printed: Android permissions and
+network read the state back from the device, and iOS location, permissions and push report only
+that the command succeeded. A hosted, remote, EAS or physical device has no Tools section, and a CLI
+refusal shows its message there. Desktop never calls `simctl` or `adb` for these.
 
 The panel's **Development** section offers **Slow animations** and **Shake**
 on supported iOS simulators. Slow animations changes UIKit's animation speed

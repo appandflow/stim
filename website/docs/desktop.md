@@ -273,8 +273,8 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   simulator, change appearance, text size, contrast, motion, transparency and
   button borders in its options popover. Values come from the selected device;
   **Refresh** reads changes made elsewhere. Unsupported options say
-  **Unavailable**. Requires Xcode's simulator appearance API; location,
-  VoiceOver, color filters and Liquid Glass options are not included.
+  **Unavailable**. Requires Xcode's simulator appearance API; VoiceOver,
+  color filters and Liquid Glass options are not included.
   **Sound** turns an owned simulator's output volume off or back on; turning it
   back on restores the level it had before.
   Without Control the popover shows only **Show device frame**. Its **Development** section also offers **Slow animations** and **Shake**
@@ -290,6 +290,14 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   older images startup warns that it could not mute the emulator. Your Mac's
   volume and physical phones are unchanged. Hosted simulators and emulators are
   muted when the host boots them, but the Sound toggles do not reach them.
+- **Device tools.** The options popover of a local simulator or emulator has a
+  **Tools** section while **Control** is on: set or clear a simulated location,
+  grant, revoke or reset an app permission, send a test push to an iOS app, and
+  turn an Android emulator's network off or on. Each button runs the matching
+  [`stim device`](./commands.md#device-location-permission-push-and-network)
+  command, so the same ownership checks apply, and the line under the buttons
+  shows what the device reported back where the platform can say. Hosted, remote
+  and physical devices have no Tools section.
 - **Logs.** Separate Metro and App / native inspector sections open the same
   viewer with their source filters selected. Filters remain editable; repeated
   errors are grouped. **Build output > Readable** simplifies Xcode output; **Raw** restores
