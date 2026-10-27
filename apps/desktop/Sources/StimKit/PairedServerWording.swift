@@ -133,10 +133,15 @@ public enum PairedServerWording {
 
   /// The command that removes this Mac's record on the server, which Forget does not do.
   public static func revokeCommand(deviceID: String?) -> String {
+    plainDeviceID(deviceID).map { "stim-server devices revoke \($0)" } ?? "stim-server devices"
+  }
+
+  /// A device id the server reported, when it is safe to put in a command Stim Desktop shows.
+  static func plainDeviceID(_ deviceID: String?) -> String? {
     guard let deviceID, !deviceID.isEmpty, deviceID.count <= 64,
       deviceID.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
-    else { return "stim-server devices" }
-    return "stim-server devices revoke \(deviceID)"
+    else { return nil }
+    return deviceID
   }
 }
 

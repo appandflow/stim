@@ -79,6 +79,7 @@ struct FormatTests {
     #expect(Format.since(.nan) == "0s")
     #expect(Format.age(-1e300) == "just now")
     #expect(Format.memoryMb(.nan) == "0 MB")
+    #expect(Format.fileSize(reported: 1e100) == Format.fileSize(Int64.max))
     #expect(Format.spokenDuration(1e300).hasSuffix(" hours 7 minutes"))
     #expect(sampleDuration(.nan) == "0:00")
     let load = try JSONDecoder().decode(

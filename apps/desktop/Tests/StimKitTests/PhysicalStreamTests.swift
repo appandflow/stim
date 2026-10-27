@@ -145,7 +145,10 @@ import Testing
     sub.onEvent(
       ServerEvent(
         name: "macos-windows", subscription: "s1",
-        fields: ["current": window(7, "Main"), "windows": .array([window(7, "Main"), window(9, "")]), "pinned": .bool(false)]))
+        fields: [
+          "current": window(7, "Main"), "windows": .array([window(7, "Main"), window(1e300, "Huge"), window(9, "")]),
+          "pinned": .bool(false),
+        ]))
     #expect(
       stream.windows?.windows == [MacosWindows.Window(id: 7, title: "Main"), MacosWindows.Window(id: 9, title: "")])
     #expect(stream.windows?.current == 7)
@@ -155,6 +158,21 @@ import Testing
     await settle()
     #expect(server.take("input.window")?.params == ["session": .string(session), "window": .number(9)])
     #expect(server.take("input.window")?.params == ["session": .string(session), "window": .null])
+  }
+
+  @Test func keepsOneKeyframeRequestOutstandingWhileTheServerDoesNotAnswer() async throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    try #require(server.subs.first).onSubscribed(["subscription": .string("s1")])
+    for _ in 0..<5 { stream.requestKeyframe() }
+    await settle()
+    #expect(server.requests.map(\.method) == ["frames.keyframe"])
+    try #require(server.take("frames.keyframe")).reply.resume(returning: .object([:]))
+    await settle()
+    stream.requestKeyframe()
+    await settle()
+    #expect(server.requests.map(\.method) == ["frames.keyframe"])
   }
 }
 

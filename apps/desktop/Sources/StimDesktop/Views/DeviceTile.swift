@@ -269,7 +269,7 @@ struct DeviceTile: View {
     .overlay(alignment: .topTrailing) {
       if hasMenu, let workspace {
         DeviceTileMenu(
-          device: device, workspace: workspace, building: build != nil, choice: choice, openBuildLogs: onBuildLogs
+          device: device, owner: owner, workspace: workspace, building: build != nil, choice: choice, openBuildLogs: onBuildLogs
         )
         .padding(.trailing, CardMetrics.headerPadding)
         .padding(.top, CardMetrics.headerPadding + 2)
@@ -535,7 +535,7 @@ struct DeviceTile: View {
   private var isPhysical: Bool { device.isPhysical }
 
   private var hasMenu: Bool {
-    clickThrough && !viewer && workspace != nil && DeviceTileMenu.applies(to: device)
+    clickThrough && !viewer && workspace != nil && DeviceTileMenu.applies(to: device, owner: owner)
   }
 
   private var buildCovered: Bool {
@@ -583,6 +583,7 @@ struct DeviceTile: View {
 
   var showsStoppedBar: Bool {
     if case .remote = device { return false }
+    if !owner.isLocal, workspace != nil { return false }
     if isPhysical || device.hostedMachine != nil, workspace != nil { return false }
     return !device.isRunning && build == nil && !["Booting", "unknown"].contains(device.state)
   }
@@ -1046,7 +1047,19 @@ struct DeviceTile: View {
       } else {
         placeholder("A workspace is required to view this hosted device.")
       }
-    case .macos(let app) where device.hostedMachine == nil && owner.isLocal:
+    case _ where !owner.isLocal:
+      if let workspace, device.platform == "ios" || device.platform == "android" {
+        PhysicalDeviceScreen(
+          device: device, owner: owner, workspace: workspace, interactive: interactive, covered: buildCovered,
+          onPixelSizeChange: { pixelSizes[1] = $0 }, onControlLost: onControlLost
+        )
+        .id(owned.id)
+        .frame(width: screenWidth(1))
+        .padding(screenPadding)
+      } else {
+        placeholder("Stim Desktop shows this device only on the Mac that runs it.")
+      }
+    case .macos(let app) where device.hostedMachine == nil:
       MacosLocalScreen(app: app, choice: choice, viewer: viewer) { pixelSizes[1] = $0 }
         .frame(width: screenWidth(1))
         .padding(screenPadding)
@@ -1159,21 +1172,6 @@ private struct DeviceControlButtonStyle: ButtonStyle {
       .background(Palette.text.opacity(active ? Opacity.pressed : 0), in: Capsule())
       .hoverHighlight(radius: Radius.round)
       .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : Opacity.disabled)
-  }
-}
-
-extension OwnedDevice {
-  var isInteractive: Bool {
-    switch ref {
-    case .ios(_, let sim):
-      return !sim.physical && (ref.hostedIos != nil ? ref.state != "stopped" : ref.isRunning && localSimulatorUDID != nil)
-    case .android(_, let avd):
-      return ref.hostedMachine != nil
-        ? ref.state != "stopped" : ref.isRunning && (avd.owned || avd.physical) && localEmulatorSerial != nil
-    case .web(let browser): return browser.running && browser.cdpEndpoint != nil && browser.targetId != nil
-    case .macos: return ref.hostedMachine != nil && ref.state != "stopped"
-    case .remote: return false
-    }
   }
 }
 
