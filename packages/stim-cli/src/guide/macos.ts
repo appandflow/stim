@@ -480,9 +480,9 @@ script such as mini-desktop.sh use these instead:
   quit                       stim stop (verified stop; the host frees the slot
                              and removes the app's defaults)
   clean                      stim worktree remove
-  3 concurrent slots         concurrency.maxDevices on the host, counted apart
-                             from simulators and emulators; one bundle id
-                             slot per session
+  3 concurrent slots         concurrency.maxMacosApps and concurrency.maxDevices
+                             on the host, counted apart from simulators and
+                             emulators; one bundle id slot per session
 
 The agent-device rows work once the host's agent field names agent-device.
 

@@ -205,7 +205,7 @@ export async function automaticDevicePlacement(
     read?: typeof readHostedNative;
     write?: (...args: Parameters<typeof writeHostedNativeAsync>) => unknown;
     resume?: typeof prepareHostedNative;
-    peek?: () => ReturnType<typeof peekDeviceSlots>;
+    peek?: () => Awaited<ReturnType<typeof peekDeviceSlots>> | ReturnType<typeof peekDeviceSlots>;
     capacity?: typeof machineCapacity;
     memory?: () => HostMemoryPressure | null | Promise<HostMemoryPressure | null>;
     probe?: typeof probeHost;
@@ -238,7 +238,7 @@ export async function automaticDevicePlacement(
       };
     await write(root, slot, null, platform);
   }
-  const devices = platform === 'macos' ? { count: 0, max: 0, queued: 0, localLive: false } : peek();
+  const devices = platform === 'macos' ? { count: 0, max: 0, queued: 0, localLive: false } : await peek();
   if (devices.localLive && placement === 'remote-only')
     throw Object.assign(
       new Error(

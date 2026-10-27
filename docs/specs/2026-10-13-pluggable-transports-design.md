@@ -212,7 +212,10 @@ Stim home, so the socket's file modes are the boundary.
 
 - **Pairing a phone.** Desktop shows a QR code with a single-use pairing token
   (5 minutes) and the server key's fingerprint.
-- **Desktop.** Desktop does not pair. It connects to the local Unix socket.
+- **Desktop.** Desktop connects to its own Stim home's server over the local
+  Unix socket, without pairing. It pairs with another machine's server as a
+  phone does, with a per-pairing key in the Keychain, as
+  `docs/specs/2026-10-26-desktop-remote-servers-design.md` describes.
 - **Approving a machine.** The requesting machine generates the setup ticket:
   Stim Desktop's Add Machine flow, or `stim doctor --fix` on a machine without
   Desktop, which prints the ticket and the command to run on the worker. A

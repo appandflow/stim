@@ -1290,8 +1290,8 @@ describe('install and launch match their local counterparts', () => {
 });
 
 describe('the local device cap does not apply', () => {
-  test('checkDeviceCapacity never refuses', () => {
-    expect(remoteIosDeps(ctx()).checkDeviceCapacity()).toBeNull();
+  test('checkDeviceCapacity never refuses', async () => {
+    expect(await remoteIosDeps(ctx()).checkDeviceCapacity()).toBeNull();
   });
 });
 
@@ -2102,8 +2102,8 @@ describe('the android adapter', () => {
     expect(r.code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
   });
 
-  test('the local device cap does not apply to a remote emulator either', () => {
-    expect(remoteAndroidDeps(ctx()).checkCapacity()).toBeNull();
+  test('the local device cap does not apply to a remote emulator either', async () => {
+    expect(await remoteAndroidDeps(ctx()).checkCapacity()).toBeNull();
   });
 });
 

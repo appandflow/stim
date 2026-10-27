@@ -108,16 +108,23 @@ function tailscaleNote(tailscale: TailscaleState): string | null {
 
 function routeNote(route: ServeRoute, port: number): string | null {
   if (route.state === 'missing') {
-    return `No \`tailscale serve\` route reaches port ${port}, so phones cannot connect yet. Run this once to serve it on a tailnet-only port: \`${serveCommand(route.port, port)}\``;
+    return `No \`tailscale serve\` route reaches port ${port}, so clients connect to this machine's tailnet address directly. For a wss:// endpoint with a certificate, run this once to serve it on a tailnet-only port: \`${serveCommand(route.port, port)}\``;
   }
   if (route.state === 'unknown') {
-    return `Could not read \`tailscale serve status --json\` (${route.reason}); assuming stim-server is served on port ${route.port}.`;
+    return `Could not read \`tailscale serve status --json\` (${route.reason}), so clients connect to this machine's tailnet address directly.`;
   }
   if (route.state === 'funneled') {
     const ports = route.ports.join(', ');
     return `Tailscale Funnel is on for port ${ports}, which proxies to stim-server, so the server is reachable from the public internet. Remove that handler (see \`tailscale serve status\`), then serve stim-server on a tailnet-only port: \`${serveCommand(route.port, port)}\``;
   }
   return null;
+}
+
+function pairingEndpoint(ips: string[], dnsName: string, route: ServeRoute, port: number) {
+  const ip = ips.find((address) => !address.includes(':')) ?? ips[0];
+  if ((route.state === 'missing' || route.state === 'unknown') && ip)
+    return `ws://${ip.includes(':') ? `[${ip}]` : ip}:${port}`;
+  return tailnetEndpoint(dnsName, route.port);
 }
 
 function macName(tailscale: TailscaleState): string {
@@ -198,7 +205,8 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
     let note = tailscaleNote(state);
     if (state.state === 'running' && state.dnsName) {
       const route = await transport.serveRoute(port);
-      if (route.state !== 'funneled') console.log(`tailnet endpoint: ${tailnetEndpoint(state.dnsName, route.port)}`);
+      if (route.state !== 'funneled')
+        console.log(`tailnet endpoint: ${pairingEndpoint(state.ips, state.dnsName, route, port)}`);
       note = routeNote(route, port);
       if (route.state === 'funneled') note = `${note} Pairing is refused until then.`;
     }
@@ -274,14 +282,13 @@ async function pair(port: number, json: boolean, control: boolean): Promise<void
   if (tailscale.state === 'running' && tailscale.dnsName) {
     const route = await serveRoute(binary, process.env, port, tailscale.ips);
     if (route.state === 'funneled') fail(`refusing to pair. ${routeNote(route, port)}`);
-    endpoint = tailnetEndpoint(tailscale.dnsName, route.port);
+    endpoint = pairingEndpoint(tailscale.ips, tailscale.dnsName, route, port);
     note = routeNote(route, port);
   }
   const { token, expiresAt } = createPairingToken(Date.now(), capabilitiesFor(control));
   const fingerprint = keyFingerprint(serverIdentity().publicKey);
   const payload = { v: 2, name: macName(tailscale), endpoint, pairingToken: token, fingerprint };
-  if (json) return void console.log(JSON.stringify({ qr: payload, expiresAt }));
-  console.log(JSON.stringify(payload));
+  console.log(JSON.stringify(json ? { qr: payload, expiresAt } : payload));
   console.error(
     `The pairing token is single use and expires at ${expiresAt}. The device it pairs can ${control ? 'run actions' : 'only read'}.`,
   );

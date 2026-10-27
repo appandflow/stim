@@ -817,20 +817,18 @@ async function runIos(
       wireless = resolved.wireless === true;
     }
     if (checkCapacity && !hostedTarget) {
-      const capacity = d.checkDeviceCapacity({
+      const capacity = await d.checkDeviceCapacity({
         platform: PLATFORM,
         project: proj,
         max: limits.maxDevices,
         sims: () => simSnapshot.read().filter((sim) => sim.available),
       });
       if (capacity) {
-        if (capacity.code === 'STIM_AT_CAPACITY') {
-          d.recordCapacityRefusal(
-            { platform: PLATFORM, max: limits.maxDevices, workspace: workspaceId(root) },
-            d.now(),
-          );
+        const { max: fullMax, ...refusal } = capacity;
+        if (refusal.code === 'STIM_AT_CAPACITY') {
+          d.recordCapacityRefusal({ platform: PLATFORM, max: fullMax, workspace: workspaceId(root) }, d.now());
         }
-        return fail(capacity);
+        return fail(refusal);
       }
     }
 

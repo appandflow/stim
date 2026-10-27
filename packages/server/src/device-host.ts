@@ -31,6 +31,7 @@ import {
   deviceHostRoot,
   getConcurrencyLimits,
   getParkedMax,
+  getPlatformDeviceLimits,
   hostedIdleStopHours,
   isJsonObject,
   parseHostedPlatformDevice,
@@ -49,7 +50,7 @@ import {
   parseHostedOfferRequest,
   maxLoadPerCore,
   parseHostedNativeOffer,
-  parseHostedLocalDeviceCount,
+  parseHostedLocalPlatformCounts,
   hostedAppAttempt,
   hostedMacosLogsDir,
   hostedNativeLogsDir,
@@ -64,6 +65,7 @@ import {
   type HostedAppRecord,
   type HostedDeviceRequest,
   type HostedDeviceSession,
+  type HostedLocalPlatformCounts,
   type HostedDeviceOffer,
   type HostedIosDevice,
   type HostedAndroidDevice,
@@ -158,6 +160,57 @@ function occupiedBy(records: HostedDeviceSession[], platform: HostedDeviceSessio
 }
 
 const capacityUnknown = (why: string) => `Hosted device capacity is unknown: ${why}`;
+
+const HOSTED_PLATFORM_CAPS = {
+  ios: { setting: 'concurrency.maxIosDevices', label: 'iOS', noun: 'iOS simulator' },
+  android: { setting: 'concurrency.maxAndroidDevices', label: 'Android', noun: 'Android emulator' },
+  macos: { setting: 'concurrency.maxMacosApps', label: 'macOS', noun: 'macOS app' },
+} as const;
+
+const used = (limit: { hosted: number; local: number | null }) => limit.hosted + (limit.local ?? 0);
+
+/**
+ * What a hosted reservation on `platform` must fit: the platform's own cap `cap` and the shared `max`, where macOS apps
+ * fill a pool of their own against `max`. `local` counts the host's own simulators and emulators, absent where they are
+ * not counted. `full` names the first limit with no room, the platform's before the shared one.
+ */
+function hostedCapacity(
+  records: HostedDeviceSession[],
+  platform: HostedDeviceSession['platform'],
+  max: number,
+  cap: number,
+  local: HostedLocalPlatformCounts | undefined,
+): { running: number; available: number | null; full: string | null } {
+  const macos = platform === 'macos';
+  const localTotal = local ? local.ios + local.android : 0;
+  const pool = occupiedBy(records, platform);
+  const limits: { setting: string; label: string; noun: string; hosted: number; local: number | null; max: number }[] =
+    [];
+  if (cap > 0)
+    limits.push({
+      ...HOSTED_PLATFORM_CAPS[platform],
+      hosted: records.filter((record) => record.state !== 'stopped' && record.platform === platform).length,
+      local: macos ? null : (local?.[platform] ?? 0),
+      max: cap,
+    });
+  if (max > 0)
+    limits.push({
+      setting: 'concurrency.maxDevices',
+      label: macos ? 'macOS' : 'device',
+      noun: macos ? 'macOS app' : 'device',
+      hosted: pool,
+      local: macos ? null : localTotal,
+      max,
+    });
+  const full = limits.find((limit) => used(limit) >= limit.max);
+  return {
+    running: pool + (macos ? 0 : localTotal),
+    available: limits.length ? Math.max(0, Math.min(...limits.map((limit) => limit.max - used(limit)))) : null,
+    full: full
+      ? `Hosted ${full.label} capacity is full: ${full.local === null ? full.hosted : `${full.hosted} hosted + ${full.local} local`} of ${full.max} ${full.noun} reservations are occupied (${full.setting}), including unresolved sessions.`
+      : null,
+  };
+}
 
 /** macOS lets 127.0.0.1 bind beside a wildcard listener and takes its loopback traffic, so probe by connecting. */
 function loopbackAccepts(port: number): Promise<boolean> {
@@ -258,11 +311,13 @@ export class DeviceHost {
     if (!request) return refused('bad-request', 'offer needs a platform and valid optional selectors.');
     try {
       const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
+      const cap = getPlatformDeviceLimits({ env: this.options.env })[request.platform];
+      const counted = request.platform !== 'macos' && (max > 0 || cap > 0);
       const recordsBefore = readHostedSessions();
       const result = await this.probe(client, {
         mode: 'offer',
         ...request,
-        ...(max > 0 && request.platform !== 'macos' ? { exclude: hostedDeviceExclusions(recordsBefore) } : {}),
+        ...(counted ? { exclude: hostedDeviceExclusions(recordsBefore) } : {}),
       });
       if (this.closed || !this.options.allowed(client))
         return refused('forbidden', 'Current device-host approval is required.');
@@ -270,12 +325,16 @@ export class DeviceHost {
       const native = parseHostedNativeOffer(result.value);
       if (!native || native.platform !== request.platform) throw new Error('Invalid native hosted offer.');
       const records = readHostedSessions();
-      const hosted = occupiedBy(records, request.platform);
-      const local =
-        max > 0 && request.platform !== 'macos'
-          ? (native.resources.localDevices ?? { unknown: 'Host local device count is unavailable.' })
-          : undefined;
-      const running = hosted + (typeof local === 'number' ? local : 0);
+      const local = counted
+        ? (native.resources.localPlatforms ?? { unknown: 'Host local device count is unavailable.' })
+        : undefined;
+      const capacity = hostedCapacity(
+        records,
+        request.platform,
+        max,
+        cap,
+        local && 'unknown' in local ? undefined : local,
+      );
       let declined =
         this.draining ??
         (loadConfig()?.server?.devicesPaused === true
@@ -291,22 +350,20 @@ export class DeviceHost {
           declined = (error as Error).message;
         }
       }
-      if (local && typeof local !== 'number') declined = capacityUnknown(local.unknown);
-      else if (max > 0 && running >= max)
-        declined =
-          local === undefined
-            ? `Hosted macOS capacity is full: ${hosted} of ${max} macOS app reservations are occupied, including unresolved sessions.`
-            : `Hosted device capacity is full: ${hosted} hosted + ${local} local of ${max} device reservations are occupied, including unresolved sessions.`;
+      if (local && 'unknown' in local) declined = capacityUnknown(local.unknown);
+      else if (capacity.full) declined = capacity.full;
+      const resources = { ...native.resources, maxLoadPerCore: maxLoadPerCore() };
+      delete resources.localPlatforms;
       return {
         result: {
           ...native,
-          resources: { ...native.resources, maxLoadPerCore: maxLoadPerCore() },
+          resources,
           declined,
           capacity: {
-            running,
+            running: capacity.running,
             max,
-            available: local && typeof local !== 'number' ? 0 : max > 0 ? Math.max(0, max - running) : null,
-            ...(local !== undefined ? { local } : {}),
+            available: local && 'unknown' in local ? 0 : capacity.available,
+            ...(local !== undefined ? { local: 'unknown' in local ? local : local.ios + local.android } : {}),
           },
         },
       };
@@ -343,13 +400,14 @@ export class DeviceHost {
     let start: HostedDeviceSession | null = null;
     try {
       const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
+      const cap = getPlatformDeviceLimits({ env: this.options.env })[request.platform];
       const recordsBefore = readHostedSessions();
       const candidate = await this.parkedCandidate(client, request, recordsBefore);
       if (this.closed || !this.options.allowed(client))
         return refused('forbidden', 'Current device-host approval is required.');
-      let local: number | { unknown: string } = 0;
+      let local: HostedLocalPlatformCounts | { unknown: string } = { ios: 0, android: 0 };
       if (
-        max > 0 &&
+        (max > 0 || cap > 0) &&
         request.platform !== 'macos' &&
         !recordsBefore.some((record) => record.client === client && record.attempt === request.attempt)
       ) {
@@ -358,7 +416,7 @@ export class DeviceHost {
           return refused('forbidden', 'Current device-host approval is required.');
         local =
           probe.settled && !probe.notice
-            ? (parseHostedLocalDeviceCount(probe.value) ?? { unknown: 'Host local device count is unavailable.' })
+            ? (parseHostedLocalPlatformCounts(probe.value) ?? { unknown: 'Host local device count is unavailable.' })
             : { unknown: probe.notice ?? 'Host local device count worker did not settle.' };
       }
       const result = this.transaction((records) => {
@@ -380,14 +438,9 @@ export class DeviceHost {
         if (this.draining) throw new Error(`This Mac takes no new hosted sessions: ${this.draining}.`);
         if (loadConfig()?.server?.devicesPaused === true)
           throw new Error('Hosted sessions are paused; resume with stim settings set server.devicesPaused false.');
-        if (typeof local !== 'number') throw new Error(capacityUnknown(local.unknown));
-        const hosted = occupiedBy(records, request.platform);
-        if (max > 0 && hosted + local >= max)
-          throw new Error(
-            request.platform === 'macos'
-              ? `Hosted macOS capacity is full: ${hosted} of ${max} macOS app reservations are occupied, including unresolved sessions.`
-              : `Hosted device capacity is full: ${hosted} hosted + ${local} local of ${max} device reservations are occupied, including unresolved sessions.`,
-          );
+        if ('unknown' in local) throw new Error(capacityUnknown(local.unknown));
+        const { full } = hostedCapacity(records, request.platform, max, cap, local);
+        if (full) throw new Error(full);
         const adopted =
           candidate &&
           records.find(

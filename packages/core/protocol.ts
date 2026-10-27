@@ -63,6 +63,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
  * `hosted-metro-link` carries hosted Metro over `device-host.metro.link` connections the client opens, so the host never
  * connects to the client.
+ * `hosted-agent-link` is `device-host.agent.link`, which carries one HTTP connection to a session's agent route over a
+ * connection its client opened and authenticated, so agent control needs no tailnet node.
  * `hosted-metro-ports` is `device-host.metro.ports`, which names the listed ports that already accept loopback
  * connections on the host, apart from the requesting client's own dev-client bridges.
  * `native-xcode-build` accepts native Xcode provider requests with a separate source-transfer identity.
@@ -133,6 +135,7 @@ export const FEATURES = [
   'hosted-android-process',
   'hosted-metro-ports',
   'hosted-metro-link',
+  'hosted-agent-link',
   'server-update',
   'build-compat',
   'build-jdk',
@@ -245,6 +248,7 @@ export const METHODS = [
   'device-host.metro.ports',
   'device-host.metro.close',
   'device-host.metro.link',
+  'device-host.agent.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
@@ -301,6 +305,7 @@ export const DEVICE_HOST_METHODS = [
   'device-host.metro.ports',
   'device-host.metro.close',
   'device-host.metro.link',
+  'device-host.agent.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
@@ -1632,6 +1637,7 @@ export interface Methods {
   'device-host.metro.ports': { params: { ports: number[] }; result: { busy: number[] } };
   'device-host.metro.close': { params: { session: string }; result: { port: null } };
   'device-host.metro.link': { params: { session: string }; result: Record<string, never> };
+  'device-host.agent.link': { params: { session: string }; result: Record<string, never> };
   'device-host.frames.subscribe': {
     params: { session: string; fps?: number; maxEdge?: number; video?: string[] };
     result: FramesSubscribeResult;

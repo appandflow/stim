@@ -14,8 +14,8 @@ import {
   extractEmulatorFailure,
   androidPoolCandidates,
   androidPoolNoCandidatesRefusal,
-  memoizeEmulatorProbe,
-  listAdbDevices,
+  emulatorProbeSession,
+  listAdbDevicesAsync,
   physicalDeviceModel,
   probeEmulatorSerial,
   hostSystemImageArch,
@@ -448,7 +448,7 @@ export async function pooledAndroidDevice({
 }: {
   root: string;
   selectPool: typeof selectFromPool;
-  listDevices: typeof listAdbDevices;
+  listDevices: typeof listAdbDevicesAsync;
   isEmulatorDevice: typeof probeEmulatorSerial;
   deviceModel: typeof physicalDeviceModel;
   waitSeconds: number;
@@ -456,14 +456,20 @@ export async function pooledAndroidDevice({
   now: () => number;
   warn: (line: string) => void;
 }): Promise<{ device: OwnedDeviceRecord } | { code: string; message: string; remedy: string; extra: FailExtra }> {
-  const isEmulator = memoizeEmulatorProbe(isEmulatorDevice);
+  const probed = emulatorProbeSession(isEmulatorDevice);
   const pooled = await selectPool({
     root,
     platform: PLATFORM,
     idLabel: 'serial',
-    list: () => androidPoolCandidates(listDevices(), isEmulator).map((entry) => ({ id: entry.serial })),
-    noCandidates: () => {
-      const resolved = androidPoolNoCandidatesRefusal(listDevices(), isEmulator);
+    list: async () => {
+      const adb = await listDevices();
+      return (await probed((isEmulator) => androidPoolCandidates(adb, isEmulator))).map((entry) => ({
+        id: entry.serial,
+      }));
+    },
+    noCandidates: async () => {
+      const adb = await listDevices();
+      const resolved = await probed((isEmulator) => androidPoolNoCandidatesRefusal(adb, isEmulator));
       return { message: resolved.error as string, remedy: resolved.remedy as string };
     },
     waitSeconds,
@@ -478,7 +484,7 @@ export async function pooledAndroidDevice({
   return {
     device: {
       serial: pooled.candidate.id,
-      deviceName: deviceModel(pooled.candidate.id) ?? pooled.candidate.id,
+      deviceName: (await deviceModel(pooled.candidate.id)) ?? pooled.candidate.id,
       owned: false,
     },
   };
@@ -500,7 +506,7 @@ export function androidJobLayout(layout: AndroidLayout): { gradleRoot?: string; 
   return layout.custom ? { gradleRoot: layout.gradleRootRelative, module: layout.module } : {};
 }
 
-export function androidBuildOptions({
+export async function androidBuildOptions({
   release,
   physical,
   device,
@@ -522,13 +528,13 @@ export function androidBuildOptions({
   targetAbiOnly?: boolean;
   hostedAbi?: string | null;
   gradleProject?: string | null;
-}): {
+}): Promise<{
   abi: string | null;
   runOptions: AndroidRunOptions;
   remoteRunOptions: AndroidRunOptions | null;
-} {
+}> {
   let abi: string | null = targetAbiOnly ? hostedAbi : null;
-  if (targetAbiOnly && !release && physical && device.serial) abi = deviceAbi(device.serial);
+  if (targetAbiOnly && !release && physical && device.serial) abi = await deviceAbi(device.serial);
   if (targetAbiOnly && !release && !physical) abi = androidSystemImageAbi(device.systemImage);
 
   const runOptions: AndroidRunOptions = {};

@@ -92,7 +92,8 @@ afterEach(() => {
   delete process.env.STIM_HOME;
 });
 
-async function runStatus() {
+async function runStatus(platform: NodeJS.Platform = 'darwin') {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue(platform);
   const program = new Command();
   statusCommand(program);
   const logs: string[] = [];
@@ -205,6 +206,40 @@ test('status reports simctl as unreadable instead of warning that every sim is g
   expect(logs.some((l) => /ios:.*unknown/.test(l))).toBeTruthy();
 });
 
+test('status off macOS never runs simctl and reports no simctl problem', async () => {
+  const simctlCalls: string[] = [];
+  const record = (args: string[] = []) => {
+    if (args.includes('simctl')) simctlCalls.push(args.join(' '));
+  };
+  setExecutor({
+    runFile(_file, args = []) {
+      record(args);
+      return '';
+    },
+    async runFileAsync(_file, args = []) {
+      record(args);
+      return '';
+    },
+    runQuiet: () => null,
+    runFileQuiet: (_file, args = []) => {
+      record(args);
+      return null;
+    },
+    spawn(_file, args = []) {
+      record(args);
+      throw new Error('spawn should not be called from status');
+    },
+  });
+  saveConfig(makeConfig({ version: 2, projects: { '/proj/a': { label: 'agent-1', platforms: {} } } }));
+
+  const logs = await runStatus('linux');
+  const json = await runStatusJson('linux');
+
+  expect(simctlCalls).toEqual([]);
+  expect(logs.some((l) => /simctl could not be read/.test(l))).toBe(false);
+  expect(json.simctlAvailable).toBe(true);
+});
+
 test('plain status shows the load and a set cap even with no projects registered', async () => {
   saveConfig(makeConfig({ concurrency: { maxBuilds: 2 } }));
   const logs = await runStatus();
@@ -300,7 +335,8 @@ test.each(['ios', 'android'] as const)(
   },
 );
 
-async function runStatusJson() {
+async function runStatusJson(platform: NodeJS.Platform = 'darwin') {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue(platform);
   const program = new Command();
   statusCommand(program);
   const logs: string[] = [];
@@ -520,7 +556,7 @@ test('status reports a supervisor whose port answers as this project as healthy'
       }),
     );
 
-    const payload = await runStatusJson();
+    const payload = await runStatusJson(process.platform);
     const env = payload.environments[0];
     expect(env.supervisor).toEqual({
       pid: process.pid,
@@ -669,7 +705,7 @@ test('the printed lines name the supervisor and the error count', async () => {
     writeLogs(root, [{ ts: 3, src: 'metro', level: 'error', msg: 'boom' }]);
     saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
 
-    const logs = await runStatus();
+    const logs = await runStatus(process.platform);
     expect(logs.some((l) => new RegExp(`supervisor: pid ${process.pid}`).test(l))).toBeTruthy();
     expect(logs.some((l) => /1 error/.test(l))).toBeTruthy();
   } finally {
@@ -799,7 +835,7 @@ test('a running build reports what its build tool is doing only while it compile
     const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim });
     progress.step('compile');
     progress.output({ src: 'build', level: 'debug', msg: 'note: Target dependency graph (3 targets)' });
-    expect((await runStatusJson()).environments[0].build).toMatchObject({
+    expect((await runStatusJson(process.platform)).environments[0].build).toMatchObject({
       state: 'running',
       phase: 'compile',
       outcome: 'cold',
@@ -808,8 +844,8 @@ test('a running build reports what its build tool is doing only while it compile
     });
 
     progress.step('install');
-    expect((await runStatusJson()).environments[0].build).toMatchObject({ phase: 'install' });
-    expect((await runStatusJson()).environments[0].build).not.toHaveProperty('detail');
+    expect((await runStatusJson(process.platform)).environments[0].build).toMatchObject({ phase: 'install' });
+    expect((await runStatusJson(process.platform)).environments[0].build).not.toHaveProperty('detail');
     progress.clear();
   } finally {
     releaseClaim(claim);

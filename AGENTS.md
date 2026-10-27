@@ -72,12 +72,24 @@ or through the local stim-server protocol for stats, status and GC dry runs when
 read-capable session serves the same Stim home, and for device replay and a leased physical
 device's screen. Status and explicit refresh use only the matching server's views;
 connection errors retain the last good display without a CLI status fallback. It runs remaining Stim commands
-through the CLI, never by reading or writing `$STIM_HOME`. It connects to
-stim-server only over the server's Unix socket, normally `$STIM_HOME/server/local.sock`.
+through the CLI, never by reading or writing `$STIM_HOME`. It connects to its
+own Stim home's stim-server only over that server's Unix socket, normally
+`$STIM_HOME/server/local.sock`.
 When that path exceeds macOS's 103-byte limit, core and Desktop use
 `/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`. Its directory
 is mode 0700 and owned by the server's user; the socket serves only that user
-without pairing or Noise. Build and test it with `swift build` and
+without pairing or Noise. It may also pair, as a client, with another machine's
+stim-server, as the phone app does: it spends a `stim-server pair` token in
+protocol 2's Noise handshake, requires the payload's server-key fingerprint, and
+keeps its per-pairing client private key and pinned server key in the macOS
+Keychain, never under `$STIM_HOME`. The pinned key is the trust boundary;
+Desktop accepts only tailnet endpoints, and `stim-server pair` refuses a Funnel
+route. A remote server grants it only the capabilities recorded for its key:
+`read`, plus `control` for a `--control` pairing. `desktop.*`, `route.setup`,
+`machines.update.*` and `device-host.sessions*` stay Unix-socket-only. Desktop
+treats every remote message as untrusted input, never turns a remote path into a
+local file or process, and never stores another machine's workspace data on
+disk. Build and test it with `swift build` and
 `swift test` from that directory, both with `-Xswiftc -warnings-as-errors` in
 CI. Format and lint its Swift sources with `scripts/format.sh` and
 `scripts/format.sh --check`. Its design tokens and empty-state agent prompts are generated from
@@ -330,7 +342,8 @@ outside it moves to its own issue and pull request.
   are 32 random bytes; the server keeps only their derived `psk` and `lookup` in
   `server/secrets.json` and never writes them to setup journals, which are named
   by the derived `journal`. Clients of this machine's own user use the Unix
-  socket, never a TCP connection. The Desktop-only methods work only there; on a
+  socket, never a TCP connection. A Stim Desktop paired with another machine's
+  server is an ordinary paired device there. The Desktop-only methods work only there; on a
   server Desktop started, only for the connection that proved the private
   bootstrap key Desktop passed to its bundled server on a pipe; the key never appears in arguments, environment or
   output, and is never passed to an external executable.
@@ -442,7 +455,11 @@ outside it moves to its own issue and pull request.
   `device-host.metro.link` connection the session's own client opened and
   authenticated, and the client forwards it only to its verified loopback Metro.
   Stop and revocation close the bridge, idle links and active streams. Keep the
-  recorded worker port on reconnect; refuse an occupied port.
+  recorded worker port on reconnect; refuse an occupied port. Agent control of a
+  session on a `local:` machine rides `device-host.agent.link` connections its
+  own client opened and authenticated, which the client's supervisor feeds from
+  a loopback port; the host serves only that client's session and still checks
+  the session's agent token on every request.
   App transfer uses bounded digest chunks, including the manifest itself. The
   worker validates content, contained links, simulator platform, architecture
   and minimum OS before installing on the exact ledger-owned device. Hold the

@@ -21,6 +21,7 @@ import { resolveBudget } from '../budget.ts';
 import { stopIdleWorkspaces } from '../commands/gc/idle-workspaces.ts';
 import type { GcOutput } from '../commands/gc/results.ts';
 import { executeAction } from '../maintenance/act.ts';
+import * as measurements from '../maintenance/measure.ts';
 import { runMaintenance } from '../maintenance/run.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
@@ -62,6 +63,7 @@ beforeEach(() => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   sims = [];
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  vi.spyOn(measurements, 'sizeScanDeferred').mockReturnValue(false);
 });
 
 afterEach(() => {

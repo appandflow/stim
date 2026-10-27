@@ -14,6 +14,7 @@ enum SidebarItem: Hashable {
   case notifications
   case machine
   case builds
+  case pairedWorkspace(WorkspaceKey)
 
   var logName: String {
     switch self {
@@ -27,6 +28,8 @@ enum SidebarItem: Hashable {
     case .notifications: "notifications"
     case .machine: "machine"
     case .builds: "builds"
+    case .pairedWorkspace(let key):
+      if case .paired(let id) = key.owner { "paired workspace on \(id)" } else { "workspace \(key.path)" }
     }
   }
 }
@@ -415,7 +418,11 @@ struct RootView: View {
       navigate(previousSelection ?? .overview, .automatic("archived workspace no longer listed"))
     }
     .onChange(of: selection, initial: true) { old, item in
-      if case .environment(let path) = item { store.show(workspace: path) } else { store.show(workspace: nil) }
+      switch item {
+      case .environment(let path): store.show(workspace: WorkspaceKey(owner: .local, path: path))
+      case .pairedWorkspace(let key): store.show(workspace: key)
+      default: store.show(workspace: nil)
+      }
       let name = item?.logName ?? "none"
       let cause = navigation.takeCause()
       if old == item {
@@ -445,7 +452,7 @@ struct RootView: View {
         openRequests.selectedWorkspace = store.environments(in: project).first?.path
       case .environment(let path):
         openRequests.selectedWorkspace = path
-      case .worktree, .archived:
+      case .worktree, .archived, .pairedWorkspace:
         openRequests.selectedWorkspace = nil
       default: break
       }
@@ -822,6 +829,9 @@ struct RootView: View {
     case .worktree(let path): return payload.unprovisionedWorktrees?.contains { $0.path == path } == true
     case .archived(let id): return payload.archived?.contains { $0.id == id } == true
     case .project(let project): return store.projectList.contains { $0.project == project }
+    case .pairedWorkspace(let key):
+      guard case .paired(let id) = key.owner, store.paired[id]?.payload != nil else { return true }
+      return store.workspace(key) != nil
     default: return true
     }
   }
@@ -1060,6 +1070,8 @@ struct RootView: View {
     case .machine:
       MachineView(
         buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot, tips: tips)
+    case .pairedWorkspace(let key):
+      PairedWorkspaceDetail(store: store, key: key)
     case .discover:
       DiscoverView(
         replayUnavailableReason: discoverReplayUnavailableReason,

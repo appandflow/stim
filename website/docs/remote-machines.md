@@ -122,7 +122,7 @@ iOS simulator, use the machine name as the remote target:
 
 <StimTabs code={`stim ios --remote janics-mac-mini`} />
 
-The host's own owned devices count toward `concurrency.maxDevices`. Hosted macOS app sessions count against it separately from simulators and emulators.
+The host's own owned devices count toward `concurrency.maxDevices` and the platform's `concurrency.maxIosDevices` or `concurrency.maxAndroidDevices`. Hosted macOS app sessions count against `concurrency.maxDevices` separately from simulators and emulators, and against `concurrency.maxMacosApps`. A refusal names the full limit with its hosted and local counts.
 
 On the host, `stim-server devices` shows **Hosted here** rows with the client,
 platform, device, installed app, state and time; `--json` includes
@@ -838,6 +838,25 @@ as step 4 of the manual path below.
 `stim doctor` on the main machine rates a Linux machine for Android only, so a
 project with iOS too still reports it offloadable for Android builds.
 
+#### Serve the phone app from Linux
+
+A Linux machine that starts workspaces, such as a bot running `stim ios --remote <mac>`, can run `stim-server` as the owning server for them. The phone app pairs with that machine and sees its workspaces, its offloaded builds and the hosted simulators it started, which it reaches through the Linux machine's server and not through the Mac that hosts them. Stim Desktop does not pair with other machines' servers yet.
+
+1. Install the server beside `stim` and run it as a systemd user service, as in the manual path above:
+
+   ```bash
+   npm install --global --prefix ~/.local @stim-cli/server@<stim version>
+   stim-server service install
+   ```
+
+   `service status` finds the user manager without a login session by defaulting `XDG_RUNTIME_DIR` to `/run/user/<uid>`. Run `sudo loginctl enable-linger $USER` once so the service survives logout.
+
+2. Run `stim-server pair` on the Linux machine, over SSH if you like. Without a `tailscale serve` route it prints the server's direct tailnet address, `ws://<tailnet IP>:7787`, which the server already listens on, and says so on stderr. With `--serve` at install, or `sudo tailscale set --operator=$USER` and the `tailscale serve` command it prints, the endpoint is `wss://<name>.<tailnet>.ts.net:7443`.
+
+Pairing needs the phone to reach the machine's tailnet address, so a phone on another tailnet needs the machine shared to it.
+
+What does not run on Linux: Mac window capture, Xcode builds, the `stim-frames` helper and iOS devices. The server leaves the matching `features` out of its `hello` and does not try to build the helper.
+
 #### Emulators and memory
 
 Stim does not host emulators on a Linux worker. If you run one there yourself
@@ -928,8 +947,13 @@ set up with `scripts/linux-worker/setup.sh --no-tailscale` takes the same
 `server.lanAddresses` setting.
 
 Offloaded builds and hosted Debug and Release runs on a simulator or emulator
-work over the local network. Agent control of hosted apps needs a tailnet
-machine. `stim-server pair` puts the worker's local network
+work over the local network. Agent control of hosted iOS and Android Debug runs
+works there too: the remote config points agent-device at a loopback port of
+this workspace's Metro supervisor, which carries each request to the worker
+over its own authenticated connection, so it works while `stim start` runs.
+The worker needs a stim-server that advertises `hosted-agent-link`. Hosted
+Release runs and hosted macOS apps on a local network machine report agent
+control as `none` with the reason. `stim-server pair` puts the worker's local network
 endpoint in the phone pairing code when Tailscale is not running there and
 `server.lanAddresses` is set.
 
@@ -1238,7 +1262,7 @@ is ahead, it is allowed. It resolves the build preference from `--remote-build`,
 Automatic
 build offload resolves later, using the device's offered architecture.
 
-If none admits and this machine is at its `concurrency.maxDevices` cap (or runs are
+If none admits and this machine is at its `concurrency.maxDevices` or per-platform cap (or runs are
 queued ahead), the opt-in `remote.easFallback` setting runs the device on an EAS
 Simulator, exactly as `--remote eas` would. EAS Simulator is billed, so the
 setting defaults to `false`; set it per machine or per project:

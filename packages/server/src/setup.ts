@@ -3,7 +3,13 @@ import { basename, dirname, join } from 'node:path';
 import { createInterface, type Interface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { claimRemoveCommand, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { isJsonObject, stimBuildDigest, type SetupCapability, type SetupJournal } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  stimBuildDigest,
+  tailscaleEnv,
+  type SetupCapability,
+  type SetupJournal,
+} from '@stim-cli/core/state';
 import type { BuildToolchain, ServeRoute } from '@stim-cli/core/protocol';
 import { BuildHost } from './build.ts';
 import { discoverToolchain } from '@stim-cli/core/toolchain';
@@ -434,7 +440,7 @@ export function defaultSetupDeps(): SetupDeps {
     prepareRoute,
     recordRoute: recordServiceRoute,
     async createRoute(args) {
-      const result = await run(binary() ?? 'tailscale', args);
+      const result = await run(binary() ?? 'tailscale', args, tailscaleEnv(process.env));
       if (!result.ok) throw new ServiceError(result.stderr.trim());
     },
     records: () => [...readBuildClients(), ...readDeviceHostClients()],

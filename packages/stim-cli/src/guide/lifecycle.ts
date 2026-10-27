@@ -569,6 +569,11 @@ The host verifies the policy digest and android-instance backend before granting
 control. An older host, missing binary or unsupported policy reports driver: none;
 the host's notice explains unavailable control.
 
+On a local: machine, daemonBaseUrl is http://127.0.0.1:<port> of this
+workspace's Metro supervisor, which carries each request to the host over its
+own authenticated device-host connection (host feature hosted-agent-link). It
+works for Debug runs while stim start runs; Release runs report driver: none.
+
 android.host.agent in stim status --json provides driver, remoteConfig and
 command, never its token. Each slot has a separate 0600 file under the workspace
 state directory at hosted-android/<slot>/agent-device-remote.json. Use that file:
@@ -661,7 +666,7 @@ The same setup serves macos --remote and macos.remote. Approval is separate from
 and phone control. Set ios.remote to the machine name for a default (machine scope for every app on this machine);
 no flag or setting runs here. eas and proxy keep their remote backend meanings.
 --remote auto (or ios.remote = auto / android.remote = auto) stays here when
-there is a free concurrency.maxDevices slot (0 means unlimited), no device
+there is a free concurrency.maxDevices slot and platform cap slot (0 means unlimited), no device
 waiter ahead, normal host memory pressure, no budget shortfall,
 and 5-minute load per core below server.maxLoadPerCore. Without remote.machines,
 auto and remote are local and remote-only refuses with STIM_HOSTING_REFUSED. An unknown local device count also stays local; boot admission
@@ -696,7 +701,7 @@ when it names a machine, then remote.machines order, so the first listed host wi
 room fills before the next gets a run. Load and free memory do not rank hosts.
 Automatic build offload resolves later, after the device architecture is known.
 
-When no host admits and this machine is at its concurrency.maxDevices cap (or runs
+When no host admits and this machine is at its concurrency.maxDevices or per-platform cap (or runs
 are queued ahead), remote.easFallback (default false; EAS Simulator is billed)
 runs the device on an EAS Simulator exactly as --remote eas would: the build
 stays here, nothing starts an EAS cloud build, stop ends the session, and
@@ -737,7 +742,8 @@ refuses. The host boots headless and ignores this Mac's iosSimulatorApp setting.
 the offered simulator architecture, not this machine's. --remote-build remains
 independent and selects a compatible build worker for a Debug cache miss.
 
-The host's own owned devices count toward concurrency.maxDevices.
+The host's own owned devices count toward concurrency.maxDevices and its per-platform cap
+(concurrency.maxIosDevices, concurrency.maxAndroidDevices; hosted macOS apps use concurrency.maxMacosApps).
 
 The host's person sees Hosted here rows in stim-server devices; --json adds
 hostedSessions beside devices. Rows show client, platform, device, installed
@@ -867,6 +873,11 @@ restart alone does not prove they stopped. A daemon exit restarts only that
 session and rotates its grant; rerun stim ios to reattach and refresh the config.
 An unresolved proxy or daemon retains its claim and blocks reinstall and native
 teardown; clear a named claim only after proving its owner and child are gone.
+
+On a local: machine, daemonBaseUrl is http://127.0.0.1:<port> of this
+workspace's Metro supervisor, which carries each request to the host over its
+own authenticated device-host connection (host feature hosted-agent-link). It
+works for Debug runs while stim start runs; Release runs report driver: none.
 
 The client writes a separate 0600 remote-config file for each workspace slot.
 Status prints agent: <command>; ios.host.agent in --json carries driver,
@@ -2084,7 +2095,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             wait also records a capacityWaits event in stats,
                             with reclaimed when one or more devices were
                             shut down for it.
-                            While at the cap, only the queue head reclaims:
+                            While at the cap, only the queue head reclaims (or a run behind a
+                            head held back only by its own platform's cap):
                             it shuts down the longest-idle eligible owned
                             device in another workspace of this Stim home,
                             one per attempt, at most once every 15 seconds,
@@ -2103,6 +2115,35 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             wait or boot claims refuse with the claim code
                             and the command to remove that exact claim.
                             See \`guide errors STIM_AT_CAPACITY\`.
+
+    concurrency.maxIosDevices      booted owned iOS simulators at once.
+    concurrency.maxAndroidDevices  booted owned Android emulators at once.
+    concurrency.maxMacosApps       hosted macOS apps on a worker at once.
+                            Each is 0 (no per-platform limit) unless set, and
+                            each only tightens: a run must fit its platform's
+                            cap AND concurrency.maxDevices. maxDevices counts
+                            simulators and emulators together, local and
+                            hosted, and counts hosted macOS apps as a pool of
+                            their own, so a macOS app is bounded by
+                            maxMacosApps and by maxDevices, and never adds to
+                            the simulator and emulator total. Leaving the new
+                            settings unset changes no existing cap.
+                            Local admission applies the iOS and Android caps
+                            with the same queue and reclaim as maxDevices; a
+                            waiter held back only by its own platform's cap
+                            does not hold up a waiter of another platform.
+                            Reclaim for a full platform cap only shuts down
+                            devices of that platform. Hosted admission on a
+                            worker (offer and reserve) applies all three,
+                            counting the worker's local devices too.
+                            Local \`stim macos\` runs are not counted, so
+                            maxMacosApps limits hosted macOS apps only.
+                            A refusal names the full limit, its count and its
+                            cap, for example "1 Stim iOS simulator(s) are
+                            already booted and concurrency.maxIosDevices is 1".
+                            Status JSON capacity.platformDevices reports
+                            { max, inUse } for each of ios and android whose
+                            cap is set.
 
   \`stim doctor\` prints one note echoing the caps and the current active count,
   but ONLY when a cap is set. \`stim gc\` reports stale build slots the way it

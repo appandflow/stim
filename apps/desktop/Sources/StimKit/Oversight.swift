@@ -680,7 +680,7 @@ public enum Oversight {
     if entry.stuckAt != nil { return }
     let due = quietSince + Double(run.prefs.stuckMinutes) * 60_000
     if now < due { return run.wake(due) }
-    let minutes = Int(((now - quietSince) / 60_000).rounded(.down))
+    let minutes = Format.int(((now - quietSince) / 60_000).rounded(.down))
     let after = green && newest != nil ? " after a green \(platformName(newest!.platform ?? "android")) build" : ""
     let body = "No agent activity for \(minutes) min\(after); \(device.model) still up"
     if run.lasting(look.notify(.stuck, body, deviceTarget(env, device), nil)) { entry.stuckAt = quietSince }

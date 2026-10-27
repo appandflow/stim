@@ -273,6 +273,28 @@ booting its device. Status adds `build.waitingFor`, and
 stats records `capacityWaits` and positive placement `deviceSlotWaitMs`.
 `0` or an unset cap means unlimited devices.
 
+`concurrency.maxIosDevices`, `concurrency.maxAndroidDevices` and
+`concurrency.maxMacosApps` cap one platform each: booted owned iOS simulators,
+booted owned Android emulators and hosted macOS apps on a worker. They default
+to `0`, no per-platform limit, and they only tighten. A run must fit its
+platform's cap and `concurrency.maxDevices`: `maxDevices` counts simulators and
+emulators together, local and hosted, and counts hosted macOS apps as a pool of
+their own, so a macOS app is bounded by both `maxMacosApps` and `maxDevices`
+and never adds to the simulator and emulator total. With the new settings unset,
+nothing changes for an existing `maxDevices`. Local admission queues and
+reclaims for a platform cap the way it does for `maxDevices`, and a run held
+back only by its own platform's cap does not hold up a run on the other
+platform; reclaim for a full platform cap shuts down only devices of that
+platform. A stim-server worker applies all three caps when it offers and
+reserves a hosted session, counting its own local simulators and emulators.
+Local `stim macos` runs are not counted, so `maxMacosApps` limits hosted macOS
+apps only. A refusal names the full limit with its count and cap, such as
+`1 Stim iOS simulator(s) are already booted and concurrency.maxIosDevices is 1`.
+
+```bash
+stim settings set concurrency.maxIosDevices 2 --scope machine
+```
+
 With a cap set, queue reclaim uses the waiting workspace's effective setting:
 `devices.reclaimIdleMinutes` defaults to 10. The queue head shuts down the
 longest-idle eligible owned device in another workspace of this Stim home,

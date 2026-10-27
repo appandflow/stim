@@ -356,8 +356,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         lifecycle hosted-android.
   remote.easFallback    true lets "auto" or "remote" (ios.remote, android.remote
                         or --remote) run the simulator or emulator on a
-                        billed EAS Simulator when this machine is at its
-                        concurrency.maxDevices cap (or has runs queued) and no
+                        billed EAS Simulator when this machine is at a
+                        device cap (concurrency.maxDevices or a per-platform
+                        cap, or has runs queued) and no
                         remote.machines entry takes the run, instead of waiting
                         or refusing with STIM_AT_CAPACITY. Default false. A
                         busy machine with a free slot never uses it. Stim checks
@@ -591,11 +592,19 @@ machine's. They live under a top-level \`concurrency\` key in
     "concurrency": { "maxBuilds": 2, "maxDevices": 3 }
   }
 
-The keys are concurrency.maxBuilds and concurrency.maxDevices.
+The keys are concurrency.maxBuilds and concurrency.maxDevices, plus the
+per-platform device caps concurrency.maxIosDevices,
+concurrency.maxAndroidDevices and concurrency.maxMacosApps. A boot must fit
+its platform cap and concurrency.maxDevices; the per-platform caps only
+tighten (see \`guide lifecycle concurrency\`).
 
 or via the environment, which overrides the file:
 
   STIM_MAX_BUILDS=2 STIM_MAX_DEVICES=3 stim ios
+
+  concurrency.maxIosDevices      STIM_MAX_IOS_DEVICES
+  concurrency.maxAndroidDevices  STIM_MAX_ANDROID_DEVICES
+  concurrency.maxMacosApps       STIM_MAX_MACOS_APPS
 
 Unset, 0, or any non-positive value means NO enforcement -- the default, where
 Stim limits nothing. See \`guide lifecycle concurrency\` for what each cap
@@ -836,7 +845,10 @@ ticket, which is a credential: whoever spends it first, after setup stores it,
 gets the approval, and on a local network that takes only the ticket and a
 route to the worker, not tailnet membership. Agents show it only to the user.
 Offloaded builds and hosted Debug and
-Release runs work there; agent control of hosted apps needs a tailnet machine.
+Release runs work there. Agent control of hosted iOS and Android Debug runs
+goes through a loopback port of this workspace's Metro supervisor, which
+carries it over its own authenticated connection; Release runs and hosted macOS
+apps there report agent control as none.
 \`stim-server pair\` puts \`ws://<address>:<port>\` in the phone pairing code
 when Tailscale is not running and \`server.lanAddresses\` is set.
 

@@ -38,6 +38,7 @@
         { "platform": "ios", "label": "stim-old-checkout (iPhone 17 27.0)", "workspace": null, "slot": null }
       ]
     },
+    "platformDevices": { "ios": { "max": 4, "inUse": 4 }, "android": { "max": 3, "inUse": 2 } },
     "builds": {
       "max": 2,
       "inUse": 2,

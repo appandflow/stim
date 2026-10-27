@@ -5,6 +5,7 @@ import SwiftUI
 
 struct DeviceViewerToolbar: View {
   var device: DeviceRef
+  var owner: ServerOwner = .local
   var env: Workspace
   var usage: WorkspaceUsage?
   @Binding var takenOver: Bool
@@ -18,6 +19,7 @@ struct DeviceViewerToolbar: View {
   @State private var confirmingStop = false
   @EnvironmentObject private var actions: ActionCenter
   @ObservedObject private var server = ServerSession.shared
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
 
   var body: some View {
     HStack(spacing: Space.md) {
@@ -93,7 +95,8 @@ struct DeviceViewerToolbar: View {
     HStack(spacing: Space.sm) {
       TimelineView(.periodic(from: .now, by: 30)) { context in
         if let badge = ActivityBadge(
-          device.activity, screenChangedAt: device.activityKey.flatMap(ScreenActivity.shared.lastChange),
+          device.activity,
+          screenChangedAt: OwnedDevice(owner: owner, ref: device).activityKey.flatMap(ScreenActivity.shared.lastChange),
           now: context.date)
         {
           activityPill(badge)
@@ -187,9 +190,9 @@ struct DeviceViewerToolbar: View {
   }
 
   @ViewBuilder private var takeOverButton: some View {
-    if device.isInteractive,
+    if OwnedDevice(owner: owner, ref: device).isInteractive,
       (!device.isPhysical && device.hostedMachine == nil) || takenOver
-        || PhysicalScreen(device: device, link: server.link, now: Date()).canControl
+        || PhysicalScreen(device: device, link: ServerSession.link(for: owner), now: Date()).canControl
     {
       if takenOver {
         Button("Release Control", systemImage: "hand.raised.fill") { takenOver = false }

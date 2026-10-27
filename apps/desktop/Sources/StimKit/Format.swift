@@ -22,6 +22,23 @@ public enum Format {
     ByteCountFormatter.string(fromByteCount: bytes, countStyle: .memory)
   }
 
+  /// `value` truncated to an Int, with NaN as zero and a value past Int's range as its bound, so a number another
+  /// machine reports cannot trap.
+  public static func int(_ value: Double) -> Int {
+    if value.isNaN { return 0 }
+    if value >= 0x1p63 { return .max }
+    if value <= -0x1p63 { return .min }
+    return Int(value)
+  }
+
+  /// The sum of counts another machine reports, at `Int.max` instead of trapping when it overflows.
+  public static func sum(_ values: some Sequence<Int>) -> Int {
+    values.reduce(0) { total, value in
+      let (sum, overflow) = total.addingReportingOverflow(value)
+      return overflow ? (value < 0 ? .min : .max) : sum
+    }
+  }
+
   /// `value` with one decimal, a tie rounded up the way the phone app's `toFixed(1)` does.
   public static func tenths(_ value: Double) -> String {
     let scaled = value * 10
@@ -31,7 +48,7 @@ public enum Format {
 
   /// "512 MB" or "1.5 GB" from a megabyte count.
   public static func memoryMb(_ mb: Double) -> String {
-    mb >= 1024 ? "\(tenths(mb / 1024)) GB" : "\(Int(mb.rounded())) MB"
+    mb >= 1024 ? "\(tenths(mb / 1024)) GB" : "\(int(mb.rounded())) MB"
   }
 
   /// "1.5 GB" from a megabyte count, always in gigabytes with one decimal.
@@ -52,14 +69,14 @@ public enum Format {
   public static func freeSpace(_ bytes: Double) -> String {
     if bytes >= 1e12 { return "\(tenths(bytes / 1e12)) TB" }
     let gb = bytes / 1e9
-    return gb >= 100 ? "\(Int(gb.rounded())) GB" : "\(tenths(gb)) GB"
+    return gb >= 100 ? "\(int(gb.rounded())) GB" : "\(tenths(gb)) GB"
   }
 
   // MARK: Durations and ages
 
   /// "12m", "1h05m", "3d" for a duration, "<1m" under a minute. Truncates; negative reads as zero.
   public static func duration(_ seconds: TimeInterval) -> String {
-    let minutes = Int(max(0, seconds) / 60)
+    let minutes = int(max(0, seconds) / 60)
     if minutes < 1 { return "<1m" }
     if minutes < 60 { return "\(minutes)m" }
     let hours = minutes / 60
@@ -70,12 +87,12 @@ public enum Format {
   /// "12s" under a minute, else `duration`.
   public static func since(_ seconds: TimeInterval) -> String {
     let clamped = max(0, seconds)
-    return clamped < 60 ? "\(Int(clamped))s" : duration(clamped)
+    return clamped < 60 ? "\(int(clamped))s" : duration(clamped)
   }
 
   /// "40s", "14m", "2h", "3d": a gap or an age in its largest unit, rounded, with hours up to 47.
   public static func roundedDuration(ms: Double) -> String {
-    let seconds = max(0, Int((ms / 1000).rounded()))
+    let seconds = max(0, int((ms / 1000).rounded()))
     if seconds < 60 { return "\(seconds)s" }
     let minutes = Int((Double(seconds) / 60).rounded())
     if minutes < 60 { return "\(minutes)m" }
@@ -85,7 +102,7 @@ public enum Format {
 
   /// "2:38" for a build time.
   public static func clock(ms: Double) -> String {
-    let seconds = max(0, Int(ms / 1000))
+    let seconds = max(0, int(ms / 1000))
     return "\(seconds / 60):\(String(format: "%02d", seconds % 60))"
   }
 
@@ -98,14 +115,14 @@ public enum Format {
 
   /// "3m 5s", or "1h 2m" from an hour up, for how long a run took.
   public static func elapsed(ms: Double) -> String {
-    let s = Int(ms / 1000)
+    let s = int(ms / 1000)
     if s >= 3600 { return "\(s / 3600)h \((s % 3600) / 60)m" }
     return "\(s / 60)m \(s % 60)s"
   }
 
   /// "just now", "5m ago", "3h ago" for how long ago something happened.
   public static func age(_ seconds: TimeInterval) -> String {
-    let minutes = Int(seconds / 60)
+    let minutes = int(seconds / 60)
     if minutes < 1 { return "just now" }
     if minutes < 60 { return "\(minutes)m ago" }
     return "\(minutes / 60)h ago"

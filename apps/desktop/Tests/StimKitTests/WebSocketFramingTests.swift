@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Testing
 
 @testable import StimKit
@@ -109,5 +110,94 @@ struct WebSocketFramingTests {
           .utf8))
     #expect(hello.isServer(onPort: 7787))
     #expect(!hello.isServer(onPort: 17911))
+  }
+}
+
+/// A WebSocket server on loopback that completes the upgrade, then either answers every frame with a pong or stays
+/// silent, as a peer behind a dropped route does.
+@MainActor private final class PingPeer {
+  private let listener: NWListener
+  private var connections: [NWConnection] = []
+  private let answers: Bool
+
+  init(answers: Bool) throws {
+    self.answers = answers
+    listener = try NWListener(using: .tcp, on: .any)
+    listener.newConnectionHandler = { [weak self] connection in
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        self.connections.append(connection)
+        connection.start(queue: .main)
+        self.read(connection, head: Data())
+      }
+    }
+    listener.start(queue: .main)
+  }
+
+  func port() async -> UInt16? {
+    for _ in 0..<200 {
+      if let port = listener.port?.rawValue, port != 0 { return port }
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    return nil
+  }
+
+  func stop() {
+    listener.cancel()
+    for connection in connections { connection.cancel() }
+  }
+
+  private func read(_ connection: NWConnection, head: Data?) {
+    connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, done, error in
+      MainActor.assumeIsolated {
+        guard let self, let data, error == nil, !done else { return }
+        guard var head else {
+          if self.answers { connection.send(content: Data([0x8A, 0x00]), completion: .idempotent) }
+          return self.read(connection, head: nil)
+        }
+        head.append(data)
+        let text = String(decoding: head, as: UTF8.self)
+        guard text.contains("\r\n\r\n") else { return self.read(connection, head: head) }
+        let key =
+          text.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("sec-websocket-key:") }
+          .map { $0.dropFirst("sec-websocket-key:".count).trimmingCharacters(in: .whitespaces) } ?? ""
+        let answer =
+          "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+          + "Sec-WebSocket-Accept: \(WebSocketFraming.accept(for: key))\r\n\r\n"
+        connection.send(content: Data(answer.utf8), completion: .idempotent)
+        self.read(connection, head: nil)
+      }
+    }
+  }
+}
+
+@MainActor struct WebSocketKeepaliveTests {
+  private func connect(to peer: PingPeer, events: @escaping @MainActor (WebSocketStream.Event) -> Void) async throws
+    -> WebSocketStream
+  {
+    let port = try #require(await peer.port())
+    return WebSocketStream(
+      to: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!), using: .tcp, host: "127.0.0.1",
+      path: "/", maximumMessageSize: 1024, keepalive: 0.1, onEvent: events)
+  }
+
+  @Test func aPeerThatStopsAnsweringEndsTheConnection() async throws {
+    let peer = try PingPeer(answers: false)
+    defer { peer.stop() }
+    var closed: String?
+    let stream = try await connect(to: peer) { if case .closed(let description, _, _) = $0 { closed = description } }
+    defer { stream.close() }
+    for _ in 0..<200 where closed == nil { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(closed == "The machine stopped answering.")
+  }
+
+  @Test func aPeerThatAnswersPingsStaysConnected() async throws {
+    let peer = try PingPeer(answers: true)
+    defer { peer.stop() }
+    var closed: String?
+    let stream = try await connect(to: peer) { if case .closed(let description, _, _) = $0 { closed = description } }
+    defer { stream.close() }
+    try await Task.sleep(for: .milliseconds(800))
+    #expect(closed == nil)
   }
 }

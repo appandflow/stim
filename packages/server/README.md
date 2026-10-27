@@ -39,7 +39,8 @@ unless it serves phones.
 serving command: see [Run as a service](#run-as-a-service). When serving, a bare
 `--env KEY` takes the value from the server's own environment.
 
-`pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
+`pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`; with or
+without `--json` the single-use note and the route note go to stderr, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
 `from` (where it paired from, as a label only), `keyFingerprint`, `pairedAt`,
 `lastSeenAt` (refreshed by a hello at most once a minute) and `capabilities`, followed by the [build clients](#build-access)
@@ -494,8 +495,11 @@ Funnel makes every handler on that port reachable from the public internet.
 
 `stim-server` reads `tailscale serve status --json` at start and on every
 `pair`. It uses the HTTPS port whose `/` handler proxies to its loopback port,
-preferring 7443. Without such a route, it assumes 7443 and prints the command
-above, or the next free port when 7443 is taken. It never suggests a Funnel
+preferring 7443. Without such a route, or when it cannot read the serve status, `pair` and the startup message give the
+server's direct tailnet address, `ws://<tailnet IP>:<port>`. With no route it also prints the
+command above (7443, or the next free port when 7443 is taken) for a `wss://`
+endpoint. Clients accept the direct address on a tailnet because the Noise
+session encrypts it and pins the server key. It never suggests a Funnel
 port. Any handler, at any path, or TCP forward that reaches the server on a
 Funnel port makes it public, and `pair` refuses.
 
@@ -791,7 +795,12 @@ stopped, including unresolved sessions, plus the host's own booted `stim-*`
 devices in `capacity.local`. A session's simulator counts once, whether or not
 its record names the device yet. A macOS offer counts only macOS app
 reservations against `max` and reports no `local`. `max` is
-`concurrency.maxDevices`; zero means uncapped and `available` is then `null`.
+`concurrency.maxDevices`; zero means that cap is off. `available` is the room
+left under the tightest limit that applies to the offer's platform:
+`concurrency.maxDevices` and the platform's `concurrency.maxIosDevices`,
+`concurrency.maxAndroidDevices` or `concurrency.maxMacosApps`, a reservation
+having to fit both. It is `null` when none is set. The decline reason names the
+full limit with its hosted and local counts.
 A full pool, an uncountable host inventory and memory pressure each decline
 with a different reason. Android offers also decline when all supported
 console ports are already recorded as occupied. macOS offers decline when all
@@ -838,6 +847,22 @@ the credential; the node check only stops a machine that took over the host's
 MagicDNS name from replaying it, and a request whose node no transport identifies
 is refused. Browser requests and
 other sessions' tokens are refused with 403, an unknown or stopped session with 404.
+
+A client on a `local:` machine has no tailnet node, so its agent requests ride
+connections it opened itself. On an approved `device-host` connection it calls
+`device-host.agent.link` with `{session}`; the server answers `{}` only when that
+session's agent grant belongs to the authenticated client key, and refuses any
+other session with `unknown-session` and a second link on the same connection
+with `bad-request`. The connection then carries one HTTP connection as binary
+frames, with the same backpressure and close codes as a Metro link. The server
+answers it with the agent route above, where the authenticated key replaces the
+node check: each request must name the linked session, carry its token and come
+from a client that still holds `device-host`. The client's Metro supervisor
+listens for these on a loopback port per hosted session and names that port in
+the remote config, and holds at most 8 connections there. A session holds at
+most 16 agent links; a new one closes the oldest. A link that carries no bytes
+for 5 minutes between requests is closed, and stopping the session closes all of its links. The
+feature `hosted-agent-link` advertises it.
 
 The `agent-device` adapter runs the binary that `STIM_AGENT_DEVICE_BIN` names
 in `stim-server`'s environment, or else the first of
@@ -905,7 +930,7 @@ need operator investigation, never a replacement inferred from a simulator name.
 Revoking this client's approval stops its sessions without granting access to
 the worker's other devices.
 
-`concurrency.maxDevices` bounds hosted reservations atomically, including
+`concurrency.maxDevices` and the per-platform caps bound hosted reservations atomically, including
 unresolved sessions. Ordinary local producers do not join that reservation
 transaction, so this is not a machine-wide hard capacity guarantee. Unknown
 inventory refuses native creation. Memory pressure is decided once: when the
@@ -983,8 +1008,11 @@ host when its delivery does not report the requested arguments.
 An offer returns `{delivery, missing}`. Upload each missing digest with
 `device-host.app.chunk` and `{session, attempt, sha256, offset, data}`; `data` is
 base64 for at most 32 KiB of raw bytes. The reply names the next byte `offset`.
-Replay of the same bytes is safe after a lost reply. Re-offer to learn received
-offsets. Upload the manifest first, then re-offer for its missing file content.
+The server answers one connection's requests in arrival order and accepts a
+chunk only at the received length, so a client may keep chunks in flight if it
+sends each file's chunks in offset order. Replay of the same bytes is safe after
+a lost reply. Re-offer to learn received offsets.
+Upload the manifest first, then re-offer for its missing file content.
 The manifest is limited to 8 MiB and 20,000 entries, with at most 1 GiB per file,
 1 KiB per link, and 4 GiB of declared bundle content. An app attempt cannot
 change its identity, mode, arguments or manifest. Complete a receiving attempt or stop the
@@ -1071,7 +1099,7 @@ unresolved agent claims refuse replacement and deletion after restart too.
 ### Hosted macOS app sessions
 
 The same offer/reserve/attach/stop methods accept `platform: "macos"` without
-selectors. macOS reservations count toward `concurrency.maxDevices` among themselves, apart from simulators and emulators, and each takes
+selectors. macOS reservations count toward `concurrency.maxDevices` among themselves, apart from simulators and emulators, and toward `concurrency.maxMacosApps`, and each takes
 the lowest free `appSlot` from 1 through 64. Unresolved sessions retain their
 slot; only a confirmed stop frees it. The ready device describes the host's
 `architecture` (`arm64` or `x86_64`), `macosVersion` and `appSlot`. No simulator,

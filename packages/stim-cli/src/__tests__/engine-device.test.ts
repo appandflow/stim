@@ -173,10 +173,15 @@ describe('ensureBooted: ios', () => {
   );
 
   test.each([false, true])('refuses a simulator that cannot spawn a process after boot (joined=%s)', async (joined) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    let probes = 0;
     setExecutor({
       run: () => simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]),
       runFile(file, args = []) {
         if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
+        if (args[3] !== 'launchctl') return '';
+        probes++;
+        vi.advanceTimersByTime(30000);
         throw Object.assign(new Error('simctl spawn timed out'), { code: 'ETIMEDOUT' });
       },
       runFileQuiet: () => null,
@@ -195,6 +200,56 @@ describe('ensureBooted: ios', () => {
     expect(result.reason).toMatch(/U1.*process-spawn readiness.*simctl spawn timed out/);
     expect(result.reason).toContain('Activity Monitor');
     expect(result.reason).not.toMatch(/out of memory|OOM/i);
+    expect(probes).toBe(6);
+  });
+
+  test('keeps probing a Booted simulator whose spawn calls time out, until one answers', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const booted = simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+    let probes = 0;
+    setExecutor({
+      run: () => simList([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]),
+      runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return booted;
+        if (args[3] !== 'launchctl') return '';
+        vi.advanceTimersByTime(30000);
+        if (++probes <= 3) throw Object.assign(new Error('simctl spawn timed out'), { code: 'ETIMEDOUT' });
+        return SPRINGBOARD_ROW;
+      },
+      runFileQuiet: () => null,
+    });
+    const result = await ensureBooted({
+      projectPath: tmpHome,
+      platform: 'ios',
+      device: { deviceUdid: 'U1', owned: true, booting: { udid: 'U1', done: Promise.resolve() } },
+    });
+    expect(result).toEqual({ ok: true, udid: 'U1' });
+    expect(probes).toBe(4);
+  });
+
+  test('stops probing at the first timeout once the simulator is no longer Booted', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const shutdown = simList([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]);
+    let probes = 0;
+    setExecutor({
+      run: () => simList([{ udid: 'U1', name: 'stim-app', state: 'Shutdown', isAvailable: true }]),
+      runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return shutdown;
+        if (args[3] !== 'launchctl') return '';
+        probes++;
+        vi.advanceTimersByTime(30000);
+        throw Object.assign(new Error('simctl spawn timed out'), { code: 'ETIMEDOUT' });
+      },
+      runFileQuiet: () => null,
+    });
+    const result = await ensureBooted({
+      projectPath: tmpHome,
+      platform: 'ios',
+      device: { deviceUdid: 'U1', owned: true, booting: { udid: 'U1', done: Promise.resolve() } },
+    });
+    expect(result.failed).toBe(true);
+    expect(result.reason).toMatch(/U1.*process-spawn readiness.*simctl spawn timed out/);
+    expect(probes).toBe(1);
   });
 
   describe('a Booted simulator whose SpringBoard is not running', () => {
@@ -1858,7 +1913,7 @@ describe('ensureOwnedDevice: ios', () => {
       const outcome = await enforceBudget({ root, note: () => {}, budget: limits, simSnapshot });
       expect(outcome.status).toBe('ok');
       expect(
-        checkDeviceCapacity({
+        await checkDeviceCapacity({
           platform: 'ios',
           project: getProject(root),
           max: 5,
@@ -2784,11 +2839,11 @@ describe('ensureOwnedDevice: android', () => {
       expect(repeated.avdName).toBe(first.avdName);
       expect(repeated.systemImage).toBe(first.systemImage);
       const options = (device: typeof first) =>
-        androidBuildOptions({ release: false, physical: false, device, variant: null, deviceAbi: () => null });
-      expect(options(first).abi).toBe(arch);
-      expect(options(repeated).abi).toBe(arch);
-      expect(buildCacheKey('android', 'same-fingerprint', options(repeated).runOptions)).toBe(
-        buildCacheKey('android', 'same-fingerprint', options(first).runOptions),
+        androidBuildOptions({ release: false, physical: false, device, variant: null, deviceAbi: async () => null });
+      expect((await options(first)).abi).toBe(arch);
+      expect((await options(repeated)).abi).toBe(arch);
+      expect(buildCacheKey('android', 'same-fingerprint', (await options(repeated)).runOptions)).toBe(
+        buildCacheKey('android', 'same-fingerprint', (await options(first)).runOptions),
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -3422,7 +3477,7 @@ describe('checkDeviceCapacity', () => {
     'a listing that %s lets the early check pass and stops the boot admission',
     async (_, sims) => {
       const sources = { sims, adb: makeAdbDevices(), config: makeConfig(), booting: [] };
-      expect(checkDeviceCapacity({ platform: 'ios', project: { platforms: {} }, max: 4, ...sources })).toBe(null);
+      expect(await checkDeviceCapacity({ platform: 'ios', project: { platforms: {} }, max: 4, ...sources })).toBe(null);
       await expect(
         withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', {
           root: tmpHome,
@@ -3446,7 +3501,9 @@ describe('checkDeviceCapacity', () => {
       config: makeConfig(),
       booting: [],
     };
-    expect(checkDeviceCapacity({ platform: 'android', project: { platforms: {} }, max: 1, ...sources })).toBe(null);
+    expect(await checkDeviceCapacity({ platform: 'android', project: { platforms: {} }, max: 1, ...sources })).toBe(
+      null,
+    );
     await expect(
       withDeviceBootAdmission({ platform: 'android', key: 'stim-a' }, async () => 'booted', {
         root: tmpHome,

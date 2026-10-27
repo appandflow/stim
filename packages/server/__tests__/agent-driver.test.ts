@@ -8,7 +8,7 @@ import {
   type HostedAgentApp,
   type HostedAgentDriver,
 } from '@stim-cli/agent-driver';
-import { HostedAgentHost } from '../src/agent-driver.ts';
+import { HostedAgentHost, type AgentPeer } from '../src/agent-driver.ts';
 
 const A = '11111111-1111-4111-8111-111111111111';
 const B = '22222222-2222-4222-8222-222222222222';
@@ -88,7 +88,7 @@ const app = (session: string, pid: number, client = `client-${session.slice(0, 1
   pid,
 });
 
-function host(driver: FakeDriver | null, approved: (client: string, node: string | null) => boolean = () => true) {
+function host(driver: FakeDriver | null, approved: (client: string, from: AgentPeer) => boolean = () => true) {
   return new HostedAgentHost({ resolve: () => driver, approved, restartDelayMs: 0 });
 }
 
@@ -98,9 +98,10 @@ async function call(
   agents: HostedAgentHost,
   session: string,
   token: string | null,
+  from: AgentPeer = { node: null },
 ): Promise<{ status: number; body: string }> {
   const server = createServer((request, response) => {
-    agents.forward(session, token, request, response);
+    agents.forward(session, token, request, response, from);
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -309,13 +310,27 @@ describe('hosted agent grants', () => {
     await agents.close();
   });
 
-  test('asks the approval about the node an agent request came from, for the session client', async () => {
+  test('asks the approval about where an agent request came from, for the session client', async () => {
     const driver = new FakeDriver();
-    const agents = host(driver, (client, node) => client === 'client-1' && node === 'nLaptop');
+    const agents = host(driver, (client, from) => client === 'client-1' && 'node' in from && from.node === 'nLaptop');
     const token = tokenOf((await agents.appRunning(app(A, 10, 'client-1'))).grant);
-    expect(agents.authorize(A, token, 'nLaptop')).toBe('ok');
-    expect(agents.authorize(A, token, 'nTakeover')).toBe('forbidden');
-    expect(agents.authorize(A, token, null)).toBe('forbidden');
+    expect(agents.authorize(A, token, { node: 'nLaptop' })).toBe('ok');
+    expect(agents.authorize(A, token, { node: 'nTakeover' })).toBe('forbidden');
+    expect(agents.authorize(A, token, { node: null })).toBe('forbidden');
+    expect(agents.holder(A)).toBe('client-1');
+    await agents.close();
+  });
+
+  test('name an unidentified requesting node in the refusal, and say nothing more than Forbidden for an identified one', async () => {
+    const driver = new FakeDriver();
+    const agents = host(driver, (client, from) => client === 'client-1' && 'node' in from && from.node === 'nLaptop');
+    const token = tokenOf((await agents.appRunning(app(A, 10, 'client-1'))).grant);
+    expect(await call(agents, A, token, { node: null })).toEqual({
+      status: 403,
+      body: 'Forbidden. The server could not identify the requesting tailnet node.\n',
+    });
+    expect(await call(agents, A, token, { node: 'nTakeover' })).toEqual({ status: 403, body: 'Forbidden.\n' });
+    expect(await call(agents, A, token, { node: 'nLaptop' })).toEqual({ status: 200, body: 'forwarded' });
     await agents.close();
   });
 
@@ -327,6 +342,10 @@ describe('hosted agent grants', () => {
     expect(agents.authorize(A, token)).toBe('ok');
     approved = false;
     expect(agents.authorize(A, token)).toBe('forbidden');
+    expect(await call(agents, A, token, { client: 'client-1' })).toEqual({
+      status: 403,
+      body: 'Forbidden. This machine no longer has device-host approval on the host.\n',
+    });
     await agents.close();
   });
 });

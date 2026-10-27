@@ -227,6 +227,11 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     var otherVersion = data
     otherVersion[0] = 2
     #expect(VideoPacket(otherVersion) == nil)
+    for time in [Double.nan, .infinity, 1e300] {
+      var bad = data
+      withUnsafeBytes(of: time.bitPattern.bigEndian) { bad.replaceSubrange(8..<16, with: $0) }
+      #expect(VideoPacket(bad) == nil, "\(time)")
+    }
   }
 
   @Test func decodesAReplayRangeStimServerAnswered() throws {

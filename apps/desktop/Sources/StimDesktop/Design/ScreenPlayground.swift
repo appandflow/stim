@@ -42,6 +42,7 @@
     case settings = "Settings"
     case addMachine = "Add remote machine"
     case pairPhone = "Pair a phone"
+    case pairedMachines = "Paired machines"
     case viewerPermissions = "Viewer permissions"
     case discovery = "Suggestions"
     case tokens = "Design tokens"
@@ -58,6 +59,7 @@
       case .builds: return PlaygroundScenario.allCases
       case .buildSheet: return [.ready, .loading, .error, .longText, .largeData]
       case .hostedIos, .hostedAndroid: return [.ready, .loading, .error, .empty]
+      case .pairedMachines: return [.ready, .error]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
       case .tokens, .addMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards: return [.ready]
@@ -280,6 +282,8 @@
         AddMachinePlayground()
       case .pairPhone:
         PairPhonePlayground()
+      case .pairedMachines:
+        PairedMachinesPlayground(scenario: scenario, now: fixtureDate)
       case .viewerPermissions:
         ViewerPermissionsPlayground()
       case .tokens:

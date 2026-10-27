@@ -42,7 +42,13 @@ import {
 } from '../workspace/worktree.ts';
 import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValidAsync } from '../dependency-state.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
-import { type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from '../workspace/config.ts';
+import {
+  type ConcurrencyLimits,
+  getConcurrencyLimits,
+  getPlatformDeviceLimits,
+  loadConfig,
+  type PlatformDeviceLimits,
+} from '../workspace/config.ts';
 import { ccacheInstallCommand } from '../engine/ccache.ts';
 import { ccacheEnabled } from '../integrations/react-native-build.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
@@ -724,16 +730,28 @@ export function checkEasAuth({
 export function checkConcurrency({
   maxBuilds = 0,
   maxDevices = 0,
+  platformMax = { ios: 0, android: 0, macos: 0 },
   liveDevices = 0,
   activeBuilds = 0,
 }: {
   maxBuilds?: number;
   maxDevices?: number;
+  platformMax?: PlatformDeviceLimits;
   liveDevices?: number | { unknown: string };
   activeBuilds?: number;
 } = {}): Finding | null {
-  if (!maxBuilds && !maxDevices) return null;
-  const caps = `maxBuilds ${maxBuilds || 'unlimited'}, maxDevices ${maxDevices || 'unlimited'}`;
+  const platformCaps = (
+    [
+      ['ios', 'maxIosDevices'],
+      ['android', 'maxAndroidDevices'],
+      ['macos', 'maxMacosApps'],
+    ] as const
+  ).filter(([platform]) => platformMax[platform] > 0);
+  if (!maxBuilds && !maxDevices && !platformCaps.length) return null;
+  const caps = [
+    `maxBuilds ${maxBuilds || 'unlimited'}, maxDevices ${maxDevices || 'unlimited'}`,
+    ...platformCaps.map(([platform, setting]) => `${setting} ${platformMax[platform]}`),
+  ].join(', ');
   const devices =
     typeof liveDevices === 'number'
       ? `${liveDevices} Stim device(s) are booted`
@@ -743,7 +761,10 @@ export function checkConcurrency({
     'Concurrency limits are set',
     `${caps}. Right now ${devices} and ${activeBuilds} build slot(s) are in use on this machine. ` +
       'At the device cap a new `stim ios`/`android` waits in FIFO order for 600s (--wait changes it; --no-wait refuses with STIM_AT_CAPACITY); ' +
-      'at the build cap a compile waits for a free slot.',
+      'at the build cap a compile waits for a free slot.' +
+      (platformCaps.length
+        ? ' A per-platform cap bounds its platform alone, and a boot must also fit maxDevices; maxMacosApps bounds hosted macOS apps only.'
+        : ''),
     null,
   );
 }
@@ -1096,10 +1117,17 @@ export async function runDoctor(
 
   const limits = typeof concurrency === 'function' ? concurrency() : concurrency;
   let concurrencyFinding: Finding | null = null;
-  if (limits && (limits.maxBuilds || limits.maxDevices)) {
+  const platformMax = getPlatformDeviceLimits();
+  if (
+    (limits && (limits.maxBuilds || limits.maxDevices)) ||
+    platformMax.ios ||
+    platformMax.android ||
+    platformMax.macos
+  ) {
     concurrencyFinding = checkConcurrency({
-      maxBuilds: limits.maxBuilds,
-      maxDevices: limits.maxDevices,
+      maxBuilds: limits?.maxBuilds,
+      maxDevices: limits?.maxDevices,
+      platformMax,
       liveDevices: liveDevices
         ? liveDevices()
         : options.operation

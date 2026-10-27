@@ -92,7 +92,7 @@ struct TutorialCompletionCard: View {
   }
 
   private static func time(_ ms: Double) -> String {
-    ms < 60_000 ? "\(Int(ms / 1000))s" : Format.elapsed(ms: ms)
+    ms < 60_000 ? "\(Format.int(ms / 1000))s" : Format.elapsed(ms: ms)
   }
 
   private var total: TimeInterval? {
