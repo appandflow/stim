@@ -233,10 +233,11 @@ Phase 1 accepts tailnet endpoints only:
 - `wss://` to a `*.ts.net` name;
 - `ws://` to a `100.64/10` or `fd7a:115c:a1e0::/48` literal.
 
-These are a subset of the phone's rule (`apps/mobile/src/lib/pairing.ts`); see
-Q3 for LAN endpoints. The host check is advisory. The security boundary is the
-pinned server key, because a client cannot tell a Funnel route from a tailnet
-one. `stim-server pair` already refuses a funneled route.
+These are a subset of the phone's rule (`apps/mobile/src/lib/pairing.ts`).
+LAN endpoints wait for phase 4 (decided 2026-10-26). The host check is
+advisory. The security boundary is the pinned server key, because a client
+cannot tell a Funnel route from a tailnet one. `stim-server pair` already
+refuses a funneled route.
 
 ### Revocation
 
@@ -604,7 +605,9 @@ only through their owning client's server.
    (including hosted devices through the relay) and recording.
 4. **Later.**
    - Pairing the phone from Desktop.
-   - LAN endpoints (Q3).
+   - LAN `ws://` endpoints, as the phone accepts them. Decided 2026-10-26:
+     they wait for this phase. Noise pins the key, so they are equally
+     authenticated, but the maintainer's case is all tailnet.
    - Self-forget: a method that removes the caller's own record.
    - A server-side pull of hosted logs.
    - Windows owning servers.
@@ -714,13 +717,6 @@ Only these block implementation.
 
    **Recommendation:** yes, done by hand by the phase 0 agent with the
    maintainer watching. Stop if `openclaw-gateway.service` changes state.
-
-3. **LAN endpoints for Desktop.** Should Desktop accept `ws://` private LAN
-   endpoints, as the phone does?
-
-   **Recommendation:** later, in phase 4. LAN endpoints are equally
-   authenticated, because Noise pins the key, but the maintainer's case is all
-   tailnet.
 
 ## Related
 
