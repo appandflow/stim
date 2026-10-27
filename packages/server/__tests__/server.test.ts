@@ -2057,7 +2057,7 @@ describe('hosted device sessions', () => {
     'keeps a hosted session while its client stays connected and stops it after the client is gone',
     async () => {
       const port = await start({
-        env: { STIM_MAINTENANCE_IDLE_STOP_HOURS: '0.0002' },
+        env: { STIM_MAINTENANCE: 'on', STIM_MAINTENANCE_IDLE_STOP_HOURS: '0.0002' },
         hostedIdleSweepMs: 50,
       });
       const { client, id } = await linkedSession(port);

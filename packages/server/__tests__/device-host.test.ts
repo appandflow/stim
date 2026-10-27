@@ -954,6 +954,7 @@ function recordAbsence(id: string, absentMs: number) {
 
 describe('a hosted session whose client is gone', () => {
   beforeEach(() => {
+    hostEnv.STIM_MAINTENANCE = 'on';
     hostEnv.STIM_MAINTENANCE_IDLE_STOP_HOURS = '1';
   });
 
@@ -1027,6 +1028,21 @@ describe('a hosted session whose client is gone', () => {
     expect(readHostedSessions().find((record) => record.id === first.id)).toMatchObject({ state: 'preparing' });
   });
 
+  test.each([
+    ['maintenance.mode is off', { STIM_MAINTENANCE: 'off' }],
+    ['maintenance.mode is report', { STIM_MAINTENANCE: 'report' }],
+    ['maintenance.idleStopHours is invalid', { STIM_MAINTENANCE_IDLE_STOP_HOURS: '-1' }],
+  ])('stops nothing when %s', async (_, env) => {
+    Object.assign(hostEnv, env);
+    const first = await reserve();
+    await state(first.id, 'ready');
+    recordAbsence(first.id, 5 * IDLE_WINDOW_MS);
+
+    host.sweepIdle();
+
+    expect((await state(first.id, 'ready')).idleStop).toBeUndefined();
+  });
+
   test('stops nothing when maintenance.idleStopHours is 0', async () => {
     hostEnv.STIM_MAINTENANCE_IDLE_STOP_HOURS = '0';
     const first = await reserve();
@@ -1049,12 +1065,16 @@ describe('a hosted session whose client is gone', () => {
       allowed: () => true,
       connected: () => false,
     });
+    const written = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     try {
       other.sweepIdle();
+      other.sweepIdle();
 
+      expect(written.mock.calls.filter(([line]) => String(line).includes(' kept: '))).toHaveLength(1);
       expect((await state(first.id, 'ready')).idleStop).toBeUndefined();
       expect(host.attach('client', { session: first.id })).toHaveProperty('result.state', 'ready');
     } finally {
+      written.mockRestore();
       await other.close();
     }
   });

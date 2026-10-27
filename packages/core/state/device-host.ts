@@ -136,22 +136,41 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
   clientMetroPort?: number;
 }
 
-/**
- * The machine-scope `maintenance.idleStopHours` of the home stim-server runs in: the environment override, the machine
- * config, then the default. An invalid value is reported so the caller can stop nothing.
- */
-export function hostedIdleStopHours(env: NodeJS.ProcessEnv): { hours: number } | { invalid: string } {
-  const setting = settingDefinition('maintenance.idleStopHours');
-  if (!setting?.env) return { invalid: 'maintenance.idleStopHours is not in the settings registry' };
+function machineSetting(key: string, env: NodeJS.ProcessEnv): { value: unknown } | { invalid: string } {
+  const setting = settingDefinition(key);
+  if (!setting?.env) return { invalid: `${key} is not in the settings registry` };
   const raw = env[setting.env];
   const fromEnv = raw !== undefined && raw !== '';
-  const configured = loadConfig()?.maintenance;
-  const fromConfig = isJsonObject(configured) ? configured.idleStopHours : undefined;
-  const value = fromEnv ? coerceSettingText(setting, raw) : (fromConfig ?? setting.default);
+  let value: unknown;
+  if (fromEnv) value = coerceSettingText(setting, raw);
+  else if (env.STIM_HOME && setting.scopedHomeValue !== undefined) value = setting.scopedHomeValue;
+  else if (env.CI && setting.ciValue !== undefined) value = setting.ciValue;
+  else {
+    const [group = '', name = ''] = key.split('.');
+    const container = loadConfig()?.[group];
+    if (container !== undefined && !isJsonObject(container))
+      return { invalid: `${group} in the config is not an object` };
+    const configured = container?.[name];
+    value = configured === undefined ? setting.default : configured;
+  }
   const error = settingValueError(setting, value);
-  return error || typeof value !== 'number'
-    ? { invalid: `${fromEnv ? setting.env : 'maintenance.idleStopHours'} is invalid: expected ${error ?? 'a number'}` }
-    : { hours: value };
+  return error ? { invalid: `${fromEnv ? setting.env : key} is invalid: expected ${error}` } : { value };
+}
+
+/**
+ * The window after which stim-server stops a hosted session whose client is gone: the machine-scope
+ * `maintenance.idleStopHours` of the home it runs in, 0 unless `maintenance.mode` is on. An invalid value is reported
+ * so the caller stops nothing.
+ */
+export function hostedIdleStopHours(env: NodeJS.ProcessEnv): { hours: number } | { invalid: string } {
+  const mode = machineSetting('maintenance.mode', env);
+  if ('invalid' in mode) return mode;
+  if (mode.value !== 'on') return { hours: 0 };
+  const hours = machineSetting('maintenance.idleStopHours', env);
+  if ('invalid' in hours) return hours;
+  return typeof hours.value === 'number'
+    ? { hours: hours.value }
+    : { invalid: 'maintenance.idleStopHours is not a number' };
 }
 
 export function deviceHostRoot(): string {

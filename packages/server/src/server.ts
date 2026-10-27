@@ -316,7 +316,7 @@ export interface ServerOptions {
   deviceHostLimits?: Partial<DeviceHostLimits>;
   /** How often a device-host client connection is pinged, and how long it may stay silent before it is dropped. */
   clientHeartbeat?: { pingMs: number; silentMs: number };
-  /** How often hosted sessions are checked for a client that is gone; tests shorten it. */
+  /** How often hosted sessions are checked for a client that is gone. */
   hostedIdleSweepMs?: number;
   hostedRelay?: HostedRelayOptions;
   service?: {
@@ -1744,12 +1744,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (access === 'device-host' && !local) {
         hostedDevices.clientSeen(device.id);
         let heardAt = Date.now();
+        let late = false;
         const hear = () => (heardAt = Date.now());
         socket.on('pong', hear);
         socket.on('message', hear);
         const { pingMs, silentMs } = options.clientHeartbeat ?? { pingMs: CLIENT_PING_MS, silentMs: CLIENT_SILENT_MS };
         clientPing = setInterval(() => {
-          if (Date.now() - heardAt > silentMs) return void socket.terminate();
+          if (Date.now() - heardAt > silentMs) {
+            if (late) return void socket.terminate();
+            late = true;
+          } else late = false;
           socket.ping();
         }, pingMs);
         clientPing.unref();

@@ -43,10 +43,11 @@ export function planHostedIdleStops({
 }): HostedIdlePlan {
   const plan: HostedIdlePlan = { updates: [], stops: [], kept: [] };
   const step = Math.min(Math.max(elapsedMs, 0), MAX_ELAPSED_MS);
+  const present = new Set(sessions.filter(({ id }) => active.has(id)).map(({ client }) => client));
   for (const session of sessions) {
     const stored = session.clientAbsentMs;
     const tracked = session.state === 'ready' && !session.parked;
-    if (!tracked || !(windowMs > 0) || connected(session.client) || active.has(session.id)) {
+    if (!tracked || !(windowMs > 0) || connected(session.client) || present.has(session.client)) {
       if (stored !== undefined) plan.updates.push({ id: session.id, absentMs: null });
       continue;
     }
@@ -55,7 +56,7 @@ export function planHostedIdleStops({
     if (absentMs < windowMs) continue;
     const why = unresolved(session.id);
     const reason = `its client had no connection for ${formatDuration(absentMs)}, over maintenance.idleStopHours`;
-    if (why) plan.kept.push({ id: session.id, reason: `${why}; ${reason}` });
+    if (why) plan.kept.push({ id: session.id, reason: `${why}; its client is gone past maintenance.idleStopHours` });
     else plan.stops.push({ id: session.id, reason });
   }
   return plan;

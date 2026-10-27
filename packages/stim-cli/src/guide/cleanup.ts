@@ -85,8 +85,9 @@ that does not answer, a session it cannot confirm (unknown, as after a worker
 crash) and a placement that cannot be read keep the workspace, and a live view of
 the hosted device is not seen here. On the host, stim-server stops a ready session
 whose client has had no connection, live stream or Metro link and sent no
-agent-device request for the host's own maintenance.idleStopHours (default 6; 0
-never; STIM_MAINTENANCE_IDLE_STOP_HOURS overrides). Server downtime is not
+agent-device request for the host's own machine maintenance.idleStopHours (default 6; 0
+never; STIM_MAINTENANCE_IDLE_STOP_HOURS overrides), only while its maintenance.mode is on;
+a project value or maintenance.keep on the client does not reach it. Server downtime is not
 counted. It uses the stop a person uses, never touches a session whose journal state is
 preparing, stopping or unknown, or one with a native operation or a claim it cannot prove free
 (a session a crashed server left ready counts once its claim is proven free),

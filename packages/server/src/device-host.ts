@@ -1579,12 +1579,10 @@ export class DeviceHost {
     return this.owned.size;
   }
 
-  /** Notes that `client` authenticated a connection, so one that ends before the next sweep still counts as present. */
   clientSeen(client: string): void {
     this.clientsSeen.add(client);
   }
 
-  /** Notes that the session's client acted through a path that is not a connection, such as an agent-device request. */
   clientActed(session: string): void {
     this.clientActive.add(session);
   }
@@ -1660,19 +1658,18 @@ export class DeviceHost {
   }
 
   private stopIdle(id: string, reason: string): void {
-    const record = readHostedSessions().find((each) => each.id === id);
-    if (!record || record.state !== 'ready') return;
     try {
+      const record = readHostedSessions().find((each) => each.id === id);
+      if (!record || record.state !== 'ready') return;
       this.beginStop(record);
+      this.change(id, (current) => {
+        current.idleStop = { at: new Date().toISOString(), reason };
+        delete current.clientAbsentMs;
+      });
+      process.stderr.write(`Hosted session ${id} stopped: ${reason}\n`);
     } catch (error) {
       this.logIdleKept(id, `${error instanceof Error ? error.message : String(error)}; ${reason}`);
-      return;
     }
-    this.change(id, (current) => {
-      current.idleStop = { at: new Date().toISOString(), reason };
-      delete current.clientAbsentMs;
-    });
-    process.stderr.write(`Hosted session ${id} stopped: ${reason}\n`);
   }
 
   drain(reason: string | null): void {

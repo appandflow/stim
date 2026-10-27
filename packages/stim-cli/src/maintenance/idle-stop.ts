@@ -282,7 +282,6 @@ async function keepReasons(
   }
   const viewers = devices.length ? unreadableViewers() : null;
   if (viewers) keep.push(viewers);
-  if (!keep.length) keep.push(...(await hostedKeepReasons(hostedFacts(root))));
   return keep;
 }
 
@@ -327,6 +326,7 @@ async function idleStopEvidence(
   const metro = metroRequestAt(root, now - idleMs, serving);
   if (typeof metro === 'string') return { activity, keep: [metro] };
   if (Number.isFinite(metro)) activity.push({ basis: 'Metro request', at: metro });
+  if (!activity.some(({ at }) => now - at < idleMs)) keep.push(...(await hostedKeepReasons(hostedFacts(root))));
   return { activity, keep };
 }
 

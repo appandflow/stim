@@ -251,7 +251,8 @@ default, `0` never) applies on both Macs, each from its own settings:
   cannot read keeps the workspace.
 - On the host, stim-server stops a `ready` session whose client has had no
   connection, no live view or control and no Metro link, and sent no agent-device
-  request, for the host's own `maintenance.idleStopHours`. This covers a client
+  request, for the host's own machine-scope `maintenance.idleStopHours`, and only while the host's
+  `maintenance.mode` is `on`; a project value or `maintenance.keep` on the client does not reach it. This covers a client
   that vanished without stopping: a closed laptop, a crash, a lost network. Time
   the server was not running is not counted, and the count survives a restart.
   The server stops the session the way a person's stop on the host does, never

@@ -37,6 +37,20 @@ test('a client that only acted through an agent request counts as present for th
   expect(result.stops).toEqual([]);
 });
 
+test('an agent request for one session keeps every session of that client', () => {
+  const sessions = [
+    session('a', { client: 'shared', clientAbsentMs: 5 * HOUR_MS }),
+    session('b', { client: 'shared', clientAbsentMs: 5 * HOUR_MS }),
+  ];
+
+  const result = plan(sessions, { active: new Set(['a']) });
+
+  expect(result.updates).toEqual([
+    { id: 'a', absentMs: null },
+    { id: 'b', absentMs: null },
+  ]);
+});
+
 test('an absence under the window accumulates and stops nothing; reaching the window stops with the reason', () => {
   const under = plan([session('a', { clientAbsentMs: 6 * HOUR_MS - 2 * HOSTED_IDLE_SWEEP_MS })]);
   expect(under.updates).toEqual([{ id: 'a', absentMs: 6 * HOUR_MS - HOSTED_IDLE_SWEEP_MS }]);
