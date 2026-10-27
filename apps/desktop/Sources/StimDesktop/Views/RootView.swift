@@ -1071,7 +1071,7 @@ struct RootView: View {
       MachineView(
         buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot, tips: tips)
     case .pairedWorkspace(let key):
-      PairedWorkspaceDetail(store: store, key: key)
+      PairedWorkspaceDetail(store: store, key: key, cli: cli)
     case .discover:
       DiscoverView(
         replayUnavailableReason: discoverReplayUnavailableReason,

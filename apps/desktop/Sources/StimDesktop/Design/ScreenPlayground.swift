@@ -59,7 +59,7 @@
       case .builds: return PlaygroundScenario.allCases
       case .buildSheet: return [.ready, .loading, .error, .longText, .largeData]
       case .hostedIos, .hostedAndroid: return [.ready, .loading, .error, .empty]
-      case .pairedMachines: return [.ready, .error]
+      case .pairedMachines: return [.ready, .empty, .error]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
       case .tokens, .addMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards: return [.ready]

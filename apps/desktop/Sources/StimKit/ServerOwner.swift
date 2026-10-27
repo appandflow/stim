@@ -78,3 +78,39 @@ public struct OwnedDevice: Hashable, Identifiable, Sendable {
   /// The key screen changes on this Mac are recorded under; nil for any device a paired server reports.
   public var activityKey: String? { owner.isLocal ? ref.activityKey : nil }
 }
+
+extension OwnedDevice {
+  /// Whether Stim Desktop can send this device clicks and keys: a simulator, emulator or browser it drives on this
+  /// Mac, or a device whose owning server streams it, either its own or one it hosts on another Mac.
+  public var isInteractive: Bool {
+    switch ref {
+    case .ios(_, let sim):
+      return !sim.physical
+        && (ref.hostedIos != nil
+          ? ref.state != "stopped" : ref.isRunning && (localSimulatorUDID != nil || !owner.isLocal))
+    case .android(_, let avd):
+      return ref.hostedMachine != nil
+        ? ref.state != "stopped"
+        : ref.isRunning && (avd.owned || avd.physical) && (localEmulatorSerial != nil || !owner.isLocal)
+    case .web(let browser):
+      return owner.isLocal && browser.running && browser.cdpEndpoint != nil && browser.targetId != nil
+    case .macos: return ref.hostedMachine != nil && ref.state != "stopped"
+    case .remote: return false
+    }
+  }
+
+  /// What a tile shows of a device stim-server streams. `server` names a paired owner in its messages.
+  public func screen(link: ServerLink, now: Date, server: String) -> PhysicalScreen {
+    owner.isLocal
+      ? PhysicalScreen(device: ref, link: link, now: now)
+      : PhysicalScreen(pairedDevice: ref, server: server, link: link, now: now)
+  }
+
+  /// Whether the viewer offers Control: always for a simulator or emulator this Mac drives itself, and otherwise
+  /// only when the server that streams the device lets this Mac control it.
+  public func offersControl(link: ServerLink, now: Date) -> Bool {
+    guard isInteractive else { return false }
+    if owner.isLocal, !ref.isPhysical, ref.hostedMachine == nil { return true }
+    return screen(link: link, now: now, server: "").canControl
+  }
+}

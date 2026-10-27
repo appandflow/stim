@@ -225,8 +225,10 @@ public struct MacosWindows: Equatable, Sendable {
 
   init(_ fields: [String: JSONValue]) {
     let window = { (value: JSONValue?) -> Window? in
-      guard case .object(let object)? = value, case .number(let id)? = object["id"] else { return nil }
-      return Window(id: Int(id), title: object["title"]?.string ?? "")
+      guard case .object(let object)? = value, let id = object["id"]?.number.flatMap(ServerProtocol.exactInteger) else {
+        return nil
+      }
+      return Window(id: id, title: object["title"]?.string ?? "")
     }
     current = window(fields["current"])?.id
     if case .array(let list)? = fields["windows"] { windows = list.compactMap(window) } else { windows = [] }

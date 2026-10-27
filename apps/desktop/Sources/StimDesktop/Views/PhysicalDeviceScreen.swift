@@ -43,12 +43,12 @@ struct PhysicalDeviceScreen: View {
 
   var body: some View {
     TimelineView(.periodic(from: .now, by: 15)) { context in
-      let screen = PhysicalScreen(device: device, link: ServerSession.link(for: owner), now: context.date)
+      let screen = ServerSession.screen(for: owned, now: context.date)
       content(screen)
         .onChange(of: screen, initial: true) { _, screen in follow(screen) }
     }
     .onChange(of: interactive, initial: true) { _, interactive in
-      if interactive, PhysicalScreen(device: device, link: ServerSession.link(for: owner), now: Date()).canControl {
+      if interactive, ServerSession.screen(for: owned, now: Date()).canControl {
         stream.begin()
       } else {
         stream.end()
@@ -57,7 +57,7 @@ struct PhysicalDeviceScreen: View {
     .onChange(of: covered) { _, covered in
       guard !covered, stream.problem != nil else { return }
       stream.stop()
-      follow(PhysicalScreen(device: device, link: ServerSession.link(for: owner), now: Date()))
+      follow(ServerSession.screen(for: owned, now: Date()))
     }
     .onChange(of: stream.control) { _, control in
       switch control {
@@ -90,7 +90,7 @@ struct PhysicalDeviceScreen: View {
     case .stream:
       VStack(spacing: Space.md) {
         PhysicalDisplay(
-          stream: stream, activityKey: OwnedDevice(owner: owner, ref: device).activityKey,
+          stream: stream, activityKey: owned.activityKey,
           interactive: interactive && isControlling,
           onPixelSizeChange: onPixelSizeChange
         )
@@ -107,6 +107,8 @@ struct PhysicalDeviceScreen: View {
       }
     }
   }
+
+  private var owned: OwnedDevice { OwnedDevice(owner: owner, ref: device) }
 
   private var isControlling: Bool {
     if case .on = stream.control { return true }

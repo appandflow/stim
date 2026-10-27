@@ -274,12 +274,21 @@ right now is tried again, not reported as revoked.
 
 `PairedServerSessions` wraps each of those clients in a `ServerSession` (owner `.paired(<pairing id>)`), so a pairing
 has one connection, and `StatusStore.usePairedServers` follows each one's status in memory. Below this Mac's
-projects, the sidebar gets a section per paired server: its name, connection dot, a **View Only** pill, and its
+projects, the sidebar gets a section per paired server: its name, connection dot, a **View Only** pill (**View and
+Control** for a `--control` pairing), and its
 workspaces with the same grouping and status filter as this Mac's. Hidden, expanded and collapsed state for those
 rows is kept in memory only, keyed by the owner and path, and this Mac's hidden paths never apply to them. A paired
-row opens a read-only page: the status, the path as text, the agent and device lines with the machine each runs on
-("Running on janics-mac-mini-2"), the build and where it compiles, and "Viewing floco · read-only". It has no
-action, no live screen, no logs and no context menu beyond Hide. **Machines** lists each paired server after the
+row opens a page: the status, the path as text, the agent and device lines with the machine each runs on
+("Running on janics-mac-mini-2"), the build and where it compiles, and "Viewing floco · read-only" or "Controlled by
+floco". An iOS or Android device row, own or hosted, and a hosted macOS app open `DeviceViewer` with the pairing's
+owner: `DeviceTile` streams it through `PhysicalDeviceScreen` on that server's `ServerSession`, with messages from
+`PhysicalScreen(pairedDevice:)`, which never offer a command to run here. The viewer has no replay, agent action list,
+run notice, Stop or device menu for a paired device, and it does not take control on open; **Control** appears only
+when `OwnedDevice.offersControl` finds the server granting `control`. **Reload App** and **Stop** come from
+`PairedAccess`: the known actions (`reload`, `stop`) the open connection's `hello.actions` lists, run with the
+server's `action` method by `ServerSession.runPairedAction`. A read-only pairing shows both disabled with the grant
+command Desktop builds from the `hello` device id; a `forbidden` answer reconnects to pick up the new access. The
+page has no logs, files or settings, and no context menu beyond Hide. **Machines** lists each paired server after the
 build machines, with its reported capacity, its hosted devices and its offloaded builds. A hosted session two
 servers report shows once, under the first. A pairing whose server says it is this Mac's own gets no section.
 With the flag off, or with no pairing, nothing connects and the sidebar and Machines page are unchanged.

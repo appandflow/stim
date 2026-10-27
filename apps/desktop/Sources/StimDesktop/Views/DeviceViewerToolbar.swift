@@ -161,6 +161,14 @@ struct DeviceViewerToolbar: View {
   }
 
   @ViewBuilder private var commands: some View {
+    if owner.isLocal {
+      localCommands
+    } else {
+      takeOverButton
+    }
+  }
+
+  @ViewBuilder private var localCommands: some View {
     let busy = actions.active(for: env.path) != nil
     if device.appStopped || (device.platform == "macos" && !device.isRunning) {
       DeviceRunButton(
@@ -174,7 +182,7 @@ struct DeviceViewerToolbar: View {
       webControls(browser, busy: busy)
     } else if case .macos = device {
       DeviceTileMenu(
-        device: device, workspace: env.path, building: env.runningBuild(for: device) != nil, choice: windowChoice,
+        device: device, owner: owner, workspace: env.path, building: env.runningBuild(for: device) != nil, choice: windowChoice,
         openBuildLogs: nil)
     } else if device.isRunning, !device.isPhysical {
       Button("Stop") {
@@ -190,10 +198,8 @@ struct DeviceViewerToolbar: View {
   }
 
   @ViewBuilder private var takeOverButton: some View {
-    if OwnedDevice(owner: owner, ref: device).isInteractive,
-      (!device.isPhysical && device.hostedMachine == nil) || takenOver
-        || PhysicalScreen(device: device, link: ServerSession.link(for: owner), now: Date()).canControl
-    {
+    let owned = OwnedDevice(owner: owner, ref: device)
+    if owned.offersControl(link: ServerSession.link(for: owner), now: Date()) || (takenOver && owned.isInteractive) {
       if takenOver {
         Button("Release Control", systemImage: "hand.raised.fill") { takenOver = false }
           .nativeIconStyle()

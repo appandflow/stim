@@ -145,7 +145,10 @@ import Testing
     sub.onEvent(
       ServerEvent(
         name: "macos-windows", subscription: "s1",
-        fields: ["current": window(7, "Main"), "windows": .array([window(7, "Main"), window(9, "")]), "pinned": .bool(false)]))
+        fields: [
+          "current": window(7, "Main"), "windows": .array([window(7, "Main"), window(1e300, "Huge"), window(9, "")]),
+          "pinned": .bool(false),
+        ]))
     #expect(
       stream.windows?.windows == [MacosWindows.Window(id: 7, title: "Main"), MacosWindows.Window(id: 9, title: "")])
     #expect(stream.windows?.current == 7)

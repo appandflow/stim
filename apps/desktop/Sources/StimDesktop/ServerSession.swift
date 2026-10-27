@@ -22,6 +22,12 @@ import StimKit
     session(for: owner)?.link ?? .connecting
   }
 
+  /// What a tile shows of a device its owning server streams, naming a paired owner in its messages.
+  static func screen(for device: OwnedDevice, now: Date) -> PhysicalScreen {
+    let name = session(for: device.owner)?.name ?? ""
+    return device.screen(link: link(for: device.owner), now: now, server: name.isEmpty ? "the paired machine" : name)
+  }
+
   /// The name the server shows for this connection: the release app, as `scripts/release.sh` bundles it, or Stim Dev.
   static let clientName = Bundle.main.bundleIdentifier == "dev.stim.desktop" ? "Stim Desktop" : "Stim Dev"
   /// The first protocol served on the Unix socket.
@@ -72,6 +78,29 @@ import StimKit
   }
 
   var isOpen: Bool { client?.isOpen == true }
+
+  /// What this paired server lets this Mac do with its workspaces; nil for this Mac's own server, whose actions run
+  /// through the CLI.
+  var pairedAccess: PairedAccess? {
+    guard case .paired = owner else { return nil }
+    var deviceID: String?
+    if case .open(let hello) = state { deviceID = hello.device?.id }
+    return PairedAccess(state: state, server: name.isEmpty ? "the paired machine" : name, deviceID: deviceID)
+  }
+
+  /// Runs one of `pairedAccess.actions` on `workspace`, a path this server reported. A refusal that says this Mac
+  /// lost control reconnects, so the next `hello` shows the access the server now grants.
+  func runPairedAction(_ action: String, workspace: String) async throws {
+    guard case .paired(let id) = owner, let client, pairedAccess?.actions.contains(action) == true else {
+      throw ServerError(code: "forbidden", message: pairedAccess?.reason ?? "This server does not offer \(action).")
+    }
+    do {
+      _ = try await client.request("action", ["action": .string(action), "workspace": .string(workspace)])
+    } catch let error as ServerError where error.code == "forbidden" {
+      PairedServers.shared.reconnect(id: id)
+      throw error
+    }
+  }
 
   var statsConnection: (client: ServerClient, home: String)? {
     guard let client, let feed = feedConnection, feed.client === client else { return nil }

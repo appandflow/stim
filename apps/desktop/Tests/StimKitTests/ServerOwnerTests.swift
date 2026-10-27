@@ -36,6 +36,36 @@ struct ServerOwnerTests {
     #expect(workspaces.map(\.key.localPath) == ["/Users/me/app", nil, nil])
   }
 
+  @Test func aPairedServersOwnSimulatorOffersControlOnlyWhenThatServerGrantsIt() throws {
+    let reported = try workspace(path: "/Users/me/app", udid: "1A2B")
+    let control = ServerLink.open(features: [], capabilities: ["read", "control"])
+    let readOnly = ServerLink.open(features: [], capabilities: ["read"])
+    let local = OwnedWorkspace(owner: .local, workspace: reported).devices[0]
+    let paired = OwnedWorkspace(owner: .paired("SHA256:floco"), workspace: reported).devices[0]
+
+    #expect(local.offersControl(link: readOnly, now: Date()))
+    #expect(paired.offersControl(link: control, now: Date()))
+    #expect(!paired.offersControl(link: readOnly, now: Date()))
+    #expect(!paired.offersControl(link: .connecting, now: Date()))
+  }
+
+  @Test func aPairedServersBrowserIsNeverDrivenThroughThisMacsChromeEndpoint() throws {
+    let json = #"""
+      {"path":"/Users/me/app","live":true,"warnings":[],
+       "web":{"profile":"/Users/me/.stim/web","running":true,"headless":false,"pid":4242,
+              "cdpEndpoint":"ws://127.0.0.1:9222/devtools/browser/x","targetId":"T1","url":"http://localhost:8081",
+              "viewport":"1280x800"}}
+      """#
+    let reported = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+    let control = ServerLink.open(features: [], capabilities: ["read", "control"])
+    let local = try #require(OwnedWorkspace(owner: .local, workspace: reported).devices.first)
+    let paired = try #require(OwnedWorkspace(owner: .paired("SHA256:floco"), workspace: reported).devices.first)
+
+    #expect(local.isInteractive)
+    #expect(!paired.isInteractive)
+    #expect(!paired.offersControl(link: control, now: Date()))
+  }
+
   private func hosted(path: String, session: String, build: Bool = false) throws -> Workspace {
     let placement =
       #"{"host":"janics-mac-mini-2:7443","phase":"pods","startedAt":"2026-10-27T10:00:00Z","phaseStartedAt":"2026-10-27T10:01:00Z"}"#

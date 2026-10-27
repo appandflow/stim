@@ -5,7 +5,13 @@ import SwiftUI
 struct PairedWorkspaceDetail: View {
   @ObservedObject var store: StatusStore
   var key: WorkspaceKey
+  var cli: Task<StimCLI, Never>
   @ObservedObject private var sessions = PairedServerSessions.shared
+  @EnvironmentObject private var actions: ActionCenter
+  @Environment(\.windowSize) private var windowSize
+  @State private var viewing: ViewedDevice?
+  @State private var running: String?
+  @State private var outcome: PairedActionOutcome?
 
   private var pairingID: String? {
     if case .paired(let id) = key.owner { return id }
@@ -21,11 +27,47 @@ struct PairedWorkspaceDetail: View {
     if let id = pairingID, !sessions.entries.contains(where: { $0.id == id }) {
       EmptyState(title: "Machine Not Paired", message: "Stim Desktop no longer has a pairing with this machine.")
     } else if let owned = store.workspace(key) {
-      ScrollView { PairedWorkspacePage(owned: owned, serverName: serverName, connectionLine: connectionLine) }
+      ScrollView {
+        PairedWorkspacePage(
+          owned: owned, serverName: serverName, connectionLine: connectionLine, access: session?.pairedAccess,
+          running: running, outcome: outcome, run: { run($0, workspace: owned.workspace) },
+          view: { viewing = ViewedDevice(id: $0.id, workspace: owned.workspace.path) })
+      }
+      .sheet(item: $viewing) { viewed in
+        DeviceViewer(
+          cli: cli, env: owned.workspace, deviceID: viewed.id, owner: key.owner, windowSize: windowSize,
+          revealInLogs: { _, _ in }, close: { viewing = nil }
+        )
+        .environmentObject(actions)
+      }
+      .onChange(of: key) { _, _ in
+        viewing = nil
+        outcome = nil
+      }
     } else if pairingID.flatMap({ store.paired[$0]?.payload }) == nil {
       EmptyState(title: "Waiting for \(serverName)", message: "Stim Desktop shows this workspace once the machine reports it.")
     } else {
       EmptyState(title: "Workspace Gone", message: "\(serverName) no longer reports this workspace.")
+    }
+  }
+
+  private var session: ServerSession? { ServerSession.session(for: key.owner) }
+
+  private func run(_ action: String, workspace: Workspace) {
+    guard running == nil, let session else { return }
+    running = action
+    outcome = nil
+    let key = key
+    Task {
+      do {
+        try await session.runPairedAction(action, workspace: workspace.path)
+        outcome = PairedActionOutcome(
+          key: key, failed: false,
+          message: action == "stop" ? "Stopped \(workspace.names.title) on \(serverName)." : "Reloaded the app on \(serverName).")
+      } catch {
+        outcome = PairedActionOutcome(key: key, failed: true, message: error.localizedDescription)
+      }
+      running = nil
     }
   }
 
@@ -40,10 +82,25 @@ struct PairedWorkspaceDetail: View {
   }
 }
 
+struct PairedActionOutcome: Equatable {
+  var key: WorkspaceKey
+  var failed: Bool
+  var message: String
+}
+
 struct PairedWorkspacePage: View {
   var owned: OwnedWorkspace
   var serverName: String
   var connectionLine: String?
+  /// Nil until the server's session exists; the page then offers no action.
+  var access: PairedAccess?
+  /// The action this page is running.
+  var running: String? = nil
+  var outcome: PairedActionOutcome? = nil
+  var run: (String) -> Void = { _ in }
+  /// Opens the viewer for a device the server streams.
+  var view: ((DeviceRef) -> Void)? = nil
+  @State private var confirmingStop = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.xxl) {
@@ -63,16 +120,63 @@ struct PairedWorkspacePage: View {
         Text(verbatim: env.names.title).font(.stim(.title)).lineLimit(1).truncationMode(.middle)
         Text(verbatim: status.text).font(.stim(.body, weight: .medium)).foregroundStyle(Color(status.tone))
       }
-      Label {
-        Text(verbatim: "Viewing \(serverName) \u{00B7} read-only")
-      } icon: {
-        Image(systemName: "eye")
+      HStack(spacing: Space.md) {
+        Label {
+          Text(verbatim: canControl ? "Controlled by \(serverName)" : "Viewing \(serverName) \u{00B7} read-only")
+        } icon: {
+          Image(systemName: canControl ? "person.badge.key" : "eye")
+        }
+        .foregroundStyle(Palette.secondary)
+        .help(Text(verbatim: "\(serverName) controls this workspace. Stim Desktop shows it as that machine reports it."))
+        Pill(tone: canControl ? .brand : .neutral, size: .small) {
+          Text(canControl ? "View and Control" : "View Only")
+        }
+        Spacer(minLength: Space.md)
+        actionButtons(env)
       }
-      .foregroundStyle(Palette.secondary)
-      .help(Text(verbatim: "\(serverName) controls this workspace. Stim Desktop shows it as that machine reports it."))
       Text(verbatim: env.path).font(.stim(.caption, mono: true)).foregroundStyle(Palette.tertiary).lineLimit(1)
         .truncationMode(.head).textSelection(.enabled)
       if let line = connectionLine { Text(verbatim: line).font(.stim(.caption)).foregroundStyle(Palette.warning) }
+      if let outcome, outcome.key == owned.key {
+        Text(verbatim: outcome.message).font(.stim(.caption))
+          .foregroundStyle(outcome.failed ? Palette.error : Palette.secondary)
+          .textSelection(.enabled)
+      } else if let reason = access?.reason {
+        Text(verbatim: reason).font(.stim(.caption)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+      }
+    }
+  }
+
+  private var canControl: Bool { access?.canControl == true }
+
+  private func offers(_ action: String) -> Bool { access?.actions.contains(action) == true }
+
+  /// Reload and Stop as the server advertises them; while it lets this Mac view only, both show disabled with why.
+  private func actionButtons(_ env: Workspace) -> some View {
+    let shown = canControl ? PairedAccess.known.filter(offers) : PairedAccess.known
+    let reason = access?.reason ?? "Waiting for \(serverName)."
+    return HStack(spacing: Space.sm) {
+      ForEach(shown, id: \.self) { action in
+        let label = action == "stop" ? "Stop" : "Reload App"
+        Button(label, systemImage: action == "stop" ? "stop.circle" : "arrow.clockwise") {
+          if action == "stop" { confirmingStop = true } else { run(action) }
+        }
+        .buttonStyle(.stim(action == "stop" ? .destructive : .secondary))
+        .disabled(!offers(action) || running != nil)
+        .help(
+          offers(action)
+            ? (action == "stop"
+              ? "Runs stim stop on \(serverName): stops this workspace's dev server and devices there."
+              : "Runs stim reload on \(serverName): reloads the workspace's running apps.")
+            : reason)
+      }
+    }
+    .confirmationDialog(
+      Text(verbatim: "Stop \(env.names.title) on \(serverName)?"), isPresented: $confirmingStop, titleVisibility: .visible
+    ) {
+      Button("Stop", role: .destructive) { run("stop") }
+    } message: {
+      Text(verbatim: "\(serverName) runs stim stop in this workspace, halting its dev server and devices there.")
     }
   }
 
@@ -111,11 +215,36 @@ struct PairedWorkspacePage: View {
         let ref = device.ref
         let place = ref.placement.map { "Running on \($0.machine)" } ?? "On \(serverName)"
         let driver = ref.activity?.driver.map { "\($0.tool) on \(serverName)" }
-        row(
+        let content = row(
           icon: ref.platform == "android" ? "smartphone" : ref.platform == "web" ? "globe" : "iphone", agent: nil,
           title: "\(ref.model) \u{00B7} \(ref.state)",
           detail: [place, driver].compactMap { $0 }.joined(separator: " \u{00B7} "))
+        if let view, Self.streams(device) {
+          Button {
+            view(ref)
+          } label: {
+            HStack {
+              content
+              Image(systemName: "chevron.right").foregroundStyle(Palette.tertiary).accessibilityHidden(true)
+                .padding(.trailing, Space.lg)
+            }
+            .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .help(Text(verbatim: "Show this device's screen through \(serverName)"))
+        } else {
+          content
+        }
       }
+    }
+  }
+
+  /// The devices whose screen the server streams: its own and hosted iOS and Android devices, and hosted macOS apps.
+  private static func streams(_ device: OwnedDevice) -> Bool {
+    switch device.ref {
+    case .ios, .android: return true
+    case .macos: return device.ref.hostedMachine != nil
+    case .web, .remote: return false
     }
   }
 
