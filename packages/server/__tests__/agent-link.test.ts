@@ -93,7 +93,7 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-async function start(): Promise<number> {
+async function start(extra: Partial<Parameters<typeof startServer>[0]> = {}): Promise<number> {
   const stimCli = join(home, 'fake-stim.mjs');
   writeFileSync(stimCli, '');
   writeFileSync(
@@ -117,7 +117,7 @@ async function start(): Promise<number> {
     name: 'Worker',
     stimVersion: '9.9.9',
     serverVersion: '1.2.3',
-    env: { ...process.env },
+    env: { ...process.env, ...extra.env },
     hostsDevices: true,
     tailscale: null,
     tailscaleState: { state: 'not-running', backendState: 'Stopped' },
@@ -127,6 +127,8 @@ async function start(): Promise<number> {
     frameHelper: null,
     pushEndpoint: 'http://127.0.0.1:9/push',
     pullRequests: async () => new Map(),
+    ...extra,
+    env: { ...process.env, ...extra.env },
   });
   await server.ready;
   const [address] = server.addresses;
@@ -325,4 +327,27 @@ test('the relay holds at most 8 local connections, and stopping the session clos
   if (!connection) throw new Error('no hosted connection');
   await call(connection, 'device-host.stop', { session });
   expect(await link.closed).toBe(1000);
+}, 30_000);
+
+test('a hosted session stays ready while its client only holds an agent link, and is stopped once that link is gone', async () => {
+  agents.driver = new FakeDriver();
+  const port = await start({
+    env: { STIM_MAINTENANCE: 'on', STIM_MAINTENANCE_IDLE_STOP_HOURS: '0.0002' },
+    hostedIdleSweepMs: 50,
+  });
+  const { machine } = approveLocalMachine(port);
+  const { session } = await hostedApp(machine);
+  const link = await noiseConnect(`ws://127.0.0.1:${port}`, { keyPair: clientIdentity() });
+  await link.request('hello', { client: { name: 'stim', version: '1' }, access: 'device-host' });
+  expect(await link.request('device-host.agent.link', { session })).toHaveProperty('result', {});
+  for (const connection of connections.splice(0)) connection.close();
+
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  expect(readHostedSessions().find((record) => record.id === session)).toMatchObject({ state: 'ready' });
+
+  link.socket.close();
+  await vi.waitFor(() => expect(readHostedSessions().find((record) => record.id === session)?.state).toBe('stopped'), {
+    timeout: 15_000,
+  });
+  expect(readHostedSessions().find((record) => record.id === session)?.idleStop).toBeDefined();
 }, 30_000);
