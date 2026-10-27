@@ -4433,6 +4433,7 @@ describe('concurrency limits', () => {
           code: 'STIM_AT_CAPACITY',
           message: 'at capacity',
           remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
+          max: 1,
         };
       },
     });
@@ -4453,7 +4454,7 @@ describe('concurrency limits', () => {
     expect(result.error).toMatchObject({ code: 'STIM_AT_CAPACITY', message: 'at capacity' });
     expect(recordCapacityRefusal).toHaveBeenCalledTimes(1);
     expect(recordCapacityRefusal).toHaveBeenCalledWith(
-      { platform: 'android', max: 3, workspace: workspaceId(root) },
+      { platform: 'android', max: 1, workspace: workspaceId(root) },
       expect.any(Number),
     );
     expect(h.stderr.join('\n')).not.toContain('stats unavailable');

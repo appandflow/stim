@@ -44,7 +44,6 @@ import type {
   SettingScope,
   StatusCapacity,
   StatusDeviceSlotHolder,
-  StatusDeviceSlots,
   StatusPlatformDeviceSlots,
 } from '@stim-cli/core/state';
 
@@ -245,8 +244,8 @@ function deviceLimits(keys: Set<string>, platform: string, max: number, platform
 }
 
 /** The first cap with no room left, or the first cap when all have room (for a run waiting behind another). */
-function bindingLimit(limits: DeviceLimit[]): DeviceLimit {
-  return limits.find((limit) => limit.count >= limit.max) ?? limits[0]!;
+function bindingLimit(limits: DeviceLimit[]): DeviceLimit | undefined {
+  return limits.find((limit) => limit.count >= limit.max) ?? limits[0];
 }
 
 function atCapacityRefusal({ count, max, setting, noun }: DeviceLimit): CapacityRefusal {
@@ -624,29 +623,28 @@ function deviceHolders(inventory: DeviceInventory, keys: Set<string>): string[] 
 }
 
 /**
- * `concurrency.maxDevices` usage for status: the owned devices the cap counts and who holds each. `sims` is the
- * listing status already read; an unknown count reports why instead of failing.
+ * `concurrency.maxDevices` usage for status (the owned devices the cap counts and who holds each) and the usage of each
+ * per-platform cap that is set, from one inventory read. `sims` is the listing status already read; an unknown count
+ * reports why instead of failing.
  */
-export async function deviceSlotUsage(max: number, sources: AsyncInventorySources = {}): Promise<StatusDeviceSlots> {
-  return (await deviceSlotUsages(max, {}, sources)).devices!;
-}
-
-/** {@link deviceSlotUsage} plus the usage of each per-platform cap that is set, from one inventory read. */
 export async function deviceSlotUsages(
   max: number,
   platformMax: Partial<Record<CappedPlatform, number>>,
   sources: AsyncInventorySources = {},
 ): Promise<Pick<StatusCapacity, 'devices' | 'platformDevices'>> {
-  const capped = (['ios', 'android'] as const).filter((platform) => (platformMax[platform] ?? 0) > 0);
-  const platformDevices = (count: (platform: CappedPlatform) => Partial<StatusPlatformDeviceSlots>) => ({
-    ...(capped.length
+  const capped: [CappedPlatform, number][] = [];
+  for (const platform of ['ios', 'android'] as const) {
+    const cap = platformMax[platform] ?? 0;
+    if (cap > 0) capped.push([platform, cap]);
+  }
+  const platformDevices = (count: (platform: CappedPlatform) => Partial<StatusPlatformDeviceSlots>) =>
+    capped.length
       ? {
           platformDevices: Object.fromEntries(
-            capped.map((platform) => [platform, { max: platformMax[platform]!, ...count(platform) }]),
+            capped.map(([platform, cap]) => [platform, { max: cap, ...count(platform) }]),
           ),
         }
-      : {}),
-  });
+      : {};
   try {
     const inventory = await readInventoryAsync(sources);
     if ('code' in inventory)
@@ -871,6 +869,7 @@ export async function withDeviceBootAdmission<T>(
             if (turn && limits.every((limit) => limit.count < limit.max)) return admit();
             lastListed = now();
             const limit = bindingLimit(limits);
+            if (!limit) return admit();
             binding = limit;
             const held = limit.platform
               ? new Set([...keys].filter((key) => key.startsWith(`${limit.platform}:`)))

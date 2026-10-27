@@ -11,7 +11,6 @@ import {
   countLiveOwnedDevices,
   countLiveOwnedDevicesByPlatform,
   countLiveOwnedDevicesFrom,
-  deviceSlotUsage,
   deviceSlotUsages,
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
@@ -900,12 +899,18 @@ test('status slot usage names the workspace and slot of each counted device and 
     projects: { '/work/app': { label: 'app', deviceSlots: { two: { ios: { deviceUdid: 'held', owned: true } } } } },
   });
   expect(
-    await deviceSlotUsage(3, {
-      ...empty,
-      sims,
-      config,
-      booting: [{ platform: 'android', key: 'stim-new', displayName: 'other' }],
-    }),
+    (
+      await deviceSlotUsages(
+        3,
+        {},
+        {
+          ...empty,
+          sims,
+          config,
+          booting: [{ platform: 'android', key: 'stim-new', displayName: 'other' }],
+        },
+      )
+    ).devices,
   ).toEqual({
     max: 3,
     inUse: 3,
@@ -916,12 +921,18 @@ test('status slot usage names the workspace and slot of each counted device and 
     ],
   });
   expect(
-    await deviceSlotUsage(3, {
-      ...empty,
-      sims: () => {
-        throw new Error('simctl timed out');
-      },
-    }),
+    (
+      await deviceSlotUsages(
+        3,
+        {},
+        {
+          ...empty,
+          sims: () => {
+            throw new Error('simctl timed out');
+          },
+        },
+      )
+    ).devices,
   ).toMatchObject({ max: 3, inUse: null, unknown: expect.stringContaining('simctl timed out'), holders: [] });
 });
 

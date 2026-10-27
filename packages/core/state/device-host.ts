@@ -266,12 +266,11 @@ export function parseHostedLocalDeviceCount(value: unknown): number | { unknown:
   return null;
 }
 
+const isCount = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+
 export function parseHostedLocalPlatformCounts(value: unknown): HostedLocalPlatformCounts | { unknown: string } | null {
-  if (
-    isJsonObject(value) &&
-    [value.ios, value.android].every((count) => typeof count === 'number' && Number.isSafeInteger(count) && count >= 0)
-  )
-    return { ios: value.ios as number, android: value.android as number };
+  if (isJsonObject(value) && isCount(value.ios) && isCount(value.android))
+    return { ios: value.ios, android: value.android };
   if (isJsonObject(value) && typeof value.unknown === 'string' && value.unknown)
     return { unknown: value.unknown.slice(0, 4000) };
   return null;

@@ -163,6 +163,8 @@ const HOSTED_PLATFORM_CAPS = {
   macos: { setting: 'concurrency.maxMacosApps', label: 'macOS', noun: 'macOS app' },
 } as const;
 
+const used = (limit: { hosted: number; local: number | null }) => limit.hosted + (limit.local ?? 0);
+
 /**
  * What a hosted reservation on `platform` must fit: the platform's own cap `cap` and the shared `max`, where macOS apps
  * fill a pool of their own against `max`. `local` counts the host's own simulators and emulators, absent where they are
@@ -196,7 +198,6 @@ function hostedCapacity(
       local: macos ? null : localTotal,
       max,
     });
-  const used = (limit: (typeof limits)[number]) => limit.hosted + (limit.local ?? 0);
   const full = limits.find((limit) => used(limit) >= limit.max);
   return {
     running: pool + (macos ? 0 : localTotal),
