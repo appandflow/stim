@@ -16,10 +16,12 @@ public struct PairedServer: Codable, Equatable, Sendable, Identifiable {
   /// The capabilities the last `hello` reported.
   public var capabilities: [String]
   public var pairedAt: Date
+  /// The id the server gave this pairing's record, which `stim-server devices revoke` takes; nil until a `hello`.
+  public var deviceID: String?
 
   public init(
     endpoint: URL, name: String, serverKey: Data, clientKey: Data, serverID: String?, capabilities: [String],
-    pairedAt: Date
+    pairedAt: Date, deviceID: String? = nil
   ) {
     self.endpoint = endpoint
     self.name = name
@@ -28,7 +30,11 @@ public struct PairedServer: Codable, Equatable, Sendable, Identifiable {
     self.serverID = serverID
     self.capabilities = capabilities
     self.pairedAt = pairedAt
+    self.deviceID = deviceID
   }
+
+  /// Whether a `hello` has confirmed the pairing: a server reports at least `read` to a client it recorded.
+  public var isConfirmed: Bool { !capabilities.isEmpty }
 
   /// The pinned server key's fingerprint, which identifies the pairing.
   public var id: String { Noise.fingerprint(serverKey) }
@@ -48,6 +54,8 @@ public struct PairedServer: Codable, Equatable, Sendable, Identifiable {
   /// False for the in-memory store, whose pairings end with the app.
   var keepsPairings: Bool { get }
   func pairings() throws -> [PairedServer]
+  /// The ids of stored items that cannot be read as a pairing, which `forget` still removes.
+  func unreadable() throws -> [String]
   /// Adds the pairing, or replaces the one with the same `id`.
   func save(_ pairing: PairedServer) throws
   func forget(id: String) throws
@@ -62,9 +70,38 @@ public struct PairedServer: Codable, Equatable, Sendable, Identifiable {
 
   public func pairings() throws -> [PairedServer] { stored.values.sorted { $0.pairedAt < $1.pairedAt } }
 
+  public func unreadable() throws -> [String] { [] }
+
   public func save(_ pairing: PairedServer) throws { stored[pairing.id] = pairing }
 
   public func forget(id: String) throws { stored[id] = nil }
+}
+
+/// The Keychain items read as pairings, and the ids of those that could not be, such as an item a later version wrote
+/// with a field this one does not know.
+struct StoredPairings: Equatable {
+  var pairings: [PairedServer]
+  var unreadable: [String]
+
+  init(pairings: [PairedServer], unreadable: [String]) {
+    self.pairings = pairings
+    self.unreadable = unreadable
+  }
+
+  init(items: [(id: String, data: Data)]) {
+    let decoder = JSONDecoder()
+    var pairings: [PairedServer] = []
+    var unreadable: [String] = []
+    for item in items {
+      if let pairing = try? decoder.decode(PairedServer.self, from: item.data), pairing.id == item.id {
+        pairings.append(pairing)
+      } else {
+        unreadable.append(item.id)
+      }
+    }
+    self.pairings = pairings.sorted { $0.pairedAt < $1.pairedAt }
+    self.unreadable = unreadable.sorted()
+  }
 }
 
 /// One generic-password item per pairing in the data-protection keychain, readable after the first unlock on this Mac
@@ -105,17 +142,25 @@ public struct PairedServer: Codable, Equatable, Sendable, Identifiable {
     return query
   }
 
-  public func pairings() throws -> [PairedServer] {
+  public func pairings() throws -> [PairedServer] { try read().pairings }
+
+  public func unreadable() throws -> [String] { try read().unreadable }
+
+  private func read() throws -> StoredPairings {
     var query = query()
     query[kSecMatchLimit as String] = kSecMatchLimitAll
     query[kSecReturnData as String] = true
+    query[kSecReturnAttributes as String] = true
     var result: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
-    if status == errSecItemNotFound { return [] }
+    if status == errSecItemNotFound { return StoredPairings(pairings: [], unreadable: []) }
     guard status == errSecSuccess else { throw Failure(status: status) }
-    let decoder = JSONDecoder()
-    return ((result as? [Data]) ?? []).compactMap { try? decoder.decode(PairedServer.self, from: $0) }
-      .sorted { $0.pairedAt < $1.pairedAt }
+    let items = ((result as? [[String: Any]]) ?? []).compactMap { item -> (id: String, data: Data)? in
+      guard let id = item[kSecAttrAccount as String] as? String, let data = item[kSecValueData as String] as? Data
+      else { return nil }
+      return (id, data)
+    }
+    return StoredPairings(items: items)
   }
 
   public func save(_ pairing: PairedServer) throws {

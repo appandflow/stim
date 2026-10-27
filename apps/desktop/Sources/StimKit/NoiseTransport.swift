@@ -282,15 +282,23 @@ public enum NoiseCredential: Sendable {
 /// Pairs with another machine's stim-server from a `stim-server pair` payload, as the phone does: a fresh client key for
 /// this pairing, protocol 2's first-contact handshake with the payload's token, then `hello`.
 @MainActor public enum NoisePairing {
+  private static var active: Set<String> = []
+
   /// Saves the pairing to `store` once the server's key matches the fingerprint and before message 3 spends the token,
   /// then again with the server id and capabilities `hello` reports. The whole pairing is bounded by `timeout` and ends
   /// when the calling task is cancelled. A failure before message 3, or the server's refusal to record the key, forgets
   /// the pairing. Any other failure after message 3 keeps the pairing, whose key the server may have recorded, and
-  /// throws `pairing-unconfirmed`.
+  /// throws `pairing-unconfirmed`. A second pairing with the same server while one is running throws
+  /// `pairing-in-progress` without touching the store, because both write and forget the same item.
   public static func pair(
     _ payload: PairingPayload, store: PairedServerStore, deviceName: String, clientName: String, clientVersion: String,
     timeout: TimeInterval = 15, now: @escaping () -> Date = Date.init
   ) async throws -> PairedServer {
+    guard active.insert(payload.fingerprint).inserted else {
+      throw ServerError(
+        code: "pairing-in-progress", message: "Stim Desktop is already pairing with this machine.")
+    }
+    defer { active.remove(payload.fingerprint) }
     let clientKey = Curve25519.KeyAgreement.PrivateKey()
     let pinned = Set(try store.pairings().map(\.serverKey))
     var saved: PairedServer?
@@ -320,6 +328,7 @@ public enum NoiseCredential: Sendable {
         throw ServerError(code: "pairing-not-saved", message: "The pairing was not saved.")
       }
       pairing.serverID = hello.server.id
+      pairing.deviceID = hello.device?.id
       pairing.capabilities = hello.capabilities
       if pairing.name.isEmpty { pairing.name = hello.server.name }
       try store.save(pairing)

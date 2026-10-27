@@ -38,8 +38,13 @@ struct SettingsView: View {
         .tag("app")
       if flags.phoneApp {
         PhonesView(server: ServerController.shared, stimHome: store.stimHome)
-          .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
+          .tabItem { Label("Paired Devices", systemImage: "iphone.gen3.radiowaves.left.and.right") }
           .tag("phones")
+      }
+      if flags.pairedMachines {
+        PairedMachinesView(servers: .shared)
+          .tabItem { Label("Paired Machines", systemImage: "server.rack") }
+          .tag("paired-machines")
       }
       BuildMachinesView(model: buildMachines, ledger: builds, store: store, workspace: workspace, actions: actions)
         .tabItem { Label("Remote Machines", systemImage: "hammer") }
@@ -57,6 +62,7 @@ struct SettingsView: View {
     .tint(Palette.primary)
     .onAppear {
       if tab == "phones", !flags.phoneApp { tab = "app" }
+      if tab == "paired-machines", !flags.pairedMachines { tab = "app" }
       if SettingScope(rawValue: tab) != nil {
         scope = tab
         tab = "stim-settings"
