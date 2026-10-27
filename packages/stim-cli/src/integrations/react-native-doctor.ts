@@ -16,6 +16,7 @@ import {
   androidRequirements,
   androidToolchain,
   androidToolchainAsync,
+  buildsOnlyOnWorker,
   iosToolchainAsync,
 } from '../offload/toolchain.ts';
 import { detectIsExpo } from '../workspace/project-files.ts';
@@ -64,7 +65,13 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
         const targets: BuildTarget[] = [];
         if (checksIos) {
           const [local, runtime] = await Promise.all([iosToolchainAsync(root, iosDir), iosRuntime()]);
-          targets.push({ platform: 'ios', local, runtime, cocoapodsPinned: bundlerPin(root, iosDir) !== null });
+          targets.push({
+            platform: 'ios',
+            local,
+            runtime,
+            cocoapodsPinned: bundlerPin(root, iosDir) !== null,
+            ...(buildsOnlyOnWorker(local) ? { runsOnWorker: true as const } : {}),
+          });
         }
         if (checksAndroid) {
           targets.push({

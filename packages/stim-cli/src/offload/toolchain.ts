@@ -79,6 +79,8 @@ export type BuildTarget =
       local: IosToolchain;
       runtime: string | null;
       cocoapodsPinned: boolean;
+      /** No CPU comparison: doctor's target for a client without Xcode, whose app runs on a simulator of the Mac that builds it. */
+      runsOnWorker?: true;
     }
   | { platform: 'android'; native?: 'gradle'; local: AndroidToolchain; requires: AndroidRequirements }
   | { platform: 'macos'; local: MacosToolchain; runsOnWorker?: true };
@@ -643,11 +645,15 @@ export function cocoapodsDifference(
   target: Extract<BuildTarget, { platform: 'ios' }>,
   worker: WorkerToolchain,
 ): OffloadProblem | null {
-  if (target.native || target.cocoapodsPinned || buildsOnlyOnWorker(target.local)) return null;
+  if (target.native || target.cocoapodsPinned) return null;
   if (worker.os !== undefined && worker.os !== 'darwin') return null;
   const here = target.local.cocoapods;
   if (!worker.cocoapods) {
-    return { code: 'cocoapods', reason: versionMismatch('CocoaPods', null, here), ...cocoapodsInstall(here) };
+    return {
+      code: 'cocoapods',
+      reason: buildsOnlyOnWorker(target.local) ? 'no CocoaPods there' : versionMismatch('CocoaPods', null, here),
+      ...cocoapodsInstall(here),
+    };
   }
   return here && worker.cocoapods !== here
     ? { code: 'cocoapods', reason: versionMismatch('CocoaPods', worker.cocoapods, here) }
@@ -823,7 +829,8 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
     if (!worker.macosSdk) out.push({ code: 'macos-sdk', reason: 'no macOS SDK there' });
     return out;
   }
-  if (worker.arch !== local.arch) out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
+  if (worker.arch !== local.arch && !(target.platform === 'ios' && target.runsOnWorker))
+    out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
   if (target.platform === 'macos') {
     const macos = target.local;
     const xcode = !macos.xcode || worker.xcode !== macos.xcode ? xcodeProblem(macos, worker) : null;

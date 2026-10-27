@@ -972,8 +972,10 @@ and no platform selection on a Mac, it also checks the macOS Xcode and SDK.
 A client with no Xcode and no simulator SDK, such as Linux or Windows, has no
 Xcode to match: the Mac's own Xcode, simulator SDK and CocoaPods are the
 build's toolchain, the client leaves pod install to it, and \`stim ios --remote
-<mac> --remote-build <mac>\` runs the app on that Mac's hosted simulator. A
-client with an Xcode still needs the same one.
+<mac> --remote-build <mac>\` runs the app on that Mac's hosted simulator. If
+that pod install changes Podfile.lock or the Xcode project, the build fails
+with fingerprint-mismatch; run pod install once on a Mac and commit the
+result. A client with an Xcode still needs the same one.
 Two machines build for each other when their Stim releases share a build
 compatibility version, which changes only when what a worker builds, how it
 builds, or the build messages change; their Stim builds can differ. A

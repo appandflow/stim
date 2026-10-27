@@ -972,6 +972,18 @@ describe('a client without Xcode', () => {
     ).toEqual(['no Xcode there', 'no simulator SDK there']);
   });
 
+  it('still keeps a worker without CocoaPods out of automatic placement', () => {
+    const worker = offer({ toolchain: { cocoapods: null } });
+    expect(offerProblems(worker, hosted)).toEqual([
+      expect.objectContaining({ code: 'cocoapods', reason: 'no CocoaPods there' }),
+    ]);
+  });
+
+  it("does not compare the CPU of doctor's target, whose app runs on the Mac that builds it", () => {
+    const doctorTarget: BuildTarget = { ...noXcode, runtime: null, runsOnWorker: true };
+    expect(toolchainMismatches(doctorTarget, offer().toolchain)).toEqual([]);
+  });
+
   it('keeps the Xcode match for a client that has another Xcode', () => {
     const otherXcode: BuildTarget = { ...IOS, local: { ...LOCAL, xcode: 'Xcode 27.1 / Build version 27A9275' } };
     expect(toolchainMismatches(otherXcode, offer().toolchain).map((p) => p.code)).toEqual(['xcode']);
