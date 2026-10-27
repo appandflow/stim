@@ -5,6 +5,7 @@ import {
   chmodSync,
   constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -941,7 +942,14 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       attempts: 0,
     };
     try {
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      mkdirSync(this.recordings, { recursive: true, mode: 0o700 });
+      const root = lstatSync(this.recordings);
+      if (
+        !root.isDirectory() ||
+        (process.getuid !== undefined && (root.uid !== process.getuid() || (root.mode & 0o077) !== 0))
+      )
+        throw new Error(`${this.recordings} is not a private directory of this user`);
+      mkdirSync(dir, { mode: 0o700 });
     } catch (error) {
       process.stderr.write(`Hosted recording directory failed: ${String(error).replace(/\s+/g, ' ')}\n`);
       response

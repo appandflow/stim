@@ -7,6 +7,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -820,6 +821,7 @@ test('writes a recording only in a private temp directory, one at a time, and re
   expect(started.flags).toEqual({ platform: 'ios', udid: UDID, fps: 30 });
   expect(started.meta.clientArtifactPaths).toEqual({ outPath: '/client/clip.mov' });
   expect(statSync(join(output, '..')).mode & 0o777).toBe(0o700);
+  expect(statSync(recordings).mode & 0o777).toBe(0o700);
 
   const second = await rpc(recordStart());
   expect(second.status).toBe(400);
@@ -840,6 +842,25 @@ test('writes a recording only in a private temp directory, one at a time, and re
   await start();
   expect(existsSync(recordings)).toBe(false);
 });
+
+test.skipIf(process.platform === 'win32')(
+  'refuses to record when the recordings directory is a link another user could plant',
+  async () => {
+    await start();
+    expect((await rpc(recordStart())).status).toBe(200);
+    const recordings = dirname(dirname(forwardedRecord().params.positionals[1]));
+    await driver.stop();
+    const elsewhere = join(home, 'elsewhere');
+    mkdirSync(elsewhere, { mode: 0o700 });
+    await start();
+    symlinkSync(elsewhere, recordings, 'dir');
+    const calls = fixture.calls.length;
+    expect((await rpc(recordStart())).status).toBe(500);
+    expect(fixture.calls.slice(calls).some((call) => call.body.includes('"record"'))).toBe(false);
+    expect(readdirSync(elsewhere)).toEqual([]);
+    rmSync(recordings);
+  },
+);
 
 test('overlapping starts run only one recording', async () => {
   await start();

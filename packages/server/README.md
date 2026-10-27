@@ -1142,8 +1142,9 @@ client's next `record stop` within 15 minutes with that result. A finished
 recording over 512 MiB, whichever stop finished it, is deleted and `record stop`
 fails with `STIM_RECORDING_TOO_LARGE`. A request the relay cannot process
 answers 500 instead of rejecting. Driver stop and daemon start
-delete the session's recordings directory, and `stim gc --delete` removes one
-idle for 24 hours as a Stim temp directory. Hosted macOS refuses `record`, because
+delete the session's recordings directory, which must be a directory of the
+server's user with no group or other access. `stim gc --delete` run by that user
+without `STIM_HOME` removes one idle for 24 hours as a Stim temp directory. Hosted macOS refuses `record`, because
 agent-device's `macos-app` lease does not allow it.
 
 ### Hosted macOS app sessions
