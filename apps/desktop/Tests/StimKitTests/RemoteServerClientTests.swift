@@ -125,7 +125,11 @@ import Testing
       transport: NoiseClientTransport.factory { try? store.pairings().first { $0.id == pairing.id }?.credential })
     client.start()
     for _ in 0..<400 where client.state == .connecting { try? await Task.sleep(for: .milliseconds(5)) }
-    #expect(client.state == .refused(NoiseClientTransport.refusal("unauthorized")))
+    guard case .refused(let refusal) = client.state else {
+      Issue.record("a forgotten pairing left the client \(client.state)")
+      return
+    }
+    #expect(refusal.code == "unauthorized")
   }
 }
 

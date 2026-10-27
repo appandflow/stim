@@ -211,8 +211,8 @@ public struct VideoPacket: Equatable, Sendable {
   public var accessUnit: Data
 
   /// Parses the big-endian layout `VideoPacket` documents: u8 version 1, u8 flags, u16 header length, u32 sequence,
-  /// f64 capture time, u16 width, u16 height, u8 id length N, N bytes of subscription id. Nil for another version
-  /// or a message too short for its header.
+  /// f64 capture time, u16 width, u16 height, u8 id length N, N bytes of subscription id. Nil for another version,
+  /// a message too short for its header, or a capture time that is not a finite time within 2^53 milliseconds.
   public init?(_ data: Data) {
     let bytes = [UInt8](data)
     guard bytes.count >= 21, bytes[0] == 1 else { return nil }
@@ -223,6 +223,7 @@ public struct VideoPacket: Equatable, Sendable {
     keyframe = bytes[1] & 1 != 0
     sequence = bytes[4..<8].reduce(0) { $0 << 8 | UInt32($1) }
     capturedAt = Double(bitPattern: bytes[8..<16].reduce(0) { $0 << 8 | UInt64($1) })
+    guard capturedAt.isFinite, abs(capturedAt) <= 9_007_199_254_740_992 else { return nil }
     width = u16(16)
     height = u16(18)
     guard let id = String(bytes: bytes[21..<(21 + idLength)], encoding: .ascii) else { return nil }

@@ -169,7 +169,7 @@ struct NoiseInteropTests {
     #expect(error["code"] == .string("forbidden"))
   }
 
-  @Test func aWrongFingerprintOrChangedKeyEndsTheHandshakeBeforeMessage3() async throws {
+  @Test func onlyAMatchingFingerprintReachesMessage3AndAPairingPastItIsKept() async throws {
     let runtime = try #require(Self.runtime)
     let token = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
     let responder = try Child([Self.responder, runtime, token], environment: ["PATH": "/usr/bin:/bin"])
@@ -196,14 +196,13 @@ struct NoiseInteropTests {
     #expect(state == .refused(NoiseClientTransport.refusal("server-key-mismatch")))
     #expect(try await responder.line(2) == ["message3": .bool(false), "code": .string("closed")])
 
-    var verified: Data?
-    let control = NoiseClientTransport(
-      url: changed.endpoint, clientKey: .init(),
-      credential: .firstContact(
-        secret: try #require(Noise.decodeSecret(token)), fingerprint: fingerprint, deviceName: "Interop Mac", pinned: []),
-      onVerified: { verified = $0 }, onEvent: { _ in })
-    defer { control.close() }
+    do {
+      _ = try await Self.pair(try Self.payload(port: port, token: token, fingerprint: fingerprint), store: store)
+      Issue.record("the responder never answers hello, yet the pairing completed")
+    } catch let error as ServerError {
+      #expect(error.code == "pairing-unconfirmed")
+    }
     #expect(try await responder.line(3) == ["message3": .bool(true), "payload": .string(#"{"name":"Interop Mac"}"#)])
-    #expect(verified.map(Noise.fingerprint) == fingerprint)
+    #expect(try store.pairings().map(\.id) == [fingerprint])
   }
 }

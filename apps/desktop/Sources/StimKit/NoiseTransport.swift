@@ -41,7 +41,8 @@ public enum NoiseCredential: Sendable {
   ) -> ServerTransportFactory {
     { url, onEvent in
       guard let (clientKey, resolved) = credential() else {
-        return NoiseClientTransport(refusing: Self.refusal("unauthorized"), onEvent: onEvent)
+        let missing = ServerError(code: "unauthorized", message: "Stim Desktop has no key for this pairing. Pair again.")
+        return NoiseClientTransport(refusing: missing, onEvent: onEvent)
       }
       return NoiseClientTransport(
         url: url, clientKey: clientKey, credential: resolved, timeout: timeout, onEvent: onEvent)
@@ -281,8 +282,11 @@ public enum NoiseCredential: Sendable {
 /// Pairs with another machine's stim-server from a `stim-server pair` payload, as the phone does: a fresh client key for
 /// this pairing, protocol 2's first-contact handshake with the payload's token, then `hello`.
 @MainActor public enum NoisePairing {
-  /// Saves the pairing to `store` once the server's key matches the fingerprint and before the token is spent, and
-  /// again with the server id and capabilities `hello` reports. A failure after the first save forgets the pairing.
+  /// Saves the pairing to `store` once the server's key matches the fingerprint and before message 3 spends the token,
+  /// then again with the server id and capabilities `hello` reports. The whole pairing is bounded by `timeout` and ends
+  /// when the calling task is cancelled. A failure before message 3, or the server's refusal to record the key, forgets
+  /// the pairing. Any other failure after message 3 keeps the pairing, whose key the server may have recorded, and
+  /// throws `pairing-unconfirmed`.
   public static func pair(
     _ payload: PairingPayload, store: PairedServerStore, deviceName: String, clientName: String, clientVersion: String,
     timeout: TimeInterval = 15, now: @escaping () -> Date = Date.init
@@ -290,12 +294,13 @@ public enum NoiseCredential: Sendable {
     let clientKey = Curve25519.KeyAgreement.PrivateKey()
     let pinned = Set(try store.pairings().map(\.serverKey))
     var saved: PairedServer?
+    var transport: NoiseClientTransport?
     let credential = NoiseCredential.firstContact(
       secret: payload.secret, fingerprint: payload.fingerprint, deviceName: deviceName, pinned: pinned)
     let client = ServerClient(
       endpoint: payload.endpoint, clientName: clientName, clientVersion: clientVersion,
       transport: { url, onEvent in
-        NoiseClientTransport(
+        let created = NoiseClientTransport(
           url: url, clientKey: clientKey, credential: credential, timeout: timeout,
           onVerified: { serverKey in
             let pairing = PairedServer(
@@ -305,25 +310,14 @@ public enum NoiseCredential: Sendable {
             saved = pairing
           },
           onEvent: onEvent)
+        transport = created
+        return created
       })
     defer { client.stop() }
     do {
-      let hello: HelloResult = try await withCheckedThrowingContinuation { continuation in
-        client.onState = { [weak client] state in
-          let result: Result<HelloResult, Error>
-          switch state {
-          case .open(let hello): result = .success(hello)
-          case .refused(let error): result = .failure(error)
-          case .waiting(_, let reason): result = .failure(ServerError(code: "unreachable", message: reason))
-          case .idle, .connecting: return
-          }
-          client?.onState = nil
-          continuation.resume(with: result)
-        }
-        client.start()
-      }
+      let hello = try await opened(client, timeout: timeout)
       guard var pairing = saved else {
-        throw ServerError(code: "handshake-failed", message: "The pairing was not saved.")
+        throw ServerError(code: "pairing-not-saved", message: "The pairing was not saved.")
       }
       pairing.serverID = hello.server.id
       pairing.capabilities = hello.capabilities
@@ -331,8 +325,56 @@ public enum NoiseCredential: Sendable {
       try store.save(pairing)
       return pairing
     } catch {
-      if let saved { try? store.forget(id: saved.id) }
-      throw error
+      guard let saved else { throw error }
+      let recordRefused = (error as? ServerError).map { ["unknown-secret", "unauthorized"].contains($0.code) } ?? false
+      guard transport?.serverKey != nil, !recordRefused else {
+        try? store.forget(id: saved.id)
+        throw error
+      }
+      let name = saved.name.isEmpty ? "The machine" : saved.name
+      throw ServerError(
+        code: "pairing-unconfirmed",
+        message:
+          "\(name) did not confirm the pairing: \(error.localizedDescription) Stim Desktop kept it; reconnect to finish, or forget it and run `stim-server devices revoke` there for this Mac."
+      )
+    }
+  }
+
+  @MainActor private final class Waiter {
+    var continuation: CheckedContinuation<HelloResult, Error>?
+
+    func finish(_ result: Result<HelloResult, Error>) {
+      guard let continuation else { return }
+      self.continuation = nil
+      continuation.resume(with: result)
+    }
+  }
+
+  private static func opened(_ client: ServerClient, timeout: TimeInterval) async throws -> HelloResult {
+    let waiter = Waiter()
+    let cancelTimer = ServerClient.dispatchAfter(timeout) {
+      waiter.finish(.failure(ServerError(code: "timeout", message: "The machine did not answer in time.")))
+    }
+    defer {
+      cancelTimer()
+      client.onState = nil
+    }
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        waiter.continuation = continuation
+        if Task.isCancelled { return waiter.finish(.failure(CancellationError())) }
+        client.onState = { state in
+          switch state {
+          case .open(let hello): waiter.finish(.success(hello))
+          case .refused(let error): waiter.finish(.failure(error))
+          case .waiting(_, let reason): waiter.finish(.failure(ServerError(code: "unreachable", message: reason)))
+          case .idle, .connecting: break
+          }
+        }
+        client.start()
+      }
+    } onCancel: {
+      Task { @MainActor in waiter.finish(.failure(CancellationError())) }
     }
   }
 }
