@@ -349,6 +349,10 @@ export function parsePackagePermissions(
   return states;
 }
 
+function hasUserFlag(state: { flags: string[] }): boolean {
+  return state.flags.some((flag) => /^USER_(SET|FIXED)$/.test(flag));
+}
+
 function parseSettingFlag(output: string): boolean | null {
   const value = output.trim();
   return value === '1' ? true : value === '0' ? false : null;
@@ -467,10 +471,9 @@ async function runAndroid(request: ToolRequest, target: ToolTarget, d: ToolDeps)
       );
     }
     const wanted = request.action === 'grant';
-    const promptable = (state: (typeof states)[number]) => !state.flags.some((flag) => /^USER_(SET|FIXED)$/.test(flag));
     const done = wanted
       ? states.some((state) => state.granted)
-      : states.every((state) => !state.granted && (request.action !== 'reset' || promptable(state)));
+      : states.every((state) => !state.granted && (request.action !== 'reset' || !hasUserFlag(state)));
     if (!done) {
       return failure(
         FAILED,
