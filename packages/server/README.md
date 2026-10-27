@@ -1122,9 +1122,12 @@ Hosted iOS and Android sessions allow `record start` and `record stop`, outside
 `batch`. The adapter accepts no output path but agent-device's remote temp shape
 (`/tmp/agent-device-recording-<ms>-<id>.<ext>`) and requires the client's
 `clientArtifactPaths.outPath`. It replaces the path with
-`device-host/sessions/<session>/agent-device/recordings/<random>/recording.<ext>`
-(directory mode 0700), so the daemon writes the video, its chunks and gesture
-telemetry only there. `record stop` returns them as daemon artifacts, which the
+`<tmpdir>/stim-server-recordings-<hash>/<random>/recording.<ext>` (directory mode
+0700), where `<tmpdir>` is the server's `os.tmpdir()` and `<hash>` derives from
+the session's agent-device state directory, so the daemon writes the video, its
+chunks and gesture telemetry only there. The recording stays off the Stim home
+because the simulator's `SimRenderServer` writes the file, and macOS denies it
+removable volumes such as an external disk holding `~/.stim`. `record stop` returns them as daemon artifacts, which the
 client downloads over `GET /artifacts/<id>` on the same agent route, and the
 daemon deletes each file after its download, or after 15 minutes. One recording
 runs per session; a second start, a stop naming another agent-device session and
@@ -1139,7 +1142,9 @@ client's next `record stop` within 15 minutes with that result. A finished
 recording over 512 MiB, whichever stop finished it, is deleted and `record stop`
 fails with `STIM_RECORDING_TOO_LARGE`. A request the relay cannot process
 answers 500 instead of rejecting. Driver stop and daemon start
-delete the `recordings` directory. Hosted macOS refuses `record`, because
+delete the session's recordings directory, which must be a directory of the
+server's user with no group or other access. `stim gc --delete` run by that user
+without `STIM_HOME` removes one idle for 24 hours as a Stim temp directory. Hosted macOS refuses `record`, because
 agent-device's `macos-app` lease does not allow it.
 
 ### Hosted macOS app sessions

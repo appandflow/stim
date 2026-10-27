@@ -5,6 +5,7 @@ import {
   chmodSync,
   constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -14,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, extname, join } from 'node:path';
 import {
   claimRemoveCommand,
@@ -280,8 +281,12 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     };
   }
 
+  // SimRenderServer writes simulator recordings and lacks access to removable volumes (TCC), where the Stim home may live.
   private get recordings(): string {
-    return join(this.options.stateDir, 'recordings');
+    return join(
+      tmpdir(),
+      `stim-server-recordings-${createHash('sha256').update(this.options.stateDir).digest('hex').slice(0, 16)}`,
+    );
   }
 
   onExit(listener: () => void): void {
@@ -937,7 +942,14 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       attempts: 0,
     };
     try {
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      mkdirSync(this.recordings, { recursive: true, mode: 0o700 });
+      const root = lstatSync(this.recordings);
+      if (
+        !root.isDirectory() ||
+        (process.getuid !== undefined && (root.uid !== process.getuid() || (root.mode & 0o077) !== 0))
+      )
+        throw new Error(`${this.recordings} is not a private directory of this user`);
+      mkdirSync(dir, { mode: 0o700 });
     } catch (error) {
       process.stderr.write(`Hosted recording directory failed: ${String(error).replace(/\s+/g, ' ')}\n`);
       response
