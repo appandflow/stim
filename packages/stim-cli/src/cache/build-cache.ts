@@ -727,10 +727,32 @@ function sourceListChanges(previous: unknown[], current: unknown[]): SourceChang
   return changes;
 }
 
-/** Whether `current` differs from `previous` in at least one source, and only in sources inside `dir`. */
+/**
+ * Whether `current` differs from `previous` in at least one source, and only in file or directory sources whose
+ * normalized path lies inside `dir`.
+ */
 export function changedOnlyInside(previous: unknown[], current: unknown[], dir: string): boolean {
+  const contents = new Set(
+    current.flatMap((source) =>
+      typeof source === 'object' &&
+      source !== null &&
+      'type' in source &&
+      source.type === 'contents' &&
+      'id' in source &&
+      typeof source.id === 'string'
+        ? [source.id]
+        : [],
+    ),
+  );
   const changes = sourceListChanges(previous, current);
-  return dir !== '.' && changes.length > 0 && changes.every(({ name }) => name === dir || name.startsWith(`${dir}/`));
+  return (
+    dir !== '.' &&
+    changes.length > 0 &&
+    changes.every(
+      ({ name }) =>
+        !contents.has(name) && posix.normalize(name) === name && (name === dir || name.startsWith(`${dir}/`)),
+    )
+  );
 }
 
 export function diffFingerprintSources({
