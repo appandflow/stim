@@ -1065,6 +1065,59 @@ its own for the length of the run, so `lock` is for holding a device across
 runs, such as a device-tool session. `stim status` lists every lease on the
 machine.
 
+## `device location`, `permission`, `push` and `network`
+
+```text
+stim device location <ios|android> (--set <lat,lng> | --clear) [--slot <name>] [--json]
+stim device permission <ios|android> <grant|revoke|reset> <service> [--slot <name>] [--json]
+stim device push ios --payload <json> [--slot <name>] [--json]
+stim device network android <on|off> [--slot <name>] [--json]
+```
+
+Change this workspace's own simulator or emulator without looking up its UDID
+or serial, and without the risk of aiming `simctl` or `adb` at a device Stim
+does not own.
+
+- `location --set 45.5,-73.6` simulates a coordinate. Latitude and longitude
+  are one value, so a negative latitude is not read as a flag. `--clear` stops
+  simulating on iOS; the Android emulator has no way to clear one and refuses.
+- `permission` grants, revokes or resets one service for the app. The app is the
+  slot's last launch, else the project's bundle id or Android package.
+  iOS services are the ones `simctl privacy` lists: `all`, `calendar`,
+  `contacts`, `contacts-limited`, `location`, `location-always`,
+  `media-library`, `microphone`, `motion`, `photos`, `photos-add`, `reminders`
+  and `siri`. Android services are `calendar`, `camera`, `contacts`, `location`,
+  `microphone`, `motion`, `notifications` and `photos`. A permission the app
+  does not declare in its manifest cannot be changed; Android lists it under
+  `skipped` and succeeds when the app declares at least one permission of the
+  service, and refuses with `STIM_DEVICE_TOOL_FAILED` when it declares none. `reset` on Android revokes the permission and clears its user-set
+  flags so the app asks again. On iOS, changing a permission can terminate the
+  running app.
+- `push ios --payload '{"aps":{"alert":"Hello"}}'` sends a test push to the
+  app. The payload is a JSON object with an `aps` key, at most 4096 bytes. The app must
+  already hold notification permission on the simulator, which `simctl privacy`
+  cannot grant; otherwise `simctl` answers "Source is not authorized".
+- `network android off` turns Wi-Fi and mobile data off and `on` turns them back
+  on.
+
+The target is the slot's owned, booted simulator or emulator, checked the way
+`reload` checks it. A hosted device, an EAS Simulator session, a physical device
+and a device Stim does not own refuse with `STIM_DEVICE_TOOL_TARGET` and run
+nothing. An action the platform lacks refuses with
+`STIM_DEVICE_TOOL_UNSUPPORTED`, and a tool call that fails, or a device that does
+not report the change afterwards, with `STIM_DEVICE_TOOL_FAILED`.
+
+`--json` prints one line: `platform`, `slot`, `deviceId`, `deviceName`, `tool`,
+the parameters, and `readBack`. `readBack` is what the device reported after the
+change: `{ "permissions": [{ "name", "granted" }] }` for Android permissions and
+`{ "wifi", "data" }` for Android network. It is `null` where the platform has no
+read: iOS location, permissions and push, and Android location. There the exit
+status of `simctl` or `adb` is the only confirmation.
+
+```text
+Set this workspace's simulator to Montreal, grant the app photos access, and show me the JSON that stim device printed for each.
+```
+
 ## `device provision`
 
 ```text
