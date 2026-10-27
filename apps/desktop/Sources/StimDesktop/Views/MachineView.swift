@@ -15,6 +15,8 @@ struct MachineView: View {
   @Environment(\.openSettings) private var openSettings
   @AppStorage("settingsTab") private var settingsTab = "app"
   @State private var selectedMachine: String?
+  @State private var selectedPairing: String?
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
   @State private var selection: Set<FreeAction>?
   @State private var confirming: [StimCommand]?
   @State private var removing: WorkspaceStorage?
@@ -31,6 +33,10 @@ struct MachineView: View {
 
   private var machine: String? {
     selectedMachine.flatMap { (buildMachines.entries ?? []).contains($0) ? $0 : nil }
+  }
+
+  private var pairing: PairedServers.Entry? {
+    selectedPairing.flatMap { id in pairedSessions.entries.first { $0.id == id } }
   }
 
   var body: some View {
@@ -51,9 +57,10 @@ struct MachineView: View {
           }
           .buttonStyle(.stim())
         }
-        if let variant = Tips.emptyState(
-          gate: tips.established, machines: buildMachines.entries, settingsError: buildMachines.settings.error,
-          selectedMachine: machine, peers: buildMachines.peers)
+        if pairing == nil,
+          let variant = Tips.emptyState(
+            gate: tips.established, machines: buildMachines.entries, settingsError: buildMachines.settings.error,
+            selectedMachine: machine, peers: buildMachines.peers)
         {
           BuildMachinesEmptyState(
             add: {
@@ -68,7 +75,11 @@ struct MachineView: View {
           Text("Could not load build history: \(error)")
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
         }
-        if let machine {
+        if let pairing {
+          PairedMachineSection(
+            entry: pairing, session: pairedSessions.sessions[pairing.id], status: status.paired[pairing.id],
+            work: RemoteWork.list(status.ownedEnvironments).filter { $0.owner == .paired(pairing.id) })
+        } else if let machine {
           MachineBuildMachines(model: buildMachines, checkout: checkout, selectedMachine: machine)
         } else {
           MachineHeading(icon: "laptopcomputer", title: "This Mac", subtitle: Host.current().localizedName) {
@@ -143,32 +154,74 @@ struct MachineView: View {
       HStack(spacing: Space.sm) {
         Button {
           selectedMachine = nil
+          selectedPairing = nil
         } label: {
           Label("This Mac", systemImage: "laptopcomputer")
         }
-        .buttonStyle(.stim(machine == nil ? .primary : .secondary, .regular))
-        .accessibilityAddTraits(machine == nil ? .isSelected : [])
+        .buttonStyle(.stim(machine == nil && pairing == nil ? .primary : .secondary, .regular))
+        .accessibilityAddTraits(machine == nil && pairing == nil ? .isSelected : [])
         ForEach(buildMachines.entries ?? [], id: \.self) { entry in
           Button {
             selectedMachine = entry
+            selectedPairing = nil
           } label: {
             Label(machineName(entry), systemImage: "desktopcomputer")
           }
-          .buttonStyle(.stim(machine == entry ? .primary : .secondary, .regular))
-          .accessibilityAddTraits(machine == entry ? .isSelected : [])
+          .buttonStyle(.stim(machine == entry && pairing == nil ? .primary : .secondary, .regular))
+          .accessibilityAddTraits(machine == entry && pairing == nil ? .isSelected : [])
           .help(entry)
+        }
+        ForEach(pairedSessions.entries) { entry in
+          Button {
+            selectedPairing = entry.id
+          } label: {
+            Label(pairedName(entry), systemImage: "link")
+          }
+          .buttonStyle(.stim(pairing?.id == entry.id ? .primary : .secondary, .regular))
+          .accessibilityAddTraits(pairing?.id == entry.id ? .isSelected : [])
+          .help(Text(verbatim: "\(pairedName(entry)), paired: the work its stim-server controls"))
         }
       }
       .fixedSize(horizontal: true, vertical: false)
-      Picker("Machine", selection: Binding(get: { machine }, set: { selectedMachine = $0 })) {
-        Text("This Mac").tag(String?.none)
+      Picker("Machine", selection: Binding(get: { choice }, set: { choose($0) })) {
+        Text("This Mac").tag(MachineChoice?.none)
         ForEach(buildMachines.entries ?? [], id: \.self) { entry in
-          Text(verbatim: machineName(entry)).tag(Optional(entry))
+          Text(verbatim: machineName(entry)).tag(Optional(MachineChoice.buildMachine(entry)))
+        }
+        ForEach(pairedSessions.entries) { entry in
+          Text(verbatim: pairedName(entry)).tag(Optional(MachineChoice.paired(entry.id)))
         }
       }
       .pickerStyle(.menu)
       .frame(maxWidth: 360, alignment: .leading)
     }
+  }
+
+  private enum MachineChoice: Hashable {
+    case buildMachine(String)
+    case paired(String)
+  }
+
+  private var choice: MachineChoice? {
+    if let pairing { return .paired(pairing.id) }
+    return machine.map { .buildMachine($0) }
+  }
+
+  private func choose(_ choice: MachineChoice?) {
+    switch choice {
+    case .buildMachine(let entry):
+      selectedMachine = entry
+      selectedPairing = nil
+    case .paired(let id):
+      selectedPairing = id
+    case nil:
+      selectedMachine = nil
+      selectedPairing = nil
+    }
+  }
+
+  private func pairedName(_ entry: PairedServers.Entry) -> String {
+    pairedSessions.sessions[entry.id]?.name ?? entry.pairing?.name ?? "Paired machine"
   }
 
   private var header: some View {
@@ -179,12 +232,12 @@ struct MachineView: View {
           .foregroundStyle(Palette.secondary)
       }
       Spacer()
-      if machine == nil, let at = storage.measuredAt, !storage.measuring, !gc.running {
+      if machine == nil, pairing == nil, let at = storage.measuredAt, !storage.measuring, !gc.running {
         TimelineView(.periodic(from: .now, by: 30)) { context in
           Text("Measured \(Format.age(context.date.timeIntervalSince(at)))").foregroundStyle(Palette.tertiary)
         }
       }
-      if machine == nil {
+      if machine == nil, pairing == nil {
         Button("Refresh") {
           storage.refresh(force: true)
           gc.refresh()

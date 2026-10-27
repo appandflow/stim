@@ -8,9 +8,13 @@ import Testing
   var stored: [String: PairedServer] = [:]
   var unreadableIDs: [String] = []
   var failsForget = false
+  var failsRead = false
   var keepsPairings: Bool { true }
 
-  func pairings() throws -> [PairedServer] { stored.values.sorted { $0.pairedAt < $1.pairedAt } }
+  func pairings() throws -> [PairedServer] {
+    if failsRead { throw ServerError(code: "keychain", message: "The Keychain is locked.") }
+    return stored.values.sorted { $0.pairedAt < $1.pairedAt }
+  }
   func unreadable() throws -> [String] { unreadableIDs }
   func save(_ pairing: PairedServer) throws { stored[pairing.id] = pairing }
 
@@ -284,6 +288,24 @@ private let code =
     #expect(rig.servers.entries.first?.connection == .connecting)
     #expect(try rig.store.pairings() == [kept])
     rig.servers.stop()
+  }
+
+  @Test func aKeyTheKeychainCannotReadIsTriedAgainInsteadOfRefused() async throws {
+    let store = ScriptedStore()
+    let kept = pairing(10)
+    store.stored[kept.id] = kept
+    let servers = PairedServers.live(
+      store: store, deviceName: "Test Mac", clientName: "test", clientVersion: "1", localServerID: { nil })
+    store.failsRead = true
+    servers.start()
+    for _ in 0..<400 where servers.entries.first?.connection == .connecting { try? await Task.sleep(for: .milliseconds(5)) }
+    guard case .offline(_, _, let hadOpened) = servers.entries.first?.connection else {
+      Issue.record("an unreadable key left the pairing \(String(describing: servers.entries.first?.connection))")
+      servers.stop()
+      return
+    }
+    #expect(!hadOpened)
+    servers.stop()
   }
 
   @Test func aFailedForgetKeepsTheConnectionAndSaysSo() async throws {

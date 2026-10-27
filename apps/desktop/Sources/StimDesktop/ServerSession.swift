@@ -18,6 +18,10 @@ import StimKit
     }
   }
 
+  static func link(for owner: ServerOwner) -> ServerLink {
+    session(for: owner)?.link ?? .connecting
+  }
+
   /// The name the server shows for this connection: the release app, as `scripts/release.sh` bundles it, or Stim Dev.
   static let clientName = Bundle.main.bundleIdentifier == "dev.stim.desktop" ? "Stim Desktop" : "Stim Dev"
   /// The first protocol served on the Unix socket.
@@ -29,7 +33,8 @@ import StimKit
   let owner: ServerOwner
 
   private let controller: ServerController?
-  let name: String
+  @Published private(set) var name: String
+  @Published private(set) var offlineSince: Date?
   private var connection: ServerClient?
   private var watch: AnyCancellable?
   private var adoptionWatch: AnyCancellable?
@@ -47,27 +52,22 @@ import StimKit
     }
   }
 
-  /// `transport` authenticates with the pairing's own key; the client stays connected until `stop()`.
-  init(pairing: PairedServer, transport: @escaping ServerTransportFactory) {
+  init(pairing: PairedServer, client: ServerClient) {
     owner = .paired(pairing.id)
     name = pairing.name
     controller = nil
-    let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
-    let client = ServerClient(
-      endpoint: pairing.endpoint, clientName: Self.clientName, clientVersion: version, transport: transport)
-    client.onState = { [weak self, weak client] state in
-      guard let self, let client, client === self.connection else { return }
-      self.state = state
-    }
     connection = client
     self.client = client
-    client.start()
+    state = client.state
   }
 
-  /// Ends a paired server's connection, once its pairing is forgotten.
-  func stop() {
-    guard controller == nil else { return }
-    connection?.stop()
+  fileprivate func follow(pairing: PairedServer, client: ServerClient) {
+    guard controller == nil, client === connection else { return }
+    if name != pairing.name { name = pairing.name }
+    if state != client.state {
+      if case .open = state { offlineSince = Date() } else if case .open = client.state { offlineSince = nil }
+      state = client.state
+    }
   }
 
   var isOpen: Bool { client?.isOpen == true }
@@ -161,34 +161,62 @@ import StimKit
   }
 }
 
-/// One session for each pairing with another machine's server, keyed by `PairedServer.id`.
 @MainActor final class PairedServerSessions: ObservableObject {
   static let shared = PairedServerSessions()
 
   @Published private(set) var sessions: [String: ServerSession] = [:]
-  private var watches: [String: AnyCancellable] = [:]
+  @Published private(set) var entries: [PairedServers.Entry] = []
+  private var servers: PairedServers?
 
-  /// Opens a session for each of `pairings`, keeps a session whose endpoint and name are unchanged, and stops every
-  /// other one. A change in any session's state publishes a change here. Each connection reads its pairing's key from `store` as it connects, so a forgotten pairing has none
-  /// to send.
-  func sync(_ pairings: [PairedServer], store: PairedServerStore) {
-    var next: [String: ServerSession] = [:]
-    for pairing in pairings {
-      if let session = sessions[pairing.id], session.client?.endpoint == pairing.endpoint, session.name == pairing.name {
-        next[pairing.id] = session
-        continue
+  func setEnabled(_ enabled: Bool) {
+    if enabled, servers == nil {
+      let servers = PairedServers.shared
+      self.servers = servers
+      servers.onChange = { [weak self, weak servers] in
+        guard let self, let servers, self.servers === servers else { return }
+        self.sync(servers, localServerID: Self.localServerID)
       }
-      let id = pairing.id
-      next[id] = ServerSession(
-        pairing: pairing,
-        transport: NoiseClientTransport.factory { [weak store] in
-          (try? store?.pairings())?.first { $0.id == id }?.credential
-        })
+      servers.start()
+    } else if !enabled, let servers {
+      self.servers = nil
+      servers.onChange = nil
+      servers.stop()
+      sessions = [:]
+      entries = []
     }
-    for (id, session) in sessions where next[id] !== session { session.stop() }
-    watches = next.mapValues { session in
-      session.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+  }
+
+  static var localServerID: String? {
+    if case .open(let hello) = ServerSession.shared.state { return hello.server.id }
+    return nil
+  }
+
+  func sync(_ servers: PairedServers, localServerID: String?) {
+    var next: [String: ServerSession] = [:]
+    var shown: [PairedServers.Entry] = []
+    for entry in servers.entries {
+      guard let pairing = entry.pairing else { continue }
+      let client = servers.client(for: pairing.id)
+      if let local = localServerID, pairing.serverID == local || client?.helloServerID == local { continue }
+      shown.append(entry)
+      guard let client else { continue }
+      if let session = sessions[pairing.id], session.client === client {
+        session.follow(pairing: pairing, client: client)
+        next[pairing.id] = session
+      } else {
+        next[pairing.id] = ServerSession(pairing: pairing, client: client)
+      }
     }
     sessions = next
+    entries = shown.sorted {
+      ($0.pairing?.name.lowercased() ?? "", $0.id) < ($1.pairing?.name.lowercased() ?? "", $1.id)
+    }
+  }
+}
+
+extension ServerClient {
+  fileprivate var helloServerID: String? {
+    if case .open(let hello) = state { return hello.server.id }
+    return nil
   }
 }

@@ -12,7 +12,7 @@ public enum ServerOwner: Hashable, Sendable {
   public var isLocal: Bool { self == .local }
 
   /// Prefixes an identifier so two servers' records never share one; a local identifier is unchanged.
-  func scoped(_ id: String) -> String {
+  public func scoped(_ id: String) -> String {
     switch self {
     case .local: return id
     case .paired(let pairing): return "paired:\(pairing):\(id)"

@@ -2,8 +2,8 @@ import Foundation
 import Observation
 
 /// The pairings Desktop keeps with other machines' stim-servers, what each connection is doing, and the pairing in
-/// progress. It opens one `ServerClient` per pairing while `start` has run, only to report the connection and to record
-/// what each `hello` says; workspace views are not built on it yet.
+/// progress. While `start` has run it holds the one `ServerClient` of each pairing, which reports the connection,
+/// records what each `hello` says, and serves the workspace views built on `client(for:)`.
 @MainActor @Observable
 public final class PairedServers {
   public enum Connection: Equatable, Sendable {
@@ -27,6 +27,12 @@ public final class PairedServers {
     public var id: String
     public var kind: Kind
     public var connection: Connection
+
+    public init(id: String, kind: Kind, connection: Connection) {
+      self.id = id
+      self.kind = kind
+      self.connection = connection
+    }
 
     public var pairing: PairedServer? {
       if case .pairing(let pairing) = kind { return pairing }
@@ -80,6 +86,9 @@ public final class PairedServers {
   public private(set) var forgotten: Forgotten?
   public private(set) var storeError: String?
 
+  /// Runs after the pairings are read again, or a pairing's client is created, replaced, dropped or changes state.
+  @ObservationIgnored public var onChange: (@MainActor () -> Void)?
+
   private let dependencies: Dependencies
   private var clients: [String: ServerClient] = [:]
   private var timeouts: [String: () -> Void] = [:]
@@ -103,7 +112,7 @@ public final class PairedServers {
           ServerClient(
             endpoint: pairing.endpoint, clientName: clientName, clientVersion: clientVersion,
             transport: NoiseClientTransport.factory {
-              (try? store.pairings())?.first { $0.id == pairing.id }?.credential
+              try store.pairings().first { $0.id == pairing.id }?.credential
             })
         },
         pair: {
@@ -114,6 +123,9 @@ public final class PairedServers {
   }
 
   public var keepsPairings: Bool { dependencies.store.keepsPairings }
+
+  /// The connection to the pairing `id` names, while `start` has run.
+  public func client(for id: String) -> ServerClient? { clients[id] }
 
   public func reload() {
     do {
@@ -128,6 +140,7 @@ public final class PairedServers {
       storeError = error.localizedDescription
     }
     if started { connectMissing() }
+    onChange?()
   }
 
   public func start() {
@@ -147,6 +160,7 @@ public final class PairedServers {
       if entry.kind != .unreadable { entry.connection = .idle }
       return entry
     }
+    onChange?()
   }
 
   public func reconnect(id: String) {
@@ -247,13 +261,16 @@ public final class PairedServers {
     }
     set(pairing.id, .connecting)
     client.start()
+    onChange?()
   }
 
   private func drop(_ id: String) {
-    clients[id]?.stop()
+    let client = clients[id]
+    client?.stop()
     clients[id] = nil
     timeouts[id]?()
     timeouts[id] = nil
+    if client != nil { onChange?() }
   }
 
   private func watchConnecting(_ id: String) {
@@ -278,6 +295,7 @@ public final class PairedServers {
       set(id, .offline(reason: reason, retryIn: retryIn, hadOpened: opened.contains(id)))
     case .refused(let error): set(id, .refused(error))
     }
+    onChange?()
   }
 
   private func confirm(_ id: String, _ hello: HelloResult) {
