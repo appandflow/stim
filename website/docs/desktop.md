@@ -332,6 +332,15 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   Stim never deletes the SwiftPM cache.
 - **Machines.** Select **This Mac** for local disk, memory and cleanup, or a
   configured remote machine for its readiness, capacity and build history.
+  **This Mac > Overview** shows compact memory, tracked-process CPU and free-disk
+  cards, the three largest process groups, and a cleanup summary. **View all
+  processes** expands the list; the information button explains the measurements.
+  **Review cleanup** opens **Storage**, where you can inspect devices, caches,
+  repositories and cleanup candidates before choosing what to free. The summary
+  includes optional caches, so it is not an amount selected for deletion.
+  **Builds** shows recent build placements and explains when history is unavailable.
+  Overview includes the latest three placements when available. Remote machine
+  choices show their reported readiness; only the selected choice uses the accent color.
   The toolbar's **Load** figure is the 5-minute load average per core, amber at or over
   `server.maxLoadPerCore` and red while new local work waits; CPU reads 100% from about
   one load per core, and Load keeps counting past that. While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
