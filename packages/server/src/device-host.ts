@@ -1406,7 +1406,6 @@ export class DeviceHost {
       owned.imagePhase = true;
       const installed = await image.done;
       if (owned.stopping) return;
-      delete owned.imagePhase;
       if (
         !installed.settled ||
         installed.notice ||
@@ -1429,6 +1428,7 @@ export class DeviceHost {
         this.beginStop(record);
         return;
       }
+      delete owned.imagePhase;
     }
     const run = this.run(record, owned, owned.adopting ? 'adopt' : 'prepare');
     owned.run = run;
@@ -1538,6 +1538,18 @@ export class DeviceHost {
         this.release(record.id, owned);
         return;
       }
+    } else if (
+      record.platform === 'android' &&
+      record.state === 'preparing' &&
+      !existsSync(join(home, 'hosted-device.json')) &&
+      !existsSync(join(home, 'created-devices.json'))
+    ) {
+      this.change(record.id, (current) => {
+        current.state = 'stopped';
+        current.device = null;
+      });
+      this.release(record.id, owned);
+      return;
     }
     const device = readHostedDevice(home, record.platform);
     assertSessionDevice(record, device);

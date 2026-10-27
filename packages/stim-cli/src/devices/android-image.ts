@@ -158,7 +158,7 @@ function outputOf(error: unknown): string {
   return `${field('stdout')}\n${field('stderr')}`;
 }
 
-/** Makes sure the system image an owned AVD needs is installed, installing it when the policy allows. */
+/** Makes sure the system image an owned AVD needs is installed. `installed` is true when it was missing at the start of this call, whichever run installed it. */
 export async function ensureSystemImage({
   requested,
   policy,
@@ -178,7 +178,8 @@ export async function ensureSystemImage({
   if (decision.kind === 'refuse')
     return { ok: false, code: decision.code, message: decision.message, remedy: decision.remedy };
   if (decision.kind === 'installed') return { ok: true, installed: false };
-  return installSystemImage({ pkg: decision.pkg, env, signal, note });
+  const result = await installSystemImage({ pkg: decision.pkg, env, signal, note });
+  return result.ok ? { ok: true, installed: true } : result;
 }
 
 const licensesRefusal = (pkg: string, sdk: string, env: NodeJS.ProcessEnv): SystemImageRefusal => ({

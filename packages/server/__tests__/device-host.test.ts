@@ -1784,6 +1784,16 @@ test('a hosted Android image the host cannot install stops the session with its 
   expect(readClaimSet(join(deviceHostRoot(), `${refused.id}.claims`)).live).toEqual([]);
 });
 
+test('a preparing Android session a crashed server left before any device record stops without one', async () => {
+  const crashed = seedHosted({ platform: 'android', state: 'preparing', device: null, attempt: 'crashed-image' });
+  rmSync(join(deviceHostArea(crashed.id), 'home', 'hosted-device.json'));
+  rmSync(join(deviceHostArea(crashed.id), 'home', 'created-devices.json'));
+  expect(host.attach('client', { session: crashed.id })).toHaveProperty('result.state', 'unknown');
+  host.stop('client', { session: crashed.id });
+  expect((await state(crashed.id, 'stopped')).device).toBeNull();
+  expect(readClaimSet(join(deviceHostRoot(), `${crashed.id}.claims`)).live).toEqual([]);
+});
+
 test('stopping a hosted Android session while its image installs releases the reservation without a device', async () => {
   const installing = await reserve({
     platform: 'android',

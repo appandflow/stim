@@ -13,7 +13,12 @@ import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { configuredAndroidEmulatorApp } from '../devices/android-emulator-viewer.ts';
-import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
+import {
+  deviceSlotFileKey,
+  deviceSlotPlatforms,
+  parseDeviceSlotOption,
+  validateDeviceSlot,
+} from '../devices/device-slots.ts';
 import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import {
   NO_BUILD_PROGRESS,
@@ -90,6 +95,7 @@ import {
   emulatorProbeSession,
   listAdbDevicesAsync,
   listInstalledSystemImages,
+  ownedAvdDirectory,
   physicalDeviceModel,
   probeEmulatorSerial,
   resolveOwnedAvdSerialAsync,
@@ -619,13 +625,20 @@ function avdSetupFailure(
   };
 }
 
+function slotKeepsAvd(root: string, slot: string): boolean {
+  const android = deviceSlotPlatforms(getProject(root), slot)?.android;
+  if (!android?.avdName || android.setupIncomplete || android.bootPending) return false;
+  return android.owned ? Boolean(ownedAvdDirectory(android.avdName)) : true;
+}
+
 async function localRunRefusal(
   budgetRefusal: { code: string; message: string; remedy: string } | null,
   target: { kind: string },
+  keepsAvd: () => boolean,
   ensureImage: () => ReturnType<typeof ensureSystemImage>,
   recheckSelectors: () => Promise<{ code: string; message: string; remedy: string } | null>,
 ): Promise<{ code: string; message: string; remedy: string } | null> {
-  if (budgetRefusal || target.kind !== 'emulator') return budgetRefusal;
+  if (budgetRefusal || target.kind !== 'emulator' || keepsAvd()) return budgetRefusal;
   const image = await ensureImage();
   if (!image.ok) return image;
   return image.installed ? recheckSelectors() : null;
@@ -997,6 +1010,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const localRefusal = await localRunRefusal(
     budget.refusal,
     target,
+    () => slotKeepsAvd(root, slot),
     () =>
       (options.ensureImage ?? ensureSystemImage)({
         requested: target.kind === 'emulator' ? target.systemImage : null,
