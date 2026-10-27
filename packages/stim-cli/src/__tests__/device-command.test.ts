@@ -550,12 +550,20 @@ describe('stim device unlock', () => {
 });
 
 describe('the command surface', () => {
-  test('lock, unlock and provision are registered under device, with the flags the guide lists', () => {
+  test('lock, unlock, provision and the device tools are registered under device, with the flags the guide lists', () => {
     const program = new Command();
     registerDevice(program);
     const device = program.commands.find((command) => command.name() === 'device');
     assert(device);
-    expect(device.commands.map((command) => command.name()).toSorted()).toEqual(['lock', 'provision', 'unlock']);
+    expect(device.commands.map((command) => command.name()).toSorted()).toEqual([
+      'location',
+      'lock',
+      'network',
+      'permission',
+      'provision',
+      'push',
+      'unlock',
+    ]);
 
     const lock = device.commands.find((command) => command.name() === 'lock');
     assert(lock);
