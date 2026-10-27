@@ -859,9 +859,10 @@ answers it with the agent route above, where the authenticated key replaces the
 node check: each request must name the linked session, carry its token and come
 from a client that still holds `device-host`. The client's Metro supervisor
 listens for these on a loopback port per hosted session and names that port in
-the remote config. A session holds at most 16 agent links; a new one closes the
-oldest, so links of a client that vanished cannot accumulate. The feature
-`hosted-agent-link` advertises it.
+the remote config, and holds at most 8 connections there. A session holds at
+most 16 agent links; a new one closes the oldest. A link that carries no bytes
+for 5 minutes is closed, and stopping the session closes all of its links. The
+feature `hosted-agent-link` advertises it.
 
 The `agent-device` adapter runs the binary that `STIM_AGENT_DEVICE_BIN` names
 in `stim-server`'s environment, or else the first of

@@ -487,7 +487,7 @@ async function placeHostedNativeOnce(
           : !host.connection.supports('hosted-agent-link')
             ? `${host.machine} runs a stim-server that cannot carry agent control over the local network. Update stim-server there, then retry.`
             : (hostedAgentPort(root, session.id) ??
-              `The Metro supervisor does not relay agent control to ${host.machine}. Run stim stop; stim start, then retry.`),
+              `The Metro supervisor has no agent relay ready for ${host.machine}. Run stim stop; stim start, then retry.`),
       ),
     };
     return { placement, launched: mode !== 'development' && delivery.launched === true ? true : 'unverified' };

@@ -407,6 +407,7 @@ interface AgentLink {
 const AGENT_PATH = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/;
 const METRO_LINK_PING_MS = 15_000;
 const MAX_AGENT_LINKS = 16;
+const AGENT_LINK_IDLE_MS = 5 * 60_000;
 const METRO_END_MS = 30_000;
 const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
@@ -1412,6 +1413,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     approved: (client, from) =>
       ('client' in from ? from.client === client : from.node !== null && agentNodes.get(client) === from.node) &&
       readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+    withdrawn: (session) => {
+      for (const stream of agentStreams.get(session) ?? []) stream.destroy();
+    },
   });
   const hostedDevices = new DeviceHost({
     worker: join(dirname(options.stimCli), 'device-host-worker.mjs'),
@@ -1433,9 +1437,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
   });
   const agentLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
-  /** The client and session each `device-host.agent.link` stream was opened for, keyed by the stream `agentHttp` serves. */
   const agentLinks = new WeakMap<object, AgentLink>();
-  /** Each hosted session's open agent link streams, oldest first, so a client that vanished cannot hold them unbounded. */
   const agentStreams = new Map<string, Set<Duplex>>();
   async function answerAgent(
     request: IncomingMessage,
@@ -1459,7 +1461,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const from = link ? { client: link.client } : { node: peer === 'local' ? null : await peerNode(request, peer) };
     if (agentDrivers.forward(session, token, request, response, from) === 'forbidden') agentLimiter.record(peer);
   }
-  /** Serves agent requests carried by `device-host.agent.link` streams; it never listens on a socket of its own. */
   const agentHttp = createServer((request, response) => {
     const link = agentLinks.get(request.socket);
     const session = AGENT_PATH.exec(request.url ?? '')?.[1];
@@ -4295,8 +4296,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         streams.delete(outside);
         if (streams.size === 0 && agentStreams.get(hosted) === streams) agentStreams.delete(hosted);
       });
-      let excess = streams.size - MAX_AGENT_LINKS;
-      for (const oldest of streams) if (excess-- > 0) oldest.destroy();
+      let excess = [...streams].filter((stream) => !stream.destroyed).length - MAX_AGENT_LINKS;
+      for (const oldest of streams) if (!oldest.destroyed && excess-- > 0) oldest.destroy();
+      const idle = setTimeout(() => outside.destroy(), AGENT_LINK_IDLE_MS);
+      idle.unref();
+      const active = () => idle.refresh();
+      socket.on('message', active);
+      outside.on('data', active);
+      outside.once('close', () => clearTimeout(idle));
       outside.once('end', () => outside.end());
       outside.once('close', () => inside.destroy());
       inside.once('close', () => {

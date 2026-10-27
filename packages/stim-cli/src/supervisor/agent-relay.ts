@@ -9,8 +9,11 @@ export interface AgentRelay {
   close: () => void;
 }
 
+const MAX_CONNECTIONS = 8;
+
 function refuse(socket: Socket, message: string): void {
   const body = `${message}\n`;
+  socket.resume();
   socket.end(
     `HTTP/1.1 502 Bad Gateway\r\ncontent-type: text/plain\r\nconnection: close\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
   );
@@ -20,9 +23,18 @@ function refuse(socket: Socket, message: string): void {
  * Listens on a loopback port and carries each connection to `session`'s agent route on `machine` over its own
  * authenticated `device-host.agent.link` connection, so the host knows the request comes from this machine's key.
  * The host still requires the session's agent token in each request. A connection the host does not link is answered
- * with 502 and the reason.
+ * with 502 and the reason. It holds at most 8 connections at a time, and listens on `port` when that is free, so a
+ * remote config written for an earlier relay of the session still reaches it.
  */
-export function openAgentRelay({ machine, session }: { machine: string; session: string }): AgentRelay {
+export function openAgentRelay({
+  machine,
+  session,
+  port: preferred,
+}: {
+  machine: string;
+  session: string;
+  port?: number;
+}): AgentRelay {
   const connect = hostConnector(machine);
   const live = new Set<BuildConnection>();
   const sockets = new Set<Socket>();
@@ -52,10 +64,16 @@ export function openAgentRelay({ machine, session }: { machine: string; session:
     }
   };
   const server = createServer({ pauseOnConnect: true }, (socket) => void relay(socket));
-  const port = new Promise<number>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port));
-  });
+  server.maxConnections = MAX_CONNECTIONS;
+  const listen = (port: number) =>
+    new Promise<number>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, '127.0.0.1', () => {
+        server.off('error', reject);
+        resolve((server.address() as AddressInfo).port);
+      });
+    });
+  const port = preferred ? listen(preferred).catch(() => listen(0)) : listen(0);
   port.catch(() => {});
   return {
     port,

@@ -36,6 +36,8 @@ export interface HostedAgentHostOptions {
    * authenticated the link, which must be `client`.
    */
   approved: (client: string, from: AgentPeer) => boolean;
+  /** Called after a session's app stopped and its grant was withdrawn, so the host can end what still carries it. */
+  withdrawn?: (session: string) => void;
   strictStop?: boolean;
   restartDelayMs?: number;
   maxRestarts?: number;
@@ -175,6 +177,7 @@ export class HostedAgentHost {
         await child.close();
         this.devices.delete(session);
       } else await this.drop(session);
+      this.options.withdrawn?.(session);
     });
   }
 

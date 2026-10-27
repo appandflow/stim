@@ -124,7 +124,7 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
       active[session] = request;
       const relay =
         parseMachine(request.machine)?.transport === 'local'
-          ? openAgentRelay({ machine: request.machine, session })
+          ? openAgentRelay({ machine: request.machine, session, port: hostedMetroLinks(state)[session]?.agentPort })
           : null;
       let agentPort: number | undefined;
       const listening = relay ? relay.port.then((port) => void (agentPort = port)).catch(() => {}) : Promise.resolve();

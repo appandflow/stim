@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { connect as connectNet, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { agentRoute, newAgentToken, type HostedAgentApp, type HostedAgentDriver } from '@stim-cli/agent-driver';
@@ -297,4 +299,32 @@ test('the host links only the authenticated client own session, and stops relayi
   expect(revoked.status).toBe(502);
   expect(revoked.body).toContain(machine);
   expect(driver.forwarded).toEqual([]);
+}, 30_000);
+
+test('the relay holds at most 8 local connections, and stopping the session closes its open agent links', async () => {
+  agents.driver = new FakeDriver();
+  const port = await start();
+  const { machine } = approveLocalMachine(port);
+  const { session } = await hostedApp(machine);
+  const relay = openAgentRelay({ machine, session });
+  relays.push(relay);
+  const relayPort = await relay.port;
+  const local: Socket[] = [];
+  for (let index = 0; index < 8; index++) {
+    const socket = connectNet(relayPort, '127.0.0.1');
+    await once(socket, 'connect');
+    local.push(socket);
+  }
+  const excess = connectNet(relayPort, '127.0.0.1');
+  await once(excess, 'close');
+  expect(local.some((socket) => socket.destroyed)).toBe(false);
+  for (const socket of local) socket.destroy();
+
+  const link = await noiseConnect(`ws://127.0.0.1:${port}`, { keyPair: clientIdentity() });
+  await link.request('hello', { client: { name: 'stim', version: '1' }, access: 'device-host' });
+  expect(await link.request('device-host.agent.link', { session })).toHaveProperty('result', {});
+  const [connection] = connections;
+  if (!connection) throw new Error('no hosted connection');
+  await call(connection, 'device-host.stop', { session });
+  expect(await link.closed).toBe(1000);
 }, 30_000);
