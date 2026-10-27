@@ -35,6 +35,7 @@ import {
 } from '@stim-cli/core/state';
 import {
   claimRemoveCommand,
+  exclusiveClaimDir,
   processGroupAlive,
   readClaimSet,
   tryAcquireClaim,
@@ -1016,6 +1017,28 @@ describe('a hosted session whose client is gone', () => {
     releaseClaim(claim.acquired);
     host.sweepIdle();
     expect((await state(crashed.id, 'stopped')).idleStop?.reason).toMatch(/no connection/);
+  });
+
+  test('keeps one session whose claim cannot be read and still stops another that is due', async () => {
+    const unreadable = seedHosted({ state: 'ready', attempt: 'unreadable', workspace: '/client/unreadable' });
+    const due = seedHosted({ state: 'ready', attempt: 'due', workspace: '/client/due' });
+    recordAbsence(unreadable.id, IDLE_WINDOW_MS);
+    recordAbsence(due.id, IDLE_WINDOW_MS);
+    const claims = exclusiveClaimDir(join(deviceHostRoot(), `${unreadable.id}.claims`));
+    mkdirSync(claims, { recursive: true });
+    writeFileSync(join(claims, 'stray'), 'not a claim');
+    const written = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      host.sweepIdle();
+
+      expect((await state(due.id, 'stopped')).idleStop).toBeDefined();
+      expect(readHostedSessions().find((record) => record.id === unreadable.id)).toMatchObject({ state: 'ready' });
+      expect(written.mock.calls.some(([line]) => String(line).includes(`Hosted session ${unreadable.id} kept`))).toBe(
+        true,
+      );
+    } finally {
+      written.mockRestore();
+    }
   });
 
   test('never touches a session that is still preparing', async () => {

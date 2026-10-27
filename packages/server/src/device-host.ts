@@ -1650,16 +1650,20 @@ export class DeviceHost {
 
   private ownedElsewhere(id: string): boolean {
     if (this.owned.has(id)) return false;
-    const attempt = tryAcquireClaim({
-      root: join(deviceHostRoot(), `${id}.claims`),
-      mode: 'exclusive',
-      label: 'hosted device session',
-      details: { session: id },
-    });
-    if (attempt.pending) releaseClaim(attempt.pending);
-    if (!attempt.acquired) return true;
-    releaseClaim(attempt.acquired);
-    return false;
+    try {
+      const attempt = tryAcquireClaim({
+        root: join(deviceHostRoot(), `${id}.claims`),
+        mode: 'exclusive',
+        label: 'hosted device session',
+        details: { session: id },
+      });
+      if (attempt.pending) releaseClaim(attempt.pending);
+      if (!attempt.acquired) return true;
+      releaseClaim(attempt.acquired);
+      return false;
+    } catch {
+      return false;
+    }
   }
 
   private idleUnresolved(id: string): string | null {
