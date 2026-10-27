@@ -82,6 +82,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `build-compat` accepts `compat` on `build.start`, and in place of `stimBuild` in React Native and SwiftPM artifact
  * queries.
+ * `build-reuse-artifact` accepts `reuseArtifact` with `podsOnWorker` on `build.start`.
  * `build-jdk` accepts `jdk` on `build.start`, the JDK major an Android build runs on; the machine finds an installed JDK of that
  * major when its default differs.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
@@ -139,6 +140,7 @@ export const FEATURES = [
   'server-update',
   'build-compat',
   'build-jdk',
+  'build-reuse-artifact',
   'status-views',
   'desktop-reports',
   'desktop-report-platform',
@@ -1240,6 +1242,11 @@ export interface BuildStartParams {
    * reports its own instead of refusing. An older machine ignores it.
    */
   podsOnWorker?: boolean;
+  /**
+   * With `podsOnWorker`, from a caller that saw `build-reuse-artifact`: the client's cache reads allow the machine to
+   * return the development app it retained under its own fingerprint after pod install instead of compiling.
+   */
+  reuseArtifact?: boolean;
 }
 
 export interface BuildJobParams {

@@ -1009,8 +1009,10 @@ build's toolchain, the client leaves pod install to it, and \`stim ios --remote
 that pod install, or a file it generates there, changes only fingerprint
 sources in the iOS project, the Mac builds and stores the app under its own
 fingerprint after pod install, and the client stores it under that key. The
-client's own fingerprint does not compute that key, so each run builds on the
-Mac again; a stale Podfile.lock is worth regenerating on a Mac and committing.
+client's own fingerprint does not compute that key, so each run offloads and
+runs pod install on the Mac again; with cache reads on, the Mac then reuses the
+app it built under that key instead of compiling. A stale Podfile.lock is worth
+regenerating on a Mac and committing.
 Any other difference, such as the app config, fails with fingerprint-mismatch.
 A client with an Xcode still needs the same one, and there a worker pod install
 that changes the fingerprint fails with fingerprint-mismatch.

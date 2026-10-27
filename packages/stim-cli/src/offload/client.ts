@@ -1046,6 +1046,7 @@ export type BuildRequest =
   | {
       platform: 'ios';
       cacheArtifact?: boolean;
+      reuseArtifact?: boolean;
       native?: { provider: 'xcode'; snapshot: NativeInputSnapshot; cacheKey: string; arch: 'arm64' | 'x86_64' | null };
       runtime: string;
       configuration: string | null;
@@ -1092,8 +1093,14 @@ function leavesPodsToWorker(choice: OffloadChoice, request: BuildRequest): boole
   return request.platform === 'ios' && !request.native && target.platform === 'ios' && buildsOnlyOnWorker(target.local);
 }
 
-function startPods(choice: OffloadChoice, request: BuildRequest): { podsOnWorker?: true } {
-  return leavesPodsToWorker(choice, request) ? { podsOnWorker: true } : {};
+function startPods(choice: OffloadChoice, request: BuildRequest): { podsOnWorker?: true; reuseArtifact?: true } {
+  if (request.platform !== 'ios' || !leavesPodsToWorker(choice, request)) return {};
+  return {
+    podsOnWorker: true,
+    ...(request.reuseArtifact === true && choice.connection.supports('build-reuse-artifact')
+      ? { reuseArtifact: true }
+      : {}),
+  };
 }
 
 /**
@@ -1874,6 +1881,7 @@ function packageName(projectRoot: string): string | null {
 const numberOrNull = (field: unknown): number | null => (typeof field === 'number' ? field : null);
 
 function compilationActivity(value: unknown): CompilationCacheActivity {
+  if (isJsonObject(value) && value.status === 'not-run') return COMPILATION_CACHE_NOT_RUN;
   if (!isJsonObject(value) || value.status !== 'reported') return COMPILATION_CACHE_UNAVAILABLE;
   return {
     status: 'reported',

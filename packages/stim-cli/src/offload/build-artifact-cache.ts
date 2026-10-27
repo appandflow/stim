@@ -13,7 +13,7 @@ import type {
   BuildReactNativeArtifactQuery,
   BuildSwiftpmArtifactQuery,
   CachedBuildArtifact,
-} from './protocol.ts';
+} from '@stim-cli/core/protocol';
 
 const androidPackage = (value: unknown): value is string =>
   typeof value === 'string' && /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/.test(value);

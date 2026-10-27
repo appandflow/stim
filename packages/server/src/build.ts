@@ -52,7 +52,7 @@ import {
 import type { BuildFingerprintSource, BuildOfferParams, BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
 import { listCommandLines } from './processes.ts';
-import { BuildArtifactCache, validArtifactIdentity } from './build-artifact-cache.ts';
+import { BuildArtifactCache, validArtifactIdentity } from 'stim/build-artifact-cache';
 import { runArtifactQuery, type ArtifactQueryResult } from './artifact-query.ts';
 import {
   BUILD_REPO_PATTERN,
@@ -405,6 +405,11 @@ interface Job {
 
 const nowhere = (): void => {};
 
+function podsOnWorkerJob(params: Record<string, unknown>): { podsOnWorker?: true; reuseArtifact?: true } {
+  if (params.podsOnWorker !== true) return {};
+  return { podsOnWorker: true, ...(params.reuseArtifact === true ? { reuseArtifact: true } : {}) };
+}
+
 export interface BuildHostOptions {
   /** The `offload-worker.mjs` entry of the bundled Stim. */
   worker: string;
@@ -645,8 +650,12 @@ export class BuildHost {
     };
   }
 
+  private artifactCacheDir(client: string, repo: string): string {
+    return join(this.clientDir(client), 'repos', repo, 'artifact-cache');
+  }
+
   cache(client: string, repo: string): BuildArtifactCache {
-    return new BuildArtifactCache(join(this.clientDir(client), 'repos', repo, 'artifact-cache'));
+    return new BuildArtifactCache(this.artifactCacheDir(client, repo));
   }
 
   private workerEnvironment(clientDir: string, area: string): NodeJS.ProcessEnv {
@@ -1104,6 +1113,7 @@ export class BuildHost {
         area,
         blobs: join(clientDir, 'blobs'),
         swiftpmCache: join(clientDir, 'cache', 'swiftpm'),
+        artifactCache: this.artifactCacheDir(client, repo),
         gradleDaemonIdleMs: gradleDaemonIdleMs(),
       }),
     );
@@ -1656,7 +1666,7 @@ export class BuildSession {
         project: params.project,
         isExpo: params.isExpo === true,
         cacheArtifact: params.cacheArtifact === true,
-        ...(params.podsOnWorker === true ? { podsOnWorker: true } : {}),
+        ...podsOnWorkerJob(params),
         stimBuild: params.stimBuild,
         ...(compat !== undefined && toolchain.compat !== undefined ? { compat } : {}),
         ...(typeof params.jdk === 'string' ? { jdk: params.jdk } : {}),

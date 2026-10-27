@@ -101,7 +101,13 @@ async function fakeMachine(
     dropOnSync?: boolean;
     attach?: object;
     hello?: () => object;
-    artifact?: { archive: Buffer; digest: string; fingerprint?: string; sourceDigest?: string } | null;
+    artifact?: {
+      archive: Buffer;
+      digest: string;
+      fingerprint?: string;
+      sourceDigest?: string;
+      compilationCache?: object;
+    } | null;
     pause?: string | null;
     cachedFetch?: 'hit' | 'miss' | 'corrupt';
     failure?: typeof FAILED;
@@ -149,7 +155,7 @@ async function fakeMachine(
                 ? {
                     ok: true,
                     artifact: { name: 'Sample.app', size: artifact.archive.length, sha256: artifact.digest },
-                    compilationCache: {},
+                    compilationCache: artifact.compilationCache ?? {},
                     fingerprint: artifact.fingerprint,
                     sourceDigest: artifact.sourceDigest,
                   }
@@ -957,6 +963,63 @@ test.each([
         ? { ok: true, builtFingerprint: built }
         : { ok: false, machine: 'mini', reason: 'The worker returned a different fingerprint.' },
     );
+  },
+);
+
+test.each([
+  { reads: true, feature: true, sent: true },
+  { reads: false, feature: true, sent: undefined },
+  { reads: true, feature: false, sent: undefined },
+])(
+  'a client without Xcode lets the worker reuse its post-pod-install app only when cache reads allow it (reads=$reads, feature=$feature)',
+  async ({ reads, feature, sent }) => {
+    mkdirSync(join(repo, 'archive-source', 'Sample.app'), { recursive: true });
+    writeFileSync(join(repo, 'archive-source', 'Sample.app', 'Info.plist'), 'plist');
+    const archivePath = join(repo, 'artifact.tgz');
+    execFileSync('tar', ['-czf', archivePath, '-C', join(repo, 'archive-source'), 'Sample.app']);
+    const archive = readFileSync(archivePath);
+    const digest = createHash('sha256').update(archive).digest('hex');
+    const machine = await fakeMachine(
+      'mini',
+      offer(0.1),
+      { result: { job: 'j1' } },
+      {
+        artifact: { archive, digest, fingerprint: 'b'.repeat(40), compilationCache: { status: 'not-run' } },
+        hello: () => ({ result: { capabilities: ['build'], features: feature ? ['build-reuse-artifact'] : [] } }),
+      },
+    );
+    machines.push(machine);
+    const choice = await chooseBuildMachine({
+      projectRoot: repo,
+      target: { ...TARGET, local: { ...TARGET.local, xcode: null, simulatorSdk: null } },
+      here: HERE,
+      note: () => {},
+      machines: [credential('mini')],
+    });
+    if (typeof choice === 'string') throw new Error(choice);
+    const result = await offloadBuild({
+      choice,
+      expectedFingerprint: 'f00d',
+      request: {
+        platform: 'ios',
+        reuseArtifact: reads,
+        runtime: 'iOS-27-0',
+        configuration: null,
+        scheme: null,
+        iosProjectPath: 'ios',
+        isExpo: false,
+        optimizations: null,
+      },
+      stagingDir: join(repo, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    const start = machine.requests.find((entry) => entry.method === 'build.start');
+    expect(start?.params.podsOnWorker).toBe(true);
+    expect(start?.params.reuseArtifact).toBe(sent);
+    expect(result.ok && result.compilationCache.status).toBe('not-run');
   },
 );
 

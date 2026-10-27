@@ -402,8 +402,10 @@ a file it generates there such as the `.xcworkspace`, changes only
 fingerprint sources in the iOS project, the worker fingerprints again and builds
 and stores the app under its own fingerprint after `pod install`, and the client
 stores it under that key too. The client's own fingerprint does not compute
-that key, so each run builds on the worker again; a stale `Podfile.lock` is
-worth regenerating on a Mac and committing. Any other difference, such as the
+that key, so each run offloads and runs `pod install` on the worker again; unless
+`--no-build-cache` is passed, the worker then reuses the app it built under that
+key instead of compiling. A stale `Podfile.lock` is worth regenerating on a Mac
+and committing. Any other difference, such as the
 app config, still fails with `fingerprint-mismatch`. A client with Xcode runs
 `pod install` itself, so there a change on the worker fails with
 `fingerprint-mismatch`. Native Xcode apps without React Native still need Xcode

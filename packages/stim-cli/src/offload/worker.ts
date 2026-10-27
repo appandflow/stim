@@ -6,6 +6,7 @@ import {
   reactNativeArtifactReceipt,
   reactNativeArtifactToolchain,
   reactNativeBuildQuery,
+  reusedReactNativeArtifact,
 } from './react-native-artifact.ts';
 import { apkPackage, dumpApkManifest } from '../commands/android/support.ts';
 import {
@@ -43,6 +44,7 @@ import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
 import { planPrebuild, recordPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-facts.ts';
 import { CCACHE_UNAVAILABLE, resolveCcache } from '../engine/ccache.ts';
+import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { assembleTaskFor } from '../engine/gradle.ts';
 
 import { getExecutor } from '../exec.ts';
@@ -141,6 +143,10 @@ export interface WorkerJob {
   cacheArtifact?: boolean;
   /** The client has no Xcode and left pod install to this machine, which may then rekey sources in the iOS project. */
   podsOnWorker?: boolean;
+  /** The client's cache reads allow the app stim-server retained under the fingerprint after this machine's pod install. */
+  reuseArtifact?: boolean;
+  /** The directory of stim-server's retained artifacts for this client's repository. */
+  artifactCache?: string;
   stimBuild?: string;
   compat?: number;
   /** The JDK major the client builds on; the build runs on an installed JDK of it when the default differs. */
@@ -807,6 +813,9 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     const tools = job.cacheArtifact ? await reactNativeArtifactToolchain(platform, realRoot, iosProject.dir) : null;
     const query = tools ? reactNativeBuildQuery(job, fingerprint, job.project, tools) : null;
     const receipt = query ? reactNativeArtifactReceipt(query, tools) : null;
+    const reused = await reuseRetained(job, query, mutations, time);
+    if (reused)
+      return { ok: true, artifact: reused, fingerprint, compilationCache: COMPILATION_CACHE_NOT_RUN, timings };
     compiled =
       platform === 'android'
         ? await compileAndroid(job, realRoot, log, time, androidLayout)
@@ -863,6 +872,26 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
 }
 
 type Timer = <T>(key: keyof WorkerTimings, run: () => T | Promise<T>) => Promise<T>;
+
+/** The app stim-server retained under the fingerprint after `mutations`, in place of compiling; null builds. */
+async function reuseRetained(
+  job: WorkerJob,
+  query: ReturnType<typeof reactNativeBuildQuery>,
+  mutations: readonly string[],
+  time: Timer,
+): Promise<Awaited<ReturnType<typeof reusedReactNativeArtifact>>> {
+  if (!query) return null;
+  try {
+    const reused = await time('packageMs', () =>
+      reusedReactNativeArtifact(job, query, join(job.area, 'out', job.job), AbortSignal.timeout(600_000)),
+    );
+    if (reused) note('cache', `hit ${query.fingerprint.slice(0, 12)} (post-${mutations.join(', ')} key)`);
+    return reused;
+  } catch (error) {
+    note('cache', `could not reuse the retained app: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
 
 type Compiled =
   | {

@@ -1279,6 +1279,7 @@ describe('pairing', () => {
           'server-update',
           'build-compat',
           'build-jdk',
+          'build-reuse-artifact',
           'status-views',
         ],
         actions: [],
@@ -2624,6 +2625,7 @@ describe('offloaded builds', () => {
         fingerprintIgnored,
         fingerprintTracked,
         podsOnWorker: true,
+        reuseArtifact: true,
       });
       expect(started).toMatchObject({ result: { job: expect.any(String) } });
       const job = (started as { result: { job: string } }).result.job;
@@ -2652,6 +2654,8 @@ describe('offloaded builds', () => {
         expectedIgnored: fingerprintIgnored,
         expectedTracked: fingerprintTracked,
         podsOnWorker: true,
+        reuseArtifact: true,
+        artifactCache: join(area, 'artifact-cache'),
         runtime: 'iOS-27-0',
       });
       expect(ran.job.manifest.map((entry: { path: string }) => entry.path).toSorted()).toEqual([
