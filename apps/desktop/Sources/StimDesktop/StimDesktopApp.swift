@@ -221,7 +221,10 @@ struct StimDesktopApp: App {
     self.store = store
     serverStatus = ServerSession.shared.objectWillChange.sink { [weak store] _ in
       DispatchQueue.main.async {
-        MainActor.assumeIsolated { store?.useServer(ServerSession.shared.feedConnection) }
+        MainActor.assumeIsolated {
+          store?.useServer(ServerSession.shared.feedConnection)
+          PairedServerSessions.shared.localServerChanged()
+        }
       }
     }
     pairedStatus = PairedServerSessions.shared.objectWillChange.sink { [weak store] _ in

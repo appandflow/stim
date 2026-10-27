@@ -18,7 +18,9 @@ struct PairedWorkspaceDetail: View {
   }
 
   var body: some View {
-    if let owned = store.workspace(key) {
+    if let id = pairingID, !sessions.entries.contains(where: { $0.id == id }) {
+      EmptyState(title: "Machine Not Paired", message: "Stim Desktop no longer has a pairing with this machine.")
+    } else if let owned = store.workspace(key) {
       ScrollView { PairedWorkspacePage(owned: owned, serverName: serverName, connectionLine: connectionLine) }
     } else if pairingID.flatMap({ store.paired[$0]?.payload }) == nil {
       EmptyState(title: "Waiting for \(serverName)", message: "Stim Desktop shows this workspace once the machine reports it.")

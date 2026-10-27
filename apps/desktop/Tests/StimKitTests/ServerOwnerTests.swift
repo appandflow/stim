@@ -83,4 +83,20 @@ struct ServerOwnerTests {
     let hidden = pairedSidebarTrees(environments: [shared, other], options: options, hidden: ["/Users/me/other"])
     #expect(hidden.flatMap(\.entries).map(\.path) == ["/Users/me/app"])
   }
+
+  @Test func memoryTotalsPastIntsRangeFromAPairedServerDoNotTrap() throws {
+    let huge = try ["a", "b"].map { name in
+      try JSONDecoder().decode(
+        Workspace.self,
+        from: Data(
+          #"{"path":"/home/bot/app/.worktrees/\#(name)","live":true,"warnings":[],"memoryMb":5000000000000000000}"#.utf8))
+    }
+    var options = SidebarOptions()
+    for sort in SidebarSort.allCases {
+      options.sort = sort
+      let trees = pairedSidebarTrees(environments: huge, options: options, hidden: [])
+      #expect(trees.map(\.summary.project.root) == ["/home/bot/app"])
+      #expect(trees.flatMap(\.entries).count == 2)
+    }
+  }
 }

@@ -97,7 +97,7 @@ struct DeviceViewer: View {
       switch device {
       case .ios where owned?.localSimulatorUDID != nil:
         displayMetrics = SimulatorDisplayMetrics.load(udid: owned!.localSimulatorUDID!)
-      case .android(_, let avd) where !avd.physical && avd.host == nil:
+      case .android(_, let avd) where !avd.physical && avd.host == nil && owner.isLocal:
         displayMetrics = EmulatorDisplayMetrics.load(avdName: avd.name)
       default: displayMetrics = nil
       }

@@ -141,7 +141,8 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
   var memoryMb: Int {
     switch self {
     case .workspace(let env): return env.memoryMb ?? 0
-    case .worktreeGroup(let page): return page.apps.reduce(0) { $0 + ($1.memoryMb ?? 0) }
+    case .worktreeGroup(let page):
+      return page.apps.reduce(0) { $0.addingReportingOverflow($1.memoryMb ?? 0).overflow ? .max : $0 + ($1.memoryMb ?? 0) }
     case .worktree, .archived, .archivedGroup: return 0
     }
   }
@@ -227,7 +228,10 @@ public func sidebarTrees(
   func key(_ tree: ProjectTree) -> (activity: Date?, memory: Int) {
     let current = tree.entries.filter { $0.status != .archived }
     let entries = current.isEmpty ? tree.entries : current
-    return (entries.compactMap(\.lastActivityAt).max(), entries.reduce(0) { $0 + $1.memoryMb })
+    return (
+      entries.compactMap(\.lastActivityAt).max(),
+      entries.reduce(0) { $0.addingReportingOverflow($1.memoryMb).overflow ? .max : $0 + $1.memoryMb }
+    )
   }
   return trees.map { ($0, key($0)) }.sorted { a, b in
     let (x, y) = (a.1, b.1)

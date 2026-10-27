@@ -146,6 +146,7 @@ public final class PairedServers {
   public func start() {
     started = true
     connectMissing()
+    onChange?()
   }
 
   public func stop() {

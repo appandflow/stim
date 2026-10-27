@@ -52,8 +52,9 @@ import StimKit
     }
   }
 
-  init(pairing: PairedServer, client: ServerClient) {
+  init(pairing: PairedServer, client: ServerClient, offlineSince: Date? = nil) {
     owner = .paired(pairing.id)
+    self.offlineSince = offlineSince
     name = pairing.name
     controller = nil
     connection = client
@@ -167,6 +168,7 @@ import StimKit
   @Published private(set) var sessions: [String: ServerSession] = [:]
   @Published private(set) var entries: [PairedServers.Entry] = []
   private var servers: PairedServers?
+  private var offlineSince: [String: Date] = [:]
 
   func setEnabled(_ enabled: Bool) {
     if enabled, servers == nil {
@@ -186,6 +188,11 @@ import StimKit
     }
   }
 
+  func localServerChanged() {
+    guard let servers else { return }
+    sync(servers, localServerID: Self.localServerID)
+  }
+
   static var localServerID: String? {
     if case .open(let hello) = ServerSession.shared.state { return hello.server.id }
     return nil
@@ -199,14 +206,18 @@ import StimKit
       let client = servers.client(for: pairing.id)
       if let local = localServerID, pairing.serverID == local || client?.helloServerID == local { continue }
       shown.append(entry)
+      if let previous = sessions[pairing.id] {
+        offlineSince[pairing.id] = previous.isOpen ? Date() : previous.offlineSince
+      }
       guard let client else { continue }
       if let session = sessions[pairing.id], session.client === client {
         session.follow(pairing: pairing, client: client)
         next[pairing.id] = session
       } else {
-        next[pairing.id] = ServerSession(pairing: pairing, client: client)
+        next[pairing.id] = ServerSession(pairing: pairing, client: client, offlineSince: offlineSince[pairing.id])
       }
     }
+    offlineSince = offlineSince.filter { id, _ in shown.contains { $0.id == id } }
     sessions = next
     entries = shown.sorted {
       ($0.pairing?.name.lowercased() ?? "", $0.id) < ($1.pairing?.name.lowercased() ?? "", $1.id)

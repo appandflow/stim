@@ -215,7 +215,7 @@ struct DeviceTile: View {
   static func hasButtons(_ device: OwnedDevice) -> Bool {
     switch device.ref {
     case .ios: return device.ref.isRunning && device.localSimulatorUDID != nil
-    case .android: return device.ref.isRunning && !device.ref.isPhysical && device.ref.hostedMachine == nil
+    case .android: return device.ref.isRunning && !device.ref.isPhysical && device.localEmulatorSerial != nil
     case .web, .remote, .macos: return false
     }
   }
@@ -1045,7 +1045,7 @@ struct DeviceTile: View {
       } else {
         placeholder("A workspace is required to view this hosted device.")
       }
-    case .macos(let app) where device.hostedMachine == nil:
+    case .macos(let app) where device.hostedMachine == nil && owner.isLocal:
       MacosLocalScreen(app: app, choice: choice, viewer: viewer) { pixelSizes[1] = $0 }
         .frame(width: screenWidth(1))
         .padding(screenPadding)

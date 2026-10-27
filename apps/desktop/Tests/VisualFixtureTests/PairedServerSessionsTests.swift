@@ -84,17 +84,35 @@ import XCTest
     servers.stop()
   }
 
-  func testAPairingWhoseServerSaysItIsThisMacsOwnGetsNoSession() async throws {
+  func testAPairingWhoseServerSaysItIsThisMacsOwnGetsNoSessionWhicheverHelloArrivesFirst() async throws {
     let own = pairing(name: "this mac")
     let servers = try servers(answeringAs: "this-mac", pairing: own)
     let sessions = PairedServerSessions()
-    servers.onChange = { sessions.sync(servers, localServerID: "this-mac") }
+    servers.onChange = { sessions.sync(servers, localServerID: nil) }
     servers.start()
+    await until { servers.client(for: own.id)?.isOpen == true }
     XCTAssertNotNil(sessions.sessions[own.id])
 
-    await until { servers.client(for: own.id)?.isOpen == true }
+    sessions.sync(servers, localServerID: "this-mac")
     XCTAssertNil(sessions.sessions[own.id])
     XCTAssertTrue(sessions.entries.isEmpty)
+    servers.stop()
+  }
+
+  func testAReplacedConnectionKeepsWhenItWentOffline() async throws {
+    let floco = pairing(name: "floco")
+    let servers = try servers(answeringAs: "floco-id", pairing: floco)
+    let sessions = PairedServerSessions()
+    servers.onChange = { sessions.sync(servers, localServerID: nil) }
+    servers.start()
+    let first = try XCTUnwrap(sessions.sessions[floco.id])
+    await until { first.isOpen }
+    XCTAssertNil(first.offlineSince)
+
+    servers.reconnect(id: floco.id)
+    let second = try XCTUnwrap(sessions.sessions[floco.id])
+    XCTAssertFalse(second === first)
+    XCTAssertNotNil(second.offlineSince)
     servers.stop()
   }
 }
