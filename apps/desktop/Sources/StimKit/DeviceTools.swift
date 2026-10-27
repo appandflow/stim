@@ -14,6 +14,9 @@ public enum DeviceTool: Sendable, Equatable {
   case push(payload: String)
   case network(enabled: Bool)
 
+  /// The `stim` release that added `stim device location|permission|push|network`.
+  public static let minimumCLIVersion = "1.30.0"
+
   public static let iosServices = [
     "calendar", "contacts", "contacts-limited", "location", "location-always", "media-library", "microphone",
     "motion", "photos", "photos-add", "reminders", "siri",
@@ -109,6 +112,10 @@ public struct DeviceToolError: LocalizedError, Equatable {
     }
     if let refusal = try? JSONDecoder().decode(Refusal.self, from: stdout) {
       message = [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
+      return
+    }
+    if stderr.contains("unknown command") {
+      message = "This version of stim has no device tools. Update stim to \(DeviceTool.minimumCLIVersion) or later."
       return
     }
     let lines = stderr.split(separator: "\n").map(String.init)
