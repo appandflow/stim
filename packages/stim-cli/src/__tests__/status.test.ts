@@ -29,6 +29,7 @@ import { findProjectRoot } from '../workspace/project.ts';
 import { recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 import { startBuildProgress } from '../engine/build-progress.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { quotedPath } from '@stim-cli/core';
 
 const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | null): void =>
   writeHostedNative(root, slot, host, 'ios');
@@ -884,7 +885,7 @@ test('a workspace whose folder was deleted reports pathMissing and no ready phas
   });
   const human = await runStatus();
   expect(human.some((line) => line.includes('gone [folder missing]'))).toBe(true);
-  expect(human.some((line) => line.includes(`stim worktree remove '${gone}'`))).toBe(true);
+  expect(human.some((line) => line.includes(`stim worktree remove ${quotedPath(gone)}`))).toBe(true);
   expect(Object.keys(loadConfig()?.projects ?? {})).toEqual([gone]);
 });
 

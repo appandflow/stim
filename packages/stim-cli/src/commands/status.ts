@@ -18,6 +18,7 @@ import chalk from 'chalk';
 import { statSync } from 'fs';
 import { totalmem, userInfo } from 'os';
 import { join } from 'path';
+import { quotedPath } from '@stim-cli/core';
 import type { Command } from 'commander';
 import { getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
@@ -298,7 +299,7 @@ function renderStatus(
     if (state.pathMissing)
       out.push(
         chalk.yellow(
-          `  ! the folder is gone; run \`stim worktree remove '${path}'\` or \`stim gc --delete\` to remove the entry`,
+          `  ! the folder is gone; run \`stim worktree remove ${quotedPath(path)}\` or \`stim gc --delete\` to remove the entry`,
         ),
       );
     for (const note of state.issues.filter((issue) => issue.severity === 'info')) {

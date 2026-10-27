@@ -82,7 +82,7 @@ extension Format {
 
 extension Workspace {
   /// The command that drops this workspace's record once its folder is gone.
-  public var removalCommand: String { "stim worktree remove '\(path)'" }
+  public var removalCommand: String { "stim worktree remove \(shellQuote(path))" }
 
   private var settingUp: Bool { !live && isSettingUp }
 
