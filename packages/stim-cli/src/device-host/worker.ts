@@ -9,8 +9,6 @@ import {
   type HostedIosChoice,
   type HostedIosDevice,
 } from '@stim-cli/core/state';
-import { getExecutor } from '../exec.ts';
-import { readHostMemoryPressure } from '../host-memory.ts';
 import {
   bootIosSim,
   createOwnedIosSim,
@@ -40,8 +38,6 @@ function inventory(): ReturnType<typeof listAllIosSims> {
 
 export async function selectHostedIosDevice(selectors: HostedDeviceSelectors): Promise<HostedIosChoice> {
   inventory();
-  if (readHostMemoryPressure(getExecutor()) !== 'normal')
-    throw new Error('Host memory pressure is unknown or elevated.');
   const selected = await resolveIosCreation(selectors);
   if (!selected.deviceType || !selected.runtime)
     throw new Error('The installed simulator type or runtime could not be established.');

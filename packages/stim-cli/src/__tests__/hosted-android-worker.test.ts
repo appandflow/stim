@@ -22,9 +22,7 @@ const native = vi.hoisted(() => ({
   reset: vi.fn<(_avd: string, _serial: string, keep: string) => Promise<void>>(),
   image: vi.fn<() => string | null>(),
   resolved: vi.fn<() => { notRunning?: true; missing?: true; notOwned?: true; serial?: string }>(),
-  pressure: vi.fn<() => string | null>(),
 }));
-vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => native.pressure() }));
 vi.mock('../devices/android.ts', () => ({
   DEFAULT_AVD_DEVICE_PROFILE: 'pixel_6',
   hostSystemImageArch: () => 'arm64-v8a',
@@ -67,7 +65,6 @@ beforeEach(() => {
   home = join(area, 'home');
   mkdirSync(home);
   process.env.STIM_HOME = home;
-  native.pressure.mockReturnValue('normal');
   native.wait.mockResolvedValue({ ok: true });
   native.image.mockReturnValue('system-images;android-30;google_apis;arm64-v8a');
   native.resolved.mockReturnValue({ notRunning: true });

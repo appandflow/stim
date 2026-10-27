@@ -34,6 +34,7 @@ import {
   isJsonObject,
   parseHostedPlatformDevice,
   hostedDeviceId,
+  hostedMemoryRefusal,
   hostedMacosBundleId,
   HOSTED_MACOS_APP_SLOTS,
   loadConfig,
@@ -134,13 +135,27 @@ const refused = (code: ProtocolError['code'], message: string): { error: Protoco
   error: { code, message },
 });
 
+/** iOS simulators of live hosted sessions: the recorded device, else what the session home's ledger lists while the device is still being prepared. A session whose ledger is unreadable excludes nothing, which only over-counts. */
 function hostedDeviceExclusions(records: HostedDeviceSession[]) {
-  return records.flatMap((record) =>
-    record.platform === 'ios' && record.state !== 'stopped' && record.device
-      ? [{ platform: 'ios' as const, key: hostedDeviceId(record.device) }]
-      : [],
-  );
+  return records.flatMap((record) => {
+    if (record.platform !== 'ios' || record.state === 'stopped') return [];
+    const udids = new Set<string>();
+    if (record.device) udids.add(hostedDeviceId(record.device));
+    try {
+      for (const udid of readHostedDeviceLedger(join(deviceHostArea(record.id), 'home'))?.ios ?? []) udids.add(udid);
+    } catch {}
+    return [...udids].map((key) => ({ platform: 'ios' as const, key }));
+  });
 }
+
+/** macOS app sessions are counted against `concurrency.maxDevices` among themselves; simulators and emulators share the other pool. */
+function occupiedBy(records: HostedDeviceSession[], platform: HostedDeviceSession['platform']): number {
+  return records.filter(
+    (record) => record.state !== 'stopped' && (record.platform === 'macos') === (platform === 'macos'),
+  ).length;
+}
+
+const capacityUnknown = (why: string) => `Hosted device capacity is unknown: ${why}`;
 
 /** macOS lets 127.0.0.1 bind beside a wildcard listener and takes its loopback traffic, so probe by connecting. */
 function loopbackAccepts(port: number): Promise<boolean> {
@@ -241,7 +256,7 @@ export class DeviceHost {
       const result = await this.probe(client, {
         mode: 'offer',
         ...request,
-        ...(max > 0 ? { exclude: hostedDeviceExclusions(recordsBefore) } : {}),
+        ...(max > 0 && request.platform !== 'macos' ? { exclude: hostedDeviceExclusions(recordsBefore) } : {}),
       });
       if (this.closed || !this.options.allowed(client))
         return refused('forbidden', 'Current device-host approval is required.');
@@ -249,9 +264,11 @@ export class DeviceHost {
       const native = parseHostedNativeOffer(result.value);
       if (!native || native.platform !== request.platform) throw new Error('Invalid native hosted offer.');
       const records = readHostedSessions();
-      const hosted = records.filter((record) => record.state !== 'stopped').length;
+      const hosted = occupiedBy(records, request.platform);
       const local =
-        max > 0 ? (native.resources.localDevices ?? { unknown: 'Host local device count is unavailable.' }) : undefined;
+        max > 0 && request.platform !== 'macos'
+          ? (native.resources.localDevices ?? { unknown: 'Host local device count is unavailable.' })
+          : undefined;
       const running = hosted + (typeof local === 'number' ? local : 0);
       let declined =
         this.draining ??
@@ -259,7 +276,7 @@ export class DeviceHost {
           ? 'Hosted sessions are paused; resume with stim settings set server.devicesPaused false'
           : null) ??
         native.declined ??
-        (native.resources.memoryPressure !== 'normal' ? 'Host memory pressure is unknown or elevated.' : null);
+        hostedMemoryRefusal(native.resources.memoryPressure);
       if (request.platform === 'android' || request.platform === 'macos') {
         try {
           if (request.platform === 'android') reserveAndroidPort(records);
@@ -268,9 +285,12 @@ export class DeviceHost {
           declined = (error as Error).message;
         }
       }
-      if (local && typeof local !== 'number') declined = local.unknown;
+      if (local && typeof local !== 'number') declined = capacityUnknown(local.unknown);
       else if (max > 0 && running >= max)
-        declined = `${hosted} hosted + ${local} local of ${max} device reservations are occupied, including unresolved sessions.`;
+        declined =
+          local === undefined
+            ? `Hosted macOS capacity is full: ${hosted} of ${max} macOS app reservations are occupied, including unresolved sessions.`
+            : `Hosted device capacity is full: ${hosted} hosted + ${local} local of ${max} device reservations are occupied, including unresolved sessions.`;
       return {
         result: {
           ...native,
@@ -322,7 +342,11 @@ export class DeviceHost {
       if (this.closed || !this.options.allowed(client))
         return refused('forbidden', 'Current device-host approval is required.');
       let local: number | { unknown: string } = 0;
-      if (max > 0 && !recordsBefore.some((record) => record.client === client && record.attempt === request.attempt)) {
+      if (
+        max > 0 &&
+        request.platform !== 'macos' &&
+        !recordsBefore.some((record) => record.client === client && record.attempt === request.attempt)
+      ) {
         const probe = await this.probe(client, { mode: 'count', exclude: hostedDeviceExclusions(recordsBefore) });
         if (this.closed || !this.options.allowed(client))
           return refused('forbidden', 'Current device-host approval is required.');
@@ -350,11 +374,13 @@ export class DeviceHost {
         if (this.draining) throw new Error(`This Mac takes no new hosted sessions: ${this.draining}.`);
         if (loadConfig()?.server?.devicesPaused === true)
           throw new Error('Hosted sessions are paused; resume with stim settings set server.devicesPaused false.');
-        if (typeof local !== 'number') throw new Error(local.unknown);
-        const hosted = records.filter((record) => record.state !== 'stopped').length;
+        if (typeof local !== 'number') throw new Error(capacityUnknown(local.unknown));
+        const hosted = occupiedBy(records, request.platform);
         if (max > 0 && hosted + local >= max)
           throw new Error(
-            `${hosted} hosted + ${local} local of ${max} device reservations are occupied, including unresolved sessions.`,
+            request.platform === 'macos'
+              ? `Hosted macOS capacity is full: ${hosted} of ${max} macOS app reservations are occupied, including unresolved sessions.`
+              : `Hosted device capacity is full: ${hosted} hosted + ${local} local of ${max} device reservations are occupied, including unresolved sessions.`,
           );
         const adopted =
           candidate &&

@@ -10,7 +10,6 @@ import {
   type HostedDeviceSelectors,
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
-import { readHostMemoryPressure } from '../host-memory.ts';
 import {
   androidDeviceAbi,
   assertOwnedAvdStopped,
@@ -45,8 +44,6 @@ function portIsOccupied(port: number): boolean {
 }
 
 export function selectHostedAndroidDevice(request: HostedDeviceSelectors): HostedAndroidChoice {
-  if (readHostMemoryPressure(getExecutor()) !== 'normal')
-    throw new Error('Host memory pressure is unknown or elevated.');
   const image = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage: request.systemImage });
   if (!image || image.arch !== hostSystemImageArch()) throw new Error('No compatible installed Android image.');
   const profile = request.deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;

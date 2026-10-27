@@ -88,14 +88,19 @@ test('records exact ownership before boot, keeps the host viewer closed and veri
   expect(native.teardown).toHaveBeenCalledExactlyOnceWith(udid, { del: true });
 });
 
-test.each(['inventory', 'memory'])('refuses unknown or unsafe %s before creation', async (failure) => {
-  if (failure === 'inventory')
-    native.inventory.mockImplementation(() => {
-      throw new Error('bad inventory');
-    });
-  if (failure === 'memory') native.pressure.mockReturnValue(null);
+test('refuses an unknown inventory before creation', async () => {
+  native.inventory.mockImplementation(() => {
+    throw new Error('bad inventory');
+  });
   expect(await runHostedDevice('prepare', {})).toMatchObject({ state: 'stopped', device: null });
   expect(native.create).not.toHaveBeenCalled();
+});
+
+test('prepare and adoption trust the offer instead of sampling memory pressure again', async () => {
+  native.pressure.mockReturnValue(null);
+  await parkedSimulator();
+  native.apps.mockImplementation(() => []);
+  expect(await runHostedDevice('adopt', {})).toMatchObject({ state: 'ready', device: { udid } });
 });
 
 test('retains a lost creation outcome and refuses missing or foreign ledger ownership on stop', async () => {
