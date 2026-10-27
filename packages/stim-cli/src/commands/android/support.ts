@@ -142,7 +142,7 @@ export function systemImageRefusal({
   const decided = decideSystemImage({ requested: resolved, installed: images, policy: installImages });
   if (decided.kind !== 'refuse') return null;
   const { message, remedy } = layerNote(
-    { message: refusal.message, remedy: `${refusal.remedy} ${decided.remedy}` },
+    { message: refusal.message, remedy: decided.remedy },
     'android.systemImage',
     flag,
     origin,

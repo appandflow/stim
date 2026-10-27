@@ -93,14 +93,14 @@ export function decideSystemImage({
       message: arch
         ? `The Android system image "${pkg}" is not installed, and Stim installs only ${hostArch} images on this machine.`
         : `"${pkg}" is not an Android system image package id.`,
-      remedy: `Pass \`--system-image\` (or set android.systemImage) to a ${hostArch} image such as "${recommendedSystemImage(hostArch)}".`,
+      remedy: `Pass \`--system-image\` (or set android.systemImage) to an installed image, or to one Stim can install for ${hostArch} such as "${recommendedSystemImage(hostArch)}".`,
     };
   if (policy === 'never')
     return {
       kind: 'refuse',
       code: requested ? 'STIM_BAD_ARG' : 'STIM_NO_DEVICE',
       message: `${requested ? `The Android system image "${pkg}" is not installed` : `No ${hostArch} Android system image is installed`}, and android.installImages is never, so Stim does not install one.`,
-      remedy: `Run \`${sdkmanagerCommand(`--install "${pkg}"`, env)}\` on this machine, or set android.installImages to auto, then try again.`,
+      remedy: `${requested ? 'Pass `--system-image` (or set android.systemImage) to an installed image, run' : 'Run'} \`${sdkmanagerCommand(`--install "${pkg}"`, env)}\` on this machine, or set android.installImages to auto, then try again.`,
     };
   return { kind: 'install', pkg };
 }
