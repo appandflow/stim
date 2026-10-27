@@ -45,6 +45,8 @@ public final class PairedServers {
   public struct Forgotten: Equatable, Sendable {
     public var name: String
     public var command: String
+    /// Whether `command` revokes this Mac's record; without the record's id it only lists the machine's records.
+    public var revokes: Bool
   }
 
   public struct Dependencies {
@@ -163,9 +165,10 @@ public final class PairedServers {
     }
     drop(id)
     if let pairing = entry.pairing {
+      let command = PairedServerWording.revokeCommand(deviceID: pairing.deviceID)
       forgotten = Forgotten(
-        name: pairing.name.isEmpty ? "the machine" : pairing.name,
-        command: PairedServerWording.revokeCommand(deviceID: pairing.deviceID))
+        name: pairing.name.isEmpty ? "the machine" : pairing.name, command: command,
+        revokes: command != PairedServerWording.revokeCommand(deviceID: nil))
     }
     reload()
   }

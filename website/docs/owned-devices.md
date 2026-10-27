@@ -632,7 +632,7 @@ replayable.
 
 Recordings stay on your machine and are served only to paired phones and Stim
 Desktop. Turn them off for the whole machine in the phone's Settings or in Stim
-Desktop's Phones settings, or on the Mac, where a repository or workspace can
+Desktop's Paired Devices settings, or on the Mac, where a repository or workspace can
 also be set on its own:
 
 ```bash

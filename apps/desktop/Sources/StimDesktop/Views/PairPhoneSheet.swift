@@ -319,7 +319,7 @@ struct PairPhoneSheet: View {
         }
         Text("Manage it in Settings > Paired Devices.").foregroundStyle(Palette.secondary)
         if let openPhones {
-          Button("Open Phones") {
+          Button("Open Paired Devices") {
             openPhones()
             dismiss()
           }.buttonStyle(.stim())

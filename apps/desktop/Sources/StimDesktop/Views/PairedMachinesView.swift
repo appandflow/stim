@@ -27,7 +27,9 @@ struct PairedMachinesView: View {
           Banner(tone: .info, icon: "key.slash", onDismiss: servers.dismissForgotten) {
             Text("Forgot \(forgotten.name)").font(.stim(.body, weight: .semibold))
             Text(
-              "Stim Desktop deleted this Mac's key for it. That does not remove this Mac from the machine's paired devices. Run this there to do that."
+              forgotten.revokes
+                ? "Stim Desktop deleted this Mac's key for it. That does not remove this Mac from the machine's paired devices. Run this there to do that."
+                : "Stim Desktop deleted this Mac's key for it. That does not remove this Mac from the machine's paired devices. Run this there to find this Mac in the list, then revoke it with stim-server devices revoke and its id."
             )
             .foregroundStyle(Palette.secondary)
             CopyableCommand(command: forgotten.command, runsOn: forgotten.name)

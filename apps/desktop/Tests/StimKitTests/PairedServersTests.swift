@@ -29,8 +29,10 @@ import Testing
   var capabilities = ["read"]
   var holdsHello = false
   private var held: JSONValue?
+  private(set) var closed = false
+  var isHoldingHello: Bool { held != nil }
 
-  func close() {}
+  func close() { closed = true }
 
   func releaseHello() {
     guard let held else { return }
@@ -272,10 +274,12 @@ private let code =
     rig.store.stored[kept.id] = kept
     rig.servers.reload()
     rig.servers.start()
-    await rig.settle { rig.servers.entries.first?.connection == .connecting && !rig.log.timers.isEmpty }
+    await rig.settle { rig.transport.isHoldingHello && !rig.log.timers.isEmpty }
     #expect(rig.log.clientsMade == 1)
+    #expect(!rig.transport.closed)
     let fire = try #require(rig.log.timers.last)
     fire()
+    #expect(rig.transport.closed)
     #expect(rig.log.clientsMade == 2)
     #expect(rig.servers.entries.first?.connection == .connecting)
     #expect(try rig.store.pairings() == [kept])
@@ -304,7 +308,8 @@ private let code =
     rig.store.stored[kept.id] = kept
     rig.servers.reload()
     rig.servers.start()
-    await rig.settle { rig.servers.entries.first?.connection == .connecting }
+    await rig.settle { rig.transport.isHoldingHello }
+    #expect(rig.transport.isHoldingHello)
     rig.servers.forget(id: kept.id)
     rig.transport.releaseHello()
     await Task.yield()

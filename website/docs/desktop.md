@@ -688,8 +688,8 @@ the **Paired machines** flag on:
 
 **Forget** deletes this Mac's key for the machine from the macOS Keychain, so the machine's
 record can never connect again, but it does not remove that record. Run
-`stim-server devices revoke <id>` on the machine for that; Desktop shows the command
-after Forget. A key that changes on the machine is never accepted again: forget the
+`stim-server devices revoke <id>` on the machine for that. Desktop shows the command
+after Forget, or `stim-server devices` to find this Mac's record when the machine never told it the id. A key that changes on the machine is never accepted again: forget the
 pairing and pair again. A build of Desktop without the Keychain entitlement, such as a development
 copy, keeps pairings only until it quits and says so in the sheet.
 
