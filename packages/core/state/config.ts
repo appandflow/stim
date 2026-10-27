@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { isAbsolute, join, sep, win32 } from 'node:path';
 import { ambientEnv } from '../context.ts';
 import { configDir, ensurePrivateDir, withDirLock, withDirLockAsync } from '../index.ts';
-import type { Config, ConcurrencyLimits, ProjectRecord } from './config-types.ts';
+import type { Config, ConcurrencyLimits, PlatformDeviceLimits, ProjectRecord } from './config-types.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
 import { configLockPath, getConfigPath } from './paths.ts';
 
@@ -117,6 +117,15 @@ export function getConcurrencyLimits({ env = ambientEnv() }: { env?: NodeJS.Proc
   return {
     maxBuilds: resolveLimit(env.STIM_MAX_BUILDS, c.maxBuilds),
     maxDevices: resolveLimit(env.STIM_MAX_DEVICES, c.maxDevices),
+  };
+}
+
+export function getPlatformDeviceLimits({ env = ambientEnv() }: { env?: NodeJS.ProcessEnv } = {}): PlatformDeviceLimits {
+  const c = loadConfig()?.concurrency || {};
+  return {
+    ios: resolveLimit(env.STIM_MAX_IOS_DEVICES, c.maxIosDevices),
+    android: resolveLimit(env.STIM_MAX_ANDROID_DEVICES, c.maxAndroidDevices),
+    macos: resolveLimit(env.STIM_MAX_MACOS_APPS, c.maxMacosApps),
   };
 }
 
