@@ -151,6 +151,37 @@ struct StatusStoreTests {
     #expect(store.title(of: Project(root: "/two/app")) == "app (two)")
   }
 
+  @Test func aWorkspacesProjectFollowsItsFolderAppearingAndDisappearing() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("refresh-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let app = root.appendingPathComponent("apps/mobile").path
+    let store = makeStore()
+    func show(_ live: Int) async throws {
+      let data = try JSONSerialization.data(withJSONObject: [
+        "environments": [["path": app, "live": false, "warnings": [], "memoryMb": 0]],
+        "capacity": ["liveCount": live, "committedMb": 0, "totalMemoryMb": 0, "overCapacity": false],
+      ])
+      store.accept(.success(try JSONDecoder().decode(StatusPayload.self, from: data)))
+      #expect(await until { store.payload?.capacity?.liveCount == live })
+    }
+
+    try await show(1)
+    #expect(store.projects[app] == Project(fallbackFor: app))
+
+    try FileManager.default.createDirectory(atPath: app, withIntermediateDirectories: true)
+    let git = Process()
+    git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    git.arguments = ["init", "-q", root.path]
+    try git.run()
+    git.waitUntilExit()
+    try await show(2)
+    #expect(await until { store.projects[app]?.root == (root.path as NSString).resolvingSymlinksInPath })
+
+    try FileManager.default.removeItem(at: root)
+    try await show(3)
+    #expect(await until { store.projects[app] == Project(fallbackFor: app) })
+  }
+
   @Test func aFailedServerReadKeepsThePayloadUntilTheNextSuccess() async {
     let store = makeStore()
     store.accept(.success(payload(live: 1)))
