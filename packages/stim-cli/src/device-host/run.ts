@@ -50,9 +50,10 @@ async function main(): Promise<void> {
     return;
   }
   if (input.mode === 'image') {
-    if (typeof input.systemImage !== 'string') throw new Error('Invalid hosted image request.');
+    if (input.systemImage !== undefined && typeof input.systemImage !== 'string')
+      throw new Error('Invalid hosted image request.');
     const image = await ensureSystemImage({
-      requested: input.systemImage,
+      requested: input.systemImage ?? null,
       policy: androidImageInstallPolicy(loadConfig()),
       env: process.env,
       note: () => {},

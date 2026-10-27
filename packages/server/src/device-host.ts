@@ -1393,11 +1393,11 @@ export class DeviceHost {
       this.beginStop(record);
       return;
     }
-    if (record.platform === 'android' && !owned.adopting && record.systemImage) {
+    if (record.platform === 'android' && !owned.adopting) {
       const image = this.runWorker({
         cwd: dirname(this.options.worker),
         env: this.options.env,
-        input: { mode: 'image', systemImage: record.systemImage },
+        input: { mode: 'image', ...(record.systemImage ? { systemImage: record.systemImage } : {}) },
         claim: owned.claim,
         timeoutMs: this.limits.imageInstallMs,
         maxOutputBytes: 16_384,

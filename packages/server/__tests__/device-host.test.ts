@@ -90,9 +90,10 @@ if(input.mode === 'count') {
   process.stdout.write(JSON.stringify({platform:request.platform,choice:declined?null:choice,declined,resources:{cpus:4,loadPerCore:0.5,memoryFreeBytes:1000,memoryPressure:'normal',workerDiskFreeBytes:null,...(input.exclude ? {localDevices:'unknown' in localCount() ? localCount() : localCount().ios + localCount().android,localPlatforms:localCount()} : {})}}));
   process.exit(0);
 } else if(input.mode === 'image') {
-  appendFileSync(join(process.env.STIM_HOME,'image-requests'),input.systemImage+'\\n');
-  if(input.systemImage.includes('slow')) await new Promise(()=>setInterval(()=>{},1000));
-  process.stdout.write(JSON.stringify(input.systemImage.includes('refused') ? {state:'refused',notice:'licenses not accepted. Run sdkmanager --licenses.'} : {state:'ready'}));
+  const image=input.systemImage ?? 'default';
+  appendFileSync(join(process.env.STIM_HOME,'image-requests'),image+'\\n');
+  if(image.includes('slow')) await new Promise(()=>setInterval(()=>{},1000));
+  process.stdout.write(JSON.stringify(image.includes('refused') ? {state:'refused',notice:'licenses not accepted. Run sdkmanager --licenses.'} : {state:'ready'}));
   process.exit(0);
 }
 const home = process.env.STIM_HOME;
@@ -1767,7 +1768,9 @@ test('Android reservations keep distinct ports and platform slots and reconnect 
   expect(readClaimSet(join(deviceHostRoot(), `${android.id}.claims`)).live).toEqual([]);
   expect(host.attach('client', { session: ios.id })).toHaveProperty('result.state', 'ready');
   expect((await reserve({ platform: 'android', attempt: 'replacement' })).consolePort).toBe(5554);
-  expect(readFileSync(join(home, 'image-requests'), 'utf8')).toBe(`${androidRequest.systemImage}\n`);
+  expect(readFileSync(join(home, 'image-requests'), 'utf8').split('\n')).toEqual(
+    expect.arrayContaining([androidRequest.systemImage, 'default']),
+  );
 });
 
 test('a hosted Android image the host cannot install stops the session with its notice before any device work', async () => {
