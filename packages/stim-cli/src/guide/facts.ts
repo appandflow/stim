@@ -1805,8 +1805,9 @@ RULES
   \`guide lifecycle\`), so the sums can differ from what they sum.
 
   capacity.load is always present. capacity.builds is present only while
-  concurrency.maxBuilds is set, and capacity.devices only while
-  concurrency.maxDevices is set (see \`guide lifecycle concurrency\`):
+  concurrency.maxBuilds is set, capacity.devices only while
+  concurrency.maxDevices is set, and capacity.platformDevices only for the
+  platforms whose cap is set (see \`guide lifecycle concurrency\`):
 
   load     { cpus, loadPerCore, busyAt, limit, state }. loadPerCore is the
            5-minute load average divided by cpus, to one decimal. busyAt is
@@ -1829,6 +1830,11 @@ RULES
            device, with its device slot; for a device no workspace records,
            label is its name and workspace and slot are null. inUse is null
            and unknown says why when the devices could not be listed.
+  platformDevices  { ios?: { max, inUse, unknown? }, android?: { max, inUse,
+           unknown? } }, the booted owned simulators and emulators counted
+           against concurrency.maxIosDevices and concurrency.maxAndroidDevices.
+           Each key is present only while its cap is set, whether or not
+           concurrency.maxDevices is.
 
   The memory budget plans before a boot
   and always uses the estimate. What is using CPU and memory now is the
@@ -1969,7 +1975,9 @@ CAPACITY REFUSALS
   capacityRefusals?: [{ at, kind: "device", platform: "ios" | "android",
                        max, workspace }]
   Only device refusals with STIM_AT_CAPACITY are recorded; build caps wait.
-  at is the ISO timestamp, max is concurrency.maxDevices, and workspace is
+  at is the ISO timestamp, max is the cap of the limit that was full
+  (concurrency.maxDevices, or the platform's concurrency.maxIosDevices or
+  concurrency.maxAndroidDevices), and workspace is
   the workspace id used by status and Desktop. The list is newest first:
   the last 50 from the last 7 days, omitted when empty. Desktop uses events
   within 6 hours for its device-limit suggestion, including terminal runs.

@@ -122,7 +122,7 @@ iOS simulator, use the machine name as the remote target:
 
 <StimTabs code={`stim ios --remote janics-mac-mini`} />
 
-The host's own owned devices count toward `concurrency.maxDevices`. Hosted macOS app sessions count against it separately from simulators and emulators.
+The host's own owned devices count toward `concurrency.maxDevices` and the platform's `concurrency.maxIosDevices` or `concurrency.maxAndroidDevices`. Hosted macOS app sessions count against `concurrency.maxDevices` separately from simulators and emulators, and against `concurrency.maxMacosApps`. A refusal names the full limit with its hosted and local counts.
 
 On the host, `stim-server devices` shows **Hosted here** rows with the client,
 platform, device, installed app, state and time; `--json` includes
@@ -1212,7 +1212,7 @@ is ahead, it is allowed. It resolves the build preference from `--remote-build`,
 Automatic
 build offload resolves later, using the device's offered architecture.
 
-If none admits and this machine is at its `concurrency.maxDevices` cap (or runs are
+If none admits and this machine is at its `concurrency.maxDevices` or per-platform cap (or runs are
 queued ahead), the opt-in `remote.easFallback` setting runs the device on an EAS
 Simulator, exactly as `--remote eas` would. EAS Simulator is billed, so the
 setting defaults to `false`; set it per machine or per project:

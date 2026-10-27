@@ -791,7 +791,12 @@ stopped, including unresolved sessions, plus the host's own booted `stim-*`
 devices in `capacity.local`. A session's simulator counts once, whether or not
 its record names the device yet. A macOS offer counts only macOS app
 reservations against `max` and reports no `local`. `max` is
-`concurrency.maxDevices`; zero means uncapped and `available` is then `null`.
+`concurrency.maxDevices`; zero means that cap is off. `available` is the room
+left under the tightest limit that applies to the offer's platform:
+`concurrency.maxDevices` and the platform's `concurrency.maxIosDevices`,
+`concurrency.maxAndroidDevices` or `concurrency.maxMacosApps`, a reservation
+having to fit both. It is `null` when none is set. The decline reason names the
+full limit with its hosted and local counts.
 A full pool, an uncountable host inventory and memory pressure each decline
 with a different reason. Android offers also decline when all supported
 console ports are already recorded as occupied. macOS offers decline when all
@@ -905,7 +910,7 @@ need operator investigation, never a replacement inferred from a simulator name.
 Revoking this client's approval stops its sessions without granting access to
 the worker's other devices.
 
-`concurrency.maxDevices` bounds hosted reservations atomically, including
+`concurrency.maxDevices` and the per-platform caps bound hosted reservations atomically, including
 unresolved sessions. Ordinary local producers do not join that reservation
 transaction, so this is not a machine-wide hard capacity guarantee. Unknown
 inventory refuses native creation. Memory pressure is decided once: when the
@@ -1071,7 +1076,7 @@ unresolved agent claims refuse replacement and deletion after restart too.
 ### Hosted macOS app sessions
 
 The same offer/reserve/attach/stop methods accept `platform: "macos"` without
-selectors. macOS reservations count toward `concurrency.maxDevices` among themselves, apart from simulators and emulators, and each takes
+selectors. macOS reservations count toward `concurrency.maxDevices` among themselves, apart from simulators and emulators, and toward `concurrency.maxMacosApps`, and each takes
 the lowest free `appSlot` from 1 through 64. Unresolved sessions retain their
 slot; only a confirmed stop frees it. The ready device describes the host's
 `architecture` (`arm64` or `x86_64`), `macosVersion` and `appSlot`. No simulator,

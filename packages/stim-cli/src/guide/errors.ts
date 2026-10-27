@@ -947,8 +947,10 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
     STIM_AT_CAPACITY: {
       summary: 'owned-device slot wait timed out, or --no-wait reached the cap or queue',
       body: () => `STIM_AT_CAPACITY
-  Only when concurrency.maxDevices is set (unset by default). New owned
-  devices queue in FIFO order across $STIM_HOME for 600 seconds by default.
+  Only when concurrency.maxDevices, concurrency.maxIosDevices or
+  concurrency.maxAndroidDevices is set (all unset by default). A boot must fit
+  its platform cap and concurrency.maxDevices; the message names the limit that
+  was full with its count and cap. New owned devices queue in FIFO order across $STIM_HOME for 600 seconds by default.
   This refusal means the wait expired, or \`--no-wait\` / \`--wait 0\`
   found the cap full or another run queued. The message gives the current
   count and, on timeout, how long it waited. iOS waits beside its build,
@@ -966,7 +968,10 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   --no-wait and --wait 0 refuse at once. Builds under remote-only refuse with
   STIM_OFFLOAD_REFUSED instead.
   Stop an environment (\`stim stop\`), pass a longer \`--wait <seconds>\`,
-  or raise concurrency.maxDevices. With --remote auto, remote.machines and
+  or raise the limit the message names (concurrency.maxDevices, or the
+  platform's concurrency.maxIosDevices / maxAndroidDevices). On a stim-server
+  worker the hosted offer and reserve name the full limit too, including
+  concurrency.maxMacosApps. With --remote auto, remote.machines and
   the opt-in remote.easFallback (billed EAS Simulator) are tried before this
   wait; \`stim logs --source placement\` says why neither took the run. Waiting prints holder names and elapsed
   time; status JSON exposes build.waitingFor independently of phase.

@@ -462,7 +462,7 @@ idle rules, rechecks under the workspace's native-run lock, records the same
 never touches the workspace of the command that started the check. It covers
 what Stim Desktop's **Shut down idle devices** option does.
 
-Queue reclaim is a separate, faster path. With `concurrency.maxDevices` set,
+Queue reclaim is a separate, faster path. With `concurrency.maxDevices` or a per-platform cap set,
 the waiting run uses its own effective `devices.reclaimIdleMinutes`, default 10, to shut down the
 longest-idle eligible owned device across this Stim home's other workspaces.
 Only the FIFO head reclaims, one device at a time, at most once every 15

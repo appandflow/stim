@@ -1022,7 +1022,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: false,
     description:
-      'When ios.remote or android.remote is auto or remote, this machine is at its concurrency.maxDevices cap and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can; remote-only never uses it',
+      'When ios.remote or android.remote is auto or remote, this machine is at a device cap (concurrency.maxDevices or a per-platform cap) and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can; remote-only never uses it',
   },
   {
     key: 'remote.easMaxDurationMinutes',

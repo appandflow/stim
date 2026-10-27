@@ -1414,6 +1414,13 @@ runs; a device's holder names the workspace label and device slot that record
 it. `capacity.devices.inUse` is `null`, with `unknown` saying why, when the
 devices could not be listed. With neither cap set, neither field appears.
 
+`concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` add an
+`iOS simulators 1/2` or `Android emulators 0/1` line and, in `--json`,
+`capacity.platformDevices.ios` or `.android`: `max` and `inUse`, with `unknown`
+saying why `inUse` is `null`. Each appears only while its cap is set, whether or
+not `concurrency.maxDevices` is. `concurrency.maxMacosApps` limits hosted macOS
+apps only and has no status line.
+
 `--watch` keeps running and prints the status again each time it changes.
 With `--json` it prints one complete payload per line: one immediately, then
 one per change, never two identical payloads in a row. In a watch line, a CPU or memory figure keeps
@@ -1739,7 +1746,7 @@ Recording is best effort.
 The optional top-level JSON `capacityRefusals` lists the last 50 device
 refusals from the last 7 days, newest first, and is omitted when empty. Each
 entry carries `at` (ISO timestamp), `kind: "device"`, `platform` (`ios` or
-`android`), `max` (`concurrency.maxDevices`), and `workspace` (the workspace
+`android`), `max` (the cap of the limit that was full: `concurrency.maxDevices`, or the platform's `concurrency.maxIosDevices` or `concurrency.maxAndroidDevices`), and `workspace` (the workspace
 id used by status and Desktop). Only `STIM_AT_CAPACITY` device refusals are
 recorded; build caps wait. Recording is best effort and does not change the
 refusal or the plain stats output. Desktop uses events within 6 hours for
