@@ -439,7 +439,7 @@ export async function checkDeviceCapacity({
   return deviceCapacityRefusal({ platform, project, slot, max, ...inventory });
 }
 
-export function peekDeviceSlots({
+export async function peekDeviceSlots({
   platform,
   project,
   slot = 'default',
@@ -450,10 +450,10 @@ export function peekDeviceSlots({
   project: ProjectRecord | null;
   slot?: string;
   max?: number;
-  sources?: InventorySources;
-}): { count: number | null; max: number; queued: number; localLive: boolean } {
+  sources?: AsyncInventorySources;
+}): Promise<{ count: number | null; max: number; queued: number; localLive: boolean }> {
   try {
-    const inventory = readInventory(sources);
+    const inventory = await readInventoryAsync(sources);
     if ('code' in inventory) return { count: null, max, queued: 0, localLive: false };
     const owned = deviceSlotPlatforms(project, slot)?.[platform]?.owned === true;
     return {
