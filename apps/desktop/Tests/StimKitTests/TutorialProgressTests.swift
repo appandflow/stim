@@ -216,6 +216,34 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(result.shouldReopen)
 }
 
+@Test func tutorialStaysClosedAtLaunchOnceDismissedUnfinishedAndKeepsProgress() throws {
+  let suite = "TutorialProgressTests-" + UUID().uuidString
+  let defaults = UserDefaults(suiteName: suite)!
+  defer { defaults.removePersistentDomain(forName: suite) }
+  let store = TutorialRecordStore(defaults)
+  var first = saved(at: "parallel")
+  #expect(first.reopensAtLaunch)
+
+  var progress = TutorialProgress()
+  _ = progress.update(TutorialInput(environment: try environment("02-after-ios1"), now: afterBuild, record: first))
+  progress.setDismissed(true)
+  store.record = progress.record
+
+  let relaunched = try #require(TutorialRecordStore(defaults).record)
+  #expect(!relaunched.reopensAtLaunch)
+  var resumed = TutorialProgress()
+  let result = resumed.update(
+    TutorialInput(environment: try environment("02-after-ios1"), now: afterBuild, record: relaunched))
+  #expect(result.currentStep == "parallel")
+  #expect(state("build", in: result).state == .done)
+
+  resumed.setDismissed(false)
+  #expect(try #require(resumed.record).reopensAtLaunch)
+
+  first.step = "done"
+  #expect(!first.reopensAtLaunch)
+}
+
 @Test func tutorialTracksSavedPathOtherwiseTheOldestWorktree() throws {
   var first = try fixture("01-started").environments[0]
   first.phaseSince = "2026-10-07T04:56:00.000Z"
