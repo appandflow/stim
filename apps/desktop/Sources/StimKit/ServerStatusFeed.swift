@@ -60,8 +60,8 @@ import Foundation
       failures = [:]
       viewsClient = client
     }
-    guard client != nil else { return }
-    LaunchMilestones.reach("server-feed-subscribed")
+    guard let client else { return }
+    if !client.isRemote { LaunchMilestones.reach("server-feed-subscribed") }
     subscribe()
   }
 
@@ -176,7 +176,7 @@ import Foundation
     case .unchanged: return
     case .changed:
       recovered("workspaces")
-      LaunchMilestones.reach("first-server-status")
+      if client?.isRemote == false { LaunchMilestones.reach("first-server-status") }
       readArchivesIfChanged()
       decode()
     }
@@ -251,9 +251,10 @@ import Foundation
     let sequence = issued
     let generation = generation
     let payload = views.payload()
+    let local = !client.isRemote
     Task.detached(priority: .userInitiated) { [weak self] in
       let result = Result { try decodeReporting(StatusPayload.self, from: payload, source: .server) }
-      await LaunchMilestones.reach("first-server-payload-decoded")
+      if local { await LaunchMilestones.reach("first-server-payload-decoded") }
       await self?.show(
         result, sequence: sequence, generation: generation, client: client, connectionGeneration: connectionGeneration)
     }
