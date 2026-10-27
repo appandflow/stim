@@ -56,12 +56,13 @@ import Testing
     await settle()
   }
 
-  private func openClient(retries: Box<[@MainActor () -> Void]> = Box([]), transports: Box<[FakeTransport]> = Box([]))
-    async throws -> (ServerClient, FakeTransport)
-  {
+  private func openClient(
+    endpoint: URL = URL(fileURLWithPath: "/tmp/stim/server/local.sock"),
+    retries: Box<[@MainActor () -> Void]> = Box([]), transports: Box<[FakeTransport]> = Box([])
+  ) async throws -> (ServerClient, FakeTransport) {
     var transport: FakeTransport?
     let client = ServerClient(
-      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Stim Desktop", clientVersion: "1",
+      endpoint: endpoint, clientName: "Stim Desktop", clientVersion: "1",
       transport: { _, onEvent in
         let next = FakeTransport(onEvent: onEvent)
         transport = next
@@ -270,6 +271,58 @@ import Testing
 
     feed.follow([])
     #expect(await until { recorder.payloads.last?.environments.first?.logs == nil })
+  }
+
+  /// Answers a paired server's archive pages from `page` until the feed reports an error or `limit` pages were sent,
+  /// and returns how many pages it answered.
+  private func pageArchives(limit: Int, page: (Int) -> JSONValue) async throws -> (pages: Int, errors: [String]) {
+    let (client, socket) = try await openClient(endpoint: URL(string: "ws://100.64.0.2:7787")!)
+    defer { client.stop() }
+    let recorder = Recorder()
+    let feed = feed(recorder)
+    feed.use(client)
+    await settle()
+    await subscribe(socket)
+    socket.reply(workspaces(["/w/a"]))
+    var answered = 0
+    while answered < limit {
+      let requested = await until {
+        !recorder.errors.isEmpty || socket.sent.filter { $0["method"] == .string("archived.list") }.count > answered
+      }
+      guard requested, recorder.errors.isEmpty else { break }
+      answered += 1
+      socket.answer("archived.list", page(answered))
+    }
+    _ = await until { !recorder.errors.isEmpty }
+    return (answered, recorder.errors)
+  }
+
+  @Test func aPairedServerThatRepeatsItsArchiveCursorFailsTheRead() async throws {
+    let read = try await pageArchives(limit: 10) { _ in
+      .object(["archived": .array([archive("a")]), "usage": .null, "next": .string("same")])
+    }
+    #expect(read.pages == 2)
+    #expect(read.errors == ["The paired server's archive list is too long."])
+  }
+
+  @Test func aPairedServerArchiveReadStopsAtItsByteBudget() async throws {
+    let large = String(repeating: "x", count: 4 * 1024 * 1024)
+    let read = try await pageArchives(limit: 20) { index in
+      .object([
+        "archived": .array([.object(["id": .string("a\(index)"), "project": .string(large)])]),
+        "usage": .null, "next": .string("c\(index)"),
+      ])
+    }
+    #expect(read.pages == 8)
+    #expect(read.errors == ["The paired server's archive list is too long."])
+  }
+
+  @Test func aPairedServerArchiveReadStopsAtItsPageBudget() async throws {
+    let read = try await pageArchives(limit: 600) { index in
+      .object(["archived": .array([]), "usage": .null, "next": .string("c\(index)")])
+    }
+    #expect(read.pages == 500)
+    #expect(read.errors == ["The paired server's archive list is too long."])
   }
 
   @Test func archivesAreReadInPagesAndRetainedUntilAFailedRefreshRecovers() async throws {

@@ -2,7 +2,8 @@ import Foundation
 import Network
 
 /// A client WebSocket over a stream `NWConnection`, framed with `WebSocketFraming` and reporting on the main actor.
-/// Messages sent before the upgrade completes wait for it.
+/// Messages sent before the upgrade completes wait for it. With a keepalive interval it pings the server that often
+/// once upgraded, and ends the connection when nothing arrived since the previous ping.
 @MainActor final class WebSocketStream {
   enum Event: Sendable {
     case message(WebSocketFraming.Opcode, Data)
@@ -16,13 +17,17 @@ import Network
   private var handshake: Data? = Data()
   private var queued: [Data] = []
   private var closed = false
+  private var heard = true
+  private var keepalive: Task<Void, Never>?
+  private let keepaliveInterval: TimeInterval?
   private let onEvent: @MainActor (Event) -> Void
 
   /// `host` is the upgrade request's `Host` header and `path` its request target.
   init(
     to endpoint: NWEndpoint, using parameters: NWParameters, host: String, path: String, maximumMessageSize: Int,
-    onEvent: @escaping @MainActor (Event) -> Void
+    keepalive: TimeInterval? = nil, onEvent: @escaping @MainActor (Event) -> Void
   ) {
+    keepaliveInterval = keepalive
     connection = NWConnection(to: endpoint, using: parameters)
     reader = WebSocketFraming.Reader(maximumMessageSize: maximumMessageSize)
     self.onEvent = onEvent
@@ -51,6 +56,7 @@ import Network
   func close(code: UInt16 = 1000, reason: String = "") {
     guard !closed else { return }
     closed = true
+    keepalive?.cancel()
     guard handshake == nil else { return connection.cancel() }
     connection.send(
       content: WebSocketFraming.frame(.close, Data([UInt8(code >> 8), UInt8(code & 0xFF)]) + Data(reason.utf8.prefix(123))),
@@ -85,6 +91,7 @@ import Network
   }
 
   private func read(_ data: Data) throws {
+    heard = true
     var frames = data
     if var head = handshake {
       head.append(data)
@@ -96,6 +103,7 @@ import Network
       for frame in queued { write(frame) }
       queued = []
       frames = rest
+      if let keepaliveInterval { startKeepalive(keepaliveInterval) }
     }
     for frame in try reader.read(frames) {
       switch frame.opcode {
@@ -108,11 +116,24 @@ import Network
     }
   }
 
+  private func startKeepalive(_ interval: TimeInterval) {
+    keepalive = Task { @MainActor [weak self] in
+      while true {
+        try? await Task.sleep(for: .seconds(interval))
+        guard let self, !Task.isCancelled, !self.closed else { return }
+        guard self.heard else { return self.end("The machine stopped answering.") }
+        self.heard = false
+        self.write(WebSocketFraming.frame(.ping, Data()))
+      }
+    }
+  }
+
   /// RFC 6455 section 5.5.1: answers the server's close frame with one carrying its status code, then disconnects.
   /// Section 5.5.1 also puts the code in the first two bytes and a UTF-8 reason after them.
   private func answerClose(_ payload: Data) {
     guard !closed else { return }
     closed = true
+    keepalive?.cancel()
     let bytes = [UInt8](payload)
     connection.send(
       content: WebSocketFraming.frame(.close, Data(bytes.prefix(2))),
@@ -125,6 +146,7 @@ import Network
   private func end(_ reason: String) {
     guard !closed else { return }
     closed = true
+    keepalive?.cancel()
     connection.cancel()
     onEvent(.closed(description: reason, code: nil, reason: nil))
   }

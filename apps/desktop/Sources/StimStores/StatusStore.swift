@@ -25,10 +25,14 @@ public final class StatusStore: ObservableObject {
     didSet { syncServerFeed() }
   }
   @Published public private(set) var doctor: [String: Fetched<DoctorReport>] = [:]
+  /// Each paired server's status, by `PairedServer.id`. It stays in memory, and none of its paths reach a local file,
+  /// process or git command.
+  @Published public private(set) var paired: [String: PairedStatus] = [:]
 
   private var started = false
   private var payloadSource: (client: ServerClient, generation: Int, payload: StatusPayload)?
   private var serverConnection: (client: ServerClient, home: String)?
+  private var pairedFeeds: [String: (client: ServerClient, feed: ServerStatusFeed)] = [:]
   private var shownWorkspace: String?
   private lazy var serverFeed = ServerStatusFeed(
     onPayload: { [weak self] result, client, generation in self?.accept(result, source: (client, generation)) },
@@ -67,6 +71,67 @@ public final class StatusStore: ObservableObject {
   public func useServer(_ connection: (client: ServerClient, home: String)?) {
     serverConnection = connection
     syncServerFeed()
+  }
+
+  /// Follows the status of each paired server's client, by `PairedServer.id`, while that client is open with `read`, and
+  /// drops the status of any other. A closed client keeps its last payload, no longer delivering. A client of this
+  /// Mac's Unix socket is never followed as a paired server. Call it again whenever a paired client's state changes.
+  public func usePairedServers(_ clients: [String: ServerClient]) {
+    for (id, followed) in pairedFeeds where clients[id] !== followed.client {
+      pairedFeeds[id] = nil
+      followed.feed.use(nil)
+      paired[id] = nil
+    }
+    for (id, client) in clients where client.isRemote {
+      if pairedFeeds[id] == nil {
+        let feed = ServerStatusFeed(
+          onPayload: { [weak self] result, source, _ in self?.acceptPaired(result, id: id, client: source) },
+          onDelivering: { [weak self, weak client] delivering in
+            guard let self, let client, self.pairedFeeds[id]?.client === client else { return }
+            self.paired[id]?.delivering = delivering
+          })
+        pairedFeeds[id] = (client, feed)
+        paired[id] = PairedStatus()
+      }
+      guard case .open(let hello) = client.state, hello.capabilities.contains("read") else {
+        pairedFeeds[id]?.feed.use(nil)
+        continue
+      }
+      pairedFeeds[id]?.feed.use(client)
+    }
+  }
+
+  private func acceptPaired(_ result: Result<StatusPayload, Error>, id: String, client: ServerClient) {
+    guard pairedFeeds[id]?.client === client else { return }
+    switch result {
+    case .success(var payload):
+      for i in payload.environments.indices {
+        let env = payload.environments[i]
+        payload.environments[i].project =
+          env.worktree?.repository.map { Project(root: $0) } ?? Project(fallbackFor: env.path)
+      }
+      paired[id] = PairedStatus(payload: payload, error: nil, updatedAt: Date(), delivering: paired[id]?.delivering ?? false)
+    case .failure(let failure):
+      paired[id, default: PairedStatus()].error = failure.localizedDescription
+    }
+  }
+
+  /// This Mac's workspaces, then each paired server's, in pairing id order.
+  public var ownedEnvironments: [OwnedWorkspace] {
+    (payload?.environments ?? []).map { OwnedWorkspace(owner: .local, workspace: $0) }
+      + paired.keys.sorted().flatMap { id in
+        (paired[id]?.payload?.environments ?? []).map { OwnedWorkspace(owner: .paired(id), workspace: $0) }
+      }
+  }
+
+  /// The workspace `key` names, as its own server last reported it.
+  public func workspace(_ key: WorkspaceKey) -> OwnedWorkspace? {
+    let environments: [Workspace]?
+    switch key.owner {
+    case .local: environments = payload?.environments
+    case .paired(let id): environments = paired[id]?.payload?.environments
+    }
+    return environments?.first { $0.path == key.path }.map { OwnedWorkspace(owner: key.owner, workspace: $0) }
   }
 
   private var connectionError: ServerError {
@@ -323,6 +388,15 @@ public final class StatusStore: ObservableObject {
       payload?.environments ?? [], volumes: lowestVolume.map { [Double($0.freeBytes)] }, now: Date(),
       stuckMinutes: 15, easSessionMinutes: minutes > 0 ? minutes : 30) + setup
   }
+}
+
+/// What a paired server last reported. `payload` stays after a failure or a dropped connection, as that server's last
+/// known status.
+public struct PairedStatus: Sendable {
+  public var payload: StatusPayload?
+  public var error: String?
+  public var updatedAt: Date?
+  public var delivering = false
 }
 
 private struct SidebarCache {

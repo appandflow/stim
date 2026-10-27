@@ -71,6 +71,16 @@ struct FormatTests {
     #expect([3_600_000.0, 3_720_000].map(Format.elapsed(ms:)) == ["1h 0m", "1h 2m"])
   }
 
+  @Test func aNumberPastIntsRangeFromAnotherMachineDoesNotTrap() {
+    #expect(Format.clock(ms: 1e300) == "153722867280912930:07")
+    #expect(Format.elapsed(ms: .nan) == "0m 0s")
+    #expect(Format.roundedDuration(ms: .nan) == "0s")
+    #expect(Format.duration(1e300) == "6405119470038038d")
+    #expect(Format.since(.nan) == "0s")
+    #expect(Format.age(-1e300) == "just now")
+    #expect(Format.memoryMb(.nan) == "0 MB")
+  }
+
   @Test func ageWordsUnderAMinuteAsJustNow() {
     #expect([-30.0, 0, 59].map(Format.age) == ["just now", "just now", "just now"])
     #expect([60.0, 3599, 3600, 90_000].map(Format.age) == ["1m ago", "59m ago", "1h ago", "25h ago"])

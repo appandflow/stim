@@ -271,7 +271,7 @@ extension Workspace {
       return reportsBundles && metro.running ? BundleLine(text: "Not bundled yet", tone: .tertiary) : nil
     }
     if bundle.bundling {
-      return BundleLine(text: "Bundling" + (bundle.percent.map { " \u{00B7} \(Int($0.rounded()))%" } ?? ""), tone: .normal)
+      return BundleLine(text: "Bundling" + (bundle.percent.map { " \u{00B7} \(Format.int($0.rounded()))%" } ?? ""), tone: .normal)
     }
     guard let last = bundle.last else { return nil }
     let when = parseTimestamp(last.finishedAt).map { " \u{00B7} \(Format.since(now.timeIntervalSince($0))) ago" } ?? ""
@@ -436,7 +436,7 @@ extension Build {
       "waiting-ready": "Waiting for app ready",
     ]
     guard let name = names[activity.name] else { return nil }
-    return (name, activity.name == "bundling" ? activity.percent.map { "\(Int($0.rounded()))%" } : nil)
+    return (name, activity.name == "bundling" ? activity.percent.map { "\(Format.int($0.rounded()))%" } : nil)
   }
 
   /// The planned phases plus the current one, each done, current or pending.
