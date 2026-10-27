@@ -187,7 +187,8 @@ withTailscale('pair with Tailscale running', () => {
   it('pairs on the direct tailnet address when tailscale serve status cannot be read', () => {
     const { endpoint, stderr } = pairWith('not json');
     expect(endpoint).toBe('ws://100.64.0.1:7787');
-    expect(stderr).toContain('Could not read');
+    expect(stderr).toContain('tailnet address directly');
+    expect(stderr).not.toContain('tailscale serve --bg');
   });
 
   it('--json prints the same endpoint and still explains it on stderr', () => {

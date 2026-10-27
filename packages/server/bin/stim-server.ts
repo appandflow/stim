@@ -111,7 +111,7 @@ function routeNote(route: ServeRoute, port: number): string | null {
     return `No \`tailscale serve\` route reaches port ${port}, so clients connect to this machine's tailnet address directly. For a wss:// endpoint with a certificate, run this once to serve it on a tailnet-only port: \`${serveCommand(route.port, port)}\``;
   }
   if (route.state === 'unknown') {
-    return `Could not read \`tailscale serve status --json\` (${route.reason}), so clients connect to this machine's tailnet address directly. For a wss:// endpoint with a certificate, run this once to serve it on a tailnet-only port: \`${serveCommand(route.port, port)}\``;
+    return `Could not read \`tailscale serve status --json\` (${route.reason}), so clients connect to this machine's tailnet address directly.`;
   }
   if (route.state === 'funneled') {
     const ports = route.ports.join(', ');

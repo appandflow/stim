@@ -496,7 +496,7 @@ Funnel makes every handler on that port reachable from the public internet.
 `stim-server` reads `tailscale serve status --json` at start and on every
 `pair`. It uses the HTTPS port whose `/` handler proxies to its loopback port,
 preferring 7443. Without such a route, or when it cannot read the serve status, `pair` and the startup message give the
-server's direct tailnet address, `ws://<tailnet IP>:<port>`, and print the
+server's direct tailnet address, `ws://<tailnet IP>:<port>`. With no route it also prints the
 command above (7443, or the next free port when 7443 is taken) for a `wss://`
 endpoint. Clients accept the direct address on a tailnet because the Noise
 session encrypts it and pins the server key. It never suggests a Funnel
