@@ -147,6 +147,11 @@ repair: its cache-lock check cannot detect uncached, release-swap fallback, or
 direct Gradle builds. The next build recreates these files; source, custom launcher settings,
 and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
+When no Android system image matches the project and `android.installImages`
+is `auto`, doctor reports it as a note, and `--fix` installs the image
+`stim android` would install on its first emulator run (about 2 GB). See
+[installing a missing Android system image](./settings.md#installing-a-missing-android-system-image).
+
 Doctor reports a checkout that holds linked worktrees inside it, such as
 `.worktrees/<name>`, when the checkout's `.watchmanconfig` does not list them in
 `ignore_dirs`. A Watchman root at that checkout, which Jest or a Metro started

@@ -19,6 +19,7 @@ import {
   RESERVE_TIMEOUT_MS,
   POLL_MS,
   PREPARE_TIMEOUT_MS,
+  IMAGE_INSTALL_TIMEOUT_MS,
   SESSION_TIMEOUT_MS,
   type HostConnection,
 } from '../device-host/hosted-client.ts';
@@ -232,8 +233,15 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
   test.each([false, true])('bounds unresolved preparation and retains its owner (resumed: %s)', async (resumed) => {
     if (resumed) resume();
     readyAt = Infinity;
-    const result = place().catch((error: unknown) => error);
+    let settled = false;
+    const result = place().catch((error: unknown) => {
+      settled = true;
+      return error;
+    });
+    const waitsForImage = resumed && platform === 'android';
     await vi.advanceTimersByTimeAsync(356_000);
+    expect(settled).toBe(!waitsForImage);
+    await vi.advanceTimersByTimeAsync(waitsForImage ? IMAGE_INSTALL_TIMEOUT_MS : 0);
     expect(await result).toBeInstanceOf(Error);
     expect(String(await result)).toContain('stayed preparing');
     expect(recorded?.session).toBe(session);

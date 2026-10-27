@@ -18,7 +18,10 @@ beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-android-image-')));
   sdk = join(root, 'sdk');
   mkdirSync(join(sdk, 'cmdline-tools', 'latest', 'bin'), { recursive: true });
-  writeFileSync(join(sdk, 'cmdline-tools', 'latest', 'bin', 'sdkmanager'), '');
+  writeFileSync(
+    join(sdk, 'cmdline-tools', 'latest', 'bin', process.platform === 'win32' ? 'sdkmanager.bat' : 'sdkmanager'),
+    '',
+  );
   mkdirSync(join(sdk, 'licenses'));
   writeFileSync(join(sdk, 'licenses', 'android-sdk-license'), 'accepted');
   process.env.STIM_HOME = join(root, 'home');

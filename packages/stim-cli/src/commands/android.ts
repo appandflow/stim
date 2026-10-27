@@ -623,10 +623,12 @@ async function localRunRefusal(
   budgetRefusal: { code: string; message: string; remedy: string } | null,
   target: { kind: string },
   ensureImage: () => ReturnType<typeof ensureSystemImage>,
+  recheckSelectors: () => Promise<{ code: string; message: string; remedy: string } | null>,
 ): Promise<{ code: string; message: string; remedy: string } | null> {
   if (budgetRefusal || target.kind !== 'emulator') return budgetRefusal;
   const image = await ensureImage();
-  return image.ok ? null : image;
+  if (!image.ok) return image;
+  return image.installed ? recheckSelectors() : null;
 }
 
 export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOptions): Promise<RunAndroidResult> {
@@ -918,6 +920,22 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const runtimeKind = integration.runtimeKind(buildPlan);
   const appMode = runtimeKind === 'process' ? 'process' : runtimeKind === 'metro' ? 'development' : 'release';
   record.configuration = variant ?? 'debug';
+  const localSelectors = (target: { systemImage: string | null; deviceProfile: string | null }) =>
+    androidDeviceSelectorRefusal(
+      {
+        settingsContext,
+        signal: context.signal,
+        slot,
+        systemImageFlag,
+        deviceProfileFlag,
+        systemImage: target.systemImage,
+        deviceProfile: target.deviceProfile,
+        physical: false,
+        remoteBackend: null,
+        installImages: androidImageInstallPolicy(settings),
+      },
+      { listSystemImages, listDeviceProfiles },
+    );
   const hosting = await selectAndroidPlacement({
     root,
     slot,
@@ -953,22 +971,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             }),
         }
       : {}),
-    localSelectors: (target) =>
-      androidDeviceSelectorRefusal(
-        {
-          settingsContext,
-          signal: context.signal,
-          slot,
-          systemImageFlag,
-          deviceProfileFlag,
-          systemImage: target.systemImage,
-          deviceProfile: target.deviceProfile,
-          physical: false,
-          remoteBackend: null,
-          installImages: androidImageInstallPolicy(settings),
-        },
-        { listSystemImages, listDeviceProfiles },
-      ),
+    localSelectors,
     checkBudget: (args) => (options.checkBudget ?? budgetGate)({ ...args, env: context.env }),
     note: out,
     phase,
@@ -991,15 +994,19 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       );
   }
   reclaimed = budget.reclaimed;
-  const localRefusal = await localRunRefusal(budget.refusal, target, () =>
-    (options.ensureImage ?? ensureSystemImage)({
-      requested: target.kind === 'emulator' ? target.systemImage : null,
-      listImages: listSystemImages,
-      policy: androidImageInstallPolicy(settings),
-      env: context.env,
-      signal: settingsSignal,
-      note: (line) => phase('image', line),
-    }),
+  const localRefusal = await localRunRefusal(
+    budget.refusal,
+    target,
+    () =>
+      (options.ensureImage ?? ensureSystemImage)({
+        requested: target.kind === 'emulator' ? target.systemImage : null,
+        listImages: listSystemImages,
+        policy: androidImageInstallPolicy(settings),
+        env: context.env,
+        signal: settingsSignal,
+        note: (line) => phase('image', line),
+      }),
+    () => localSelectors(target.kind === 'emulator' ? target : { systemImage: null, deviceProfile: null }),
   );
   if (localRefusal) return fail(localRefusal.code, localRefusal.message, localRefusal.remedy);
   const remoteContext = remoteBackend

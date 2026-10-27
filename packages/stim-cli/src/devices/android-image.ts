@@ -257,6 +257,8 @@ export async function installSystemImage({
   try {
     if (listInstalledSystemImages(undefined, env).some((image) => image.pkg === pkg))
       return { ok: true, installed: false };
+    const queued = waited ? systemImageInstallProblem(pkg, env) : null;
+    if (queued) return { ok: false, ...queued };
     note(`installing ${pkg} with sdkmanager (about 2 GB)`);
     let output: string;
     markClaimChildPending(held);

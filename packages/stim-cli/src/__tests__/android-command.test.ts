@@ -6493,6 +6493,28 @@ describe('the emulator system-image flag', () => {
     expect(h.calls.ensureDevice[0]).toMatchObject({ flags: { systemImage: wanted } });
   });
 
+  test('a foldable profile is checked again against the image the run just installed', async () => {
+    const wanted = `system-images;android-99;google_apis;${hostSystemImageArch()}`;
+    const images = [...IMAGES];
+    const h = harness({
+      json: true,
+      systemImage: wanted,
+      deviceProfile: 'pixel_fold',
+      listDeviceProfiles: () => ['pixel_6', 'pixel_fold'],
+      listSystemImages: () => images,
+      ensureImage: async () => {
+        images.push({ api: 99, tag: 'google_apis', arch: hostSystemImageArch(), pkg: wanted });
+        return { ok: true as const, installed: true };
+      },
+    });
+    expect((await h.run()).ok).toBe(false);
+    expect(JSON.parse(h.stdout[0] ?? '{}')).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('foldable support'),
+    });
+    expect(h.calls.ensureDevice.length).toBe(0);
+  });
+
   test('a failed image install refuses before any device is created', async () => {
     const h = harness({
       json: true,
