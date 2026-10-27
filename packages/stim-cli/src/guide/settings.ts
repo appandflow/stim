@@ -954,9 +954,8 @@ shared daemon only when that agent-device can lease a single app (its
 notice, and no client is handed the Mac's desktop. STIM_AGENT_DEVICE_BIN in
 stim-server's environment names an agent-device binary to use instead of
 ~/.local/bin/agent-device. Hosted iOS uses one daemon per simulator, pinned by
-its UDID policy; both machines need agent-device 0.21.20 or later. Hosted Android
-uses one daemon per emulator, pinned by its serial policy, with agent-device
-0.21.22 or later on both machines. See guide lifecycle
+its UDID policy. Hosted Android uses one daemon per emulator, pinned by its
+serial policy. Both machines need agent-device 0.21.30 or later. See guide lifecycle
 hosted-ios. \`doctor\` on that Mac notes an installed hosted app that runs while
 the setting is \`none\`.
 

@@ -884,7 +884,7 @@ simulators in this phase; their recorded sessions prevent Metro idle stop.
 [hosted sessions stop when they are idle](./remote-machines.md#hosted-sessions-stop-when-they-are-idle).
 
 For agent control, set `hosting.agentDriver` to `agent-device` on the hosting Mac.
-Both machines need agent-device **0.21.20 or later**, with the daemon policy and remote-config contract.
+Both machines need agent-device **0.21.30 or later**, with the daemon policy, command list and remote-config contract.
 The host starts one loopback daemon per installed session, under an ownership claim
 whose child is that daemon. Its policy allows exactly the session's simulator UDID and
 refuses shutdown. Stop, close, revocation, reinstall and graceful server close stop
@@ -918,21 +918,39 @@ targeting its exact simulator UDID before deleting the simulator, even without `
 
 Allowed commands are `devices`, `open`, `close`, `snapshot`, `diff`, `wait`, `find`, `get`,
 `is`, `click`, `fill`, `press`, `type`, `focus`, `scroll`, `screenshot`,
-`longpress`, `swipe`, `back`, `home`, `orientation`, `appstate`, `alert`, `batch`,
-`record start` and `record stop`. They inspect, interact with or record the
-simulator and its installed apps. `devices`
+`longpress`, `swipe`, `gesture`, `back`, `home`, `orientation`, `fold`, `appstate`,
+`alert`, `batch`, `record start` and `record stop`, `action-button`, `app-switcher`,
+`hardware-button`, `keyboard`, `apps`, `capabilities`, `events`, `network`,
+`react-native`, `telephony` and `trigger-app-event`. Some are guarded: `push` takes
+`<app id> <inline JSON object>`, never a payload file; `perf` allows only `frames` and
+`memory sample`; `artifacts` lists this session's artifacts and takes no provider
+session; `settings` refuses `permission` for `accessibility`, `screen-recording` and
+`input-monitoring`, which are permissions of the hosting Mac.
+
+Each command takes only the flags and input fields Stim lists for it, so a flag
+that a newer agent-device adds is refused until Stim allows it. `open` refuses
+`--metro-host`, `--metro-port`, `--bundle-url`, `--launch-url`, `--launch-args`,
+`--launch-console`, `--surface` and `--save-script`. Stim's Metro bridge already
+points the app at your Metro; a client-chosen address would let the hosted app
+reach any service the hosting Mac can.
+
+These commands are refused, and the error gives the reason: `install`, `reinstall`,
+`install-from-source` and `uninstall` (Stim installs the app and tracks it), `boot`,
+`shutdown` and `close --shutdown` (use `stim stop`), `logs` (use `stim logs`), `trace`,
+`audio`, `doctor`, `prepare`, `replay`, `test`, `clipboard` (a simulator or emulator
+can share the clipboard of the hosting Mac), `hover`, `viewport`, `tv-remote`, and
+agent-device's client-side commands. The allowed commands inspect, interact with or record
+the simulator and its installed apps. `devices`
 lists only the session's simulator, filtered by the daemon policy. Its device
 claims are session-local and record `/` as the workspace; a host-side agent-device
 using the same simulator is not visible to the hosted daemon. Client device
 selectors are stripped and requests are pinned to iOS and that UDID; an explicitly
-named foreign UDID is refused. Selecting another device, boot/shutdown/erase,
-installs, uninstall, uploads, `push`, `logs`, `network`, `perf`, `trace`,
-`clipboard` and `settings` are refused. Stim installs the app; agents cannot
-enumerate other host devices or write host files. Ambient client fields (`cwd`,
+named foreign UDID is refused. Selecting another device, erase and uploads are
+refused. Agents cannot enumerate other host devices or write host files. Ambient client fields (`cwd`,
 `stateDir`, `config` and `remoteConfig`) are stripped, including within batch steps.
 Host paths and launch inputs (`--out`, baseline, launchConsole, developerDir,
 installSource and similar fields) are refused, including within batch steps.
-Runtime hints are dropped and only reporting/artifact metadata is forwarded. Screenshots accept agent-device's generated remote temp artifact,
+Runtime hints (the Metro and launch URL flags of `open`) are refused, and only reporting/artifact metadata is forwarded. Screenshots accept agent-device's generated remote temp artifact,
 which the client downloads, rather than arbitrary host destinations.
 
 `agent-device record start [path] --remote-config <file>` records the simulator, and

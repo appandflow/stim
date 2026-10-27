@@ -47,7 +47,11 @@ vi.mock('node:child_process', async (original) => ({
     queueMicrotask(() => child.stdout.write('Proxy listening at http://127.0.0.1:4310\n'));
     return child;
   },
-  execFile: (_command: string, ...args: unknown[]) => (args.at(-1) as (error: null, stdout: string) => void)(null, ''),
+  execFile: (_command: string, ...args: unknown[]) =>
+    (args.at(-1) as (error: null, stdout: string) => void)(
+      null,
+      Array.isArray(args[0]) && args[0].includes('--version') ? '0.21.31' : '',
+    ),
 }));
 vi.mock('@stim-cli/core/process-identity', async (original) => {
   const actual = await original<typeof import('@stim-cli/core/process-identity')>();
@@ -103,7 +107,7 @@ test('upstream accepts the hosted policy, agrees on its digest and filters inven
     const { assertDaemonPolicyAdmitsRequest, restrictDeviceInventoryToDaemonPolicy } =
       await import(pathToFileURL(join(root, 'packages/daemon/src/core/daemon-policy.ts')));
     const { resolveDeviceClaimRoot } =
-      await import(pathToFileURL(join(root, 'packages/daemon/src/resources/device/device-claim-paths.ts')));
+      await import(pathToFileURL(join(root, 'packages/host-kit/src/internal/path-resolution.ts')));
     const file = process.env.AGENT_DEVICE_DAEMON_POLICY;
     const raw = JSON.parse(readFileSync(file, 'utf8'));
     const policy = parseDaemonPolicy(raw, file);
@@ -119,7 +123,7 @@ test('upstream accepts the hosted policy, agrees on its digest and filters inven
       local: await gateways.localOnly.discover(),
       provider: await gateways.providerFirst.discover(),
       workspace: process.cwd(),
-      claims: resolveDeviceClaimRoot(),
+      claims: resolveDeviceClaimRoot(process.env),
     }));
   `;
   const driver = new AgentDeviceDriver({

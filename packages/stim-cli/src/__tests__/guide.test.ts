@@ -1,4 +1,5 @@
 import { FEATURES } from '@stim-cli/core/protocol';
+import { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS } from '@stim-cli/agent-driver-agent-device';
 import { includesArchives } from '../commands/gc/caches.ts';
 import { registerIos } from '../commands/ios.ts';
 import { registerAndroid } from '../commands/android.ts';
@@ -1062,6 +1063,18 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(android).toContain('agent-device <command> --remote-config <file>');
   expect(android).toContain('close --shutdown');
   expect(renderTopic('agent')).toContain('--remote-config');
+});
+
+test('the hosted device sections name every command the agent-device driver allows or refuses', () => {
+  const clientSide = REFUSED_DEVICE_COMMANDS.auth;
+  const named = [
+    ...Object.keys(DEVICE_COMMAND_RULES),
+    ...Object.keys(REFUSED_DEVICE_COMMANDS).filter((name) => REFUSED_DEVICE_COMMANDS[name] !== clientSide),
+  ];
+  for (const section of ['hosted-ios', 'hosted-android']) {
+    const words = new Set(renderSection('lifecycle', section)?.split(/[^a-z-]+/));
+    expect(named.filter((name) => !words.has(name))).toEqual([]);
+  }
 });
 
 test('native Xcode and Gradle apps route to their lifecycle sections', () => {

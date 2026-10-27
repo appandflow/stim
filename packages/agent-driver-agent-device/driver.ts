@@ -41,6 +41,12 @@ import {
   type HostedAgentDevice,
   type HostedAgentDriver,
 } from '@stim-cli/agent-driver';
+import {
+  DEVICE_COMMAND_RULES,
+  REFUSED_DEVICE_COMMANDS,
+  remoteScreenshot,
+  type DeviceCommandRule,
+} from './device-policy.ts';
 import { listProcesses } from './processes.ts';
 
 function adbPath(env: NodeJS.ProcessEnv): string {
@@ -90,19 +96,10 @@ const POLICY = {
   },
 };
 
-const DEVICE_COMMANDS = [
-  ...POLICY.commands.allow,
-  'devices',
-  'diff',
-  'longpress',
-  'swipe',
-  'back',
-  'home',
-  'orientation',
-  'appstate',
-  'alert',
-  'record',
-];
+const DEVICE_COMMANDS = Object.keys(DEVICE_COMMAND_RULES);
+
+const DEVICE_AGENT_DEVICE =
+  'Agent control requires agent-device 0.21.30 or later on the hosting Mac. Update it with: npm install --global --prefix "$HOME/.local" agent-device';
 
 const MAX_RECORDING_MS = 10 * 60_000;
 const MAX_RECORDING_BYTES = 512 * 1024 * 1024;
@@ -310,7 +307,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       }
     }
     const invocation = resolveAgentDevice(this.options.env);
-    if (this.options.device?.serial) {
+    if (this.options.device) {
       const version = await new Promise<string>((resolve) => {
         execFile(
           invocation.command,
@@ -322,11 +319,9 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
       if (
         !match ||
-        !(Number(match[1]) > 0 || Number(match[2]) > 21 || (Number(match[2]) === 21 && Number(match[3]) >= 22))
+        !(Number(match[1]) > 0 || Number(match[2]) > 21 || (Number(match[2]) === 21 && Number(match[3]) >= 30))
       )
-        throw new AgentDriverUnavailable(
-          'Agent control requires agent-device 0.21.22 or later with serial daemon policy on the hosting Mac.',
-        );
+        throw new AgentDriverUnavailable(DEVICE_AGENT_DEVICE);
     }
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
     chmodSync(this.options.stateDir, 0o700);
@@ -378,13 +373,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       if (!proxyIdentity?.ok) throw new Error('The agent-device proxy identity could not be captured.');
       setClaimChild(claim, daemon);
       if (!(await leasesBackend(url, this.options.device ? deviceScope(this.options.device).backend : 'macos-app')))
-        throw new AgentDriverUnavailable(
-          this.options.device
-            ? this.options.device.serial === undefined
-              ? 'Agent control requires agent-device 0.21.20 or later with the ios-instance backend and daemon policy on the hosting Mac.'
-              : 'Agent control requires agent-device 0.21.22 or later with the android-instance backend and serial daemon policy on the hosting Mac.'
-            : UNSCOPED,
-        );
+        throw new AgentDriverUnavailable(this.options.device ? DEVICE_AGENT_DEVICE : UNSCOPED);
       const watch = setInterval(() => void this.watchDaemon(), this.options.watchMs);
       watch.unref();
       const running: Running = {
@@ -470,11 +459,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
     if (this.options.device && value.policyDigest !== devicePolicyDigest(this.options.device)) {
       this.daemonRecord = record;
-      throw new AgentDriverUnavailable(
-        this.options.device.serial === undefined
-          ? 'Agent control requires agent-device 0.21.20 or later enforcing this hosted simulator policy.'
-          : 'Agent control requires agent-device 0.21.22 or later enforcing this hosted emulator serial policy.',
-      );
+      throw new AgentDriverUnavailable(DEVICE_AGENT_DEVICE);
     }
     return { record, admin: { port: value.httpPort, token: value.token } };
   }
@@ -1281,8 +1266,6 @@ const HOST_INPUTS = [
   'artifact',
   'dsym',
   'reportJunit',
-  'recordAs',
-  'keyframes',
 ];
 
 function pinDeviceRequest(
@@ -1345,14 +1328,11 @@ function pinDeviceRequest(
   return { rpc };
 }
 
-// agent-device rewrites remote screenshot destinations to this temp shape before downloading the artifact.
-function remoteScreenshot(value: unknown): boolean {
-  return typeof value === 'string' && /^\/tmp\/agent-device-screenshot-\d+-[a-z0-9]+\.png$/.test(value);
-}
+const DEVICE_SESSION_INPUTS = ['platform', 'verbose', 'session', 'leaseId', 'noRecord'];
 
-// agent-device rewrites an explicit remote `record start` destination to this temp shape, keeping its extension.
-function remoteRecording(value: unknown): boolean {
-  return typeof value === 'string' && /^\/tmp\/agent-device-recording-\d+-[a-z0-9]+\.[A-Za-z0-9]{1,8}$/.test(value);
+function refusedKey(command: string, rule: DeviceCommandRule, key: string): string {
+  const flag = Object.entries({ ...rule.flags, ...rule.refused }).find(([, value]) => value === key)?.[0];
+  return `Refused ${command} ${flag ?? JSON.stringify(key.slice(0, MAX_ECHO))}: a hosted device does not take it.`;
 }
 
 function inspectDeviceCommand(
@@ -1361,14 +1341,35 @@ function inspectDeviceCommand(
   device: { platform: string; selector: string; id: string },
 ): Refusal | null {
   const refuse = (rule: Refusal['rule'], message: string): Refusal => ({ id, rule, message, details: {} });
-  if (typeof params.command !== 'string' || !DEVICE_COMMANDS.includes(params.command))
-    return refuse('command', 'Refused command: this connection allows only hosted device inspection and interaction.');
+  const command = typeof params.command === 'string' ? params.command : '';
+  const rule = Object.hasOwn(DEVICE_COMMAND_RULES, command) ? DEVICE_COMMAND_RULES[command] : undefined;
+  if (!rule) {
+    const name = JSON.stringify(command.slice(0, MAX_ECHO));
+    return refuse(
+      'command',
+      Object.hasOwn(REFUSED_DEVICE_COMMANDS, command)
+        ? `Refused command ${name}: ${REFUSED_DEVICE_COMMANDS[command]}`
+        : `Refused command ${name}: it is not a hosted device command.`,
+    );
+  }
   if (device.platform === 'android' && params.serial !== undefined && params.serial !== device.id)
     return refuse('device', 'Another emulator is refused; this connection targets one hosted emulator.');
+  if (isJsonObject(params.runtime) && Object.keys(params.runtime).length > 0)
+    return refuse(
+      'host-path',
+      `Refused ${command} with --metro-host, --metro-port, --bundle-url or --launch-url: Stim's Metro bridge already points the hosted app at your Metro, and a client-chosen address could reach any service the hosting Mac can.`,
+    );
   const noun = device.platform === 'android' ? 'emulator' : 'simulator';
-  const screenshot = params.command === 'screenshot';
+  const screenshot = command === 'screenshot';
   const positionals = Array.isArray(params.positionals) ? params.positionals : [];
-  const recordStart = params.command === 'record' && positionals[0] === 'start';
+  const recordStart = command === 'record' && positionals[0] === 'start';
+  const allowed = new Set([
+    ...DEVICE_CLIENT_AMBIENT_INPUTS,
+    ...DEVICE_SELECTORS,
+    ...DEVICE_SESSION_INPUTS,
+    ...Object.values(rule.flags ?? {}),
+    ...(rule.keys ?? []),
+  ]);
   for (const fields of [params.flags, params.input]) {
     if (!isJsonObject(fields)) continue;
     if (
@@ -1377,6 +1378,9 @@ function inspectDeviceCommand(
         : typeof fields.udid === 'string' && fields.udid.trim() !== device.id
     )
       return refuse('device', `Another ${noun} is refused; this connection targets one hosted ${noun}.`);
+    if (fields.shutdown === true) return refuse('command', 'Simulator shutdown is refused; use stim stop.');
+    const unknown = Object.keys(fields).find((key) => fields[key] !== undefined && !allowed.has(key));
+    if (unknown !== undefined) return refuse('request', refusedKey(command, rule, unknown));
     if (
       HOST_INPUTS.some(
         (key) =>
@@ -1387,45 +1391,9 @@ function inspectDeviceCommand(
       )
     )
       return refuse('host-path', 'Host paths and launch inputs are refused.');
-    if (fields.shutdown === true) return refuse('command', 'Simulator shutdown is refused; use stim stop.');
   }
-  if (screenshot && positionals.some((value) => !remoteScreenshot(value)))
-    return refuse('host-path', 'Screenshots use only agent-device remote artifacts.');
-  if (
-    (params.command === 'open' || params.command === 'close') &&
-    positionals.some(
-      (value) =>
-        typeof value !== 'string' ||
-        /[\\:]/.test(value) ||
-        value.includes('/') ||
-        value.includes(String.fromCharCode(0)),
-    )
-  )
-    return refuse('host-path', 'Open and close accept only installed simulator app names or bundle ids.');
-  if (params.command === 'record') {
-    const [action, output, ...rest] = positionals;
-    if ((action !== 'start' && action !== 'stop') || rest.length > 0 || (action === 'stop' && output !== undefined))
-      return refuse('command', 'Refused record: this connection allows only record start and record stop.');
-    if (output !== undefined && !remoteRecording(output))
-      return refuse(
-        'host-path',
-        `Refused record start: the hosting Mac writes a recording only in this session's private area and returns it through agent-device's remote download, so a host output path is refused.`,
-      );
-    const meta = params.meta;
-    if (
-      action === 'start' &&
-      !(
-        isJsonObject(meta) &&
-        isJsonObject(meta.clientArtifactPaths) &&
-        typeof meta.clientArtifactPaths.outPath === 'string' &&
-        meta.clientArtifactPaths.outPath.trim() !== ''
-      )
-    )
-      return refuse(
-        'request',
-        'Refused record start: it needs the local destination agent-device sends when it runs with --remote-config.',
-      );
-  }
+  const refusal = rule.positionals?.(positionals, params);
+  if (refusal) return refuse(refusal.rule, refusal.message);
   for (const fields of [params.flags, params.input]) {
     if (!isJsonObject(fields) || fields.batchSteps === undefined) continue;
     if (!Array.isArray(fields.batchSteps)) return refuse('request', 'Invalid batch steps.');

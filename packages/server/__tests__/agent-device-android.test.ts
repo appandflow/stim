@@ -12,7 +12,7 @@ import { HostedAgentHost } from '../src/agent-driver.ts';
 import { AgentDeviceDriver } from '@stim-cli/agent-driver-agent-device';
 
 const fixture = vi.hoisted(() => ({
-  version: '0.21.22',
+  version: '0.21.30',
   policy: true,
   backend: true,
   proxyStopped: true,
@@ -140,7 +140,7 @@ beforeEach(() => {
   process.env.STIM_HOME = home;
   const bin = join(home, 'agent-device.mjs');
   writeFileSync(bin, '');
-  fixture.version = '0.21.22';
+  fixture.version = '0.21.30';
   fixture.policy = true;
   fixture.backend = true;
   fixture.proxyStopped = true;
@@ -218,7 +218,7 @@ test('pins the serial policy and verifies its digest before granting Android con
 
 test.each(['policy', 'backend'] as const)('grants nothing without the required %s', async (missing) => {
   fixture[missing] = false;
-  await expect(driver.start()).rejects.toThrow('requires agent-device 0.21.22');
+  await expect(driver.start()).rejects.toThrow('requires agent-device 0.21.30');
   expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
 });
 
@@ -506,9 +506,9 @@ test('pins allocation and nested batch steps to the host owner without ambient f
   expect(fixture.calls.at(-1)!.body).not.toContain('/client');
 });
 
-test('older Android policy parsers get no daemon or claim', async () => {
-  fixture.version = '0.21.20';
-  await expect(driver.start()).rejects.toThrow('0.21.22');
+test('an agent-device older than the hosted command list gets no daemon or claim', async () => {
+  fixture.version = '0.21.29';
+  await expect(driver.start()).rejects.toThrow('0.21.30');
   expect(fixture.events).toEqual([]);
   expect(readClaimSet(join(home, 'claims')).live).toEqual([]);
 });
